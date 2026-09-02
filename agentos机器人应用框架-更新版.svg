@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1190" viewBox="0 0 1400 1190">
+  <style>
+    .title{font:700 27px Arial,'Microsoft YaHei',sans-serif;fill:#17324d}
+    .sub{font:14px Arial,'Microsoft YaHei',sans-serif;fill:#486176}
+    .section{font:700 18px Arial,'Microsoft YaHei',sans-serif;fill:#17324d}
+    .label{font:700 15px Arial,'Microsoft YaHei',sans-serif;fill:#17324d}
+    .text{font:14px Arial,'Microsoft YaHei',sans-serif;fill:#17324d}
+    .small{font:12px Arial,'Microsoft YaHei',sans-serif;fill:#486176}
+    .box{fill:#fff;stroke:#285b78;stroke-width:2;rx:5}
+    .arrow{stroke:#456477;stroke-width:2;fill:none;marker-end:url(#arrow)}
+  </style>
+  <defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" fill="#456477"/></marker></defs>
+  <rect width="1400" height="1060" fill="#f7fafc"/>
+  <rect x="0" y="0" width="1400" height="6" fill="#f4b400"/>
+  <text x="26" y="44" class="title">鸿道机器人总体架构：Agent 应用、机器人应用框架与执行底座</text>
+  <text x="47" y="68" class="sub">应用通过机器人应用框架调用能力，由 AgentOS 统一提供运行、治理、数据和安全支持</text>
+  <text x="1240" y="42" class="small">Intewell®</text><text x="1210" y="60" class="small">光电鸿道</text>
+
+  <!-- applications -->
+  <rect x="4" y="86" width="1392" height="114" fill="#e1f1d8" stroke="#385e37" stroke-width="2"/>
+  <text x="24" y="118" class="section">Agent 应用层</text>
+  <line x1="166" y1="98" x2="166" y2="190" stroke="#385e37" stroke-width="2"/>
+  <rect x="178" y="98" width="1200" height="92" fill="#eff8e9" stroke="#385e37" stroke-width="2"/>
+  <text x="778" y="121" text-anchor="middle" class="label">鸿道机器人 Agent</text>
+  <g class="text" text-anchor="middle">
+    <rect x="192" y="139" width="132" height="32" class="box"/><text x="258" y="160">巡检</text>
+    <rect x="337" y="139" width="132" height="32" class="box"/><text x="403" y="160">导览</text>
+    <rect x="482" y="139" width="132" height="32" class="box"/><text x="548" y="160">配送</text>
+    <rect x="627" y="139" width="132" height="32" class="box"/><text x="693" y="160">迎宾</text>
+    <rect x="772" y="139" width="132" height="32" class="box"/><text x="838" y="160">工业操作</text>
+    <rect x="917" y="139" width="132" height="32" class="box"/><text x="983" y="160">家庭服务</text>
+    <rect x="1062" y="139" width="132" height="32" class="box"/><text x="1128" y="160">安防</text>
+    <rect x="1207" y="139" width="150" height="32" class="box"/><text x="1282" y="160">园区运营</text>
+  </g>
+
+  <!-- app framework -->
+  <rect x="4" y="220" width="1392" height="560" fill="#eef4fa" stroke="#285b78" stroke-width="2"/>
+  <text x="23" y="262" class="section">机器人应用框架（IRAF）</text>
+  <line x1="166" y1="234" x2="166" y2="768" stroke="#285b78" stroke-width="2"/>
+
+  <!-- task layer -->
+  <rect x="178" y="236" width="1200" height="74" fill="#d8edf8" stroke="#21658a" stroke-width="2"/>
+  <text x="198" y="261" class="label">任务编排 TaskFlow（可借鉴 IB-Robot 的任务/流程编排能力）</text>
+  <g class="text" text-anchor="middle">
+    <rect x="198" y="272" width="190" height="26" class="box"/><text x="293" y="290">任务图 / 行为树</text>
+    <rect x="405" y="272" width="190" height="26" class="box"/><text x="500" y="290">前置条件 / 成功条件</text>
+    <rect x="612" y="272" width="190" height="26" class="box"/><text x="707" y="290">重试 / 恢复 / 接管</text>
+    <rect x="819" y="272" width="190" height="26" class="box"/><text x="914" y="290">任务状态与反馈</text>
+    <rect x="1026" y="272" width="330" height="26" class="box"/><text x="1191" y="290">离线执行与云端协同</text>
+  </g>
+
+  <!-- agentos -->
+  <rect x="178" y="324" width="1200" height="142" fill="#e5ebf8" stroke="#285b78" stroke-width="2"/>
+  <text x="198" y="350" class="label">AgentOS 接入层（AgentOSBridge 版本协商、身份委托、生命周期与事件）</text>
+  <g class="text" text-anchor="middle">
+    <rect x="198" y="362" width="180" height="32" class="box"/><text x="288" y="383">LLM / VLM / VLA</text>
+    <rect x="395" y="362" width="180" height="32" class="box"/><text x="485" y="383">Memory / World Model</text>
+    <rect x="592" y="362" width="180" height="32" class="box"/><text x="682" y="383">Agent Scheduler</text>
+    <rect x="789" y="362" width="180" height="32" class="box"/><text x="879" y="383">Tool / Skill Registry</text>
+    <rect x="986" y="362" width="180" height="32" class="box"/><text x="1076" y="383">Access / Governance</text>
+    <rect x="1183" y="362" width="174" height="32" class="box"/><text x="1270" y="383">Storage / Memory</text>
+    <rect x="198" y="408" width="1150" height="38" class="box"/><text x="773" y="432">AgentOS System Call　·　MCP Client/Server　·　HTTP/A2A　·　ROS 2 Client</text>
+  </g>
+
+  <!-- skill/policy -->
+  <rect x="178" y="480" width="1200" height="142" fill="#fff0c9" stroke="#bd7200" stroke-width="2"/>
+  <text x="198" y="506" class="label">技能与策略层 Skill / Policy（传统控制、VLA、学习策略可插拔，单写者仲裁）</text>
+  <g class="text" text-anchor="middle">
+    <rect x="198" y="518" width="180" height="30" class="box"/><text x="288" y="538">感知 Provider</text>
+    <rect x="395" y="518" width="180" height="30" class="box"/><text x="485" y="538">导航 Provider</text>
+    <rect x="592" y="518" width="180" height="30" class="box"/><text x="682" y="538">操作 · 传统控制</text>
+    <rect x="789" y="518" width="180" height="30" class="box"/><text x="879" y="538">操作 · VLA 引导</text>
+    <rect x="986" y="518" width="180" height="30" class="box"/><text x="1076" y="538">ACT / Diffusion / RL</text>
+    <rect x="1183" y="518" width="174" height="30" class="box"/><text x="1270" y="538">遥操作 / 回放 / 数据</text>
+    <rect x="198" y="562" width="1159" height="42" fill="#ffe2a3" stroke="#bd7200" stroke-width="1"/><text x="778" y="582">Provider Router + ControlAuthorityManager → Policy Gateway</text><text x="778" y="598" class="small">身份 / schema / 模式权限 / 限位 / 碰撞 / 互锁 / Safety Projector → 确定性执行器</text>
+  </g>
+
+  <!-- capability -->
+  <rect x="178" y="636" width="1200" height="74" fill="#e1f2ee" stroke="#28716f" stroke-width="2"/>
+  <text x="198" y="660" class="label">机器人能力抽象层（可借鉴 IB-Robot 的设备/能力封装方式）</text>
+  <g class="text" text-anchor="middle">
+    <rect x="198" y="670" width="210" height="28" class="box"/><text x="303" y="689">Capability API</text>
+    <rect x="428" y="670" width="210" height="28" class="box"/><text x="533" y="689">Robot Profile / 本体配置</text>
+    <rect x="658" y="670" width="210" height="28" class="box"/><text x="763" y="689">Skill Runtime / Mode Router</text>
+    <rect x="888" y="670" width="210" height="28" class="box"/><text x="993" y="689">状态 / 反馈 / 事件</text>
+    <rect x="1118" y="670" width="240" height="28" class="box"/><text x="1238" y="689">录制 / 回放 / 评测</text>
+  </g>
+
+  <!-- skill lifecycle -->
+  <rect x="178" y="716" width="1200" height="54" fill="#f0e7f7" stroke="#6d4585" stroke-width="2"/>
+  <text x="198" y="739" class="label">Skill 生命周期</text>
+  <text x="360" y="739" class="text">注册 → 仿真 → 训练 → 评测 → 部署 → 运行 → 采集 → 迭代</text>
+  <text x="360" y="758" class="small">运行日志 · 任务轨迹 · 示范数据 · 失败案例 · 技能版本 · 模型版本</text>
+
+  <!-- capability framework -->
+  <rect x="4" y="792" width="1392" height="126" fill="#e0f2ef" stroke="#28716f" stroke-width="2"/>
+  <text x="23" y="830" class="section">机器人能力执行层</text>
+  <line x1="166" y1="804" x2="166" y2="907" stroke="#28716f" stroke-width="2"/>
+  <g text-anchor="middle" class="text">
+    <rect x="178" y="808" width="370" height="48" fill="#fff" stroke="#b86728" stroke-width="2"/><text x="363" y="828" class="label">智控域</text><text x="363" y="847">AI Agent · VLA · World Model · Task Planner</text>
+    <rect x="563" y="808" width="370" height="48" fill="#fff" stroke="#b86728" stroke-width="2"/><text x="748" y="828" class="label">运控域</text><text x="748" y="847">ROS 2 Humble/Jazzy Adapter · MoveIt2 · WBC/MPC</text>
+    <rect x="948" y="808" width="430" height="48" fill="#fff" stroke="#28716f" stroke-width="2"/><text x="1163" y="828" class="label">通信主站域</text><text x="1163" y="847">EtherCAT · AUTBUS · 设备聚合 · 主站诊断</text>
+    <rect x="178" y="866" width="1200" height="38" fill="#fff" stroke="#b86728" stroke-width="2"/><text x="778" y="891">应用语义总线：DDS / 消息中间件　　实时控制通道：运控域 ↔ 通信主站域　　AI 任务通道：智控域 ↔ 运控域</text>
+  </g>
+
+  <!-- system -->
+  <rect x="4" y="940" width="1392" height="112" fill="#f1f5f8" stroke="#285b78" stroke-width="2"/>
+  <text x="23" y="978" class="section">系统软件底座（AgentOS 之下）</text>
+  <line x1="166" y1="952" x2="166" y2="1040" stroke="#285b78" stroke-width="2"/>
+  <g text-anchor="middle" class="text">
+    <rect x="178" y="956" width="360" height="48" fill="#286b79" stroke="#184957" stroke-width="2"/><text x="358" y="986" fill="#fff">Intewell Linux（智控域）</text>
+    <rect x="558" y="956" width="360" height="48" fill="#286b79" stroke="#184957" stroke-width="2"/><text x="738" y="986" fill="#fff">Intewell Linux RT（运控域）</text>
+    <rect x="938" y="956" width="220" height="48" fill="#286b79" stroke="#184957" stroke-width="2"/><text x="1048" y="986" fill="#fff">Intewell RTOS（通信主站域）</text>
+    <rect x="1178" y="956" width="200" height="48" fill="#286b79" stroke="#184957" stroke-width="2"/><text x="1278" y="986" fill="#fff">Intewell Hypervisor</text>
+    <text x="778" y="1026" class="small">认证基线：Ubuntu 22.04 · ROS 2 Humble · MuJoCo　|　Ubuntu 24.04：Jammy/Humble OCI 兼容，Jazzy 原生预览</text>
+    <text x="778" y="1044" class="small">首期本体：Piper + Unitree Go2 EDU　|　边缘：E300 / FIREFLY 逐构型验收，S600 待正式 Profile</text>
+  </g>
+  <path d="M700 200 L700 220 M700 770 L700 792 M700 918 L700 940" class="arrow"/>
+
+  <!-- supported Hyper release profiles -->
+  <rect x="4" y="1065" width="1392" height="112" fill="#f0e7f7" stroke="#6d4585" stroke-width="2"/>
+  <text x="23" y="1092" class="section">AgentOS / Hyper 兼容发布构型（签名 HyperProfile 驱动）</text>
+  <g text-anchor="middle">
+    <rect x="178" y="1106" width="380" height="52" class="box"/><text x="368" y="1127" class="label">MQ50-E300-3VM-LPR</text><text x="368" y="1147" class="small">Linux 智控 + Linux RT 运控 + RTOS 主站</text>
+    <rect x="578" y="1106" width="380" height="52" class="box"/><text x="768" y="1127" class="label">MQ50-E300-3VM-LPP</text><text x="768" y="1147" class="small">Linux 智控 + Linux RT 运控 + Linux RT 主站</text>
+    <rect x="978" y="1106" width="400" height="52" class="box"/><text x="1178" y="1127" class="label">FIREFLY-RK3588-2VM-LR</text><text x="1178" y="1147" class="small">Linux 智控 + Linux RT 运控/主站（隔离进程）</text>
+  </g>
+  <path d="M700 1052 L700 1065" class="arrow"/>
+</svg>

@@ -1,0 +1,22 @@
+[Unit]
+Description=IRAF Development Simulation HTTP Adapter
+After=network.target
+
+[Service]
+Type=simple
+User=coretek
+WorkingDirectory=/home/coretek/AIIRAF
+Environment=PYTHONPATH=/home/coretek/AIIRAF/src:/home/coretek/AIIRAF/skills/common:/home/coretek/AIIRAF/adapters:/home/coretek/AIIRAF/adapters/mujoco:/home/coretek/AIIRAF/adapters/agentos:/home/coretek/AIIRAF/adapters/model:/home/coretek/AIIRAF/adapters/http:/home/coretek/AIIRAF/build/generated/python
+EnvironmentFile=-/etc/iraf-runtime.env
+ExecStart=/home/coretek/miniconda3/envs/mujoco_graspnet/bin/python /home/coretek/AIIRAF/adapters/http/runtime_http.py --host 127.0.0.1 --port 8765
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/coretek/AIIRAF/build
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

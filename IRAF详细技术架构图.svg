@@ -1,0 +1,174 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1350" viewBox="0 0 1600 1350">
+  <style>
+    .title{font:700 28px Arial,'Microsoft YaHei',sans-serif;fill:#17324d}
+    .sub{font:14px Arial,'Microsoft YaHei',sans-serif;fill:#4a6173}
+    .section{font:700 17px Arial,'Microsoft YaHei',sans-serif;fill:#17324d}
+    .label{font:700 14px Arial,'Microsoft YaHei',sans-serif;fill:#17324d}
+    .text{font:13px Arial,'Microsoft YaHei',sans-serif;fill:#17324d}
+    .small{font:11px Arial,'Microsoft YaHei',sans-serif;fill:#4a6173}
+    .white{fill:#fff}
+    .box{fill:#fff;stroke:#2b5d78;stroke-width:1.5;rx:4}
+    .api{fill:#e7f1fa;stroke:#2b5d78;stroke-width:1.5;rx:4}
+    .core{fill:#e9f5ef;stroke:#357258;stroke-width:1.5;rx:4}
+    .policy{fill:#fff1cf;stroke:#b27612;stroke-width:1.5;rx:4}
+    .mode{fill:#f1eaf7;stroke:#704889;stroke-width:1.5;rx:4}
+    .exec{fill:#eaf3f5;stroke:#29717b;stroke-width:1.5;rx:4}
+    .safe{fill:#fff0ef;stroke:#a8433f;stroke-width:1.5;rx:4}
+    .arrow{stroke:#496779;stroke-width:2;fill:none;marker-end:url(#arrow)}
+    .data{stroke:#6a4c86;stroke-width:1.5;stroke-dasharray:6 4;fill:none;marker-end:url(#arrowPurple)}
+    .safetyLine{stroke:#a8433f;stroke-width:2;stroke-dasharray:5 4;fill:none;marker-end:url(#arrowRed)}
+  </style>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" fill="#496779"/></marker>
+    <marker id="arrowPurple" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" fill="#6a4c86"/></marker>
+    <marker id="arrowRed" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" fill="#a8433f"/></marker>
+  </defs>
+
+  <rect width="1600" height="1200" fill="#f8fafb"/>
+  <rect x="0" y="0" width="1600" height="6" fill="#f4b400"/>
+  <text x="28" y="44" class="title">IRAF 详细技术架构：多模式 Skill、MuJoCo 仿真与边缘执行</text>
+  <text x="28" y="68" class="sub">公共契约与业务能力解耦；传统控制、VLA、学习策略共享安全投影和确定性执行器</text>
+  <text x="1572" y="43" text-anchor="end" class="small">v0.3 · 2026-08-28</text>
+
+  <!-- Applications and AgentOS -->
+  <rect x="20" y="88" width="1340" height="82" fill="#e2f1db" stroke="#426b3d" stroke-width="2"/>
+  <text x="38" y="113" class="section">应用与 AgentOS</text>
+  <g text-anchor="middle" class="text">
+    <rect x="190" y="104" width="180" height="44" class="box"/><text x="280" y="130">巡检 / 配送 / 操作应用</text>
+    <rect x="390" y="104" width="180" height="44" class="box"/><text x="480" y="130">Agent Scheduler</text>
+    <rect x="590" y="104" width="180" height="44" class="box"/><text x="680" y="130">LLM / VLM / VLA</text>
+    <rect x="790" y="104" width="180" height="44" class="box"/><text x="880" y="130">Memory / Tool / MCP</text>
+    <rect x="990" y="104" width="180" height="44" class="box"/><text x="1080" y="130">开发者 SDK / CLI</text>
+    <rect x="1190" y="104" width="150" height="44" class="box"/><text x="1265" y="130">运维 / 接管</text>
+  </g>
+
+  <!-- Public API -->
+  <rect x="20" y="190" width="1340" height="100" fill="#edf4fa" stroke="#2b5d78" stroke-width="2"/>
+  <text x="38" y="215" class="section">公共 API、AgentOSBridge 与信任入口</text>
+  <g text-anchor="middle">
+    <rect x="190" y="224" width="230" height="46" class="api"/><text x="305" y="244" class="label">TaskService</text><text x="305" y="260" class="small">Submit / Watch / Cancel / Resume</text>
+    <rect x="440" y="224" width="230" height="46" class="api"/><text x="555" y="244" class="label">SkillRuntimeService</text><text x="555" y="260" class="small">Execute / Cancel / Snapshot</text>
+    <rect x="690" y="224" width="230" height="46" class="api"/><text x="805" y="244" class="label">WorldModelService</text><text x="805" y="260" class="small">Snapshot / Query / Watch</text>
+    <rect x="940" y="224" width="190" height="46" class="api"/><text x="1035" y="244" class="label">EventService</text><text x="1035" y="260" class="small">Audit / Replay</text>
+    <rect x="1150" y="224" width="190" height="46" class="safe"/><text x="1245" y="244" class="label">AgentOSBridge / Auth</text><text x="1245" y="260" class="small">version · mTLS · delegation</text>
+  </g>
+
+  <!-- Core -->
+  <rect x="20" y="310" width="1340" height="280" fill="#f0f7f3" stroke="#357258" stroke-width="2"/>
+  <text x="38" y="337" class="section">IRAF 核心控制面</text>
+  <g text-anchor="middle">
+    <rect x="42" y="354" width="240" height="92" class="core"/>
+    <text x="162" y="378" class="label">TaskFlow Engine</text><text x="162" y="398" class="text">DSL 编译 · 事件状态机</text><text x="162" y="417" class="small">重试 / SAFE_HOLD / 接管 / 补偿</text><text x="162" y="433" class="small">TaskDelegation · task-scope lease</text>
+
+    <rect x="302" y="354" width="240" height="92" class="core"/>
+    <text x="422" y="378" class="label">Skill Registry / Runtime</text><text x="422" y="398" class="text">manifest · version · provider route</text><text x="422" y="417" class="small">幂等 · deadline · cancel · feedback</text><text x="422" y="433" class="small">execution snapshot · terminal state</text>
+
+    <rect x="562" y="354" width="240" height="92" class="policy"/>
+    <text x="682" y="378" class="label">Policy Gateway</text><text x="682" y="398" class="text">RBAC · schema · Profile</text><text x="682" y="417" class="small">限位 / 工作区 / 碰撞 / 互锁</text><text x="682" y="433" class="small">Safety Projector · deny first</text>
+
+    <rect x="822" y="354" width="240" height="92" class="policy"/>
+    <text x="942" y="378" class="label">Resource / Control Authority</text><text x="942" y="398" class="text">task / execution lease</text><text x="942" y="417" class="small">fencing token · single writer</text><text x="942" y="433" class="small">QUARANTINED · safe reset</text>
+
+    <rect x="1082" y="354" width="256" height="92" class="core"/>
+    <text x="1210" y="378" class="label">World Model</text><text x="1210" y="398" class="text">Robot / Object / Place / Zone</text><text x="1210" y="417" class="small">source · sequence · frame · TTL</text><text x="1210" y="433" class="small">typed snapshot / relation</text>
+
+    <rect x="42" y="466" width="240" height="88" class="api"/>
+    <text x="162" y="490" class="label">Profiles / TrustStore</text><text x="162" y="510" class="text">Robot · Board · Safety</text><text x="162" y="530" class="small">signature · digest · rollback guard</text>
+
+    <rect x="302" y="466" width="240" height="88" class="api"/>
+    <text x="422" y="490" class="label">EventStore / Replay</text><text x="422" y="510" class="text">TaskEvent · SkillEvent · SafetyEvent</text><text x="422" y="530" class="small">PostgreSQL / SQLite conformance</text>
+
+    <rect x="562" y="466" width="240" height="88" class="api"/>
+    <text x="682" y="490" class="label">Observability</text><text x="682" y="510" class="text">trace · metrics · structured log</text><text x="682" y="530" class="small">correlation / versions / policy decision</text>
+
+    <rect x="822" y="466" width="240" height="88" class="api"/>
+    <text x="942" y="490" class="label">Model Provider Gateway</text><text x="942" y="510" class="text">Generate · Embed · Infer</text><text x="942" y="530" class="small">local / remote / cloud / replay</text>
+
+    <rect x="1082" y="466" width="256" height="88" class="api"/>
+    <text x="1210" y="490" class="label">Capability Inventory</text><text x="1210" y="510" class="text">health · clock · sensors · devices</text><text x="1210" y="530" class="small">simulation / HIL / hardware flags</text>
+  </g>
+
+  <!-- Provider plane -->
+  <rect x="20" y="610" width="1340" height="248" fill="#f6f0fa" stroke="#704889" stroke-width="2"/>
+  <text x="38" y="637" class="section">Skill / Policy Provider 面（策略模式与执行后端正交）</text>
+  <rect x="42" y="654" width="880" height="178" fill="#fbf8fd" stroke="#704889" stroke-width="1.5"/>
+  <text x="58" y="678" class="label">Piper Provider Router</text>
+  <g text-anchor="middle">
+    <rect x="58" y="694" width="154" height="54" class="mode"/><text x="135" y="716" class="label">classical</text><text x="135" y="735" class="small">视觉 + MoveIt2</text>
+    <rect x="226" y="694" width="154" height="54" class="mode"/><text x="303" y="716" class="label">vla_guided</text><text x="303" y="735" class="small">VLA ActionProposal</text>
+    <rect x="394" y="694" width="154" height="54" class="mode"/><text x="471" y="716" class="label">learned_policy</text><text x="471" y="735" class="small">ACT / Diffusion / RL</text>
+    <rect x="562" y="694" width="154" height="54" class="mode"/><text x="639" y="716" class="label">teleop</text><text x="639" y="735" class="small">人工操作 / 死手开关</text>
+    <rect x="730" y="694" width="154" height="54" class="mode"/><text x="807" y="716" class="label">replay</text><text x="807" y="735" class="small">确定性数据回放</text>
+  </g>
+  <rect x="58" y="766" width="826" height="48" class="policy"/>
+  <text x="471" y="785" text-anchor="middle" class="label">Action Normalizer → Safety Projector → Deterministic Executor</text>
+  <text x="471" y="802" text-anchor="middle" class="small">单写者 ControlAuthorityManager · MoveIt2 / ros2_control · cancel / stop / feedback</text>
+
+  <rect x="944" y="654" width="394" height="178" fill="#f8fbfc" stroke="#29717b" stroke-width="1.5"/>
+  <text x="960" y="678" class="label">Unitree Go2 EDU Provider</text>
+  <g text-anchor="middle">
+    <rect x="960" y="694" width="170" height="54" class="exec"/><text x="1045" y="716" class="label">Navigation / Dock</text><text x="1045" y="735" class="small">map · lidar · camera · IMU</text>
+    <rect x="1146" y="694" width="176" height="54" class="exec"/><text x="1234" y="716" class="label">Gait / Payload</text><text x="1234" y="735" class="small">stand · stop · tray state</text>
+  </g>
+  <rect x="960" y="766" width="362" height="48" class="policy"/>
+  <text x="1141" y="785" text-anchor="middle" class="label">UnitreeGo2Adapter / Quadruped API</text><text x="1141" y="802" text-anchor="middle" class="small">DDS domain / topic / firmware / SDK 隔离</text>
+
+  <!-- Execution backends -->
+  <rect x="20" y="878" width="1340" height="166" fill="#edf5f6" stroke="#29717b" stroke-width="2"/>
+  <text x="38" y="905" class="section">执行后端与受控设备接口</text>
+  <g text-anchor="middle">
+    <rect x="42" y="922" width="416" height="98" class="exec"/>
+    <text x="250" y="946" class="label">MuJoCo SimulationAdapter</text><text x="250" y="966" class="text">Piper MJCF · Go2 官方 MJCF · handoff_lab.xml</text><text x="250" y="985" class="small">camera / depth / lidar / contact / clock / domain randomization</text><text x="250" y="1003" class="small">unitree_mujoco + ros2_control / IRAF bridge</text>
+
+    <rect x="478" y="922" width="416" height="98" class="exec"/>
+    <text x="686" y="946" class="label">ROS 2 Humble / HIL Adapter</text><text x="686" y="966" class="text">Action · DDS QoS · TF · ros2_control</text><text x="686" y="985" class="small">Piper driver / MoveIt2 / unitree_ros2 / SDK2</text><text x="686" y="1003" class="small">同一 Skill / RobotState / SafetyEvent 契约</text>
+
+    <rect x="914" y="922" width="424" height="98" class="exec"/>
+    <text x="1126" y="946" class="label">边缘硬件与主站受控通道</text><text x="1126" y="966" class="text">Piper · Go2 EDU · camera · lidar · gripper</text><text x="1126" y="985" class="small">运控目标 → 本地 IPC → EtherCAT / AUTBUS / DDS</text><text x="1126" y="1003" class="small">watchdog · 急停 · safe-state acknowledgement</text>
+  </g>
+
+  <!-- Platform -->
+  <rect x="20" y="1064" width="1340" height="108" fill="#eef2f5" stroke="#2b5d78" stroke-width="2"/>
+  <text x="38" y="1091" class="section">平台与发布</text>
+  <g text-anchor="middle">
+    <rect x="190" y="1082" width="260" height="62" fill="#286b79" stroke="#184957" stroke-width="1.5"/><text x="320" y="1108" class="white label">原生认证 S1</text><text x="320" y="1128" class="white text">Ubuntu 22.04 · ROS 2 Humble</text>
+    <rect x="470" y="1082" width="300" height="62" fill="#357258" stroke="#24543f" stroke-width="1.5"/><text x="620" y="1108" class="white label">兼容宿主 C1 / 容器 S1</text><text x="620" y="1128" class="white text">Ubuntu 24.04 / CentOS / openEuler</text>
+    <rect x="790" y="1082" width="300" height="62" fill="#704889" stroke="#4f3461" stroke-width="1.5"/><text x="940" y="1108" class="white label">边缘逐板 S2</text><text x="940" y="1128" class="white text">E300 / S600 / FIREFLY</text>
+    <rect x="1110" y="1082" width="228" height="62" fill="#b27612" stroke="#7c510d" stroke-width="1.5"/><text x="1224" y="1108" class="white label">发布证据</text><text x="1224" y="1128" class="white text">OCI · SBOM · 签名 · HIL</text>
+  </g>
+
+  <!-- AgentOS and Hyper deployment profiles -->
+  <rect x="20" y="1192" width="1340" height="126" fill="#f3f0f7" stroke="#704889" stroke-width="2"/>
+  <text x="38" y="1219" class="section">AgentOS / Intewell Hyper 兼容部署（由签名 HyperProfile + Release manifest 驱动）</text>
+  <g text-anchor="middle">
+    <rect x="42" y="1236" width="404" height="62" class="mode"/><text x="244" y="1256" class="label">MQ50-E300-3VM-LPR</text><text x="244" y="1275" class="small">Linux: AgentOS+IRAF　|　Linux RT: Motion</text><text x="244" y="1291" class="small">RTOS: Master / watchdog</text>
+    <rect x="466" y="1236" width="404" height="62" class="mode"/><text x="668" y="1256" class="label">MQ50-E300-3VM-LPP</text><text x="668" y="1275" class="small">Linux: AgentOS+IRAF　|　Linux RT: Motion</text><text x="668" y="1291" class="small">Linux RT: Master / watchdog</text>
+    <rect x="890" y="1236" width="448" height="62" class="mode"/><text x="1114" y="1256" class="label">FIREFLY-RK3588-2VM-LR</text><text x="1114" y="1275" class="small">Linux: AgentOS+IRAF　|　Linux RT: Motion + Master</text><text x="1114" y="1291" class="small">同 VM、分进程 / 权限 / 资源 / 设备所有权</text>
+  </g>
+
+  <!-- Safety lane -->
+  <rect x="1380" y="88" width="200" height="1230" fill="#fff6f5" stroke="#a8433f" stroke-width="2"/>
+  <text x="1480" y="116" text-anchor="middle" class="section">安全与治理纵切面</text>
+  <g text-anchor="middle">
+    <rect x="1396" y="138" width="168" height="70" class="safe"/><text x="1480" y="161" class="label">认证与最小权限</text><text x="1480" y="180" class="small">mTLS / JWT</text><text x="1480" y="196" class="small">TaskDelegation</text>
+    <rect x="1396" y="230" width="168" height="70" class="safe"/><text x="1480" y="253" class="label">签名配置</text><text x="1480" y="272" class="small">Profile / Policy</text><text x="1480" y="288" class="small">TrustStore / 防回滚</text>
+    <rect x="1396" y="322" width="168" height="86" class="safe"/><text x="1480" y="345" class="label">执行隔离</text><text x="1480" y="364" class="small">lease / fencing token</text><text x="1480" y="381" class="small">单写者 / deadline</text><text x="1480" y="397" class="small">幂等 / 终态不可复活</text>
+    <rect x="1396" y="430" width="168" height="86" class="safe"/><text x="1480" y="453" class="label">SafetyEvent</text><text x="1480" y="472" class="small">stop / watchdog</text><text x="1480" y="489" class="small">QUARANTINED</text><text x="1480" y="505" class="small">授权复位</text>
+    <rect x="1396" y="538" width="168" height="86" class="safe"/><text x="1480" y="561" class="label">可追溯</text><text x="1480" y="580" class="small">task / skill / model</text><text x="1480" y="597" class="small">controller / profile</text><text x="1480" y="613" class="small">policy / replay</text>
+    <rect x="1396" y="646" width="168" height="86" class="safe"/><text x="1480" y="669" class="label">质量门禁</text><text x="1480" y="688" class="small">contract / sim / fault</text><text x="1480" y="705" class="small">HIL / hardware</text><text x="1480" y="721" class="small">RAID / RACI / 签署</text>
+  </g>
+
+  <!-- Main flow arrows -->
+  <path d="M690 170 L690 190" class="arrow"/>
+  <path d="M690 290 L690 310" class="arrow"/>
+  <path d="M690 590 L690 610" class="arrow"/>
+  <path d="M690 858 L690 878" class="arrow"/>
+  <path d="M690 1044 L690 1064" class="arrow"/>
+  <path d="M690 1172 L690 1192" class="arrow"/>
+  <path d="M942 554 L942 610" class="data"/>
+  <path d="M1210 446 L1210 466" class="data"/>
+  <path d="M1360 400 L1380 400" class="safetyLine"/>
+  <path d="M1360 790 L1380 790" class="safetyLine"/>
+
+  <text x="28" y="1340" class="small">实线：受控调用/执行流　　紫色虚线：模型/数据流　　红色虚线：安全事件与治理　　S600：无正式 Release profile，保持 unverified</text>
+</svg>

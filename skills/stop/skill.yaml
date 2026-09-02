@@ -1,0 +1,16 @@
+apiVersion: iraf.intewell.io/v1
+kind: Skill
+metadata: {name: stop, version: 1.0.0}
+spec:
+  verification: development
+  inputSchema: stop.input.json
+  outputSchema: result.output.json
+  requires: [stop]
+  preconditions: []
+  intentExamples: ["停止机器人", "立即停止当前动作", "stop"]
+  timeoutSeconds: 2
+  cancellation: not_applicable
+  recovery: [request_handover]
+  safetyClass: safety_action
+  providers:
+    - {name: common_stop_sim, type: python_adapter, entrypoint: "motion:StopProvider", selector: {mode: simulation}, priority: 0}

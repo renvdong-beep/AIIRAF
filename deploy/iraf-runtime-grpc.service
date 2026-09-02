@@ -1,0 +1,26 @@
+[Unit]
+Description=IRAF Development Simulation gRPC Adapter
+After=network.target iraf-runtime.service
+Requires=iraf-runtime.service
+
+[Service]
+Type=simple
+User=coretek
+WorkingDirectory=/home/coretek/AIIRAF
+Environment=PYTHONPATH=/home/coretek/AIIRAF/src:/home/coretek/AIIRAF/skills/common:/home/coretek/AIIRAF/adapters:/home/coretek/AIIRAF/adapters/mujoco:/home/coretek/AIIRAF/adapters/agentos:/home/coretek/AIIRAF/adapters/model:/home/coretek/AIIRAF/adapters/grpc:/home/coretek/AIIRAF/build/generated/python
+EnvironmentFile=-/etc/iraf-runtime.env
+Environment=IRAF_GRPC_DEVELOPMENT=true
+Environment=IRAF_GRPC_HOST=127.0.0.1
+Environment=IRAF_GRPC_PORT=50051
+ExecStart=/home/coretek/miniconda3/envs/mujoco_graspnet/bin/python /home/coretek/AIIRAF/tools/runtime_grpc_server.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/coretek/AIIRAF/build
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

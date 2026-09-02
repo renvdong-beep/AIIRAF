@@ -1,0 +1,14 @@
+syntax = "proto3";
+package iraf.v1;
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "iraf/v1/common.proto";
+enum SkillState { SKILL_STATE_UNSPECIFIED=0; SKILL_STATE_PENDING=1; SKILL_STATE_VALIDATING=2; SKILL_STATE_RUNNING=3; SKILL_STATE_SUCCEEDED=4; SKILL_STATE_FAILED=5; SKILL_STATE_ABORTED=6; SKILL_STATE_CANCELLED=7; SKILL_STATE_SAFETY_STOP=8; }
+message SkillGoal { string correlation_id=1; string skill_name=2; string skill_version_constraint=3; google.protobuf.Struct inputs=4; google.protobuf.Timestamp deadline=5; VersionRef robot_profile=6; VersionRef safety_policy=7; map<string,string> labels=8; }
+message ExecuteSkillRequest { string request_id=1; string idempotency_key=2; SkillGoal goal=3; }
+message IrafError { string code=1; string message_zh=2; bool retryable=3; map<string,string> details=4; }
+message SkillFeedback { string execution_id=1; uint64 sequence=2; SkillState state=3; double progress=4; string phase=5; google.protobuf.Struct outputs=6; IrafError error=7; google.protobuf.Timestamp occurred_at=8; }
+message CancelExecutionRequest { string execution_id=1; string reason=2; }
+message CancelExecutionResponse { bool accepted=1; SkillState state=2; }
+message GetExecutionRequest { string execution_id=1; }
+message ExecutionSnapshot { string execution_id=1; SkillState state=2; uint64 last_sequence=3; VersionRef skill=4; VersionRef provider=5; IrafError error=6; }

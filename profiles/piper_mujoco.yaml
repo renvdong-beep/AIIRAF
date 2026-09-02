@@ -1,0 +1,20 @@
+apiVersion: iraf.intewell.io/v1
+kind: RobotProfile
+metadata:
+  name: piper_mujoco
+  version: 0.1.0
+spec:
+  simulation: true
+  verification: development
+  control_frequency_hz: 100
+  joints: [joint1, joint2, joint3, joint4, joint5, joint6, joint7, joint8]
+  joint_limits:
+    joint1: [-3.14, 3.14]
+    joint2: [-3.14, 3.14]
+    joint3: [-3.14, 3.14]
+    joint4: [-3.14, 3.14]
+    joint5: [-3.14, 3.14]
+    joint6: [-3.14, 3.14]
+    joint7: [0.0, 0.08]
+    joint8: [0.0, 0.08]
+  capabilities: [move_joint, stop]

@@ -1,0 +1,4 @@
+syntax = "proto3";
+package iraf.v1;
+import "iraf/v1/skill.proto";
+service SkillRuntimeService { rpc Execute(ExecuteSkillRequest) returns (stream SkillFeedback); rpc Cancel(CancelExecutionRequest) returns (CancelExecutionResponse); rpc GetExecution(GetExecutionRequest) returns (ExecutionSnapshot); }

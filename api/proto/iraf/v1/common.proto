@@ -1,0 +1,3 @@
+syntax = "proto3";
+package iraf.v1;
+message VersionRef { string name = 1; string version = 2; string digest = 3; }

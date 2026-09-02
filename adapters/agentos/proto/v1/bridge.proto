@@ -1,0 +1,10 @@
+syntax = "proto3";
+package iraf.agentos.v1;
+import "google/protobuf/timestamp.proto";
+import "iraf/v1/skill.proto";
+message IntentRequest { string request_id=1; string idempotency_key=2; string correlation_id=3; string text=4; string resource_id=5; string controller=6; google.protobuf.Timestamp deadline=7; }
+message CompatibilityRequest { string agentos_version=1; string bridge_version=2; }
+message CompatibilityResponse { bool compatible=1; string reason=2; }
+message HealthRequest {}
+message HealthResponse { bool ready=1; string version=2; }
+service AgentOSBridgeService { rpc InterpretIntent(IntentRequest) returns (stream iraf.v1.SkillFeedback); rpc GetCompatibility(CompatibilityRequest) returns (CompatibilityResponse); rpc Health(HealthRequest) returns (HealthResponse); }

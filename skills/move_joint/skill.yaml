@@ -1,0 +1,16 @@
+apiVersion: iraf.intewell.io/v1
+kind: Skill
+metadata: {name: move_joint, version: 1.0.0}
+spec:
+  verification: development
+  inputSchema: move_joint.input.json
+  outputSchema: result.output.json
+  requires: [move_joint]
+  preconditions: [safety.estop == false]
+  intentExamples: ["将关节移动到指定角度", "关节1移动到0.2", "move joint"]
+  timeoutSeconds: 30
+  cancellation: unsupported
+  recovery: [stop, request_handover]
+  safetyClass: controlled_motion
+  providers:
+    - {name: common_motion_sim, type: python_adapter, entrypoint: "motion:MoveJointProvider", selector: {mode: simulation}, priority: 100}
