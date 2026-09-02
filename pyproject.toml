@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iraf-runtime"
+version = "0.1.0"
+description = "IRAF manifest-driven skill runtime for development simulation"
+requires-python = ">=3.9"
+dependencies = [
+  "PyYAML==6.0.2",
+  "jsonschema==4.23.0",
+  "packaging==25.0",
+]
+
+[project.optional-dependencies]
+simulation = [
+  "mujoco==3.3.1",
+  "grpcio==1.71.0",
+  "grpcio-tools==1.71.0",
+  "protobuf==5.29.5",
+]
+test = [
+  "pytest>=8,<9",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [
+  "src",
+  "skills/common",
+  "adapters",
+  "adapters/mujoco",
+  "adapters/agentos",
+  "adapters/model",
+  "adapters/grpc",
+  "build/generated/python",
+]
