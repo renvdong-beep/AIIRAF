@@ -18,3 +18,9 @@ IRAF 是 AgentOS 到机器人 Skill 的应用框架，不替代实时控制器�
 - 三阶段：完成 World Model、模型 Provider、遥操作和数据闭环。
 
 所有 Skill 必须声明 schema、能力依赖、前置/成功条件、错误码、超时、取消、恢复、安全等级和版本。仿真必须声明 `simulation=true`，不得把仿真结果表述为真机实时能力。
+
+## 当前实现图纸（2026-09-02）
+
+- `docs/diagrams/iraf-current-implementation-overview.png`：当前模块边界、Runtime 唯一入口、Profile/Policy、Skill Registry、Provider/Backend 及后续能力。
+- `docs/diagrams/iraf-minimal-chain.png`：已实测的中文意图到 MuJoCo 最小链路，包含拒绝路径和当前安全边界。
+- 同目录的 `.dot` 为可审查源文件，`.svg` 为可缩放版本。

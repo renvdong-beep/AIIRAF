@@ -1,0 +1,19 @@
+digraph IRAFMinimalChain {
+  graph [rankdir=LR, bgcolor="white", pad="0.25", nodesep="0.35", ranksep="0.7", splines=ortho, fontname="Noto Sans CJK SC", label="IRAF 最小链路：文字意图 -> Piper MuJoCo", labelloc=t, fontsize=22, fontcolor="#111827"];
+  node [shape=box, style="rounded,filled", fontname="Noto Sans CJK SC", fontsize=12, margin="0.18,0.12", color="#1F2937", penwidth=1.5, fillcolor="#DCFCE7", fontcolor="#111827"];
+  edge [color="#374151", penwidth=1.6, arrowsize=0.75];
+  n1 [label="① IntentRequest\n将 joint1 移动到 0.2\nHTTP Bearer 已认证", fillcolor="#DBEAFE", color="#1D4ED8"];
+  n2 [label="② OpenAICompatibleIntentProvider\nE300 Qwen3-0.6B\n结构化 JSON + schema 校验", fillcolor="#DBEAFE", color="#1D4ED8"];
+  n3 [label="③ AgentOSBridge\n解析结果只允许 manifest Skill\n生成 canonical Task", fillcolor="#DBEAFE", color="#1D4ED8"];
+  n4 [label="④ SkillRuntime\nTaskFlow + PolicyGateway\nProfile/SafetyPolicy + deadline", fillcolor="#DCFCE7", color="#15803D", penwidth=2];
+  n5 [label="⑤ Resource Lease\nControlAuthorityManager\nresource=piper_mujoco", fillcolor="#FEF3C7", color="#B45309"];
+  n6 [label="⑥ SkillRegistry\nmove_joint@1.0.0\nSemVer + input/output schema", fillcolor="#DCFCE7", color="#15803D"];
+  n7 [label="⑦ common_motion_sim\n校验关节名与 joint_limits\n调用 Backend", fillcolor="#DCFCE7", color="#15803D"];
+  n8 [label="⑧ MujocoBackend\nPiper MuJoCo model\n动作调用完成", fillcolor="#DCFCE7", color="#15803D"];
+  n9 [label="⑨ Terminal Result\nSUCCEEDED\nexecution_id + provider + event seq", fillcolor="#BBF7D0", color="#166534", penwidth=2];
+  n1 -> n2 -> n3 -> n4 -> n5 -> n6 -> n7 -> n8 -> n9;
+  reject [shape=note, label="任一校验失败：\nFAILED + error_code\n不调用 MuJoCo 后端\n不伪造成功", fillcolor="#FEF2F2", color="#B91C1C", fontcolor="#991B1B"];
+  n4 -> reject [style=dashed, color="#B91C1C", arrowhead=tee, label="拒绝路径", fontname="Noto Sans CJK SC", fontcolor="#991B1B"];
+  boundary [shape=note, label="当前边界：\n开发仿真；HTTP 仅回环\nCancel / mTLS / HIL / 真机未完成", fillcolor="#F3F4F6", color="#6B7280"];
+  boundary -> n4 [style=dashed, arrowhead=none];
+}

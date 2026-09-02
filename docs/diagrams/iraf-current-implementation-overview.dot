@@ -1,0 +1,42 @@
+digraph IRAFCurrent {
+  graph [rankdir=LR, bgcolor="white", pad="0.25", nodesep="0.35", ranksep="0.7", splines=ortho, fontname="Noto Sans CJK SC", label="IRAF v1.8 当前实现总览（开发仿真基线）", labelloc=t, fontsize=22, fontcolor="#111827"];
+  node [shape=box, style="rounded,filled", fontname="Noto Sans CJK SC", fontsize=12, margin="0.16,0.10", color="#1F2937", penwidth=1.5, fillcolor="white", fontcolor="#111827"];
+  edge [color="#374151", penwidth=1.4, arrowsize=0.7];
+  agentos [label="AgentOS / E300\nQwen3-0.6B\n文字意图来源", fillcolor="#DBEAFE", color="#1D4ED8"];
+  http [label="HTTP Intent Adapter\n/v1/intents\n127.0.0.1:8765\n开发仿真", fillcolor="#E0F2FE", color="#0369A1"];
+  grpc [label="canonical gRPC Adapter\nExecute / GetExecution\n回环 + Bearer\n开发仿真", fillcolor="#E0F2FE", color="#0369A1"];
+  subgraph cluster_agentos { label="AgentOS 适配边界"; color="#93C5FD"; penwidth=1.5; fontname="Noto Sans CJK SC"; fontsize=14;
+    bridge [label="AgentOSBridge\n意图 -> canonical Task", fillcolor="#DBEAFE", color="#1D4ED8"];
+    dispatcher [label="TaskDispatcher\n协议转发，不含领域逻辑", fillcolor="#DBEAFE", color="#1D4ED8"];
+  }
+  agentos -> http [label="模型调用", fontname="Noto Sans CJK SC"]; http -> bridge; grpc -> dispatcher; bridge -> dispatcher;
+  subgraph cluster_core { label="IRAF Core（唯一执行入口）"; color="#16A34A"; penwidth=1.8; fontname="Noto Sans CJK SC"; fontsize=14;
+    runtime [label="SkillRuntime\n执行、终态、幂等、事件", fillcolor="#DCFCE7", color="#15803D", penwidth=2];
+    taskflow [label="TaskFlow\nPENDING -> VALIDATING\n-> RUNNING -> SUCCEEDED/FAILED", fillcolor="#F0FDF4", color="#16A34A"];
+    policy [label="PolicyGateway\nRBAC / schema / profile\n安全策略 / 前置条件", fillcolor="#F0FDF4", color="#16A34A"];
+    registry [label="SkillRegistry\nmanifest + JSON Schema\nSemVer Provider 路由", fillcolor="#F0FDF4", color="#16A34A"];
+    lease [label="ControlAuthorityManager\n进程内资源租约\n当前为仿真实现", fillcolor="#FEF3C7", color="#B45309"];
+    store [label="SQLite ExecutionStore\n幂等结果 + 状态事件", fillcolor="#F0FDF4", color="#16A34A"];
+    runtime -> taskflow; runtime -> policy; runtime -> registry; runtime -> lease; runtime -> store;
+  }
+  dispatcher -> runtime;
+  profile [label="RobotProfile\npiper_mujoco\nsimulation=true\n能力：move_joint / stop", fillcolor="#F3E8FF", color="#7E22CE"];
+  safety [label="SafetyPolicy\nsimulation_lab\n允许 Skill + 时长上限", fillcolor="#F3E8FF", color="#7E22CE"];
+  profile -> policy [style=dashed]; safety -> policy [style=dashed];
+  manifests [label="skills/*/skill.yaml\nmove_joint / stop\n输入输出 schema", fillcolor="#F3E8FF", color="#7E22CE"];
+  manifests -> registry [style=dashed];
+  subgraph cluster_provider { label="Capability Provider / Backend"; color="#F59E0B"; penwidth=1.5; fontname="Noto Sans CJK SC"; fontsize=14;
+    simprovider [label="common_motion_sim\nPython Provider\n当前已验证", fillcolor="#DCFCE7", color="#15803D"];
+    mujoco [label="MujocoBackend\nMuJoCo Piper model\n当前已验证", fillcolor="#DCFCE7", color="#15803D"];
+    ros [label="ROS2 / 真机后端\n后续适配器", fillcolor="#F3F4F6", color="#6B7280", style="rounded,filled,dashed"];
+    vla [label="VLA Provider\nACT / Diffusion 等\n后续", fillcolor="#F3F4F6", color="#6B7280", style="rounded,filled,dashed"];
+    rl [label="强化学习 Provider\n后续", fillcolor="#F3F4F6", color="#6B7280", style="rounded,filled,dashed"];
+    simprovider -> mujoco;
+  }
+  registry -> simprovider; registry -> ros [style=dashed]; registry -> vla [style=dashed]; registry -> rl [style=dashed];
+  result [label="Execution Result\nexecution_id / status / provider\n仅代表开发仿真证据", fillcolor="#DCFCE7", color="#15803D"];
+  mujoco -> result;
+  note [shape=note, label="铁律：模型、HTTP、AgentOS\n不得直接发送关节/电机命令\n所有动作必须经过 SkillRuntime", fillcolor="#FEF2F2", color="#B91C1C", fontcolor="#991B1B"];
+  note -> runtime [style=dashed, arrowhead=none];
+  legend [shape=plain, label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="5"><TR><TD BGCOLOR="#DCFCE7">绿色：当前可验证</TD><TD BGCOLOR="#F3F4F6">灰色虚线：后续阶段</TD><TD BGCOLOR="#FEF3C7">黄色：仿真限制项</TD></TR></TABLE>>, fontname="Noto Sans CJK SC"];
+}
