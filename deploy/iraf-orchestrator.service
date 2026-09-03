@@ -1,0 +1,22 @@
+[Unit]
+Description=IRAF 24h development simulation soak
+Wants=network-online.target
+After=network-online.target iraf-runtime.service
+
+[Service]
+Type=simple
+User=coretek
+Group=coretek
+WorkingDirectory=/home/coretek/AIIRAF
+EnvironmentFile=/etc/iraf/orchestrator.env
+ExecStart=/usr/bin/python3 /home/coretek/AIIRAF/tools/orchestrate_cycle.py --config /etc/iraf/orchestrator.json --duration-hours 24 --interval-seconds 3600 --output /home/coretek/AIIRAF/build/orchestrator/24h-run
+Restart=no
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/home/coretek/AIIRAF/build
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

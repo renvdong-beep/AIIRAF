@@ -16,6 +16,7 @@ export IRAF_RUNTIME_SSH_TARGET='coretek@10.203.247.145'
 export IRAF_EDGE_MODELS_URL='https://10.203.247.86:9119/v1'
 export IRAF_EDGE_TOKEN='由本机安全凭据注入'
 export IRAF_EDGE_MODEL='Qwen3-0.6B'
+export IRAF_EDGE_MODEL='Qwen3-0.6B'
 ```
 
 Token 不要写入仓库、配置文件或调度日志。247.86 任务默认关闭，只有确认本机到边缘板卡的网络和凭据后才启用。
@@ -49,6 +50,8 @@ python tools/orchestrate_cycle.py \
 build/orchestrator/<run>/
   manifest.json
   manifest.sha256
+  heartbeat.json
+  cycles/<cycle-id>.json
   heartbeat.json
   cycles/<cycle-id>.json
 ```
