@@ -85,7 +85,7 @@ def runtime_task(config, task, cycle_id):
     remote_output = f"build/acceptance/development-simulation/orchestrator-{cycle_id}"
     command = (
         f"cd {shlex.quote(repo)} && "
-        "test -z "$(git status --porcelain)" && "
+        'test -z "$(git status --porcelain)" && '
         f"PYTHONPATH=src:build/generated/python:adapters:adapters/agentos:adapters/grpc:"
         f"adapters/http:adapters/mujoco:adapters/model:skills/common:skills/piper:tools "
         f"{shlex.quote(python)} scripts/verify_development_simulation.py "
