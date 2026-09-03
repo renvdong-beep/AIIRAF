@@ -8,13 +8,13 @@ Type=simple
 User=coretek
 Group=coretek
 WorkingDirectory=/home/coretek/AIIRAF
-ExecStart=/usr/bin/python3 /home/coretek/AIIRAF/tools/coding_worker.py --repo /home/coretek/AIIRAF --queue /etc/iraf/coding-queue/inbox --worktree /home/coretek/AIIRAF-coding-worktree --evidence /home/coretek/AIIRAF/build/coding-worker --poll-seconds 1800
+ExecStart=/usr/bin/python3 /home/coretek/AIIRAF/tools/coding_worker.py --repo /home/coretek/AIIRAF --queue /etc/iraf/coding-queue/inbox --worktree /home/coretek/AIIRAF/build/coding-worktree --evidence /home/coretek/AIIRAF/build/coding-worker --poll-seconds 1800
 Restart=on-failure
 RestartSec=30
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-ReadWritePaths=/home/coretek/AIIRAF/build /home/coretek/AIIRAF-coding-worktree /etc/iraf/coding-queue
+ReadWritePaths=/home/coretek/AIIRAF/build /home/coretek/AIIRAF/build/coding-worktree /etc/iraf/coding-queue
 StandardOutput=journal
 StandardError=journal
 
