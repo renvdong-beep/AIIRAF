@@ -3,7 +3,7 @@
 本仓库提供 `tools/orchestrate_cycle.py`，用于由本机发起验证调度。它只允许两类任务：
 
 - `verify_development_simulation`：SSH 到 247.145，要求工作区干净，然后执行仓库内的 9 项开发仿真门禁。
-- `edge_model_health`：访问 247.86 的 OpenAI-compatible `/v1/models`，只验证模型服务可达和返回模型列表。
+- `edge_model_health`：访问 247.86 的 OpenAI-compatible `/v1/models`，并执行一次有超时限制的 /v1/chat/completions 真实生成探针。
 
 调度器禁止执行任意远程代码修改、禁止提交密钥、禁止把边缘模型当作运动控制权限来源。代码实现必须在独立分支完成，并经门禁和人工审核后再合并。
 
@@ -15,6 +15,7 @@
 export IRAF_RUNTIME_SSH_TARGET='coretek@10.203.247.145'
 export IRAF_EDGE_MODELS_URL='https://10.203.247.86:9119/v1'
 export IRAF_EDGE_TOKEN='由本机安全凭据注入'
+export IRAF_EDGE_MODEL='Qwen3-0.6B'
 ```
 
 Token 不要写入仓库、配置文件或调度日志。247.86 任务默认关闭，只有确认本机到边缘板卡的网络和凭据后才启用。
@@ -38,7 +39,7 @@ python tools/orchestrate_cycle.py \
   --output build/orchestrator/24h-run
 ```
 
-任一 Runtime 门禁失败、远端工作区 dirty 或 SSH 超时，当前周期立即停止；已生成的 manifest 和日志保留用于审计。当前调度器只做验证，不自动修改源码、不自动合并、不自动推送。
+启动前锁定调度端 commit，运行中源码变化、持续时间不足、周期数不足、任一 Runtime 门禁失败、远端工作区 dirty 或 SSH 超时，当前运行立即判定失败；已生成的 manifest 和日志保留用于审计。当前调度器只做验证，不自动修改源码、不自动合并、不自动推送。
 
 ## 证据
 
@@ -48,6 +49,8 @@ python tools/orchestrate_cycle.py \
 build/orchestrator/<run>/
   manifest.json
   manifest.sha256
+  heartbeat.json
+  cycles/<cycle-id>.json
 ```
 
 manifest 记录调度器版本、commit、分支、dirty 状态、周期结果和失败原因。远端 247.145 的完整验收包仍保存在其 `build/acceptance/development-simulation/<cycle-id>/` 下。
