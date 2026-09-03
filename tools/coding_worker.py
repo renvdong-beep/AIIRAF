@@ -38,9 +38,10 @@ def verify_task(task):
     return task
 
 
-def verify_command(profile, cwd):
+def verify_command(profile, cwd, repo):
     env = dict(os.environ)
-    env["PYTHONPATH"] = PYTHONPATH
+    generated = repo / "build" / "generated" / "python"
+    env["PYTHONPATH"] = f"{generated}:{PYTHONPATH}"
     if profile == "unit":
         return [PYTHON, "-m", "unittest", "discover", "-s", "tests/unit", "-p", "test_*.py"], env
     return [PYTHON, "scripts/verify_development_simulation.py", "--output", "build/coding-worker-verification"], env
@@ -76,7 +77,7 @@ def process_task(repo, queue, worktree, task_path, evidence_root):
         applied = run(["git", "apply", str(patch_path)], worktree, 60)
         if applied.returncode != 0:
             raise RuntimeError("patch 应用失败: " + applied.stderr[-2000:])
-        command, env = verify_command(task["verification_profile"], worktree)
+        command, env = verify_command(task["verification_profile"], worktree, repo)
         tested = subprocess.run(command, cwd=worktree, env=env, text=True, capture_output=True, timeout=1800, check=False)
         result["verification"] = {"profile": task["verification_profile"], "exit_code": tested.returncode, "stdout": tested.stdout[-6000:], "stderr": tested.stderr[-3000:]}
         if tested.returncode != 0:
