@@ -98,6 +98,19 @@ class GrpcRuntimeTest(unittest.TestCase):
         tail = self.event_stub.ListEvents(events_pb2.ListEventsRequest(execution_id=terminal.execution_id, limit=2, page_token=page.next_page_token), metadata=(("authorization", "Bearer token"),))
         self.assertEqual([2, 3], [event.sequence for event in tail.events])
         self.assertFalse(tail.next_page_token)
+        self.runtime.annotate_execution(
+            terminal.execution_id,
+            {
+                "adapter": "agentos-intent",
+                "intent_provider": {
+                    "name": "test-provider",
+                    "version": "1.0.0",
+                    "model": "test-model",
+                },
+                "intent_request_digest": "a" * 64,
+                "resolved_skill": "move_joint",
+            },
+        )
         replay = self.event_stub.GetReplayManifest(events_pb2.GetReplayManifestRequest(execution_id=terminal.execution_id), metadata=(("authorization", "Bearer token"),))
         self.assertEqual("iraf.execution-replay/v1", replay.schema_version)
         self.assertEqual("SUCCEEDED", replay.terminal_status)
@@ -107,6 +120,10 @@ class GrpcRuntimeTest(unittest.TestCase):
         self.assertEqual(64, len(replay.subject_digest))
         self.assertEqual(64, len(replay.result_digest))
         self.assertTrue(replay.simulation)
+        self.assertEqual("agentos-intent", replay.adapter)
+        self.assertEqual("test-model", replay.intent_provider.model)
+        self.assertEqual("a" * 64, replay.intent_request_digest)
+        self.assertEqual("move_joint", replay.resolved_skill)
 
     def test_event_service_lists_recovered_safety_history(self):
         event = self.runtime.handle_safety_event("event-resource", "heartbeat timeout", "HEARTBEAT_TIMEOUT")

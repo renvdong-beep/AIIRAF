@@ -29,6 +29,10 @@ class BridgeTest(unittest.TestCase):
         provider=Provider()
         result=AgentOSBridge(provider,self.dispatcher).execute_intent(self.request(),self.context); self.assertEqual("SUCCEEDED",result["status"]); self.assertTrue(self.backend.stopped); self.assertEqual("fake-model",result["intent_provider"]["model"])
         self.assertEqual({"j1"}, set(provider.contracts["move_joint"]["inputSchema"]["properties"]["positions"]["properties"]))
+        replay=self.dispatcher.runtime.store.get_replay_manifest(result["execution_id"]); self.assertEqual("agentos-intent",replay["adapter"]); self.assertEqual("fake-model",replay["intent_provider"]["model"]); self.assertEqual("stop",replay["resolved_skill"]); self.assertEqual(64,len(replay["intent_request_digest"]))
     def test_model_failure_never_calls_backend(self):
         result=AgentOSBridge(Provider(True),self.dispatcher).execute_intent(self.request(),self.context); self.assertEqual("IRAF-INTENT-PARSE-FAILED",result["error_code"]); self.assertFalse(self.backend.stopped)
+        replay=self.dispatcher.runtime.store.get_replay_manifest(result["execution_id"]); self.assertEqual(["PENDING","VALIDATING","FAILED"],[event["status"] for event in replay["events"]]); self.assertEqual("fake-model",replay["intent_provider"]["model"]); self.assertNotIn("停止机器人",str(replay)); self.assertTrue(replay["simulation"])
+    def test_untrusted_context_cannot_persist_provider_failure(self):
+        context=AuthenticatedContext("forged",frozenset({"task.submit"}),"request-body"); result=AgentOSBridge(Provider(True),self.dispatcher).execute_intent(self.request(),context); self.assertEqual("IRAF-UNAUTHENTICATED",result["error_code"]); self.assertIsNone(self.dispatcher.runtime.store.get_replay_manifest(result["execution_id"])); self.assertFalse(self.backend.stopped)
 if __name__=="__main__": unittest.main()

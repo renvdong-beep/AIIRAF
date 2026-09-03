@@ -58,7 +58,7 @@ class SkillRuntime:
                 return self._standalone_failure(request.get("correlation_id", ""), "IRAF-EXECUTION-CONFLICT", "execution is already active")
             self._active[requested_id] = control
         if ready_event is not None: ready_event.set()
-        digest = hashlib.sha256(json.dumps(request, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
+        digest = self._request_digest(request)
         try:
             with self._lock:
                 existing = self.store.find_idempotent(context.subject, key) if key else None
@@ -194,6 +194,70 @@ class SkillRuntime:
                 return {"execution_id": control.execution_id, "status": control.status.value, "sequence": control.sequence, "reason": control.reason, "error_code": ""}
         return self.store.get(execution_id)
 
+    def record_pre_dispatch_failure(self, request, context, error_code, reason, metadata=None):
+        """持久化 Provider/adapter 在 Skill 调度前产生的安全失败。"""
+        correlation = request.get("correlation_id", "")
+        metadata = dict(metadata or {})
+        self._validate_execution_metadata(metadata)
+        if (
+            context is None
+            or not getattr(context, "subject", "")
+            or getattr(context, "transport", "") not in {"bearer", "local"}
+        ):
+            return self._standalone_failure(
+                correlation, "IRAF-UNAUTHENTICATED", "missing authenticated context"
+            )
+        if "task.submit" not in set(getattr(context, "roles", ())):
+            return self._standalone_failure(
+                correlation, "IRAF-POLICY-DENIED", "调用方无任务提交权限"
+            )
+        key = request.get("idempotency_key", "")
+        if not key:
+            result = self._decorate_result(
+                self._standalone_failure(correlation, error_code, reason), request
+            )
+            result.update(metadata)
+            return result
+        digest = self._request_digest(request)
+        with self._lock:
+            existing = self.store.find_idempotent(context.subject, key)
+            if existing:
+                if existing[0] == digest:
+                    return existing[1]
+                return self._standalone_failure(
+                    correlation,
+                    "IRAF-IDEMPOTENCY-CONFLICT",
+                    "same idempotency key maps to different request",
+                )
+            execution_id = self.execution_id_for(context.subject, key)
+            control = ActiveExecution(execution_id, context.subject)
+            flow = TaskFlow(execution_id)
+            self.store.append_event(execution_id, flow.sequence, flow.status.value)
+            self._transition(flow, control, TaskStatus.VALIDATING)
+            self._transition(flow, control, TaskStatus.FAILED, reason)
+            result = self._decorate_result(
+                self._result(flow, correlation, error_code, reason), request
+            )
+            result.update(metadata)
+            self.store.save_result(context.subject, key, digest, result)
+            return result
+
+    def annotate_execution(self, execution_id, metadata):
+        self._validate_execution_metadata(metadata)
+        return self.store.annotate_result(execution_id, metadata)
+
+    @staticmethod
+    def _validate_execution_metadata(metadata):
+        allowed = {
+            "adapter",
+            "intent_provider",
+            "intent_request_digest",
+            "resolved_skill",
+        }
+        unexpected = sorted(set(metadata) - allowed)
+        if unexpected:
+            raise ValueError("不允许追加的执行元数据: " + str(unexpected))
+
     def _decorate_result(self, result, request):
         """为成功和失败结果冻结相同的回放边界元数据。"""
         result.setdefault(
@@ -225,6 +289,17 @@ class SkillRuntime:
         result.setdefault("controller", request.get("controller", "default"))
         result.setdefault("simulation", bool(self.profile.simulation))
         return result
+
+    @staticmethod
+    def _request_digest(request):
+        return hashlib.sha256(
+            json.dumps(
+                request,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            ).encode()
+        ).hexdigest()
 
     def _standalone_failure(self, correlation, code, reason):
         flow = TaskFlow(str(uuid.uuid4()))

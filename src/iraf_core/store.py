@@ -27,6 +27,36 @@ class SqliteExecutionStore:
             self._db.execute("INSERT INTO executions VALUES(?,?,?,?,?,?)", (result["execution_id"], subject, key, digest, json.dumps(result, ensure_ascii=True, sort_keys=True), int(time.time() * 1000)))
             self._db.commit()
 
+    def annotate_result(self, execution_id, metadata):
+        """只追加新的适配器元数据，不允许改写已有执行事实。"""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT result_json FROM executions WHERE execution_id=?",
+                (execution_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            result = json.loads(row[0])
+            conflicts = sorted(
+                key
+                for key in set(result).intersection(metadata)
+                if result[key] != metadata[key]
+            )
+            if conflicts:
+                raise ValueError("执行元数据不得覆盖已有字段: " + str(conflicts))
+            additions = {key: value for key, value in metadata.items() if key not in result}
+            if not additions:
+                return result
+            result.update(additions)
+            encoded = json.dumps(result, ensure_ascii=True, sort_keys=True)
+            self._db.execute(
+                "UPDATE executions SET result_json=?,updated_at_ms=? "
+                "WHERE execution_id=?",
+                (encoded, int(time.time() * 1000), execution_id),
+            )
+            self._db.commit()
+            return result
+
     def append_event(self, execution_id, sequence, status, reason=""):
         with self._lock:
             self._db.execute("INSERT OR IGNORE INTO execution_events VALUES(?,?,?,?,?)", (execution_id, sequence, status, reason, int(time.time() * 1000)))
@@ -88,6 +118,10 @@ class SqliteExecutionStore:
             "resource_id": result.get("resource_id", ""),
             "controller": result.get("controller", ""),
             "simulation": bool(result.get("simulation", False)),
+            "adapter": result.get("adapter", ""),
+            "intent_provider": result.get("intent_provider", {}),
+            "intent_request_digest": result.get("intent_request_digest", ""),
+            "resolved_skill": result.get("resolved_skill", ""),
             "events": events,
             "event_digest": hashlib.sha256(event_payload).hexdigest(),
             "completed_at_ms": int(completed_at_ms),

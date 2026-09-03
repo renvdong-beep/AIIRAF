@@ -10,7 +10,15 @@
 - Runtime 为成功与失败执行统一冻结 requested Skill、RobotProfile、SafetyPolicy、资源、控制器和 `simulation` 边界。
 - manifest 只包含原始请求、结果、subject 和 idempotency key 的 SHA-256，不返回这些原值。
 - `scripts/export_replay_manifest.py` 可从开发 Runtime 的 EventStore 导出 JSON 和 SHA-256 校验文件。
-- 一键仿真验收会导出本次 direct task 的 replay manifest，并将其纳入总证据包门禁。
+- 一键仿真验收会分别导出本次 direct task 和在线 AgentOS intent task 的 replay manifest，并将两者纳入总证据包门禁。
+
+### AgentOS intent 失败回放
+
+- AgentOSBridge 在解析前生成 intent 请求摘要，不保存自然语言原文。
+- Provider 失联或结构化输出失败时，由 SkillRuntime 记录 `PENDING -> VALIDATING -> FAILED`，不会进入 Skill Provider 或 Backend。
+- 成功解析后，intent provider 名称、版本、模型、请求摘要和 resolved Skill 以只追加方式写回同一个 execution；不允许覆盖终态、事件或安全边界字段。
+- `scripts/verify_intent_failure_replay.py` 使用显式不可用 Provider 验证无动作失败路径，并输出 `iraf.intent-failure-replay/v1` 报告。
+- 在线成功门禁调用部署配置中的 Qwen Provider，要求回放包含 `agentos-intent`、模型身份、请求摘要、resolved Skill 及完整四态事件链。
 
 ## 验收场景
 
@@ -19,6 +27,8 @@
 3. manifest 不出现原始 subject、idempotency key 或 Skill 输出。
 4. 不存在的 execution 返回 `NOT_FOUND`，未认证 gRPC 请求返回 `UNAUTHENTICATED`。
 5. replay JSON 和证据包 manifest 均可用各自 `.sha256` 文件从仓库根目录校验。
+6. intent Provider 失联形成可回放失败，且 manifest 中不出现自然语言原文。
+7. 在线 Qwen intent 成功执行与回放属于同一个 execution，模型、Skill 和事件链身份完整。
 
 ## 未覆盖
 

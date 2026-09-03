@@ -1,4 +1,4 @@
-# IRAF 项目进度基线：2026-09-01 至 2026-09-02
+# IRAF 项目进度基线：2026-09-01 至 2026-09-03
 
 > 本文是本阶段跨机器协作的唯一进度摘要。后续 AI、开发机、Runtime 主机或边缘板卡接手时，应先阅读本文，再查看 `docs/debug/` 下的专项记录。
 
@@ -90,14 +90,24 @@ framework-owned 渲染入口已生成：
 
 Ubuntu 系统 MuJoCo/EGL 渲染已成功。远端 Conda MuJoCo 绑定因 EGL 驱动不支持 `EGL_PLATFORM_DEVICE` 无法创建无头渲染上下文，但这不影响 Runtime 的无窗口物理步进。交互式 Viewer 仍需要 X11、VNC 或桌面会话。
 
+### 3.4 2026-09-03 仿真诊断与执行回放
+
+- MuJoCo 连续循环增加目标/有效步频、步进耗时、超限、失败和最近错误指标；`/health` 在步进失败后返回降级状态。
+- 故障注入仅允许在显式启用的独立仿真实例中使用；步进失败后控制量归零并锁存，必须显式清除才能重启。
+- EventService 增加确定性 `ReplayManifest`，冻结请求、结果、Profile、Policy、Skill、Provider 和事件摘要，不保存原始凭据与 Skill 输出。
+- AgentOS Provider 失败持久化为 `PENDING -> VALIDATING -> FAILED`，不触发动作后端；成功意图以只追加方式记录模型身份、意图摘要和 resolved Skill。
+- 一键证据包同时验证 direct、在线 Qwen intent、故障回放、两条成功回放和 Runtime 健康状态。
+
 ## 4. 当前验证证据
 
 - Runtime 服务：`iraf-runtime.service` 为 `active`。
 - 服务重启次数：`NRestarts=0`。
 - 健康检查：`continuous_simulation=true`、`intent_enabled=true`。
-- 单元测试：`26 tests`，`unittest discover` 全部通过。
+- 单元测试：`44 tests`，`unittest discover` 全部通过。
 - 最小链路：`/v1/tasks` 和 `/v1/intents` 均 `SUCCEEDED`。
 - AgentOS 模型：`Qwen3-0.6B`。
+- 一键证据：九项门禁全部通过，manifest 和两份成功回放均提供 SHA-256 校验。
+- 仿真循环：目标 500 Hz，验收与长期服务中的有效步频稳定在约 460 Hz。
 - Piper 渲染：Supervisor 模式执行成功并产出 PNG/GIF。
 - 长期模式：`--forever` 已进入 `RUNNING`，可由 Ctrl-C 停止。
 
@@ -112,6 +122,9 @@ Ubuntu 系统 MuJoCo/EGL 渲染已成功。远端 Conda MuJoCo 绑定因 EGL 驱
 - HTTP Runtime：`src/iraf_adapters/http/runtime_http.py`
 - gRPC Runtime：`src/iraf_adapters/grpc/server.py`
 - 最小链路验证：`scripts/verify_minimal_chain.py`
+- 一键仿真证据：`scripts/verify_development_simulation.py`
+- 意图失败回放：`scripts/verify_intent_failure_replay.py`
+- 执行回放导出：`scripts/export_replay_manifest.py`
 - Piper 画面验证：`scripts/render_piper_mujoco.py`
 
 ## 6. 已知限制与未完成项
@@ -127,13 +140,13 @@ Ubuntu 系统 MuJoCo/EGL 渲染已成功。远端 Conda MuJoCo 绑定因 EGL 驱
 1. 将当前 Piper MuJoCo Backend 与真实 ROS 2/Linux-RT 控制接口建立同一 Skill/Policy 契约。
 2. 接入 RTOS motion permit、heartbeat、fieldbus authority 和 fail-closed 负向测试。
 3. 增加生产部署的 mTLS、Profile 签名校验、事件远端回读和 HIL 验证证据。
-4. 增加持续仿真的指标、帧率/步进延迟监控和故障注入，形成可发布验收包。
+4. 将当前 JSON 仿真指标接入统一 Observability/Prometheus，并定义告警阈值与 retention。
 5. 在所有调用方完成迁移后，再评估删除旧兼容入口。
 
-## 8. 今日微信日报摘要
+## 8. 2026-09-03 微信日报摘要
 
-1. 完成 IRAF 框架分层和远端代码架构统一。
-2. 完善 Runtime 安全策略、持久化事件和 gRPC 事件查询。
-3. 打通 AgentOS/Qwen -> Runtime -> Piper MuJoCo 最小动作链路。
-4. 将 MuJoCo 连续物理步进纳入 Runtime 生命周期。
-5. 完成 26 项测试、双链路验收和 Piper 可视化验证。
+1. 完成 MuJoCo 连续步进指标、健康降级、受控故障注入和失败后归零锁存。
+2. 完成 execution replay manifest、导出校验和 gRPC 查询契约。
+3. 完成 AgentOS Provider 失败的无动作回放，以及成功意图的模型与 Skill 身份固化。
+4. 将 direct 与在线 Qwen intent 成功链路及两份 replay 纳入一键仿真证据包。
+5. 完成 44 项测试和九项开发仿真门禁；边界仍明确为 `simulation_only=true`。

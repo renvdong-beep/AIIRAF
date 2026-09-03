@@ -213,6 +213,30 @@ def _evidence_artifacts(paths):
     return [item for item in (_artifact(path, "verification_report") for path in paths) if item]
 
 
+def _successful_replay_checks(report, execution_id, require_intent=False):
+    report = report or {}
+    checks = {
+        "schema": report.get("schema_version") == "iraf.execution-replay/v1",
+        "execution": bool(execution_id) and report.get("execution_id") == execution_id,
+        "terminal": report.get("terminal_status") == "SUCCEEDED",
+        "events": [item.get("status") for item in report.get("events", [])]
+        == ["PENDING", "VALIDATING", "RUNNING", "SUCCEEDED"],
+        "simulation_boundary": report.get("simulation") is True,
+    }
+    if require_intent:
+        provider = report.get("intent_provider") or {}
+        checks.update(
+            {
+                "adapter": report.get("adapter") == "agentos-intent",
+                "intent_provider": bool(provider.get("name") and provider.get("model")),
+                "intent_request_digest": len(report.get("intent_request_digest", ""))
+                == 64,
+                "resolved_skill": bool(report.get("resolved_skill")),
+            }
+        )
+    return checks
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -234,8 +258,10 @@ def main(argv=None):
     env, missing_env = _runtime_environment()
 
     simulation_report_path = output_dir / "simulation-baseline.json"
+    intent_failure_report_path = output_dir / "intent-failure-replay.json"
     minimal_report_path = output_dir / "minimal-chain.json"
     replay_report_path = output_dir / "execution-replay.json"
+    intent_replay_report_path = output_dir / "intent-execution-replay.json"
     commands = [
         _run_command(
             "unit-tests",
@@ -256,15 +282,27 @@ def main(argv=None):
             args.command_timeout_seconds,
             env,
         ),
+        _run_command(
+            "intent-failure-replay",
+            [
+                sys.executable,
+                PROJECT_ROOT / "scripts" / "verify_intent_failure_replay.py",
+                "--output",
+                intent_failure_report_path,
+            ],
+            output_dir,
+            args.command_timeout_seconds,
+            env,
+        ),
     ]
     commands.append(
         _run_command(
-            "minimal-direct-chain",
+            "minimal-direct-and-intent-chain",
             [
                 sys.executable,
                 PROJECT_ROOT / "scripts" / "verify_minimal_chain.py",
                 "--mode",
-                "direct",
+                "both",
                 "--output",
                 minimal_report_path,
             ],
@@ -275,10 +313,16 @@ def main(argv=None):
     )
     health = _runtime_health(args.base_url)
     simulation_report = _read_json(simulation_report_path)
+    intent_failure_report = _read_json(intent_failure_report_path)
     minimal_report = _read_json(minimal_report_path)
     direct_result = (minimal_report or {}).get("results", {}).get("direct_task", {})
     direct_status = direct_result.get("status")
     direct_execution_id = direct_result.get("execution_id", "")
+    intent_result = (minimal_report or {}).get("results", {}).get(
+        "agentos_intent", {}
+    )
+    intent_status = intent_result.get("status")
+    intent_execution_id = intent_result.get("execution_id", "")
     commands.append(
         _run_command(
             "execution-replay",
@@ -295,7 +339,30 @@ def main(argv=None):
             env,
         )
     )
+    commands.append(
+        _run_command(
+            "intent-execution-replay",
+            [
+                sys.executable,
+                PROJECT_ROOT / "scripts" / "export_replay_manifest.py",
+                "--execution-id",
+                intent_execution_id,
+                "--output",
+                intent_replay_report_path,
+            ],
+            output_dir,
+            args.command_timeout_seconds,
+            env,
+        )
+    )
     replay_report = _read_json(replay_report_path)
+    intent_replay_report = _read_json(intent_replay_report_path)
+    direct_replay_checks = _successful_replay_checks(
+        replay_report, direct_execution_id
+    )
+    intent_replay_checks = _successful_replay_checks(
+        intent_replay_report, intent_execution_id, require_intent=True
+    )
     health_body = health.get("body", {})
     health_simulation = health_body.get("simulation") or {}
     checks = {
@@ -304,20 +371,42 @@ def main(argv=None):
         "simulation_baseline": {
             "passed": bool(commands[1]["passed"] and (simulation_report or {}).get("passed"))
         },
+        "intent_failure_replay": {
+            "passed": bool(
+                commands[2]["passed"]
+                and (intent_failure_report or {}).get("passed")
+            )
+        },
         "minimal_direct_chain": {
-            "passed": bool(commands[2]["passed"] and direct_status == "SUCCEEDED"),
+            "passed": bool(commands[3]["passed"] and direct_status == "SUCCEEDED"),
             "terminal_status": direct_status,
+        },
+        "agentos_intent_chain": {
+            "passed": bool(
+                commands[3]["passed"]
+                and intent_status == "SUCCEEDED"
+                and (intent_result.get("intent_provider") or {}).get("model")
+            ),
+            "terminal_status": intent_status,
+            "model": (intent_result.get("intent_provider") or {}).get("model", ""),
         },
         "execution_replay": {
             "passed": bool(
-                commands[3]["passed"]
-                and (replay_report or {}).get("schema_version")
-                == "iraf.execution-replay/v1"
-                and (replay_report or {}).get("execution_id")
-                == direct_execution_id
+                commands[4]["passed"]
+                and all(direct_replay_checks.values())
             ),
             "execution_id": direct_execution_id,
             "event_count": len((replay_report or {}).get("events", [])),
+            "checks": direct_replay_checks,
+        },
+        "intent_execution_replay": {
+            "passed": bool(
+                commands[5]["passed"]
+                and all(intent_replay_checks.values())
+            ),
+            "execution_id": intent_execution_id,
+            "event_count": len((intent_replay_report or {}).get("events", [])),
+            "checks": intent_replay_checks,
         },
         "runtime_health": {
             "passed": bool(
@@ -341,7 +430,13 @@ def main(argv=None):
         "runtime_health": health,
         "contract_artifacts": _contract_artifacts(env),
         "evidence_artifacts": _evidence_artifacts(
-            [simulation_report_path, minimal_report_path, replay_report_path]
+            [
+                simulation_report_path,
+                intent_failure_report_path,
+                minimal_report_path,
+                replay_report_path,
+                intent_replay_report_path,
+            ]
         ),
         "limitations": [
             "本证据包不证明真机、HIL、Linux-RT deadline 或 RTOS/现场总线能力。",

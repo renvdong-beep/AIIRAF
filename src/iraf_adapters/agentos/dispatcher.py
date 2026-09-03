@@ -25,3 +25,15 @@ class TaskDispatcher:
 
     def get(self, execution_id):
         return self.runtime.get(execution_id)
+
+    def record_pre_dispatch_failure(self, payload, context, code, reason, metadata):
+        return self.runtime.record_pre_dispatch_failure(
+            payload, context, code, reason, metadata
+        )
+
+    def annotate(self, result, metadata):
+        persisted = self.runtime.annotate_execution(result["execution_id"], metadata)
+        if persisted is not None:
+            return persisted
+        result.update(metadata)
+        return result

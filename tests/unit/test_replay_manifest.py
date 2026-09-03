@@ -59,6 +59,24 @@ class ReplayManifestStoreTests(unittest.TestCase):
     def test_missing_execution_has_no_replay_manifest(self):
         self.assertIsNone(self.store.get_replay_manifest("missing"))
 
+    def test_annotation_is_additive_and_idempotent(self):
+        result = {
+            "execution_id": "execution-2",
+            "status": "FAILED",
+            "sequence": 2,
+        }
+        self.store.save_result("subject", "key-2", "digest", result)
+        metadata = {"adapter": "agentos-intent"}
+
+        first = self.store.annotate_result("execution-2", metadata)
+        second = self.store.annotate_result("execution-2", metadata)
+
+        self.assertEqual(first, second)
+        with self.assertRaisesRegex(ValueError, "不得覆盖"):
+            self.store.annotate_result(
+                "execution-2", {"adapter": "different-adapter"}
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

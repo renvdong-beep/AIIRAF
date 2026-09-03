@@ -72,6 +72,35 @@ class DevelopmentSimulationEvidenceTests(unittest.TestCase):
             self.module._is_evidence_path(PROJECT_ROOT.parent / "simulation")
         )
 
+    def test_online_intent_replay_requires_identity_and_complete_events(self):
+        report = {
+            "schema_version": "iraf.execution-replay/v1",
+            "execution_id": "execution-1",
+            "terminal_status": "SUCCEEDED",
+            "simulation": True,
+            "adapter": "agentos-intent",
+            "intent_provider": {"name": "qwen", "model": "Qwen3-0.6B"},
+            "intent_request_digest": "a" * 64,
+            "resolved_skill": "move_joint",
+            "events": [
+                {"status": status}
+                for status in ("PENDING", "VALIDATING", "RUNNING", "SUCCEEDED")
+            ],
+        }
+
+        checks = self.module._successful_replay_checks(
+            report, "execution-1", require_intent=True
+        )
+
+        self.assertTrue(all(checks.values()))
+        report["intent_provider"] = {}
+        report["events"].pop()
+        failed = self.module._successful_replay_checks(
+            report, "execution-1", require_intent=True
+        )
+        self.assertFalse(failed["intent_provider"])
+        self.assertFalse(failed["events"])
+
 
 if __name__ == "__main__":
     unittest.main()

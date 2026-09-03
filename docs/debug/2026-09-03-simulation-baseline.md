@@ -32,7 +32,7 @@ python -m unittest discover -s tests/unit -v
 
 ## 2026-09-03 运行结果
 
-- 单元测试共 36 项，全部通过。
+- 单元测试共 44 项，全部通过。
 - 真实 Piper MuJoCo 验收通过：目标步频 500 Hz，稳态采样有效步频约 464 Hz，频率比约 0.929。
 - 注入 20 ms 步进延迟后 `step_overrun_count` 从 0 增至 1，连续线程保持健康。
 - 注入步进失败后 `step_failure_count=1`、`running=false`、控制量归零；未清除时重启被拒绝，清除后恢复健康。
@@ -47,7 +47,7 @@ python -m unittest discover -s tests/unit -v
 
 ## 一键证据包
 
-`scripts/verify_development_simulation.py` 将单元测试、仿真故障验收和 Runtime direct task 汇总到 `build/acceptance/development-simulation/`。`manifest.json` 记录：
+`scripts/verify_development_simulation.py` 将单元测试、仿真故障验收、Runtime direct task 和在线 Qwen intent task 汇总到 `build/acceptance/development-simulation/`。`manifest.json` 记录：
 
 - 每条验收命令的退出码、耗时、日志路径和日志 SHA-256。
 - Git commit、分支、dirty 状态和变更路径数量。
@@ -57,4 +57,4 @@ python -m unittest discover -s tests/unit -v
 
 `manifest.sha256` 用于校验 manifest 本身。证据包明确标记 `simulation_only=true`；工作区为 dirty 时只允许作为开发阶段证据。
 
-2026-09-03 已实际运行一键入口，环境、单元测试、仿真基线、direct task、执行回放和 Runtime 健康六项门禁全部通过。
+2026-09-03 已实际运行一键入口，环境、单元测试、仿真基线、意图 Provider 故障回放、direct task、在线 Qwen intent task、两条成功执行回放和 Runtime 健康九项门禁全部通过。意图故障门禁验证模型身份和 `PENDING -> VALIDATING -> FAILED` 事件链，同时确认未触发动作后端、原始自然语言未进入回放证据；在线成功门禁验证 Qwen3-0.6B、resolved Skill 和四态事件链进入同一 replay manifest。

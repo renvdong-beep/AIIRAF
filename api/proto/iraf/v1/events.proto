@@ -41,6 +41,12 @@ message ProviderIdentity {
   string type = 2;
 }
 
+message IntentProviderIdentity {
+  string name = 1;
+  string version = 2;
+  string model = 3;
+}
+
 message GetReplayManifestRequest {
   string execution_id = 1;
 }
@@ -71,6 +77,10 @@ message ReplayManifest {
   repeated EventRecord events = 23;
   google.protobuf.Timestamp completed_at = 24;
   string event_digest = 25;
+  string adapter = 26;
+  IntentProviderIdentity intent_provider = 27;
+  string intent_request_digest = 28;
+  string resolved_skill = 29;
 }
 
 service EventService {

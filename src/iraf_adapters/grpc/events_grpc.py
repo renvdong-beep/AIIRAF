@@ -89,6 +89,7 @@ class EventServicer(events_pb2_grpc.EventServiceServicer):
             context.abort(grpc.StatusCode.NOT_FOUND, "execution replay not found")
         requested_skill = value.get("requested_skill") or {}
         provider = value.get("provider") or {}
+        intent_provider = value.get("intent_provider") or {}
         response = events_pb2.ReplayManifest(
             schema_version=value["schema_version"],
             execution_id=value["execution_id"],
@@ -111,6 +112,9 @@ class EventServicer(events_pb2_grpc.EventServiceServicer):
             controller=value["controller"],
             simulation=value["simulation"],
             event_digest=value["event_digest"],
+            adapter=value.get("adapter", ""),
+            intent_request_digest=value.get("intent_request_digest", ""),
+            resolved_skill=value.get("resolved_skill", ""),
         )
         _artifact_message(response.skill, value.get("skill", {}))
         _artifact_message(response.robot_profile, value.get("profile", {}))
@@ -119,6 +123,9 @@ class EventServicer(events_pb2_grpc.EventServiceServicer):
         )
         response.provider.name = provider.get("name", "")
         response.provider.type = provider.get("type", "")
+        response.intent_provider.name = intent_provider.get("name", "")
+        response.intent_provider.version = intent_provider.get("version", "")
+        response.intent_provider.model = intent_provider.get("model", "")
         for row in value["events"]:
             _event_message(response.events.add(), row)
         _timestamp(response.completed_at, value["completed_at_ms"])
