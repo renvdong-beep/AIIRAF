@@ -9,6 +9,8 @@
   "edge": {
     "models_url_env": "IRAF_EDGE_MODELS_URL",
     "token_env": "IRAF_EDGE_TOKEN",
+    "model_env": "IRAF_EDGE_MODEL",
+    "chat_timeout_seconds": 30,
     "verify_tls": false
   },
   "tasks": [
@@ -22,7 +24,7 @@
       "id": "edge-model-health",
       "kind": "edge_model_health",
       "target": "edge",
-      "enabled": false
+      "enabled": true
     }
   ]
 }

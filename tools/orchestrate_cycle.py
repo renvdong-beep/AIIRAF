@@ -27,6 +27,16 @@ def git_value(*args):
     except (OSError, subprocess.CalledProcessError):
         return "unavailable"
 
+def git_state():
+    """Return the source identity used to bind every soak run."""
+    dirty_output = git_value("status", "--porcelain")
+    return {
+        "commit": git_value("rev-parse", "HEAD"),
+        "branch": git_value("branch", "--show-current"),
+        "dirty": bool(dirty_output) if dirty_output != "unavailable" else None,
+    }
+
+
 def load_config(path):
     value = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(value, dict) or value.get("version") != 1:
@@ -98,8 +108,11 @@ def runtime_task(config, task, cycle_id):
     return result
 
 def edge_task(config, task):
+    # edge probe
     edge = config.get("edge") or {}
     url = os.environ.get(edge.get("models_url_env", ""), "")
+    model = os.environ.get(edge.get("model_env", ""), "")
+    chat_timeout = float(edge.get("chat_timeout_seconds", 30))
     token = os.environ.get(edge.get("token_env", ""), "")
     if not url or not token:
         return {
@@ -119,15 +132,16 @@ def edge_task(config, task):
         with urllib.request.urlopen(request, timeout=15, context=context) as response:
             payload = json.loads(response.read().decode("utf-8"))
             models = payload.get("data") if isinstance(payload, dict) else None
-            return {
-                "passed": response.status == 200 and isinstance(models, list),
-                "task_id": task["id"],
-                "kind": task["kind"],
-                "target": "edge",
-                "http_status": response.status,
-                "model_count": len(models) if isinstance(models, list) else 0,
-            }
-    except (urllib.error.URLError, ValueError) as exc:
+            available = [item.get("id") for item in models if isinstance(item, dict)] if isinstance(models, list) else []
+            selected_model = model or next((item for item in available if item), "")
+            if response.status != 200 or not isinstance(models, list) or not models or (model and model not in available):
+                return {"passed": False, "task_id": task["id"], "kind": task["kind"], "target": "edge", "http_status": response.status, "model_count": len(models) if isinstance(models, list) else 0, "reason": "model list invalid or configured model unavailable"}
+            chat_request = urllib.request.Request(url.rstrip("/") + "/chat/completions", data=json.dumps({"model": selected_model, "messages": [{"role": "user", "content": "Return only OK."}], "temperature": 0, "max_tokens": 8, "stream": False}).encode("utf-8"), headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(chat_request, timeout=chat_timeout, context=context) as chat_response:
+                chat_payload = json.loads(chat_response.read().decode("utf-8"))
+                choices = chat_payload.get("choices") if isinstance(chat_payload, dict) else None
+                return {"passed": chat_response.status == 200 and isinstance(choices, list) and bool(choices), "task_id": task["id"], "kind": task["kind"], "target": "edge", "http_status": chat_response.status, "model_count": len(models), "model": selected_model, "chat_response_present": bool(choices)}
+    except (OSError, urllib.error.URLError, ValueError) as exc:
         return {
             "passed": False,
             "task_id": task["id"],
@@ -158,6 +172,9 @@ def main(argv=None):
     if args.duration_hours < 0:
         parser.error("duration-hours 不能为负数")
     config = load_config(args.config)
+    source_start = git_state()
+    if source_start["commit"] == "unavailable" or source_start["dirty"] is not False:
+        parser.error("scheduler Git worktree must be clean and commit-resolvable")
     interval = args.interval_seconds if args.interval_seconds is not None else float(config.get("interval_seconds", 3600))
     if interval <= 0:
         parser.error("interval-seconds 必须为正数")
@@ -167,25 +184,48 @@ def main(argv=None):
     output.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     deadline = started + args.duration_hours * 3600 if args.duration_hours else started
+    minimum_cycles = max(1, int(args.duration_hours * 3600 // interval)) if args.duration_hours else 1
     cycles = []
     while True:
         cycle_id = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
-        cycle = {"cycle_id": cycle_id, "started_at": now(), "results": run_cycle(config, cycle_id)}
-        cycle["passed"] = bool(cycle["results"]) and all(item.get("passed") for item in cycle["results"])
+        source_now = git_state()
+        if source_now != source_start:
+            cycle = {"cycle_id": cycle_id, "started_at": now(), "results": [], "passed": False,
+                     "reason": "scheduler source changed during run"}
+        else:
+            cycle = {"cycle_id": cycle_id, "started_at": now(), "results": run_cycle(config, cycle_id)}
+            cycle["passed"] = bool(cycle["results"]) and all(item.get("passed") for item in cycle["results"])
+        cycle["ended_at"] = now()
         cycles.append(cycle)
+        cycle_dir = output / "cycles"
+        cycle_dir.mkdir(exist_ok=True)
+        (cycle_dir / f"{cycle_id}.json").write_text(json.dumps(cycle, ensure_ascii=True, indent=2) + "\\n", encoding="utf-8")
+        (output / "heartbeat.json").write_text(json.dumps({
+            "updated_at": cycle["ended_at"], "cycle_id": cycle_id,
+            "cycles_completed": len(cycles), "last_cycle_passed": cycle["passed"],
+        }, ensure_ascii=True, indent=2) + "\\n", encoding="utf-8")
         if args.once or not args.duration_hours or time.monotonic() >= deadline:
             break
         if not cycle["passed"]:
             cycle["halted"] = True
             break
         time.sleep(min(interval, max(0, deadline - time.monotonic())))
+    elapsed_seconds = round(time.monotonic() - started, 3)
+    duration_met = not args.duration_hours or elapsed_seconds >= args.duration_hours * 3600
+    cycles_met = len(cycles) >= minimum_cycles
     manifest = {
         "schema_version": "iraf.orchestrator-run/v1",
         "created_at": now(),
-        "source": {"commit": git_value("rev-parse", "HEAD"), "branch": git_value("branch", "--show-current"), "dirty": bool(git_value("status", "--porcelain"))},
+        "source": source_start,
         "scope": "development-simulation",
+        "duration_seconds": elapsed_seconds,
+        "required_duration_seconds": args.duration_hours * 3600,
+        "minimum_cycles": minimum_cycles,
+        "cycles_completed": len(cycles),
+        "duration_met": duration_met,
+        "cycles_met": cycles_met,
         "cycles": cycles,
-        "passed": bool(cycles) and all(cycle.get("passed") for cycle in cycles),
+        "passed": bool(cycles) and duration_met and cycles_met and all(cycle.get("passed") for cycle in cycles),
         "policy": {"allowed_kinds": sorted(ALLOWED_KINDS), "code_mutation": "forbidden"},
     }
     path = output / "manifest.json"
