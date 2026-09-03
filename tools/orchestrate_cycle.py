@@ -199,11 +199,11 @@ def main(argv=None):
         cycles.append(cycle)
         cycle_dir = output / "cycles"
         cycle_dir.mkdir(exist_ok=True)
-        (cycle_dir / f"{cycle_id}.json").write_text(json.dumps(cycle, ensure_ascii=True, indent=2) + "\\n", encoding="utf-8")
+        (cycle_dir / f"{cycle_id}.json").write_text(json.dumps(cycle, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
         (output / "heartbeat.json").write_text(json.dumps({
             "updated_at": cycle["ended_at"], "cycle_id": cycle_id,
             "cycles_completed": len(cycles), "last_cycle_passed": cycle["passed"],
-        }, ensure_ascii=True, indent=2) + "\\n", encoding="utf-8")
+        }, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
         if args.once or not args.duration_hours or time.monotonic() >= deadline:
             break
         if not cycle["passed"]:
