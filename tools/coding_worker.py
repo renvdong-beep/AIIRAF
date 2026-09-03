@@ -62,7 +62,9 @@ def process_task(repo, queue, worktree, task_path, evidence_root):
     if run(["git", "show-ref", "--verify", f"refs/heads/{branch}"], repo, 30).returncode == 0:
         raise RuntimeError(f"分支已存在: {branch}")
     if worktree.exists():
-        raise RuntimeError(f"编码 worktree 已存在: {worktree}")
+        if any(worktree.iterdir()):
+            raise RuntimeError(f"编码 worktree 已存在: {worktree}")
+        worktree.rmdir()
     result = {"task_id": task["id"], "branch": branch, "started_at": started, "passed": False}
     try:
         added = run(["git", "worktree", "add", "-b", branch, str(worktree), base.stdout.strip()], repo, 60)
