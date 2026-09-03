@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "interval_seconds": 3600,
+  "interval_seconds": 1800,
   "runtime": {
     "target_env": "IRAF_RUNTIME_SSH_TARGET",
     "repo": "/home/coretek/AIIRAF",
