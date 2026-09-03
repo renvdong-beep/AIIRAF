@@ -1,3 +1,5 @@
+[Unit]
+Description=IRAF Ubuntu-only coding task planner
 Wants=network-online.target
 After=network-online.target
 ConditionPathExists=/etc/iraf/coding-queue/plan.json
