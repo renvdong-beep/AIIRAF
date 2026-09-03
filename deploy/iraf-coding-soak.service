@@ -2,14 +2,14 @@
 Description=IRAF Ubuntu-only coding task planner
 Wants=network-online.target
 After=network-online.target
-ConditionPathExists=/etc/iraf/coding-queue/plan.json
+ConditionPathExists=/etc/iraf/coding-queue/plan/plan.json
 
 [Service]
 Type=simple
 User=coretek
 Group=coretek
 WorkingDirectory=/home/coretek/AIIRAF
-ExecStart=/usr/bin/python3 /home/coretek/AIIRAF/tools/task_planner.py --plan /etc/iraf/coding-queue/plan.json --queue /etc/iraf/coding-queue/inbox --evidence /home/coretek/AIIRAF/build/coding-worker --poll-seconds 1800
+ExecStart=/usr/bin/python3 /home/coretek/AIIRAF/tools/task_planner.py --plan /etc/iraf/coding-queue/plan/plan.json --queue /etc/iraf/coding-queue/inbox --evidence /home/coretek/AIIRAF/build/coding-worker --poll-seconds 1800
 Restart=on-failure
 RestartSec=30
 NoNewPrivileges=true
