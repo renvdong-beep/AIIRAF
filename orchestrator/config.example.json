@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "interval_seconds": 3600,
+  "runtime": {
+    "target_env": "IRAF_RUNTIME_SSH_TARGET",
+    "repo": "/home/coretek/AIIRAF",
+    "python": "/home/coretek/miniconda3/envs/mujoco_graspnet/bin/python"
+  },
+  "edge": {
+    "models_url_env": "IRAF_EDGE_MODELS_URL",
+    "token_env": "IRAF_EDGE_TOKEN",
+    "verify_tls": false
+  },
+  "tasks": [
+    {
+      "id": "development-simulation",
+      "kind": "verify_development_simulation",
+      "target": "runtime",
+      "enabled": true
+    },
+    {
+      "id": "edge-model-health",
+      "kind": "edge_model_health",
+      "target": "edge",
+      "enabled": false
+    }
+  ]
+}
