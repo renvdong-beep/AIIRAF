@@ -1,7 +1,2 @@
-"""Common backend contract for simulation and real robots."""
-from typing import Protocol
-
-class RobotBackend(Protocol):
-    def move_joint(self, positions: dict, duration_ms: int, lease) -> None: ...
-    def stop(self, lease) -> None: ...
-    def step(self, count: int = 1) -> dict: ...
+"""Compatibility wrapper; canonical backend contract is iraf_adapters.backend."""
+from iraf_adapters.backend import *

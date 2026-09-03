@@ -1,0 +1,139 @@
+# IRAF 项目进度基线：2026-09-01 至 2026-09-02
+
+> 本文是本阶段跨机器协作的唯一进度摘要。后续 AI、开发机、Runtime 主机或边缘板卡接手时，应先阅读本文，再查看 `docs/debug/` 下的专项记录。
+
+## 1. 机器与运行边界
+
+| 角色 | 主机 | 目录/服务 | 当前职责 |
+|---|---|---|---|
+| 本机开发参考 | 当前工作区 | `/home/nando/AI-APPLICATION-FRAMEWORK` | IRAF 框架结构、契约、测试和文档基线 |
+| Runtime 仿真主机 | `10.203.247.145`，用户 `coretek` | `/home/coretek/AIIRAF`，`iraf-runtime.service`，HTTP `127.0.0.1:8765` | AgentOS/HTTP Runtime、SkillRuntime、策略、安全审计和 Piper MuJoCo |
+| 边缘 AI 板卡 | `10.203.247.86`，用户 `root` | `qwen-vllm.service`，HTTPS `:9119/v1` | Qwen3-0.6B 意图解析，不拥有运动或安全最终权限 |
+
+运行边界遵循 IRAF：AI/应用层只能提交意图和技能；Linux-RT/控制层负责规划控制；RTOS/现场总线侧保留最终安全和执行权限。当前远端链路是 `development simulation`，不能视为真实硬件闭环。
+
+## 2. 2026-09-01 完成的架构与基础能力
+
+### 2.1 IRAF 分层目录和兼容迁移
+
+- 建立 canonical 包：`src/iraf_core`、`src/iraf_adapters`、`src/iraf_skills`、`src/iraf_tools`。
+- 适配器按职责拆分为 AgentOS、gRPC、HTTP、模型、MuJoCo、ROS 2。
+- 将 Robot Profile、Skill、Safety Policy、消息和执行边界纳入框架层。
+- 原有 `adapters/`、`skills/common/`、`tools/` 兼容入口保留，没有删除旧兼容代码，避免现有脚本和部署立即失效。
+- 更新 `pyproject.toml`、部署配置、README、gRPC 开发文档和框架对齐状态。
+
+### 2.2 Runtime、权限和执行一致性
+
+- 增加 Runtime authority 的租约 TTL、fencing 和过期校验。
+- 增加数字化 SemVer 技能版本约束。
+- 保持执行幂等、取消和 stop 的安全收敛行为。
+- AgentOS 意图先经过 Profile/Skill/Policy 校验，再进入 Backend，禁止绕过安全桥直接驱动仿真或设备。
+
+### 2.3 持久化事件和安全隔离
+
+- SQLite 执行存储增加 `executions`、`execution_events`、`safety_events`、`safety_event_history`。
+- `SafetyQuarantine` 支持跨 Runtime 实例读取同一安全事件，恢复必须提供事件 ID、控制器确认和操作主体。
+- 新增事件 proto、生成代码和 canonical gRPC `EventService.ListEvents`，支持执行、资源、时间范围和分页查询。
+- 恢复历史保留，便于事后审计和故障分析。
+
+### 2.4 AgentOS/Qwen 意图桥接
+
+- AgentOS Bridge 根据当前 Robot Profile 注入显式关节集合和参数契约，避免模型输出非法字段。
+- OpenAI-compatible provider 增加提示词约束和语义校验。
+- 修复 Qwen 曾输出 `{"positions":{"positions":0.2}}` 的结构错误，当前可解析为合法 `move_joint` 意图。
+- 边缘板 `qwen-vllm.service` 从异常 watchdog 状态恢复，当前提供 Qwen3-0.6B 的 HTTPS OpenAI-compatible 接口。
+- 服务增加 `Restart=always`、重启间隔和启动限流配置，并保留修改前备份。
+
+## 3. 2026-09-02 完成的最小链路与 MuJoCo 生命周期
+
+### 3.1 最小动作链路
+
+已验证以下两条链路：
+
+```text
+直接任务：HTTP /v1/tasks
+  -> TaskDispatcher
+  -> SkillRuntime
+  -> Policy/Authority/Store
+  -> common_motion_sim
+  -> Piper MuJoCo
+
+AgentOS 意图：HTTP /v1/intents
+  -> Qwen3-0.6B
+  -> AgentOSBridge
+  -> 同一 TaskDispatcher 和 Runtime 链路
+  -> Piper MuJoCo
+```
+
+验证脚本：`scripts/verify_minimal_chain.py --mode direct|intent|both`。最终 `--mode both` 中 direct task 和 AgentOS intent 均为 `SUCCEEDED`。
+
+### 3.2 连续 MuJoCo 仿真
+
+此前动作只在请求期间步进，不能表达长期运行的仿真服务。本次改为框架生命周期管理：
+
+- 新增 `src/iraf_adapters/mujoco/supervisor.py` 的 `MujocoSimulationSupervisor`。
+- `MujocoBackend` 增加单一后台步进线程，按 MuJoCo `model.opt.timestep` 执行连续 `mj_step`。
+- HTTP Runtime 和 gRPC Runtime 启动时启动 Supervisor，退出时停止并等待线程收敛。
+- `move_joint` 在连续模式下只设置控制目标并等待动作时长，不再创建第二套物理循环。
+- `stop` 保留取消事件、控制量归零和安全停止行为。
+- `/health` 增加 `continuous_simulation: true`，可由部署和监控确认连续仿真是否生效。
+- `scripts/render_piper_mujoco.py` 通过 Runtime、SkillRuntime、Backend 和 Supervisor 工作；新增 `--forever` 生成持续更新的 `piper-live.png`，没有复制独立动作控制逻辑。
+
+### 3.3 Piper 画面验证
+
+framework-owned 渲染入口已生成：
+
+- `piper-initial.png`
+- `piper-final.png`
+- `piper-motion.gif`
+- `render-report.json`，schema 为 `iraf.piper-mujoco-view/v3`，记录 execution、profile、policy、provider 和 Supervisor 状态。
+
+Ubuntu 系统 MuJoCo/EGL 渲染已成功。远端 Conda MuJoCo 绑定因 EGL 驱动不支持 `EGL_PLATFORM_DEVICE` 无法创建无头渲染上下文，但这不影响 Runtime 的无窗口物理步进。交互式 Viewer 仍需要 X11、VNC 或桌面会话。
+
+## 4. 当前验证证据
+
+- Runtime 服务：`iraf-runtime.service` 为 `active`。
+- 服务重启次数：`NRestarts=0`。
+- 健康检查：`continuous_simulation=true`、`intent_enabled=true`。
+- 单元测试：`26 tests`，`unittest discover` 全部通过。
+- 最小链路：`/v1/tasks` 和 `/v1/intents` 均 `SUCCEEDED`。
+- AgentOS 模型：`Qwen3-0.6B`。
+- Piper 渲染：Supervisor 模式执行成功并产出 PNG/GIF。
+- 长期模式：`--forever` 已进入 `RUNNING`，可由 Ctrl-C 停止。
+
+## 5. 关键代码入口
+
+- Runtime 核心：`src/iraf_core/runtime.py`
+- 安全隔离：`src/iraf_core/safety.py`
+- 执行和事件存储：`src/iraf_core/store.py`
+- AgentOS 桥：`src/iraf_adapters/agentos/bridge.py`
+- MuJoCo Backend：`src/iraf_adapters/mujoco/mujoco_backend.py`
+- MuJoCo Supervisor：`src/iraf_adapters/mujoco/supervisor.py`
+- HTTP Runtime：`src/iraf_adapters/http/runtime_http.py`
+- gRPC Runtime：`src/iraf_adapters/grpc/server.py`
+- 最小链路验证：`scripts/verify_minimal_chain.py`
+- Piper 画面验证：`scripts/render_piper_mujoco.py`
+
+## 6. 已知限制与未完成项
+
+1. 当前仍是 development simulation，真实 ROS 2、Hyper IPC、RTOS/现场总线和硬件在环尚未接入。
+2. Profile 签名、生产 mTLS、RTOS SafetyEvent 回读和真实设备负向测试仍需补齐。
+3. gRPC 当前为开发仿真入口，生产网络暴露和认证策略需按部署环境继续收敛。
+4. EGL/Viewer 的图形环境需要单独部署；无头 Runtime 物理循环不依赖窗口。
+5. 旧兼容层暂不删除，待所有调用方迁移、兼容测试和发布分支确认后再制定下线计划。
+
+## 7. 下一阶段优先级
+
+1. 将当前 Piper MuJoCo Backend 与真实 ROS 2/Linux-RT 控制接口建立同一 Skill/Policy 契约。
+2. 接入 RTOS motion permit、heartbeat、fieldbus authority 和 fail-closed 负向测试。
+3. 增加生产部署的 mTLS、Profile 签名校验、事件远端回读和 HIL 验证证据。
+4. 增加持续仿真的指标、帧率/步进延迟监控和故障注入，形成可发布验收包。
+5. 在所有调用方完成迁移后，再评估删除旧兼容入口。
+
+## 8. 今日微信日报摘要
+
+1. 完成 IRAF 框架分层和远端代码架构统一。
+2. 完善 Runtime 安全策略、持久化事件和 gRPC 事件查询。
+3. 打通 AgentOS/Qwen -> Runtime -> Piper MuJoCo 最小动作链路。
+4. 将 MuJoCo 连续物理步进纳入 Runtime 生命周期。
+5. 完成 26 项测试、双链路验收和 Piper 可视化验证。

@@ -19,7 +19,7 @@ class RuntimeTest(unittest.TestCase):
     def test_manifest_driven_success(self):
         result=self.runtime.execute(self.task(),self.context); self.assertEqual("SUCCEEDED",result["status"]); self.assertEqual("common_motion_sim",result["provider"]["name"]); self.assertTrue(result["skill"]["digest"])
     def test_schema_rejection(self):
-        result=self.runtime.execute(self.task(parameters={"positions":{}}),self.context); self.assertEqual("IRAF-INPUT-INVALID",result["error_code"]); self.assertEqual([],self.backend.calls)
+        result=self.runtime.execute(self.task(parameters={"positions":{}}),self.context); self.assertEqual("IRAF-INPUT-INVALID",result["error_code"]); self.assertEqual([],self.backend.calls); replay=self.store.get_replay_manifest(result["execution_id"]); self.assertEqual("move_joint",replay["requested_skill"]["name"]); self.assertTrue(replay["simulation"]); self.assertEqual("profile-digest",replay["profile"]["digest"])
     def test_joint_limit_rejection(self):
         result=self.runtime.execute(self.task(parameters={"positions":{"j1":2}}),self.context); self.assertEqual("FAILED",result["status"]); self.assertEqual([],self.backend.calls)
     def test_same_idempotency_returns_snapshot(self):

@@ -13,4 +13,4 @@ spec:
   recovery: [request_handover]
   safetyClass: safety_action
   providers:
-    - {name: common_stop_sim, type: python_adapter, entrypoint: "motion:StopProvider", selector: {mode: simulation}, priority: 0}
+    - {name: common_stop_sim, type: python_adapter, entrypoint: "iraf_skills.common.motion:StopProvider", selector: {mode: simulation}, priority: 0}

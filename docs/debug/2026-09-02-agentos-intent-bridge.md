@@ -16,6 +16,8 @@
 - Protobuf 描述符生成成功，Python 模块编译成功。
 - E300 模型服务实际将“停止机器人”解析为 `stop`，MuJoCo Backend 执行成功。
 - 返回记录包含 execution、correlation、Skill、Profile、Policy、模型、资源和控制器版本信息。
+- 重新验收“将关节1移动到0.2”：`/v1/intents` 与 `/v1/tasks` 均返回 `SUCCEEDED`，解析模型为 `Qwen3-0.6B`，Provider 为 `common_motion_sim/python_adapter`。
+- 边缘板卡 `qwen-vllm.service` 曾因 MCCL watchdog hang 退出，已恢复并设置 `Restart=always`、5 分钟最多启动 3 次；恢复后 9119 HTTPS API 和完整链路正常。
 
 ## 限制
 

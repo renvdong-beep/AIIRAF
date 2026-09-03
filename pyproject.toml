@@ -3,39 +3,32 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "iraf-runtime"
-version = "0.1.0"
-description = "IRAF manifest-driven skill runtime for development simulation"
+name = "intewell-iraf"
+version = "0.2.0"
+description = "Intewell Robot Application Framework runtime"
+readme = "docs/README.md"
 requires-python = ">=3.9"
+license = {text = "Proprietary"}
 dependencies = [
-  "PyYAML==6.0.2",
-  "jsonschema==4.23.0",
-  "packaging==25.0",
+  "jsonschema>=4.18,<5",
+  "mujoco>=3.2,<4",
+  "protobuf>=5.29,<6",
+  "PyYAML>=6,<7",
 ]
 
 [project.optional-dependencies]
-simulation = [
-  "mujoco==3.3.1",
-  "grpcio==1.71.0",
-  "grpcio-tools==1.71.0",
-  "protobuf==5.29.5",
-]
-test = [
-  "pytest>=8,<9",
-]
+simulation = ["grpcio>=1.71,<2", "Pillow>=10,<13"]
+dev = ["pytest>=8,<9"]
+
+[project.scripts]
+iraf-runtime-http = "iraf_adapters.http.runtime_http:main"
+iraf-runtime-grpc = "iraf_adapters.grpc.server:main"
+iraf-task = "iraf_tools.run_task:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["iraf_core*", "iraf_adapters*", "iraf_skills*", "iraf_tools*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = [
-  "src",
-  "skills/common",
-  "adapters",
-  "adapters/mujoco",
-  "adapters/agentos",
-  "adapters/model",
-  "adapters/grpc",
-  "build/generated/python",
-]
+addopts = "-q"

@@ -1,1 +1,1 @@
-{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","required":["skill","accepted"],"additionalProperties":false,"properties":{"skill":{"type":"string"},"accepted":{"type":"boolean"}}}
+{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","required":["skill","accepted"],"additionalProperties":false,"properties":{"skill":{"const":"move_joint"},"accepted":{"const":true}}}

@@ -9,8 +9,8 @@ spec:
   preconditions: [safety.estop == false]
   intentExamples: ["将关节移动到指定角度", "关节1移动到0.2", "move joint"]
   timeoutSeconds: 30
-  cancellation: unsupported
+  cancellation: cooperative_stop
   recovery: [stop, request_handover]
   safetyClass: controlled_motion
   providers:
-    - {name: common_motion_sim, type: python_adapter, entrypoint: "motion:MoveJointProvider", selector: {mode: simulation}, priority: 100}
+    - {name: common_motion_sim, type: python_adapter, entrypoint: "iraf_skills.common.motion:MoveJointProvider", selector: {mode: simulation}, priority: 100}

@@ -1,0 +1,29 @@
+from pathlib import Path
+import yaml
+from .core import RobotProfile
+
+class ProfileError(ValueError):
+    pass
+
+def load_robot_profile(path):
+    data = yaml.safe_load(Path(path).read_text(encoding='utf-8')) or {}
+    meta = data.get('metadata') or {}
+    spec = data.get('spec') or {}
+    joints = tuple(spec.get('joints') or ())
+    limits = spec.get('joint_limits') or {}
+    if data.get('kind') != 'RobotProfile' or not meta.get('name'):
+        raise ProfileError('invalid RobotProfile')
+    if not joints or set(joints) != set(limits):
+        raise ProfileError('joints and limits mismatch')
+    parsed = {}
+    for joint in joints:
+        pair = limits[joint]
+        if len(pair) != 2 or float(pair[0]) >= float(pair[1]):
+            raise ProfileError('invalid joint limits')
+        parsed[joint] = (float(pair[0]), float(pair[1]))
+    hz = float(spec.get('control_frequency_hz', 0))
+    if hz <= 0:
+        raise ProfileError('invalid control frequency')
+    return RobotProfile(meta['name'], str(meta.get('version', '0.0.0')),
+                        bool(spec.get('simulation')), joints, parsed, hz,
+                        frozenset(spec.get('capabilities') or ()))

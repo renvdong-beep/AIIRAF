@@ -1,0 +1,79 @@
+syntax = "proto3";
+package iraf.v1;
+
+import "google/protobuf/timestamp.proto";
+
+message EventRecord {
+  string event_id = 1;
+  string object_id = 2;
+  string execution_id = 3;
+  uint64 sequence = 4;
+  string kind = 5;
+  string status = 6;
+  string reason = 7;
+  google.protobuf.Timestamp occurred_at = 8;
+  google.protobuf.Timestamp recovered_at = 9;
+  string recovered_by = 10;
+}
+
+message ListEventsRequest {
+  string execution_id = 1;
+  string object_id = 2;
+  int64 since_unix_ms = 3;
+  int64 until_unix_ms = 4;
+  uint32 limit = 5;
+  string page_token = 6;
+}
+
+message ListEventsResponse {
+  repeated EventRecord events = 1;
+  string next_page_token = 2;
+}
+
+message ArtifactIdentity {
+  string name = 1;
+  string version = 2;
+  string digest = 3;
+}
+
+message ProviderIdentity {
+  string name = 1;
+  string type = 2;
+}
+
+message GetReplayManifestRequest {
+  string execution_id = 1;
+}
+
+message ReplayManifest {
+  string schema_version = 1;
+  string execution_id = 2;
+  string request_digest = 3;
+  string result_digest = 4;
+  string subject_digest = 5;
+  string idempotency_key_digest = 6;
+  string correlation_id = 7;
+  string terminal_status = 8;
+  uint64 terminal_sequence = 9;
+  string error_code = 10;
+  string reason = 11;
+  ArtifactIdentity skill = 12;
+  ArtifactIdentity robot_profile = 13;
+  ArtifactIdentity safety_policy = 14;
+  string requested_skill_name = 15;
+  string requested_skill_version_constraint = 16;
+  ProviderIdentity provider = 17;
+  string policy_decision_id = 18;
+  string policy_version = 19;
+  string resource_id = 20;
+  string controller = 21;
+  bool simulation = 22;
+  repeated EventRecord events = 23;
+  google.protobuf.Timestamp completed_at = 24;
+  string event_digest = 25;
+}
+
+service EventService {
+  rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
+  rpc GetReplayManifest(GetReplayManifestRequest) returns (ReplayManifest);
+}
