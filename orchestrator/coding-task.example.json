@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "id": "example-task",
+  "title": "feat: describe the bounded change",
+  "verification_profile": "unit",
+  "patch": "change.patch"
+}
