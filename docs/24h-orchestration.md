@@ -57,3 +57,4 @@ build/orchestrator/<run>/
 ```
 
 manifest 记录调度器版本、commit、分支、dirty 状态、周期结果和失败原因。远端 247.145 的完整验收包仍保存在其 `build/acceptance/development-simulation/<cycle-id>/` 下。
+使用 tools/verify_24h_run.py <manifest.json> 可自动校验 24 小时持续时间、周期证据、heartbeat、源码状态和 manifest SHA-256。
