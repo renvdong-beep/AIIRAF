@@ -71,6 +71,8 @@ def emit_ready(plan: dict, plan_path: Path, queue: Path, evidence: Path) -> list
     emitted = []
     for item in plan["tasks"]:
         task_id = item["id"]
+        if item.get("status", "ready") != "ready":
+            continue
         if task_id in known or not set(item.get("depends_on", [])) <= completed:
             continue
         source_patch = (plan_path.parent / item["patch"]).resolve()
