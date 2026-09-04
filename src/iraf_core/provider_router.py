@@ -17,7 +17,13 @@ class ProviderCandidate:
 
 class ProviderRouter:
     def __init__(self, candidates=()):
-        self._candidates = tuple(candidates)
+        items = tuple(candidates)
+        for item in items:
+            if not item.name or not item.provider_type:
+                raise ProviderRouteError("Provider name and type are required")
+            if item.priority < 0:
+                raise ProviderRouteError("Provider priority must be non-negative")
+        self._candidates = items
 
     def select(self, required_capability, mode=None, provider_type=None):
         if not required_capability:
