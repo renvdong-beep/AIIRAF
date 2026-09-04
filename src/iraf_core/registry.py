@@ -4,6 +4,7 @@ import hashlib, importlib, json, re
 from pathlib import Path
 import yaml
 from jsonschema import Draft202012Validator
+from .provider_router import ProviderCandidate, ProviderRouteError, ProviderRouter
 
 class RegistryError(ValueError):
     pass
@@ -83,10 +84,12 @@ class RegisteredSkill:
     def invoke(self, profile, backend, inputs, lease):
         self.validate_inputs(inputs)
         mode = "simulation" if profile.simulation else "hardware"
-        candidates = [p for p in self.manifest.providers if not p.selector.get("mode") or p.selector.get("mode") == mode]
-        if not candidates:
-            raise RegistryError("no Provider matches runtime mode")
-        provider_spec = sorted(candidates, key=lambda p: (p.priority, p.name))[0]
+        candidates = [ProviderCandidate(p.name, p.type, frozenset({self.manifest.name}), frozenset({p.selector["mode"]}) if p.selector.get("mode") else frozenset(), p.priority) for p in self.manifest.providers]
+        try:
+            selected = ProviderRouter(candidates).select(self.manifest.name, mode)
+        except ProviderRouteError as exc:
+            raise RegistryError(str(exc)) from exc
+        provider_spec = next(p for p in self.manifest.providers if p.name == selected.name)
         if provider_spec.type != "python_adapter":
             raise RegistryError("unsupported Provider type: " + provider_spec.type)
         module_name, class_name = provider_spec.entrypoint.split(":", 1)
