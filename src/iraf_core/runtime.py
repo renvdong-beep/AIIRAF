@@ -2,6 +2,7 @@
 from dataclasses import dataclass, field
 import hashlib
 import json
+import re
 import threading
 import uuid
 
@@ -248,6 +249,8 @@ class SkillRuntime:
 
     @staticmethod
     def _validate_execution_metadata(metadata):
+        if not isinstance(metadata, dict):
+            raise ValueError("执行元数据必须是对象")
         allowed = {
             "adapter",
             "intent_provider",
@@ -257,6 +260,42 @@ class SkillRuntime:
         unexpected = sorted(set(metadata) - allowed)
         if unexpected:
             raise ValueError("不允许追加的执行元数据: " + str(unexpected))
+
+        for key in ("adapter", "resolved_skill"):
+            if key not in metadata:
+                continue
+            value = metadata[key]
+            if not isinstance(value, str) or not value or len(value) > 128:
+                raise ValueError(f"执行元数据 {key} 必须是 1-128 字符的字符串")
+
+        if "intent_request_digest" in metadata:
+            digest = metadata["intent_request_digest"]
+            if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+                raise ValueError("intent_request_digest 必须是小写 SHA-256")
+
+        if "intent_provider" in metadata:
+            provider = metadata["intent_provider"]
+            provider_fields = {"name", "version", "model"}
+            if not isinstance(provider, dict):
+                raise ValueError("intent_provider 必须是对象")
+            unexpected_provider_fields = sorted(set(provider) - provider_fields)
+            if unexpected_provider_fields:
+                raise ValueError(
+                    "intent_provider 包含不允许的字段: "
+                    + str(unexpected_provider_fields)
+                )
+            missing_provider_fields = sorted(provider_fields - set(provider))
+            if missing_provider_fields:
+                raise ValueError(
+                    "intent_provider 缺少字段: " + str(missing_provider_fields)
+                )
+            if any(
+                not isinstance(provider[field], str)
+                or not provider[field]
+                or len(provider[field]) > 256
+                for field in provider_fields
+            ):
+                raise ValueError("intent_provider 字段必须是 1-256 字符的字符串")
 
     def _decorate_result(self, result, request):
         """为成功和失败结果冻结相同的回放边界元数据。"""

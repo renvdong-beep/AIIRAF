@@ -35,3 +35,14 @@
 - 当前不保存原始输入与输出，只保存摘要；确定性重执行需要后续受访问控制的对象存储。
 - 当前 EventStore 是单机 SQLite，生产 EventService 的 mTLS、tenant 隔离、retention 和远端续传尚未完成。
 - 仿真 replay 不能替代 ROS 2/Linux-RT、RTOS 或 HIL 的 telemetry 与安全证据。
+
+## 2026-09-08 脱敏边界加固
+
+- Runtime 对追加的 AgentOS 元数据执行严格结构校验：只允许固定顶层字段，
+  `intent_provider` 只允许 `name`、`version`、`model`，摘要必须是小写 SHA-256。
+- EventStore 生成 replay manifest 时再次按公共契约投影所有嵌套身份字段。
+  即使数据库包含历史或异常扩展字段，也不会将凭据、端点或其他私有值导出到证据包。
+- 回归测试覆盖嵌套敏感字段、未知字段、类型错误和非法摘要；失败必须显式拒绝，
+  不允许静默接受不受约束的元数据。
+- 一键开发证据脚本在继承 Runtime 进程环境后补齐 `tools` 路径，
+  单测发现、直接执行和 replay 导出使用同一受控 Python 环境。

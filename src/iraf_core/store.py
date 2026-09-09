@@ -94,6 +94,7 @@ class SqliteExecutionStore:
         event_payload = json.dumps(
             events, ensure_ascii=True, sort_keys=True, separators=(",", ":")
         ).encode()
+        project = self._project_mapping
         return {
             "schema_version": "iraf.execution-replay/v1",
             "execution_id": execution_id,
@@ -108,24 +109,39 @@ class SqliteExecutionStore:
             "terminal_sequence": int(result.get("sequence", 0)),
             "error_code": result.get("error_code", ""),
             "reason": result.get("reason", ""),
-            "requested_skill": result.get("requested_skill", {}),
-            "skill": result.get("skill", {}),
-            "provider": result.get("provider", {}),
-            "profile": result.get("profile", {}),
-            "safety_policy": result.get("safety_policy", {}),
+            "requested_skill": project(
+                result.get("requested_skill"), ("name", "version_constraint")
+            ),
+            "skill": project(result.get("skill"), ("name", "version", "digest")),
+            "provider": project(result.get("provider"), ("name", "type")),
+            "profile": project(
+                result.get("profile"), ("name", "version", "digest")
+            ),
+            "safety_policy": project(
+                result.get("safety_policy"), ("name", "version", "digest")
+            ),
             "policy_decision_id": result.get("policy_decision_id", ""),
             "policy_version": result.get("policy_version", ""),
             "resource_id": result.get("resource_id", ""),
             "controller": result.get("controller", ""),
             "simulation": bool(result.get("simulation", False)),
             "adapter": result.get("adapter", ""),
-            "intent_provider": result.get("intent_provider", {}),
+            "intent_provider": project(
+                result.get("intent_provider"), ("name", "version", "model")
+            ),
             "intent_request_digest": result.get("intent_request_digest", ""),
             "resolved_skill": result.get("resolved_skill", ""),
             "events": events,
             "event_digest": hashlib.sha256(event_payload).hexdigest(),
             "completed_at_ms": int(completed_at_ms),
         }
+
+    @staticmethod
+    def _project_mapping(value, fields):
+        """只导出公共契约允许的嵌套字段，兼容历史或异常持久化数据。"""
+        if not isinstance(value, dict):
+            return {}
+        return {field: value[field] for field in fields if field in value}
 
     @staticmethod
     def _safety_record(row):

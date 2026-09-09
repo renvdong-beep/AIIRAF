@@ -1,6 +1,7 @@
 import unittest
 
 from iraf_core.store import SqliteExecutionStore
+from iraf_core.runtime import SkillRuntime
 
 
 class ReplayManifestStoreTests(unittest.TestCase):
@@ -76,6 +77,59 @@ class ReplayManifestStoreTests(unittest.TestCase):
             self.store.annotate_result(
                 "execution-2", {"adapter": "different-adapter"}
             )
+
+    def test_replay_projects_nested_contract_fields(self):
+        secret = "provider-api-key-must-not-be-exported"
+        result = {
+            "execution_id": "execution-3",
+            "status": "FAILED",
+            "sequence": 2,
+            "requested_skill": {"name": "stop", "credential": secret},
+            "skill": {"name": "stop", "version": "1.0.0", "secret": secret},
+            "provider": {"name": "sim", "type": "python_adapter", "token": secret},
+            "profile": {"name": "robot", "version": "1.0.0", "private": secret},
+            "safety_policy": {"name": "lab", "version": "1.0.0", "key": secret},
+            "intent_provider": {
+                "name": "edge",
+                "version": "1.0.0",
+                "model": "model",
+                "api_key": secret,
+            },
+        }
+        self.store.save_result("subject", "key-3", "digest", result)
+
+        replay = self.store.get_replay_manifest("execution-3")
+
+        self.assertNotIn(secret, str(replay))
+        self.assertEqual({"name": "stop"}, replay["requested_skill"])
+        self.assertEqual(
+            {"name": "edge", "version": "1.0.0", "model": "model"},
+            replay["intent_provider"],
+        )
+
+    def test_execution_metadata_contract_rejects_unsafe_nested_values(self):
+        valid = {
+            "adapter": "agentos-intent",
+            "intent_provider": {
+                "name": "test-provider",
+                "version": "1.0.0",
+                "model": "test-model",
+            },
+            "intent_request_digest": "a" * 64,
+            "resolved_skill": "move_joint",
+        }
+        self.assertIsNone(SkillRuntime._validate_execution_metadata(valid))
+
+        invalid_values = (
+            {**valid, "intent_request_digest": "not-a-sha256"},
+            {**valid, "intent_provider": {**valid["intent_provider"], "api_key": "secret"}},
+            {**valid, "intent_provider": {"name": "missing-fields"}},
+            {**valid, "adapter": {"name": "not-a-string"}},
+        )
+        for metadata in invalid_values:
+            with self.subTest(metadata=metadata):
+                with self.assertRaises(ValueError):
+                    SkillRuntime._validate_execution_metadata(metadata)
 
 
 if __name__ == "__main__":

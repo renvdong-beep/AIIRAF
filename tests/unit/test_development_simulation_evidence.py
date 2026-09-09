@@ -1,7 +1,9 @@
 import importlib.util
+import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -20,6 +22,25 @@ class DevelopmentSimulationEvidenceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.module = _load_script()
+
+    def test_runtime_environment_path_includes_tools(self):
+        env = {"PYTHONPATH": os.pathsep.join(["first", "second"])}
+
+        self.module._append_project_python_paths(env)
+
+        paths = env["PYTHONPATH"].split(os.pathsep)
+        self.assertEqual(["first", "second"], paths[:-1])
+        self.assertEqual(str(PROJECT_ROOT / "tools"), paths[-1])
+
+    def test_runtime_environment_configured_env_still_adds_tools(self):
+        configured_env = {key: "configured" for key in self.module.RUNTIME_ENV_KEYS}
+        configured_env["PYTHONPATH"] = "existing"
+
+        with mock.patch.dict(self.module.os.environ, configured_env, clear=True):
+            env, missing = self.module._runtime_environment()
+
+        self.assertEqual([], missing)
+        self.assertIn(str(PROJECT_ROOT / "tools"), env["PYTHONPATH"].split(os.pathsep))
 
     def test_run_command_records_success_and_digest(self):
         with tempfile.TemporaryDirectory(dir=PROJECT_ROOT / "build") as directory:

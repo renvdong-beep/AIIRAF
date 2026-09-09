@@ -106,6 +106,7 @@ def _read_json(path):
 def _runtime_environment():
     env = dict(os.environ)
     if all(env.get(key) for key in RUNTIME_ENV_KEYS):
+        _append_project_python_paths(env)
         return env, []
     try:
         pids = subprocess.check_output(
@@ -128,7 +129,19 @@ def _runtime_environment():
         except (OSError, UnicodeDecodeError):
             continue
     missing = [key for key in RUNTIME_ENV_KEYS if not env.get(key)]
+    _append_project_python_paths(env)
     return env, missing
+
+
+def _append_project_python_paths(env):
+    """补齐受控脚本兼容入口，保留 Runtime 进程的其余环境。"""
+    tools_path = str(PROJECT_ROOT / "tools")
+    paths = [
+        value for value in env.get("PYTHONPATH", "").split(os.pathsep) if value
+    ]
+    if tools_path not in paths:
+        paths.append(tools_path)
+    env["PYTHONPATH"] = os.pathsep.join(paths)
 
 
 def _runtime_health(base_url, timeout_seconds=5.0):
