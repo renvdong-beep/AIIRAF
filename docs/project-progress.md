@@ -159,3 +159,10 @@ Ubuntu 系统 MuJoCo/EGL 渲染已成功。远端 Conda MuJoCo 绑定因 EGL 驱
 - 单元测试已由 44 项增至 68 项，`unittest discover` 全部通过。
 - 一键开发仿真在当前网络条件下 direct、故障回放、执行回放和 Runtime 健康检查通过；在线 Qwen 意图链路因到 `10.203.247.86:9119` 的 `No route to host` 失败，不能标记为全门禁通过。
 - GitHub 推送仍受运行环境 DNS/SSH 出站限制影响，待网络恢复后执行 `git push -u origin codex/replay-evidence-tests-001`。
+
+## 10. 2026-09-10 控制门进展
+
+- 新增 `RtosMotionGate`：运动前必须具备新鲜单调 heartbeat、短期 motion permit 和匹配 fencing token。
+- 心跳超时、序号回退/重复、permit 字段异常、资源或 token 不匹配、permit 过期、Provider 链路异常均 fail-closed。
+- 新增 4 项负向/成功回归测试；全量单元测试增至 72 项并全部通过。
+- 当前控制门仍是平台无关核心契约，下一步接入 ROS 2/Linux-RT 适配器；`stop` 路径保持独立，确保异常时仍可安全停机。
