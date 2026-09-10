@@ -166,3 +166,11 @@ Ubuntu 系统 MuJoCo/EGL 渲染已成功。远端 Conda MuJoCo 绑定因 EGL 驱
 - 心跳超时、序号回退/重复、permit 字段异常、资源或 token 不匹配、permit 过期、Provider 链路异常均 fail-closed。
 - 新增 4 项负向/成功回归测试；全量单元测试增至 72 项并全部通过。
 - 当前控制门仍是平台无关核心契约，下一步接入 ROS 2/Linux-RT 适配器；`stop` 路径保持独立，确保异常时仍可安全停机。
+
+## 11. 2026-09-10 `pick_object` 第一批实现
+
+- 新增 `pick_object` 输入输出 Schema 和仿真 Provider 契约，开始从关节运动推进到抓取能力。
+- 抓取成功必须由 Backend 返回目标一致的接触、约束或夹爪状态确认；不得仅因命令已发送而返回成功。
+- 目标不可见、能力缺失、后端未确认、非有限位姿或非归一化四元数均 fail-closed。
+- 正式 Piper Profile 暂不声明 `pick_object`，需要真实 MJCF 目标、夹爪接触确认和仿真证据完成后再启用。
+- 远端固定 Conda 环境全量单元测试由 72 项增至 77 项，全部通过。

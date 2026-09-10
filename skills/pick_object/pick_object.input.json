@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["target_id", "grasp_pose"],
+  "additionalProperties": false,
+  "properties": {
+    "target_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "grasp_pose": {
+      "type": "object",
+      "required": ["frame_id", "position", "orientation"],
+      "additionalProperties": false,
+      "properties": {
+        "frame_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "position": {
+          "type": "object",
+          "required": ["x", "y", "z"],
+          "additionalProperties": false,
+          "properties": {
+            "x": {"type": "number"},
+            "y": {"type": "number"},
+            "z": {"type": "number"}
+          }
+        },
+        "orientation": {
+          "type": "object",
+          "required": ["x", "y", "z", "w"],
+          "additionalProperties": false,
+          "properties": {
+            "x": {"type": "number"},
+            "y": {"type": "number"},
+            "z": {"type": "number"},
+            "w": {"type": "number"}
+          }
+        }
+      }
+    },
+    "duration_ms": {"type": "integer", "minimum": 1, "maximum": 30000}
+  }
+}

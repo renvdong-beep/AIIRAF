@@ -1,0 +1,22 @@
+apiVersion: iraf.intewell.io/v1
+kind: Skill
+metadata: {name: pick_object, version: 1.0.0}
+spec:
+  verification: unverified
+  inputSchema: pick_object.input.json
+  outputSchema: pick_object.output.json
+  requires: [pick_object]
+  preconditions:
+    - safety.estop == false
+    - manipulation.target_visible == true
+  intentExamples: ["抓取 box_01", "拾取目标物体", "pick object"]
+  timeoutSeconds: 30
+  cancellation: cooperative_stop
+  recovery: [stop, reacquire_target, request_handover]
+  safetyClass: controlled_motion
+  providers:
+    - name: common_pick_sim
+      type: python_adapter
+      entrypoint: "iraf_skills.common.manipulation:PickObjectProvider"
+      selector: {mode: simulation}
+      priority: 100

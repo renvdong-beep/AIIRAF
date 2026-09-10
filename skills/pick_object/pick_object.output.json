@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["skill", "accepted", "target_id", "confirmation"],
+  "additionalProperties": false,
+  "properties": {
+    "skill": {"const": "pick_object"},
+    "accepted": {"const": true},
+    "target_id": {"type": "string", "minLength": 1},
+    "confirmation": {"enum": ["contact", "constraint", "gripper_state"]}
+  }
+}
