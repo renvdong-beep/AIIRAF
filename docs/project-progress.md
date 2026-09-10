@@ -150,3 +150,12 @@ Ubuntu 系统 MuJoCo/EGL 渲染已成功。远端 Conda MuJoCo 绑定因 EGL 驱
 3. 完成 AgentOS Provider 失败的无动作回放，以及成功意图的模型与 Skill 身份固化。
 4. 将 direct 与在线 Qwen intent 成功链路及两份 replay 纳入一键仿真证据包。
 5. 完成 44 项测试和九项开发仿真门禁；边界仍明确为 `simulation_only=true`。
+
+## 9. 2026-09-10 进度更新
+
+- `codex/replay-evidence-tests-001` 当前提交为 `e392737`，工作区干净。
+- 回放清单已加强嵌套身份字段白名单和执行元数据校验，避免凭据、token、key 等字段进入证据。
+- ROS 2 命令/状态边界已补充输入校验：租约先校验，命令拒绝未知/非有限关节值和非正时长，状态拒绝重复/未知/非有限数据。
+- 单元测试已由 44 项增至 68 项，`unittest discover` 全部通过。
+- 一键开发仿真在当前网络条件下 direct、故障回放、执行回放和 Runtime 健康检查通过；在线 Qwen 意图链路因到 `10.203.247.86:9119` 的 `No route to host` 失败，不能标记为全门禁通过。
+- GitHub 推送仍受运行环境 DNS/SSH 出站限制影响，待网络恢复后执行 `git push -u origin codex/replay-evidence-tests-001`。
