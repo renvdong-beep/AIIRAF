@@ -2,7 +2,7 @@ apiVersion: iraf.intewell.io/v1
 kind: Skill
 metadata: {name: pick_object, version: 1.0.0}
 spec:
-  verification: unverified
+  verification: development
   inputSchema: pick_object.input.json
   outputSchema: pick_object.output.json
   requires: [pick_object]

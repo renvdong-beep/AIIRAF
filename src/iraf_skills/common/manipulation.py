@@ -36,12 +36,18 @@ class PickObjectProvider:
         confirmation = result.get("confirmation")
         if confirmation not in self._CONFIRMATIONS:
             raise SkillRejected("Backend 抓取确认类型不受信")
-        return {
+        output = {
             "skill": "pick_object",
             "accepted": True,
             "target_id": target_id,
             "confirmation": confirmation,
         }
+        evidence = result.get("evidence")
+        if evidence is not None:
+            if not isinstance(evidence, dict):
+                raise SkillRejected("Backend 抓取证据格式无效")
+            output["evidence"] = evidence
+        return output
 
     @staticmethod
     def _validate_pose(pose):

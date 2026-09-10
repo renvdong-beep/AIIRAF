@@ -20,8 +20,7 @@
 ## 验证
 
 新增单元测试覆盖：受信仿真确认成功、目标不可见、Profile 能力缺失、Backend 未确认
-抓取和非有限位姿。真实 MuJoCo 抓取仍需配置带目标物体和夹爪接触信息的 MJCF，并在
-Backend 中实现基于接触/约束状态的确认后才能启用正式 Profile。
+抓取和非有限位姿。
 
 远端固定 Conda 环境执行：
 
@@ -31,3 +30,32 @@ python -m unittest discover -s tests/unit -p 'test_*.py'
 
 结果为 `Ran 77 tests`、`OK`。当前提交仍属于契约和安全边界完成，不是 MuJoCo
 真实抓取验收完成。
+
+## 第二批：Piper 双指接触
+
+运行服务实际使用的 AgileX Piper MJCF 来自 `piper_ros`，模型内已包含双指夹爪：
+`joint7` 行程为 `0..0.035m`，`joint8` 行程为 `-0.035..0m`，并分别配置位置执行器。
+此前 Profile 把两个关节都配置为 `0..0.08m`，已按 MJCF 修正。
+
+新增 `scripts/build_piper_pick_scene.py`，从只读 Piper MJCF 自动生成开发抓取场景，
+把 mesh 路径解析为绝对路径，并在 `build/` 中加入 `box_01` 立方体。立方体是本项目
+直接定义的 MuJoCo 基础几何体，不复制来源不明的第三方网格。当前场景关闭重力，只用于
+验证目标定位、夹爪开合和双指接触链路；在完成带重力升举测试前，不声称具备稳定搬运能力。
+
+MuJoCo Backend 新增声明式 `manipulation.targets` 和 `manipulation.gripper` 配置。
+`pick_object` 仅在目标存在、请求位姿与目标一致且 `link7`、`link8` 都与目标产生真实
+MuJoCo contact 时返回成功。单侧接触、目标未知、坐标系错误或位姿偏差超限均失败。
+
+完整 Runtime 验收入口：
+
+```bash
+PYTHONPATH=src python scripts/verify_piper_pick.py \
+  --source /path/to/piper_description.xml
+```
+
+场景、场景清单和执行报告分别写入 `build/models/` 与
+`build/acceptance/piper-pick/`。
+
+远端固定 Conda 环境验证结果：全量 `80 tests` 全部通过；真实 Piper MJCF 验收执行
+状态为 `SUCCEEDED`，目标为 `box_01`，确认类型为 `contact`，左右接触体分别为
+`link7` 和 `link8`。报告路径为 `build/acceptance/piper-pick/report.json`。

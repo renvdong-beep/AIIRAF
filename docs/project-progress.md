@@ -174,3 +174,18 @@ Ubuntu 系统 MuJoCo/EGL 渲染已成功。远端 Conda MuJoCo 绑定因 EGL 驱
 - 目标不可见、能力缺失、后端未确认、非有限位姿或非归一化四元数均 fail-closed。
 - 正式 Piper Profile 暂不声明 `pick_object`，需要真实 MJCF 目标、夹爪接触确认和仿真证据完成后再启用。
 - 远端固定 Conda 环境全量单元测试由 72 项增至 77 项，全部通过。
+
+## 12. 2026-09-10 Piper MuJoCo 双指接触抓取
+
+- 定位到运行服务实际使用的 AgileX Piper MJCF；模型包含 `joint7`、`joint8` 双指、
+  对应 mesh 和位置执行器，不需要重新猜测夹爪结构。
+- 修正 Piper Profile 的夹爪行程，并在真实双指 contact 验收后开放开发仿真的
+  `pick_object` 能力和 SafetyPolicy 准入。
+- 新增可复跑场景生成器，在 `build/` 内生成带 `box_01` 基础几何体的 MJCF，保持
+  Piper 原模型和安装目录只读。
+- Backend 抓取成功必须同时观察到目标与左右手指接触，并校验目标 ID、world 位姿和
+  容差；不能用“控制命令已发出”代替抓取成功。
+- 当前证据范围是零重力接触夹取，不包含升举和搬运；下一步增加重力、工作台、IK 接近、
+  抬升后目标位移与持续接触验收。
+- 远端全量单元测试增至 80 项并全部通过；真实 Piper MJCF 完整 Runtime 验收为
+  `SUCCEEDED`，证据报告位于 `build/acceptance/piper-pick/report.json`。

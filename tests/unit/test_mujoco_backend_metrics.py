@@ -30,6 +30,7 @@ class MujocoBackendMetricsTests(unittest.TestCase):
                 "iraf_adapters.mujoco.mujoco_backend.mujoco.MjData",
                 return_value=data,
             ),
+            patch("iraf_adapters.mujoco.mujoco_backend.mujoco.mj_forward"),
             patch("iraf_adapters.mujoco.mujoco_backend.mujoco.mj_step"),
         )
         for item in patches:

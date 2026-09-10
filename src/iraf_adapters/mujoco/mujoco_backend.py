@@ -1,6 +1,7 @@
 """带连续步进、指标和受控故障注入的 MuJoCo 3 后端。"""
 
 from pathlib import Path
+import math
 import threading
 import time
 
@@ -18,13 +19,22 @@ class MujocoBackend:
             profile,
             authority,
             fault_injection_enabled=fault_injection_enabled,
+            manipulation_config=config.get("manipulation"),
         )
 
-    def __init__(self, model_path, profile, authority, fault_injection_enabled=False):
+    def __init__(
+        self,
+        model_path,
+        profile,
+        authority,
+        fault_injection_enabled=False,
+        manipulation_config=None,
+    ):
         self.profile = profile
         self.authority = authority
         self.model = mujoco.MjModel.from_xml_path(str(Path(model_path)))
         self.data = mujoco.MjData(self.model)
+        mujoco.mj_forward(self.model, self.data)
         self._actuators = {
             mujoco.mj_id2name(
                 self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, index
@@ -44,10 +54,71 @@ class MujocoBackend:
         self._fault_kind = None
         self._fault_delay_seconds = 0.0
         self._fault_remaining = 0
+        self._manipulation = self._parse_manipulation_config(manipulation_config)
         self._reset_metrics()
 
     def runtime_inventory(self):
-        return {"safety": {"estop": False}, "mode": "simulation"}
+        return {
+            "safety": {"estop": False},
+            "manipulation": {
+                "target_visible": bool(self._manipulation["targets"])
+            },
+            "mode": "simulation",
+        }
+
+    def pick_object(self, target_id, grasp_pose, duration_ms, lease):
+        """闭合双指并以目标和两侧手指的真实接触作为抓取确认。"""
+        self.authority.validate(lease)
+        target = self._manipulation["targets"].get(target_id)
+        gripper = self._manipulation["gripper"]
+        if target is None:
+            raise ValueError("MuJoCo 场景中没有受控目标: " + str(target_id))
+        if gripper is None:
+            raise RuntimeError("MuJoCo Backend 未配置 Piper 夹爪接触信息")
+        if grasp_pose.get("frame_id") != "world":
+            raise ValueError("MuJoCo 抓取当前只接受 world 坐标系")
+
+        target_body = self._body_id(target["body"])
+        left_body = self._body_id(gripper["left_finger_body"])
+        right_body = self._body_id(gripper["right_finger_body"])
+        requested = grasp_pose["position"]
+        with self._data_lock:
+            mujoco.mj_forward(self.model, self.data)
+            actual = tuple(float(value) for value in self.data.xpos[target_body])
+        distance = math.sqrt(
+            sum(
+                (actual[index] - float(requested[key])) ** 2
+                for index, key in enumerate(("x", "y", "z"))
+            )
+        )
+        if distance > target["pose_tolerance_m"]:
+            raise ValueError(
+                "抓取位姿与目标位置不一致: "
+                f"distance={distance:.6f}m tolerance={target['pose_tolerance_m']:.6f}m"
+            )
+
+        duration_ms = max(1, int(duration_ms))
+        open_ms = max(1, duration_ms * 2 // 5)
+        close_ms = max(1, duration_ms - open_ms)
+        self._set_controls(gripper["open_positions"])
+        self._advance_for(open_ms)
+        self._set_controls(gripper["closed_positions"])
+        bilateral = self._advance_for(
+            close_ms,
+            contact_bodies=(target_body, left_body, right_body),
+        )
+        self.stopped = False
+        return {
+            "target_id": target_id,
+            "grasped": bool(bilateral),
+            "confirmation": "contact",
+            "evidence": {
+                "target_body": target["body"],
+                "left_finger_body": gripper["left_finger_body"],
+                "right_finger_body": gripper["right_finger_body"],
+                "bilateral_contact": bool(bilateral),
+            },
+        }
 
     def move_joint(self, positions, duration_ms, lease):
         self.authority.validate(lease)
@@ -253,6 +324,102 @@ class MujocoBackend:
         with self._data_lock:
             self.data.ctrl[:] = 0.0
             self.stopped = True
+
+    def _set_controls(self, positions):
+        with self._data_lock:
+            for actuator, value in positions.items():
+                if actuator not in self._actuators:
+                    raise ValueError("actuator not found: " + actuator)
+                self.data.ctrl[self._actuators[actuator]] = float(value)
+
+    def _advance_for(self, duration_ms, contact_bodies=None):
+        bilateral = False
+        deadline = time.monotonic() + max(1, int(duration_ms)) / 1000.0
+        if self._continuous_mode:
+            while not self._cancel_event.is_set() and time.monotonic() < deadline:
+                if contact_bodies and self._has_bilateral_contact(*contact_bodies):
+                    bilateral = True
+                time.sleep(min(0.005, max(0.0, deadline - time.monotonic())))
+            return bilateral
+
+        steps = max(1, int(math.ceil((duration_ms / 1000.0) / self.model.opt.timestep)))
+        for _ in range(steps):
+            if self._cancel_event.is_set():
+                self._safe_stop_controls()
+                break
+            self.step()
+            if contact_bodies and self._has_bilateral_contact(*contact_bodies):
+                bilateral = True
+        return bilateral
+
+    def _has_bilateral_contact(self, target_body, left_body, right_body):
+        contacted = set()
+        with self._data_lock:
+            for contact in self.data.contact[: self.data.ncon]:
+                first = int(self.model.geom_bodyid[contact.geom1])
+                second = int(self.model.geom_bodyid[contact.geom2])
+                if first == target_body:
+                    contacted.add(second)
+                elif second == target_body:
+                    contacted.add(first)
+        return left_body in contacted and right_body in contacted
+
+    def _body_id(self, name):
+        body_id = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_BODY, str(name)
+        )
+        if body_id < 0:
+            raise ValueError("body not found: " + str(name))
+        return int(body_id)
+
+    @staticmethod
+    def _parse_manipulation_config(config):
+        if config is None:
+            return {"targets": {}, "gripper": None}
+        if not isinstance(config, dict):
+            raise ValueError("manipulation 配置必须是对象")
+        raw_targets = config.get("targets") or {}
+        if not isinstance(raw_targets, dict):
+            raise ValueError("manipulation.targets 必须是对象")
+        targets = {}
+        for target_id, item in raw_targets.items():
+            if not isinstance(item, dict) or not item.get("body"):
+                raise ValueError("每个 MuJoCo 目标必须声明 body")
+            tolerance = float(item.get("pose_tolerance_m", 0.03))
+            if not math.isfinite(tolerance) or tolerance <= 0:
+                raise ValueError("目标 pose_tolerance_m 必须是正有限数")
+            targets[str(target_id)] = {
+                "body": str(item["body"]),
+                "pose_tolerance_m": tolerance,
+            }
+        raw_gripper = config.get("gripper")
+        if raw_gripper is None:
+            gripper = None
+        else:
+            required = {
+                "left_finger_body",
+                "right_finger_body",
+                "open_positions",
+                "closed_positions",
+            }
+            missing = sorted(required - set(raw_gripper))
+            if missing:
+                raise ValueError("Piper 夹爪配置缺少字段: " + str(missing))
+            open_positions = dict(raw_gripper["open_positions"])
+            closed_positions = dict(raw_gripper["closed_positions"])
+            if set(open_positions) != set(closed_positions) or not open_positions:
+                raise ValueError("夹爪开合执行器配置必须一致且非空")
+            gripper = {
+                "left_finger_body": str(raw_gripper["left_finger_body"]),
+                "right_finger_body": str(raw_gripper["right_finger_body"]),
+                "open_positions": {
+                    str(key): float(value) for key, value in open_positions.items()
+                },
+                "closed_positions": {
+                    str(key): float(value) for key, value in closed_positions.items()
+                },
+            }
+        return {"targets": targets, "gripper": gripper}
 
     def _consume_fault(self):
         with self._metrics_lock:

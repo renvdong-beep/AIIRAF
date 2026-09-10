@@ -32,6 +32,12 @@ class PickBackend:
             "target_id": target_id,
             "grasped": True,
             "confirmation": "contact",
+            "evidence": {
+                "target_body": target_id,
+                "left_finger_body": "left_finger",
+                "right_finger_body": "right_finger",
+                "bilateral_contact": True,
+            },
         }
 
     def stop(self, lease):
@@ -115,6 +121,7 @@ class PickObjectTests(unittest.TestCase):
         self.assertEqual("SUCCEEDED", result["status"])
         self.assertEqual("common_pick_sim", result["provider"]["name"])
         self.assertEqual("contact", result["result"]["confirmation"])
+        self.assertTrue(result["result"]["evidence"]["bilateral_contact"])
         self.assertEqual(1, len(backend.calls))
 
     def test_invisible_target_fails_before_backend(self):

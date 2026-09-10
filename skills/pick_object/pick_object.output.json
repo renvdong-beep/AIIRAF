@@ -7,6 +7,22 @@
     "skill": {"const": "pick_object"},
     "accepted": {"const": true},
     "target_id": {"type": "string", "minLength": 1},
-    "confirmation": {"enum": ["contact", "constraint", "gripper_state"]}
+    "confirmation": {"enum": ["contact", "constraint", "gripper_state"]},
+    "evidence": {
+      "type": "object",
+      "required": [
+        "target_body",
+        "left_finger_body",
+        "right_finger_body",
+        "bilateral_contact"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "target_body": {"type": "string", "minLength": 1},
+        "left_finger_body": {"type": "string", "minLength": 1},
+        "right_finger_body": {"type": "string", "minLength": 1},
+        "bilateral_contact": {"const": true}
+      }
+    }
   }
 }
