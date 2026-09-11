@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","required":["skill","accepted","target_id","evidence"],"properties":{"skill":{"const":"visual_pick"},"accepted":{"const":true},"target_id":{"type":"string"},"evidence":{"type":"object"}}}

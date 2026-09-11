@@ -76,3 +76,19 @@ class CalibrateGraspProvider:
             raise SkillRejected("Backend 未实现 calibrate_grasp")
         evidence = self.backend.calibrate_grasp(inputs, lease)
         return {"skill": "calibrate_grasp", "accepted": True, "evidence": evidence}
+
+
+class VisualPickProvider:
+    """只接受 Backend 返回的视觉目标位姿，再进入统一抓取闭环。"""
+
+    def __init__(self, profile, backend):
+        self.profile = profile
+        self.backend = backend
+
+    def execute(self, inputs, lease):
+        if not hasattr(self.backend, "visual_pick"):
+            raise SkillRejected("Backend 未实现 visual_pick，拒绝回退到先验坐标")
+        result = self.backend.visual_pick(inputs, lease)
+        if not isinstance(result, dict) or result.get("grasped") is not True:
+            raise SkillRejected("视觉抓取未通过目标位姿或接触力验收")
+        return {"skill": "visual_pick", "accepted": True, "target_id": inputs["target_id"], "evidence": result.get("evidence", {})}

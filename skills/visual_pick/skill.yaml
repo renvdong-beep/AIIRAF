@@ -1,0 +1,20 @@
+apiVersion: iraf.intewell.io/v1
+kind: Skill
+metadata: {name: visual_pick, version: 1.0.0}
+spec:
+  verification: development
+  inputSchema: visual_pick.input.json
+  outputSchema: visual_pick.output.json
+  requires: [visual_pick]
+  preconditions: [safety.estop == false, manipulation.target_visible == true]
+  intentExamples: [视觉抓取方块, 通过相机抓取目标, visual pick]
+  timeoutSeconds: 45
+  cancellation: cooperative_stop
+  recovery: [stop, reacquire_target, request_handover]
+  safetyClass: controlled_motion
+  providers:
+    - name: common_visual_pick
+      type: python_adapter
+      entrypoint: "iraf_skills.common.manipulation:VisualPickProvider"
+      selector: {mode: simulation}
+      priority: 100

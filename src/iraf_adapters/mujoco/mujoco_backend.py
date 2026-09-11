@@ -84,6 +84,17 @@ class MujocoBackend:
         center = (l + r) / 2.0; offset = center - w; norm = max(float((offset @ offset) ** 0.5), 1e-9)
         return {"wrist_position_m": w.tolist(), "left_finger_position_m": l.tolist(), "right_finger_position_m": r.tolist(), "grasp_center_m": center.tolist(), "finger_separation_m": float(((l-r) @ (l-r)) ** 0.5), "tcp_offset_from_link6_m": offset.tolist(), "approach_axis_world": (offset / norm).tolist(), "recommended_pregrasp_offset_m": 0.04}
 
+    def visual_pick(self, inputs, lease):
+        import json
+        path = Path(inputs.get("vision_file", "build/calibration/piper-vision-target.json"))
+        if not path.is_file():
+            raise RuntimeError("视觉目标证据不存在: " + str(path))
+        data = json.loads(path.read_text())
+        position = data.get("vision_world_position_m")
+        if not isinstance(position, list) or len(position) != 3:
+            raise RuntimeError("视觉目标坐标无效")
+        return self.pick_object(inputs["target_id"], {"frame_id": "world", "position": dict(zip(("x", "y", "z"), position)), "orientation": {"x": 0, "y": 0, "z": 0, "w": 1}}, int(inputs.get("duration_ms", 10000)), lease)
+
     def pick_object(self, target_id, grasp_pose, duration_ms, lease):
         """闭合双指并以目标和两侧手指的真实接触作为抓取确认。"""
         self.authority.validate(lease)
