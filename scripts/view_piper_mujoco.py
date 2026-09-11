@@ -1,6 +1,7 @@
 """在 Ubuntu X11 图形会话中打开 Piper Viewer 并演示一次 pick_object。"""
 
 import argparse
+import json
 import threading
 import time
 from pathlib import Path
@@ -55,6 +56,15 @@ def main(argv=None):
     backend._advance_for(500)
     target_id = backend._body_id("box_01")
     target = backend.data.xpos[target_id].copy()
+    vision_file = root / "build/calibration/piper-vision-target.json"
+    vision_source = "scene"
+    if vision_file.is_file():
+        vision = json.loads(vision_file.read_text())
+        observed = vision.get("vision_world_position_m")
+        if isinstance(observed, list) and len(observed) == 3:
+            target = observed
+            vision_source = "camera"
+    print("PICK_TARGET_SOURCE", vision_source, flush=True)
     pick_done = threading.Event()
     pick_error = []
 
