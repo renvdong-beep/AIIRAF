@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","required":["translation_m","rotation_matrix","mean_error_m","max_error_m","passed"]}

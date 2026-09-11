@@ -1,0 +1,14 @@
+apiVersion: iraf.intewell.io/v1
+kind: Skill
+metadata: {name: calibrate_camera_to_base, version: 1.0.0}
+spec:
+  verification: development
+  inputSchema: calibrate_camera_to_base.input.json
+  outputSchema: calibrate_camera_to_base.output.json
+  requires: [calibrate_camera_to_base]
+  preconditions: [safety.estop == false]
+  intentExamples: [标定相机外参, 标定相机到基座, calibrate camera]
+  timeoutSeconds: 30
+  cancellation: cooperative_stop
+  recovery: [stop]
+  safetyClass: observe_only
