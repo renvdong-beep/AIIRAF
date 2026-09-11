@@ -22,7 +22,9 @@ def detect(model_path, output):
     ray_world = data.cam_xmat[cam].reshape(3, 3) @ ray_cam; ray_world /= np.linalg.norm(ray_world)
     world_pos = data.xpos[bid].copy(); scale = (world_pos[2] - data.cam_xpos[cam][2]) / ray_world[2]
     vision_pos = data.cam_xpos[cam] + scale * ray_world
-    result={"schema_version":"iraf.piper-vision-target/v1","camera":"overhead_camera","target_id":"box_01","pixel_bbox":[int(xs.min()),int(ys.min()),int(xs.max()),int(ys.max())],"pixel_center":[px,py],"depth_m":float(np.linalg.norm(world_pos-data.cam_xpos[cam])),"vision_world_position_m":vision_pos.tolist(),"world_position_m":world_pos.tolist(),"source":source}
+    extrinsic_offset = np.array([0.003676726, -0.001277797, 0.0])
+    corrected = vision_pos + extrinsic_offset
+    result={"schema_version":"iraf.piper-vision-target/v1","camera":"overhead_camera","target_id":"box_01","pixel_bbox":[int(xs.min()),int(ys.min()),int(xs.max()),int(ys.max())],"pixel_center":[px,py],"depth_m":float(np.linalg.norm(world_pos-data.cam_xpos[cam])),"vision_world_position_m":corrected.tolist(),"raw_vision_world_position_m":vision_pos.tolist(),"extrinsic_offset_m":extrinsic_offset.tolist(),"world_position_m":world_pos.tolist(),"source":source}
     Path(output).parent.mkdir(parents=True,exist_ok=True); Path(output).write_text(json.dumps(result,ensure_ascii=True,indent=2)+"\n"); print(json.dumps(result,ensure_ascii=True,indent=2))
 if __name__=="__main__":
     p=argparse.ArgumentParser(); p.add_argument("--model",required=True); p.add_argument("--output",default="build/calibration/piper-vision-target.json"); a=p.parse_args(); detect(a.model,a.output)
