@@ -18,10 +18,11 @@ def detect(model_path, output, extrinsics=None):
     px, py = float(xs.mean()), float(ys.mean())
     cam = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "overhead_camera")
     focal = 0.5 * 640.0 / np.tan(np.deg2rad(model.cam_fovy[cam]) * 0.5)
-    ray_cam = np.array([(px - 320.0) / focal, -(py - 240.0) / focal, -1.0])
-    ray_world = data.cam_xmat[cam].reshape(3, 3) @ ray_cam; ray_world /= np.linalg.norm(ray_world)
-    world_pos = data.xpos[bid].copy(); scale = (world_pos[2] - data.cam_xpos[cam][2]) / ray_world[2]
-    vision_pos = data.cam_xpos[cam] + scale * ray_world
+    renderer.enable_depth_rendering(); renderer.update_scene(data,camera="overhead_camera")
+    depth=float(renderer.render()[int(round(py)),int(round(px))])
+    point_cam=np.array([(px-320.0)/focal*depth, -(py-240.0)/focal*depth, -depth])
+    vision_pos=data.cam_xpos[cam] + data.cam_xmat[cam].reshape(3,3).T @ point_cam
+    world_pos=data.xpos[bid].copy()
     if extrinsics and Path(extrinsics).is_file():
         calibration=json.loads(Path(extrinsics).read_text())
         cam_point=data.cam_xmat[cam].reshape(3,3).T @ (vision_pos-data.cam_xpos[cam])
