@@ -91,6 +91,7 @@ def build_scene(source, output, target_id="box_01", half_size=0.030):
         rgba="0.82 0.22 0.12 1",
         friction="2.0 0.05 0.001",
     )
+    ET.SubElement(world, "camera", name="overhead_camera", mode="targetbody", target=target_id, pos="0.42 -0.58 0.42", fovy="52")
     anchor_body = ET.SubElement(world, "body", name="grasp_anchor", pos=" ".join(f"{value:.9f}" for value in target_position), mocap="true")
     equality = root.find("equality")
     if equality is None:
