@@ -141,6 +141,11 @@ class MujocoBackend:
             close_ms = max(1, duration_ms - open_ms - lift_ms)
         approach_positions = gripper.get("approach_positions")
         grasp_positions = gripper.get("grasp_positions")
+        home_positions = gripper.get("home_positions")
+        if home_positions:
+            self._log_pick_phase("HOME_HOLD", target_body)
+            self._set_controls(home_positions)
+            self._advance_for(max(1, duration_ms // 5))
         if approach_positions:
             self._log_pick_phase("APPROACH", target_body)
             self._set_controls(approach_positions)
@@ -619,6 +624,11 @@ class MujocoBackend:
             for key in ("approach_positions", "grasp_positions"):
                 if raw_gripper.get(key) is not None:
                     gripper[key] = {str(name): float(value) for name, value in dict(raw_gripper[key]).items()}
+            if raw_gripper.get("home_positions") is not None:
+                gripper["home_positions"] = {
+                    str(name): float(value)
+                    for name, value in dict(raw_gripper["home_positions"]).items()
+                }
             if raw_gripper.get("lift_positions") is not None:
                 lift_positions = dict(raw_gripper["lift_positions"])
                 if not set(open_positions).issubset(lift_positions):
