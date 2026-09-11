@@ -66,7 +66,10 @@ def main(argv=None):
         threading.Thread(target=run_pick, daemon=True).start()
         started = time.monotonic()
         while viewer.is_running():
-            viewer.sync()
+            # Viewer 和 Runtime 共用同一 MjData；同步时持有 Backend 锁，避免 GLFW
+            # 渲染线程与 Skill 物理步进并发访问 MuJoCo 数据导致段错误。
+            with backend._data_lock:
+                viewer.sync()
             if args.seconds and time.monotonic() - started >= args.seconds:
                 break
             time.sleep(0.02)
