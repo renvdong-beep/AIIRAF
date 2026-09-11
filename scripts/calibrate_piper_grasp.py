@@ -20,8 +20,12 @@ def calibrate(model_path, output):
 
     link6, left, right = body("link6"), body("link7"), body("link8")
     wrist = data.xpos[link6].copy()
-    left_pos = data.xpos[left].copy()
-    right_pos = data.xpos[right].copy()
+    def geom_position(name, fallback_body):
+        ident = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, name)
+        return data.geom_xpos[ident].copy() if ident >= 0 else data.xpos[fallback_body].copy()
+
+    left_pos = geom_position("piper_left_finger", left)
+    right_pos = geom_position("piper_right_finger", right)
     midpoint = (left_pos + right_pos) / 2.0
     approach = midpoint - wrist
     norm = float((approach @ approach) ** 0.5)
@@ -37,6 +41,7 @@ def calibrate(model_path, output):
         "right_finger_position_m": [round(float(v), 9) for v in right_pos],
         "grasp_center_m": [round(float(v), 9) for v in midpoint],
         "finger_separation_m": round(float(((left_pos - right_pos) ** 2).sum() ** 0.5), 9),
+        "position_source": "geom_xpos",
         "tcp_offset_from_link6_m": [round(float(v), 9) for v in (midpoint - wrist)],
         "approach_axis_world": [round(float(v), 9) for v in approach],
         "recommended_pregrasp_offset_m": 0.04,
