@@ -60,7 +60,6 @@ def main(argv=None):
     runtime = SkillRuntime(profile, safety, backend, SkillRegistry().load_directory(root / "skills"), authority, SqliteExecutionStore(":memory:"))
     # MuJoCo 模型的 qpos 可能来自闭合姿态；演示必须从张开夹爪开始，避免初始与目标重叠。
     backend._set_controls(manipulation["gripper"]["open_positions"])
-    backend._advance_for(500)
     target_id = backend._body_id("box_01")
     target = backend.data.xpos[target_id].copy()
     vision_file = root / "build/calibration/piper-vision-target.json"
