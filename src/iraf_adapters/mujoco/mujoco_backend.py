@@ -114,9 +114,21 @@ class MujocoBackend:
             close_ms,
             contact_bodies=(target_body, left_body, right_body),
         )
+        force_evidence = self._contact_force_evidence(
+            target_body, left_body, right_body
+        )
+        force_ok = (
+            bilateral
+            and force_evidence["left_normal_force_n"]
+            >= gripper["min_normal_force_n"]
+            and force_evidence["right_normal_force_n"]
+            >= gripper["min_normal_force_n"]
+            and force_evidence["force_imbalance_ratio"]
+            <= gripper["max_force_imbalance_ratio"]
+        )
         constraint_activated = False
         equality_name = gripper.get("lift_constraint")
-        if bilateral and equality_name:
+        if force_ok and equality_name:
             equality_id = mujoco.mj_name2id(
                 self.model, mujoco.mjtObj.mjOBJ_EQUALITY, equality_name
             )
@@ -143,13 +155,15 @@ class MujocoBackend:
         self.stopped = False
         return {
             "target_id": target_id,
-            "grasped": bool(bilateral and lifted),
+            "grasped": bool(force_ok and lifted),
             "confirmation": "constraint" if constraint_activated else "contact",
             "evidence": {
                 "target_body": target["body"],
                 "left_finger_body": gripper["left_finger_body"],
                 "right_finger_body": gripper["right_finger_body"],
                 "bilateral_contact": bool(bilateral),
+                **force_evidence,
+                "force_ok": bool(force_ok),
                 "lifted": bool(lifted),
                 "constraint_activated": constraint_activated,
                 "lift_delta_m": round(
@@ -404,6 +418,33 @@ class MujocoBackend:
                     contacted.add(first)
         return left_body in contacted and right_body in contacted
 
+    def _contact_force_evidence(self, target_body, left_body, right_body):
+        import numpy as np
+
+        forces = {left_body: [], right_body: []}
+        with self._data_lock:
+            for index in range(self.data.ncon):
+                contact = self.data.contact[index]
+                bodies = (
+                    int(self.model.geom_bodyid[contact.geom1]),
+                    int(self.model.geom_bodyid[contact.geom2]),
+                )
+                finger = left_body if left_body in bodies else right_body if right_body in bodies else None
+                if finger is None or target_body not in bodies:
+                    continue
+                result = np.zeros(6, dtype=float)
+                mujoco.mj_contactForce(self.model, self.data, index, result)
+                forces[finger].append(max(0.0, float(result[0])))
+        left = max(forces[left_body] or [0.0])
+        right = max(forces[right_body] or [0.0])
+        low = min(left, right)
+        ratio = max(left, right) / low if low > 1e-9 else float("inf")
+        return {
+            "left_normal_force_n": round(left, 6),
+            "right_normal_force_n": round(right, 6),
+            "force_imbalance_ratio": round(ratio, 6) if math.isfinite(ratio) else None,
+        }
+
     def _body_id(self, name):
         body_id = mujoco.mj_name2id(
             self.model, mujoco.mjtObj.mjOBJ_BODY, str(name)
@@ -470,9 +511,20 @@ class MujocoBackend:
                     str(key): float(value) for key, value in lift_positions.items()
                 }
                 gripper["min_lift_delta_m"] = min_lift
+                min_force = float(raw_gripper.get("min_normal_force_n", 0.2))
+                max_ratio = float(raw_gripper.get("max_force_imbalance_ratio", 4.0))
+                if not math.isfinite(min_force) or min_force <= 0:
+                    raise ValueError("min_normal_force_n 必须是正有限数")
+                if not math.isfinite(max_ratio) or max_ratio < 1:
+                    raise ValueError("max_force_imbalance_ratio 必须不小于 1")
+                gripper["min_normal_force_n"] = min_force
+                gripper["max_force_imbalance_ratio"] = max_ratio
             else:
                 gripper["lift_positions"] = None
                 gripper["min_lift_delta_m"] = 0.02
+            # 保证没有抬升动作的旧配置也能走统一的力闭环判定。
+            gripper.setdefault("min_normal_force_n", 0.2)
+            gripper.setdefault("max_force_imbalance_ratio", 4.0)
             constraint = raw_gripper.get("lift_constraint")
             if constraint is not None:
                 if not isinstance(constraint, str) or not constraint:

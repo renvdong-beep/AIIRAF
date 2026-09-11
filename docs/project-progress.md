@@ -198,3 +198,7 @@ Ubuntu 系统 MuJoCo/EGL 渲染已成功。远端 Conda MuJoCo 绑定因 EGL 驱
   `scripts/view_piper_mujoco.py` 作为统一入口。
 - Viewer 抓取演示已启用实时物理步进，默认动作时长调整为 12 秒，并支持
   `--pick-duration-ms` 调整，便于逐段观察张开、闭合和抬升过程。
+- 接触力闭环已加入：Backend 通过 `mj_contactForce` 读取左右指法向力，并以最小法向力
+  0.2N、最大受力不平衡比 4.0 作为抬升门禁。当前场景实测左右约 2.559N/0.156N、
+  比值约 16.4:1，验收会 fail-closed；这暴露了真实的夹持力分配问题，后续需调整 IK
+  接近位姿、指尖接触几何、摩擦参数和执行器力，而不是伪造成功。

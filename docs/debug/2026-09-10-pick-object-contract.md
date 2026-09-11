@@ -79,3 +79,25 @@ LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libstdc++.so.6 \
 限制，场景增加“接触后激活”的 MuJoCo connect 约束：只有先观察到 `link7`、`link8`
 与目标双侧接触，才激活约束并执行抬升。验收成功的确认类型为 `constraint`，报告同时
 保留 `bilateral_contact` 和 `constraint_activated`，不宣称纯摩擦抓取已经通过。
+
+## 13. 接触力闭环与掉块根因
+
+此前的判定只检查 `link7`、`link8` 是否产生 contact，然后直接激活搬运约束；这能证明
+接触链路存在，但不能证明夹爪已经形成可承载的夹持力，因此会出现“判定成功、抬升后掉块”。
+
+现在 Backend 使用 MuJoCo `mj_contactForce` 读取每个接触的六维接触力，取接触坐标系的
+法向分量 `force[0]`，分别取左右手指接触法向力的最大值：
+
+```text
+F_left  = max(contactForce(link7, box)[0])
+F_right = max(contactForce(link8, box)[0])
+imbalance = max(F_left, F_right) / max(min(F_left, F_right), 1e-9)
+```
+
+抓取通过条件为：双侧 contact、左右法向力都不低于 `min_normal_force_n`（默认 0.2N）、
+`imbalance` 不超过 `max_force_imbalance_ratio`（默认 4.0）。只有通过该力门禁后才允许
+激活 `lift_constraint`；否则 fail-closed，报告 `force_ok=false` 及实测力值。
+
+最新 Piper 场景实测左指约 2.559N、右指约 0.156N，受力比约 16.4:1，因而正确判定为
+不可承载抓取。该结果说明当前接近位姿、指尖几何或执行器力分配仍需调整，不能通过放宽
+阈值或继续使用“接触即成功”来掩盖掉块问题。

@@ -25,6 +25,10 @@
         "lifted": {"const": true},
         "constraint_activated": {"type": "boolean"},
         "lift_delta_m": {"type": "number", "minimum": 0}
+        ,"left_normal_force_n": {"type": "number", "minimum": 0}
+        ,"right_normal_force_n": {"type": "number", "minimum": 0}
+        ,"force_imbalance_ratio": {"type": ["number", "null"], "minimum": 1}
+        ,"force_ok": {"const": true}
       }
     }
   }

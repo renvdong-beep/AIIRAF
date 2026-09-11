@@ -126,6 +126,8 @@ def build_scene(source, output, target_id="box_01", half_size=0.018):
             "closed_positions": {"joint1": 0.0, "joint2": 0.0, "joint3": 0.0, "joint4": 0.0, "joint5": 0.0, "joint6": 0.0, "joint7": 0.0, "joint8": 0.0},
             "lift_positions": {"joint1": 0.0, "joint2": 0.4, "joint3": -0.5, "joint4": 0.0, "joint5": 0.0, "joint6": 0.0, "joint7": 0.0, "joint8": 0.0},
             "min_lift_delta_m": 0.02,
+            "min_normal_force_n": 0.2,
+            "max_force_imbalance_ratio": 4.0,
             "lift_constraint": "box_01_lift_constraint",
         },
     }
