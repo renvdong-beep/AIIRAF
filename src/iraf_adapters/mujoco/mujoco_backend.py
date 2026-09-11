@@ -34,7 +34,8 @@ class MujocoBackend:
     ):
         self.profile = profile
         self.authority = authority
-        self.model = mujoco.MjModel.from_xml_path(str(Path(model_path)))
+        self._model_path = str(Path(model_path).resolve())
+        self.model = mujoco.MjModel.from_xml_path(self._model_path)
         self.data = mujoco.MjData(self.model)
         mujoco.mj_forward(self.model, self.data)
         self._actuators = {
@@ -85,8 +86,11 @@ class MujocoBackend:
         return {"wrist_position_m": w.tolist(), "left_finger_position_m": l.tolist(), "right_finger_position_m": r.tolist(), "grasp_center_m": center.tolist(), "finger_separation_m": float(((l-r) @ (l-r)) ** 0.5), "tcp_offset_from_link6_m": offset.tolist(), "approach_axis_world": (offset / norm).tolist(), "recommended_pregrasp_offset_m": 0.04}
 
     def visual_pick(self, inputs, lease):
-        import json
+        import json, os, subprocess, sys
         path = Path(inputs.get("vision_file", "build/calibration/piper-vision-target.json"))
+        detector = Path(__file__).resolve().parents[3] / "scripts/detect_piper_target.py"
+        if detector.is_file() and os.environ.get("IRAF_REFRESH_VISION", "1") == "1":
+            subprocess.run([sys.executable, str(detector), "--model", str(self._model_path), "--output", str(path)], check=True)
         if not path.is_file():
             raise RuntimeError("视觉目标证据不存在: " + str(path))
         data = json.loads(path.read_text())

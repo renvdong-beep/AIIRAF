@@ -21,7 +21,14 @@ def detect(model_path, output, extrinsics=None):
     renderer.enable_depth_rendering(); renderer.update_scene(data,camera="overhead_camera")
     depth=float(renderer.render()[int(round(py)),int(round(px))])
     point_cam=np.array([(px-320.0)/focal*depth, -(py-240.0)/focal*depth, -depth])
-    vision_pos=data.cam_xpos[cam] + data.cam_xmat[cam].reshape(3,3).T @ point_cam
+    # cam_xmat 是相机坐标到世界坐标的旋转矩阵，不能再次转置。
+    cam_rot = data.cam_xmat[cam].reshape(3,3)
+    ray_world = cam_rot @ np.array([(px-320.0)/focal, -(py-240.0)/focal, -1.0])
+    # 目标放在工作台上，使用目标中心高度求射线与支撑平面交点。
+    # 这样不会把方块顶面深度误当成目标中心深度。
+    plane_z = float(data.xpos[bid][2])
+    ray_scale = (plane_z - float(data.cam_xpos[cam][2])) / float(ray_world[2])
+    vision_pos = data.cam_xpos[cam] + ray_scale * ray_world
     world_pos=data.xpos[bid].copy()
     if extrinsics and Path(extrinsics).is_file():
         calibration=json.loads(Path(extrinsics).read_text())
