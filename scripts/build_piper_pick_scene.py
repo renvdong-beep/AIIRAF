@@ -8,12 +8,23 @@ from pathlib import Path
 
 import mujoco
 
+WORKBENCH_TOP_Z = 0.0
+
 
 def _body(root, name):
     body = root.find(f".//body[@name='{name}']")
     if body is None:
         raise ValueError("Piper MJCF 缺少 body: " + name)
     return body
+
+
+def _validate_support_height(target_z, half_size, workbench_top_z=WORKBENCH_TOP_Z):
+    bottom_z = float(target_z) - float(half_size)
+    if abs(bottom_z - float(workbench_top_z)) > 1e-7:
+        raise ValueError(
+            "目标底面未贴合工作台: "
+            f"bottom_z={bottom_z:.9f} workbench_top_z={workbench_top_z:.9f}"
+        )
 
 
 def build_scene(source, output, target_id="box_01", half_size=0.030):
@@ -65,6 +76,7 @@ def build_scene(source, output, target_id="box_01", half_size=0.030):
     # 目标初始化在工作台上，抓取前不应悬空自由落下。
     # 工作台中心 z=-0.025、厚度 0.05，台面为 z=0；方块中心应为半边长。
     target_position[2] = half_size
+    _validate_support_height(target_position[2], half_size)
 
     world = root.find("worldbody")
     ET.SubElement(
@@ -123,6 +135,7 @@ def build_scene(source, output, target_id="box_01", half_size=0.030):
             for index, key in enumerate(("x", "y", "z"))
         },
         "target_half_size_m": half_size,
+        "workbench_top_z_m": WORKBENCH_TOP_Z,
         "gravity_fixture": True,
         "gripper": {
             "left_finger_body": "link7",
