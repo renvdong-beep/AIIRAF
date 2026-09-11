@@ -2,6 +2,8 @@
 
 import argparse
 import json
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -31,6 +33,11 @@ def main(argv=None):
         parser.error("pick-duration-ms 必须在 1000..30000 之间")
 
     root = Path(__file__).resolve().parents[1]
+    vision_file = root / "build/calibration/piper-vision-target.json"
+    try:
+        subprocess.run([sys.executable, str(Path(__file__).resolve().parent / "detect_piper_target.py"), "--model", str(args.model), "--output", str(vision_file)], check=True, cwd=root)
+    except Exception as exc:
+        print("VISION_REFRESH_ERROR", exc, flush=True)
     profile = load_robot_profile(root / "profiles/piper_mujoco.yaml")
     safety = load_safety_policy(root / "profiles/safety/simulation_lab.yaml")
     authority = ControlAuthorityManager()
