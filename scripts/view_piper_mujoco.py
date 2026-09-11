@@ -116,11 +116,17 @@ def main(argv=None):
             time.sleep(0.02)
         threading.Thread(target=run_pick, daemon=True).start()
         started = time.monotonic()
+        hold_applied = False
         while viewer.is_running():
             # Viewer 和 Runtime 共用同一 MjData；同步时持有 Backend 锁，避免 GLFW
             # 渲染线程与 Skill 物理步进并发访问 MuJoCo 数据导致段错误。
             with backend._data_lock:
                 viewer.sync()
+                if pick_done.is_set() and not hold_applied:
+                    # Runtime 收尾会清零控制量；演示窗口保持最后抓取姿态，避免机械臂在重力下塌回零位。
+                    backend._set_controls(manipulation["gripper"]["grasp_positions"])
+                    backend._set_gripper_controls(manipulation["gripper"]["closed_positions"])
+                    hold_applied = True
             if args.seconds and time.monotonic() - started >= args.seconds:
                 break
             time.sleep(0.02)
