@@ -7,6 +7,7 @@ spec:
   outputSchema: calibrate_grasp.output.json
   requires: [calibrate_grasp]
   preconditions: [safety.estop == false]
+  intentExamples: [标定 Piper 夹爪, 计算抓取参数, calibrate grasp]
   timeoutSeconds: 10
   cancellation: cooperative_stop
   recovery: [stop]
