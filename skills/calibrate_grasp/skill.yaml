@@ -1,0 +1,19 @@
+apiVersion: iraf.intewell.io/v1
+kind: Skill
+metadata: {name: calibrate_grasp, version: 1.0.0}
+spec:
+  verification: development
+  inputSchema: calibrate_grasp.input.json
+  outputSchema: calibrate_grasp.output.json
+  requires: [calibrate_grasp]
+  preconditions: [safety.estop == false]
+  timeoutSeconds: 10
+  cancellation: cooperative_stop
+  recovery: [stop]
+  safetyClass: observe_only
+  providers:
+    - name: common_grasp_calibration
+      type: python_adapter
+      entrypoint: "iraf_skills.common.manipulation:CalibrateGraspProvider"
+      selector: {mode: simulation}
+      priority: 100

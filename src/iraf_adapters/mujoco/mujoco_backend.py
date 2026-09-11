@@ -69,6 +69,21 @@ class MujocoBackend:
             "mode": "simulation",
         }
 
+    def calibrate_grasp(self, config=None, lease=None):
+        """读取当前模型的腕部和真实指尖 geom，生成可审计标定证据。"""
+        self.authority.validate(lease)
+        def body(name):
+            return self._body_id(name)
+        wrist, left, right = body("link6"), body("link7"), body("link8")
+        def geom(name, fallback):
+            ident = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, name)
+            return self.data.geom_xpos[ident].copy() if ident >= 0 else self.data.xpos[fallback].copy()
+        with self._data_lock:
+            mujoco.mj_forward(self.model, self.data)
+            w = self.data.xpos[wrist].copy(); l = geom("piper_left_finger", left); r = geom("piper_right_finger", right)
+        center = (l + r) / 2.0; offset = center - w; norm = max(float((offset @ offset) ** 0.5), 1e-9)
+        return {"wrist_position_m": w.tolist(), "left_finger_position_m": l.tolist(), "right_finger_position_m": r.tolist(), "grasp_center_m": center.tolist(), "finger_separation_m": float(((l-r) @ (l-r)) ** 0.5), "tcp_offset_from_link6_m": offset.tolist(), "approach_axis_world": (offset / norm).tolist(), "recommended_pregrasp_offset_m": 0.04}
+
     def pick_object(self, target_id, grasp_pose, duration_ms, lease):
         """闭合双指并以目标和两侧手指的真实接触作为抓取确认。"""
         self.authority.validate(lease)

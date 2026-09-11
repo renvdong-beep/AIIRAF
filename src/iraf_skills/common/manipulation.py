@@ -62,3 +62,17 @@ class PickObjectProvider:
         )
         if not 0.999 <= norm <= 1.001:
             raise SkillRejected("抓取姿态四元数必须归一化")
+
+
+class CalibrateGraspProvider:
+    """通过 Backend 读取模型几何，禁止在 Skill 层猜测标定值。"""
+
+    def __init__(self, profile, backend):
+        self.profile = profile
+        self.backend = backend
+
+    def execute(self, inputs, lease):
+        if not hasattr(self.backend, "calibrate_grasp"):
+            raise SkillRejected("Backend 未实现 calibrate_grasp")
+        evidence = self.backend.calibrate_grasp(inputs, lease)
+        return {"skill": "calibrate_grasp", "accepted": True, "evidence": evidence}
