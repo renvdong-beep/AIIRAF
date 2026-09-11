@@ -147,9 +147,9 @@ class MujocoBackend:
         if grasp_positions:
             self._set_controls(grasp_positions)
             self._advance_for(max(1, duration_ms // 5))
-        self._set_controls(gripper["open_positions"])
+        self._set_gripper_controls(gripper["open_positions"])
         self._advance_for(open_ms)
-        self._set_controls(gripper["closed_positions"])
+        self._set_gripper_controls(gripper["closed_positions"])
         bilateral = self._advance_for(
             close_ms,
             contact_bodies=(target_body, left_body, right_body),
@@ -185,8 +185,8 @@ class MujocoBackend:
             constraint_activated = True
         with self._data_lock:
             before_lift_z = float(self.data.xpos[target_body][2])
-        lifted = True
-        if lift_ms:
+        lifted = not lift_ms
+        if lift_ms and force_ok:
             self._set_controls(gripper["lift_positions"])
             if constraint_activated and gripper.get("lift_anchor_body"):
                 self._advance_with_grasp_anchor(lift_ms, target_body, left_body, right_body, gripper["lift_anchor_body"])
@@ -455,6 +455,17 @@ class MujocoBackend:
                 if actuator not in self._actuators:
                     raise ValueError("actuator not found: " + actuator)
                 self.data.ctrl[self._actuators[actuator]] = float(value)
+
+    def _set_gripper_controls(self, positions):
+        """只更新夹爪指关节，避免开合动作覆盖机械臂 1-6 号关节。"""
+        finger_positions = {
+            name: value
+            for name, value in positions.items()
+            if name in {"joint7", "joint8"}
+        }
+        if not finger_positions:
+            raise ValueError("夹爪开合配置必须包含 joint7/joint8")
+        self._set_controls(finger_positions)
 
     def _advance_for(self, duration_ms, contact_bodies=None):
         bilateral = False
