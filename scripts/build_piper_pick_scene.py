@@ -37,6 +37,8 @@ def build_scene(source, output, target_id="box_01", half_size=0.030):
         raise ValueError("Piper MJCF 缺少夹爪碰撞 geom")
     left_geom.set("name", "piper_left_finger")
     right_geom.set("name", "piper_right_finger")
+    left_geom.set("friction", "2.0 0.05 0.001")
+    right_geom.set("friction", "2.0 0.05 0.001")
 
     option = root.find("option")
     if option is None:
@@ -67,7 +69,7 @@ def build_scene(source, output, target_id="box_01", half_size=0.030):
         "geom",
         name="workbench",
         type="box",
-        pos="0 0 0.165",
+        pos="0 0 -0.025",
         size="0.8 0.8 0.025",
         rgba="0.25 0.28 0.32 1",
         friction="1.0 0.02 0.001",
@@ -87,7 +89,7 @@ def build_scene(source, output, target_id="box_01", half_size=0.030):
         size=f"{half_size} {half_size} {half_size}",
         mass="0.04",
         rgba="0.82 0.22 0.12 1",
-        friction="1.2 0.02 0.001",
+        friction="2.0 0.05 0.001",
     )
     equality = root.find("equality")
     if equality is None:
@@ -96,7 +98,7 @@ def build_scene(source, output, target_id="box_01", half_size=0.030):
         equality,
         "connect",
         name="box_01_lift_constraint",
-        body1="link6",
+        body1="link7",
         body2=target_id,
         # 使用目标初始中心作为世界锚点，避免把方块硬拉到 link6 内部。
         anchor=" ".join(f"{value:.9f}" for value in target_position),
@@ -125,7 +127,7 @@ def build_scene(source, output, target_id="box_01", half_size=0.030):
             "right_finger_body": "link8",
             "open_positions": {"joint1": 0.0, "joint2": 0.0, "joint3": 0.0, "joint4": 0.0, "joint5": 0.0, "joint6": 0.0, "joint7": 0.035, "joint8": -0.035},
             "closed_positions": {"joint1": 0.0, "joint2": 0.0, "joint3": 0.0, "joint4": 0.0, "joint5": 0.0, "joint6": 0.0, "joint7": 0.0, "joint8": 0.0},
-            "lift_positions": {"joint1": 0.0, "joint2": 0.4, "joint3": -0.5, "joint4": 0.0, "joint5": 0.0, "joint6": 0.0, "joint7": 0.0, "joint8": 0.0},
+            "lift_positions": {"joint1": 0.0, "joint2": 0.2, "joint3": -0.25, "joint4": 0.0, "joint5": 0.0, "joint6": 0.0, "joint7": 0.0, "joint8": 0.0},
             "min_lift_delta_m": 0.02,
             "min_normal_force_n": 0.2,
             "max_force_imbalance_ratio": 4.0,
