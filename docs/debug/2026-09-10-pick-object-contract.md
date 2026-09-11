@@ -56,6 +56,25 @@ PYTHONPATH=src python scripts/verify_piper_pick.py \
 场景、场景清单和执行报告分别写入 `build/models/` 与
 `build/acceptance/piper-pick/`。
 
+## Ubuntu Viewer
+
+Ubuntu 主机存在 XFCE/Xorg 图形会话（`DISPLAY=:0`）。MuJoCo Viewer 首次启动失败的
+根因是 Conda `libstdc++.so.6` 缺少系统 Mesa LLVM 所需的 `GLIBCXX_3.4.30`。使用
+系统 C++ ABI 和 Mesa DRI 后，Viewer 已实测返回 `VIEWER_OK`：
+
+```bash
+DISPLAY=:0 \
+XAUTHORITY=/run/user/1000/gdm/Xauthority \
+LIBGL_DRIVERS_PATH=/usr/lib/x86_64-linux-gnu/dri \
+MESA_LOADER_DRIVER_OVERRIDE=iris \
+LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libstdc++.so.6 \
+/home/coretek/miniconda3/envs/mujoco_graspnet/bin/python \
+  scripts/view_piper_mujoco.py --seconds 0
+```
+
+脚本只负责 Viewer 和物理画面显示；任务动作仍必须经 IRAF Runtime、Skill、Policy
+和 Backend 执行，不能把 Viewer 作为旁路控制入口。
+
 重力搬运验收中发现 Piper 原始网格在当前姿态下的纯摩擦夹持会滑脱。为避免掩盖真实
 限制，场景增加“接触后激活”的 MuJoCo connect 约束：只有先观察到 `link7`、`link8`
 与目标双侧接触，才激活约束并执行抬升。验收成功的确认类型为 `constraint`，报告同时

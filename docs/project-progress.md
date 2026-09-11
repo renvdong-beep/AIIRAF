@@ -193,3 +193,6 @@ Ubuntu 系统 MuJoCo/EGL 渲染已成功。远端 Conda MuJoCo 绑定因 EGL 驱
   执行抬升并校验目标高度增加。最新证据为目标抬升 `0.197722m`、`lifted=true`、
   `constraint_activated=true`。这证明了可审计的抓取搬运链路，不等价于真实硬件摩擦力
   和负载能力认证。
+- Ubuntu 图形界面已实测可打开 MuJoCo Viewer。由于 Conda 自带 C++ ABI 与系统 Mesa
+  驱动不兼容，启动时必须使用系统 `libstdc++`、Mesa DRI 路径和 `DISPLAY=:0`；已固化
+  `scripts/view_piper_mujoco.py` 作为统一入口。
