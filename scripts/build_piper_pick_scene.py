@@ -62,6 +62,8 @@ def build_scene(source, output, target_id="box_01", half_size=0.030):
     direction = center - data.xpos[link6_id]
     direction /= max(float((direction**2).sum() ** 0.5), 1e-9)
     target_position = center - direction * 0.051
+    # 目标初始化在工作台上，抓取前不应悬空自由落下。
+    target_position[2] = 0.025 + half_size
 
     world = root.find("worldbody")
     ET.SubElement(
