@@ -142,13 +142,17 @@ class MujocoBackend:
         approach_positions = gripper.get("approach_positions")
         grasp_positions = gripper.get("grasp_positions")
         if approach_positions:
+            self._log_pick_phase("APPROACH", target_body)
             self._set_controls(approach_positions)
             self._advance_for(max(1, duration_ms // 5))
         if grasp_positions:
+            self._log_pick_phase("DESCEND", target_body)
             self._set_controls(grasp_positions)
             self._advance_for(max(1, duration_ms // 5))
+        self._log_pick_phase("GRIP_OPEN", target_body)
         self._set_gripper_controls(gripper["open_positions"])
         self._advance_for(open_ms)
+        self._log_pick_phase("GRIP_CLOSE", target_body)
         self._set_gripper_controls(gripper["closed_positions"])
         bilateral = self._advance_for(
             close_ms,
@@ -187,6 +191,7 @@ class MujocoBackend:
             before_lift_z = float(self.data.xpos[target_body][2])
         lifted = not lift_ms
         if lift_ms and force_ok:
+            self._log_pick_phase("LIFT", target_body)
             self._set_controls(gripper["lift_positions"])
             if constraint_activated and gripper.get("lift_anchor_body"):
                 self._advance_with_grasp_anchor(lift_ms, target_body, left_body, right_body, gripper["lift_anchor_body"])
@@ -241,6 +246,21 @@ class MujocoBackend:
                 ),
             },
         }
+
+    def _log_pick_phase(self, phase, target_body):
+        if os.environ.get("IRAF_DEBUG_PICK") != "1":
+            return
+        with self._data_lock:
+            mujoco.mj_forward(self.model, self.data)
+            wrist = self._body_id("link6")
+            print(
+                "PICK_PHASE " + json.dumps({
+                    "phase": phase,
+                    "target_z_m": float(self.data.xpos[target_body][2]),
+                    "wrist_z_m": float(self.data.xpos[wrist][2]),
+                }, ensure_ascii=False),
+                flush=True,
+            )
 
     def move_joint(self, positions, duration_ms, lease):
         self.authority.validate(lease)
