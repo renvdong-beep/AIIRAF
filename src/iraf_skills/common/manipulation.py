@@ -92,3 +92,15 @@ class VisualPickProvider:
         if not isinstance(result, dict) or result.get("grasped") is not True:
             raise SkillRejected("视觉抓取未通过目标位姿或接触力验收")
         return {"skill": "visual_pick", "accepted": True, "target_id": inputs["target_id"], "evidence": result.get("evidence", {})}
+
+
+class CalibrateCameraProvider:
+    """相机外参标定入口，具体拟合由 Backend/标定工具实现。"""
+
+    def __init__(self, profile, backend):
+        self.backend = backend
+
+    def execute(self, inputs, lease):
+        if not hasattr(self.backend, "calibrate_camera_to_base"):
+            raise SkillRejected("Backend 未实现 calibrate_camera_to_base")
+        return self.backend.calibrate_camera_to_base(inputs, lease)

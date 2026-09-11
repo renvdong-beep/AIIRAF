@@ -12,3 +12,9 @@ spec:
   cancellation: cooperative_stop
   recovery: [stop]
   safetyClass: observe_only
+  providers:
+    - name: common_camera_calibration
+      type: python_adapter
+      entrypoint: "iraf_skills.common.manipulation:CalibrateCameraProvider"
+      selector: {mode: simulation}
+      priority: 100
