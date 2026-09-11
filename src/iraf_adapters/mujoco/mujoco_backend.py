@@ -507,7 +507,12 @@ class MujocoBackend:
             if self._cancel_event.is_set():
                 self._safe_stop_controls()
                 break
-            self.step()
+            # 与 Viewer 的 Home 阶段使用同一条受锁保护的 MuJoCo 步进路径。
+            with self._data_lock:
+                mujoco.mj_step(self.model, self.data)
+            self._record_step(float(self.model.opt.timestep))
+            if self._realtime:
+                time.sleep(float(self.model.opt.timestep))
             if contact_bodies and self._has_bilateral_contact(*contact_bodies):
                 bilateral = True
         return bilateral
