@@ -98,7 +98,8 @@ def build_scene(source, output, target_id="box_01", half_size=0.030):
         name="box_01_lift_constraint",
         body1="link6",
         body2=target_id,
-        anchor="0 0 0.1358",
+        # 使用目标初始中心作为世界锚点，避免把方块硬拉到 link6 内部。
+        anchor=" ".join(f"{value:.9f}" for value in target_position),
         active="false",
         solref="0.01 1",
         solimp="0.9 0.95 0.01",

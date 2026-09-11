@@ -67,10 +67,10 @@ def main(argv=None):
         print(runtime.execute(request, AuthenticatedContext("viewer-pick", frozenset({"task.submit", "task.read"}), "local")), flush=True)
 
     with mujoco.viewer.launch_passive(backend.model, backend.data) as viewer:
-        viewer.cam.lookat[:] = [0.08, 0.0, 0.16]
-        viewer.cam.distance = 0.82
+        viewer.cam.lookat[:] = [0.06, 0.0, 0.12]
+        viewer.cam.distance = 1.05
         viewer.cam.azimuth = 180
-        viewer.cam.elevation = -12
+        viewer.cam.elevation = -8
         threading.Thread(target=run_pick, daemon=True).start()
         started = time.monotonic()
         while viewer.is_running():
