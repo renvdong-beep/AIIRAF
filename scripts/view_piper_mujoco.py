@@ -55,11 +55,14 @@ def main(argv=None):
     backend._advance_for(500)
     target_id = backend._body_id("box_01")
     target = backend.data.xpos[target_id].copy()
+    pick_done = threading.Event()
+    pick_error = []
 
     def run_pick():
-        time.sleep(1.0)
-        now = int(time.time() * 1000)
-        request = {
+        try:
+            time.sleep(1.0)
+            now = int(time.time() * 1000)
+            request = {
             "request_id": "viewer-pick", "idempotency_key": "viewer-pick-" + str(now), "correlation_id": "viewer-pick",
             "skill": "pick_object", "skill_version_constraint": "1.0.0",
             "parameters": {"target_id": "box_01", "grasp_pose": {"frame_id": "world", "position": {"x": float(target[0]), "y": float(target[1]), "z": float(target[2])}, "orientation": {"x": 0, "y": 0, "z": 0, "w": 1}}, "duration_ms": args.pick_duration_ms},
@@ -67,11 +70,16 @@ def main(argv=None):
             "safety_policy_name": safety.name, "safety_policy_version": safety.version, "safety_policy_digest": safety.digest,
             "resource_id": "piper-mujoco", "controller": "viewer-pick",
         }
-        result = runtime.execute(request, AuthenticatedContext("viewer-pick", frozenset({"task.submit", "task.read"}), "local"))
-        report = root / "build/acceptance/piper-pick/viewer-result.json"
-        report.parent.mkdir(parents=True, exist_ok=True)
-        report.write_text(__import__("json").dumps(result, ensure_ascii=True, indent=2) + "\n")
-        print(result, flush=True)
+            result = runtime.execute(request, AuthenticatedContext("viewer-pick", frozenset({"task.submit", "task.read"}), "local"))
+            report = root / "build/acceptance/piper-pick/viewer-result.json"
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text(__import__("json").dumps(result, ensure_ascii=True, indent=2) + "\n")
+            print(result, flush=True)
+        except Exception as exc:
+            pick_error.append(f"{type(exc).__name__}: {exc}")
+            print("VIEWER_SKILL_ERROR", pick_error[-1], flush=True)
+        finally:
+            pick_done.set()
 
     with mujoco.viewer.launch_passive(backend.model, backend.data) as viewer:
         viewer.cam.lookat[:] = [0.06, 0.0, 0.12]
@@ -88,6 +96,7 @@ def main(argv=None):
             if args.seconds and time.monotonic() - started >= args.seconds:
                 break
             time.sleep(0.02)
+        pick_done.wait(timeout=5.0)
     print("VIEWER_OK")
     return 0
 
