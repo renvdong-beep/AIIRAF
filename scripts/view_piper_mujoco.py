@@ -67,7 +67,11 @@ def main(argv=None):
             "safety_policy_name": safety.name, "safety_policy_version": safety.version, "safety_policy_digest": safety.digest,
             "resource_id": "piper-mujoco", "controller": "viewer-pick",
         }
-        print(runtime.execute(request, AuthenticatedContext("viewer-pick", frozenset({"task.submit", "task.read"}), "local")), flush=True)
+        result = runtime.execute(request, AuthenticatedContext("viewer-pick", frozenset({"task.submit", "task.read"}), "local"))
+        report = root / "build/acceptance/piper-pick/viewer-result.json"
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text(__import__("json").dumps(result, ensure_ascii=True, indent=2) + "\n")
+        print(result, flush=True)
 
     with mujoco.viewer.launch_passive(backend.model, backend.data) as viewer:
         viewer.cam.lookat[:] = [0.06, 0.0, 0.12]
