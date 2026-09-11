@@ -166,6 +166,13 @@ class MujocoBackend:
             and force_evidence["force_imbalance_ratio"]
             <= gripper["max_force_imbalance_ratio"]
         )
+        if os.environ.get("IRAF_DEBUG_PICK") == "1":
+            print("PICK_PRELIFT_EVIDENCE " + json.dumps({
+                "target_position_m": [float(v) for v in self.data.xpos[target_body]],
+                "left_finger_position_m": [float(v) for v in self.data.xpos[left_body]],
+                "right_finger_position_m": [float(v) for v in self.data.xpos[right_body]],
+                "bilateral_contact": bool(bilateral), **force_evidence,
+            }, ensure_ascii=False), flush=True)
         constraint_activated = False
         equality_name = gripper.get("lift_constraint")
         if force_ok and equality_name:
