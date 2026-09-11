@@ -47,6 +47,9 @@ def main(argv=None):
     }
     backend = MujocoBackend.from_config({"model_path": str(args.model.resolve()), "manipulation": manipulation, "realtime": True}, profile, authority)
     runtime = SkillRuntime(profile, safety, backend, SkillRegistry().load_directory(root / "skills"), authority, SqliteExecutionStore(":memory:"))
+    # MuJoCo 模型的 qpos 可能来自闭合姿态；演示必须从张开夹爪开始，避免初始与目标重叠。
+    backend._set_controls(manipulation["gripper"]["open_positions"])
+    backend._advance_for(500)
     target_id = backend._body_id("box_01")
     target = backend.data.xpos[target_id].copy()
 
@@ -64,10 +67,10 @@ def main(argv=None):
         print(runtime.execute(request, AuthenticatedContext("viewer-pick", frozenset({"task.submit", "task.read"}), "local")), flush=True)
 
     with mujoco.viewer.launch_passive(backend.model, backend.data) as viewer:
-        viewer.cam.lookat[:] = [0.08, 0.0, 0.22]
-        viewer.cam.distance = 0.62
+        viewer.cam.lookat[:] = [0.08, 0.0, 0.16]
+        viewer.cam.distance = 0.82
         viewer.cam.azimuth = 180
-        viewer.cam.elevation = -18
+        viewer.cam.elevation = -12
         threading.Thread(target=run_pick, daemon=True).start()
         started = time.monotonic()
         while viewer.is_running():
