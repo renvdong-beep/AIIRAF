@@ -15,7 +15,14 @@ def detect(model_path, output):
         ys,xs=np.where(mask); source="rgb_color_threshold"
     if not len(xs): raise RuntimeError("视觉相机未检测到 box_01")
     bid=mujoco.mj_name2id(model,mujoco.mjtObj.mjOBJ_BODY,"box_01")
-    result={"schema_version":"iraf.piper-vision-target/v1","camera":"overhead_camera","target_id":"box_01","pixel_bbox":[int(xs.min()),int(ys.min()),int(xs.max()),int(ys.max())],"pixel_center":[float(xs.mean()),float(ys.mean())],"depth_m":float(data.xpos[bid][2]),"world_position_m":data.xpos[bid].tolist(),"source":source}
+    px, py = float(xs.mean()), float(ys.mean())
+    cam = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "overhead_camera")
+    focal = 0.5 * 640.0 / np.tan(np.deg2rad(model.cam_fovy[cam]) * 0.5)
+    ray_cam = np.array([(px - 320.0) / focal, -(py - 240.0) / focal, -1.0])
+    ray_world = data.cam_xmat[cam].reshape(3, 3) @ ray_cam; ray_world /= np.linalg.norm(ray_world)
+    world_pos = data.xpos[bid].copy(); scale = (world_pos[2] - data.cam_xpos[cam][2]) / ray_world[2]
+    vision_pos = data.cam_xpos[cam] + scale * ray_world
+    result={"schema_version":"iraf.piper-vision-target/v1","camera":"overhead_camera","target_id":"box_01","pixel_bbox":[int(xs.min()),int(ys.min()),int(xs.max()),int(ys.max())],"pixel_center":[px,py],"depth_m":float(np.linalg.norm(world_pos-data.cam_xpos[cam])),"vision_world_position_m":vision_pos.tolist(),"world_position_m":world_pos.tolist(),"source":source}
     Path(output).parent.mkdir(parents=True,exist_ok=True); Path(output).write_text(json.dumps(result,ensure_ascii=True,indent=2)+"\n"); print(json.dumps(result,ensure_ascii=True,indent=2))
 if __name__=="__main__":
     p=argparse.ArgumentParser(); p.add_argument("--model",required=True); p.add_argument("--output",default="build/calibration/piper-vision-target.json"); a=p.parse_args(); detect(a.model,a.output)
