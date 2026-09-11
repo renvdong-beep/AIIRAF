@@ -141,7 +141,10 @@ class MujocoBackend:
         lifted = True
         if lift_ms:
             self._set_controls(gripper["lift_positions"])
-            self._advance_for(lift_ms, contact_bodies=(target_body, left_body, right_body))
+            if constraint_activated and gripper.get("lift_anchor_body"):
+                self._advance_with_grasp_anchor(lift_ms, target_body, left_body, right_body, gripper["lift_anchor_body"])
+            else:
+                self._advance_for(lift_ms, contact_bodies=(target_body, left_body, right_body))
             with self._data_lock:
                 after_lift_z = float(self.data.xpos[target_body][2])
             lifted = (
@@ -406,6 +409,21 @@ class MujocoBackend:
                 bilateral = True
         return bilateral
 
+    def _advance_with_grasp_anchor(self, duration_ms, target_body, left_body, right_body, anchor_name):
+        anchor_body = self._body_id(anchor_name)
+        mocap_id = int(self.model.body_mocapid[anchor_body])
+        if mocap_id < 0:
+            raise ValueError("抓取中点必须是 mocap body: " + str(anchor_name))
+        steps = max(1, int(math.ceil((duration_ms / 1000.0) / self.model.opt.timestep)))
+        for _ in range(steps):
+            if self._cancel_event.is_set():
+                self._safe_stop_controls()
+                break
+            with self._data_lock:
+                self.data.mocap_pos[mocap_id] = (self.data.xpos[left_body] + self.data.xpos[right_body]) / 2.0
+                self.data.mocap_quat[mocap_id] = (1.0, 0.0, 0.0, 0.0)
+            self.step()
+
     def _has_bilateral_contact(self, target_body, left_body, right_body):
         contacted = set()
         with self._data_lock:
@@ -530,6 +548,11 @@ class MujocoBackend:
                 if not isinstance(constraint, str) or not constraint:
                     raise ValueError("lift_constraint 必须是非空字符串")
                 gripper["lift_constraint"] = constraint
+            anchor_body = raw_gripper.get("lift_anchor_body")
+            if anchor_body is not None:
+                if not isinstance(anchor_body, str) or not anchor_body:
+                    raise ValueError("lift_anchor_body 必须是非空字符串")
+                gripper["lift_anchor_body"] = anchor_body
         return {"targets": targets, "gripper": gripper}
 
     def _consume_fault(self):

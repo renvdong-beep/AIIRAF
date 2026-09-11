@@ -91,6 +91,7 @@ def build_scene(source, output, target_id="box_01", half_size=0.030):
         rgba="0.82 0.22 0.12 1",
         friction="2.0 0.05 0.001",
     )
+    anchor_body = ET.SubElement(world, "body", name="grasp_anchor", pos=" ".join(f"{value:.9f}" for value in target_position), mocap="true")
     equality = root.find("equality")
     if equality is None:
         equality = ET.SubElement(root, "equality")
@@ -98,7 +99,7 @@ def build_scene(source, output, target_id="box_01", half_size=0.030):
         equality,
         "connect",
         name="box_01_lift_constraint",
-        body1="link7",
+        body1="grasp_anchor",
         body2=target_id,
         # 使用目标初始中心作为世界锚点，避免把方块硬拉到 link6 内部。
         anchor=" ".join(f"{value:.9f}" for value in target_position),

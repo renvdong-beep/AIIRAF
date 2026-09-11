@@ -43,6 +43,7 @@ def main(argv=None):
             "min_lift_delta_m": 0.02, "min_normal_force_n": 0.2,
             "max_force_imbalance_ratio": 4.0,
             "lift_constraint": "box_01_lift_constraint",
+            "lift_anchor_body": "grasp_anchor",
         },
     }
     backend = MujocoBackend.from_config({"model_path": str(args.model.resolve()), "manipulation": manipulation, "realtime": True}, profile, authority)
