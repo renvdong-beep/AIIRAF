@@ -8,7 +8,7 @@ def solve(model_path, target_path, output, iterations=200):
     model = mujoco.MjModel.from_xml_path(str(Path(model_path).resolve()))
     data = mujoco.MjData(model)
     target_data = json.loads(Path(target_path).read_text())
-    target = np.asarray(target_data.get("target_position_m", target_data.get("grasp_position_m", target_data["pregrasp_position_m"])), dtype=float)
+    target = np.asarray(target_data.get("ik_target_position_m", target_data.get("ik_link6_pregrasp_position_m", target_data.get("target_position_m", target_data.get("grasp_position_m", target_data["pregrasp_position_m"])))), dtype=float)
     body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "link6")
     if body < 0:
         raise ValueError("MJCF 缺少 link6")
