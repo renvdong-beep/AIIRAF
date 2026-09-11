@@ -74,12 +74,9 @@ def build_scene(source, output, target_id="box_01", half_size=0.030):
         rgba="0.25 0.28 0.32 1",
         friction="1.0 0.02 0.001",
     )
-    target = ET.SubElement(
-        world,
-        "body",
-        name=target_id,
-        pos=" ".join(f"{value:.9f}" for value in target_position),
-    )
+    target = ET.SubElement(world, "body", name=target_id,
+                           pos=" ".join(f"{value:.9f}" for value in target_position),
+                           gravcomp="1")
     ET.SubElement(target, "freejoint", name=target_id + "_free")
     ET.SubElement(
         target,
@@ -91,7 +88,7 @@ def build_scene(source, output, target_id="box_01", half_size=0.030):
         rgba="0.82 0.22 0.12 1",
         friction="2.0 0.05 0.001",
     )
-    ET.SubElement(world, "camera", name="overhead_camera", mode="targetbody", target=target_id, pos="0.42 -0.58 0.42", fovy="52")
+    ET.SubElement(world, "camera", name="overhead_camera", mode="targetbody", target=target_id, pos="0.28 -0.72 0.72", fovy="78")
     anchor_body = ET.SubElement(world, "body", name="grasp_anchor", pos=" ".join(f"{value:.9f}" for value in target_position), mocap="true")
     equality = root.find("equality")
     if equality is None:
