@@ -16,7 +16,7 @@ def _body(root, name):
     return body
 
 
-def build_scene(source, output, target_id="box_01", half_size=0.018):
+def build_scene(source, output, target_id="box_01", half_size=0.030):
     source = Path(source).resolve()
     output = Path(output).resolve()
     if not source.is_file():
@@ -141,7 +141,7 @@ def main(argv=None):
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--target-id", default="box_01")
-    parser.add_argument("--target-half-size", type=float, default=0.018)
+    parser.add_argument("--target-half-size", type=float, default=0.030)
     args = parser.parse_args(argv)
     print(
         json.dumps(
