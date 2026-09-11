@@ -20,6 +20,7 @@ class MujocoBackend:
             authority,
             fault_injection_enabled=fault_injection_enabled,
             manipulation_config=config.get("manipulation"),
+            realtime=bool(config.get("realtime", False)),
         )
 
     def __init__(
@@ -29,6 +30,7 @@ class MujocoBackend:
         authority,
         fault_injection_enabled=False,
         manipulation_config=None,
+        realtime=False,
     ):
         self.profile = profile
         self.authority = authority
@@ -55,6 +57,7 @@ class MujocoBackend:
         self._fault_delay_seconds = 0.0
         self._fault_remaining = 0
         self._manipulation = self._parse_manipulation_config(manipulation_config)
+        self._realtime = bool(realtime)
         self._reset_metrics()
 
     def runtime_inventory(self):
@@ -201,6 +204,8 @@ class MujocoBackend:
             with self._data_lock:
                 mujoco.mj_step(self.model, self.data)
             self._record_step(time.monotonic() - started)
+            if self._realtime:
+                time.sleep(float(self.model.opt.timestep))
         return {
             joint: float(self.last_positions[joint]) for joint in self.profile.joints
         }

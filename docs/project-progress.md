@@ -196,3 +196,5 @@ Ubuntu 系统 MuJoCo/EGL 渲染已成功。远端 Conda MuJoCo 绑定因 EGL 驱
 - Ubuntu 图形界面已实测可打开 MuJoCo Viewer。由于 Conda 自带 C++ ABI 与系统 Mesa
   驱动不兼容，启动时必须使用系统 `libstdc++`、Mesa DRI 路径和 `DISPLAY=:0`；已固化
   `scripts/view_piper_mujoco.py` 作为统一入口。
+- Viewer 抓取演示已启用实时物理步进，默认动作时长调整为 12 秒，并支持
+  `--pick-duration-ms` 调整，便于逐段观察张开、闭合和抬升过程。

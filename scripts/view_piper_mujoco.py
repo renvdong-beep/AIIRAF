@@ -20,11 +20,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, default=Path("build/models/piper-pick-scene.xml"))
     parser.add_argument("--seconds", type=float, default=0, help="0 表示保持窗口")
+    parser.add_argument("--pick-duration-ms", type=int, default=12000)
     args = parser.parse_args(argv)
     if not args.model.is_file():
         parser.error("模型文件不存在: " + str(args.model))
     if args.seconds < 0:
         parser.error("seconds 不能为负数")
+    if args.pick_duration_ms < 1000 or args.pick_duration_ms > 30000:
+        parser.error("pick-duration-ms 必须在 1000..30000 之间")
 
     root = Path(__file__).resolve().parents[1]
     profile = load_robot_profile(root / "profiles/piper_mujoco.yaml")
@@ -40,7 +43,7 @@ def main(argv=None):
             "min_lift_delta_m": 0.02, "lift_constraint": "box_01_lift_constraint",
         },
     }
-    backend = MujocoBackend.from_config({"model_path": str(args.model.resolve()), "manipulation": manipulation}, profile, authority)
+    backend = MujocoBackend.from_config({"model_path": str(args.model.resolve()), "manipulation": manipulation, "realtime": True}, profile, authority)
     runtime = SkillRuntime(profile, safety, backend, SkillRegistry().load_directory(root / "skills"), authority, SqliteExecutionStore(":memory:"))
     target_id = backend._body_id("box_01")
     target = backend.data.xpos[target_id].copy()
@@ -51,7 +54,7 @@ def main(argv=None):
         request = {
             "request_id": "viewer-pick", "idempotency_key": "viewer-pick-" + str(now), "correlation_id": "viewer-pick",
             "skill": "pick_object", "skill_version_constraint": "1.0.0",
-            "parameters": {"target_id": "box_01", "grasp_pose": {"frame_id": "world", "position": {"x": float(target[0]), "y": float(target[1]), "z": float(target[2])}, "orientation": {"x": 0, "y": 0, "z": 0, "w": 1}}, "duration_ms": 5000},
+            "parameters": {"target_id": "box_01", "grasp_pose": {"frame_id": "world", "position": {"x": float(target[0]), "y": float(target[1]), "z": float(target[2])}, "orientation": {"x": 0, "y": 0, "z": 0, "w": 1}}, "duration_ms": args.pick_duration_ms},
             "deadline_unix_ms": now + 30000, "profile_name": profile.name, "profile_version": profile.version, "profile_digest": profile.digest,
             "safety_policy_name": safety.name, "safety_policy_version": safety.version, "safety_policy_digest": safety.digest,
             "resource_id": "piper-mujoco", "controller": "viewer-pick",
