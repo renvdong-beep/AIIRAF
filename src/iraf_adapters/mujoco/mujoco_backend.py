@@ -100,6 +100,10 @@ class MujocoBackend:
         duration_ms = max(1, int(duration_ms))
         open_ms = max(1, duration_ms * 2 // 5)
         close_ms = max(1, duration_ms - open_ms)
+        lift_ms = 0
+        if gripper.get("lift_positions"):
+            lift_ms = max(1, duration_ms // 3)
+            close_ms = max(1, duration_ms - open_ms - lift_ms)
         self._set_controls(gripper["open_positions"])
         self._advance_for(open_ms)
         self._set_controls(gripper["closed_positions"])
@@ -107,16 +111,47 @@ class MujocoBackend:
             close_ms,
             contact_bodies=(target_body, left_body, right_body),
         )
+        constraint_activated = False
+        equality_name = gripper.get("lift_constraint")
+        if bilateral and equality_name:
+            equality_id = mujoco.mj_name2id(
+                self.model, mujoco.mjtObj.mjOBJ_EQUALITY, equality_name
+            )
+            if equality_id < 0:
+                raise ValueError("抓取约束不存在: " + str(equality_name))
+            self.data.eq_active[equality_id] = 1
+            constraint_activated = True
+        with self._data_lock:
+            before_lift_z = float(self.data.xpos[target_body][2])
+        lifted = True
+        if lift_ms:
+            self._set_controls(gripper["lift_positions"])
+            self._advance_for(lift_ms, contact_bodies=(target_body, left_body, right_body))
+            with self._data_lock:
+                after_lift_z = float(self.data.xpos[target_body][2])
+            lifted = (
+                after_lift_z - before_lift_z
+                >= gripper["min_lift_delta_m"]
+                and (
+                    constraint_activated
+                    or self._has_bilateral_contact(target_body, left_body, right_body)
+                )
+            )
         self.stopped = False
         return {
             "target_id": target_id,
-            "grasped": bool(bilateral),
-            "confirmation": "contact",
+            "grasped": bool(bilateral and lifted),
+            "confirmation": "constraint" if constraint_activated else "contact",
             "evidence": {
                 "target_body": target["body"],
                 "left_finger_body": gripper["left_finger_body"],
                 "right_finger_body": gripper["right_finger_body"],
                 "bilateral_contact": bool(bilateral),
+                "lifted": bool(lifted),
+                "constraint_activated": constraint_activated,
+                "lift_delta_m": round(
+                    (float(self.data.xpos[target_body][2]) - before_lift_z), 6
+                ),
             },
         }
 
@@ -419,6 +454,25 @@ class MujocoBackend:
                     str(key): float(value) for key, value in closed_positions.items()
                 },
             }
+            if raw_gripper.get("lift_positions") is not None:
+                lift_positions = dict(raw_gripper["lift_positions"])
+                if not set(open_positions).issubset(lift_positions):
+                    raise ValueError("抬升执行器配置必须包含夹爪执行器")
+                min_lift = float(raw_gripper.get("min_lift_delta_m", 0.02))
+                if not math.isfinite(min_lift) or min_lift <= 0:
+                    raise ValueError("min_lift_delta_m 必须是正有限数")
+                gripper["lift_positions"] = {
+                    str(key): float(value) for key, value in lift_positions.items()
+                }
+                gripper["min_lift_delta_m"] = min_lift
+            else:
+                gripper["lift_positions"] = None
+                gripper["min_lift_delta_m"] = 0.02
+            constraint = raw_gripper.get("lift_constraint")
+            if constraint is not None:
+                if not isinstance(constraint, str) or not constraint:
+                    raise ValueError("lift_constraint 必须是非空字符串")
+                gripper["lift_constraint"] = constraint
         return {"targets": targets, "gripper": gripper}
 
     def _consume_fault(self):

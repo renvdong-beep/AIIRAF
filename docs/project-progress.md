@@ -189,3 +189,7 @@ Ubuntu 系统 MuJoCo/EGL 渲染已成功。远端 Conda MuJoCo 绑定因 EGL 驱
   抬升后目标位移与持续接触验收。
 - 远端全量单元测试增至 80 项并全部通过；真实 Piper MJCF 完整 Runtime 验收为
   `SUCCEEDED`，证据报告位于 `build/acceptance/piper-pick/report.json`。
+- 第二阶段完成：场景加入重力和工作台；抓取过程先验证双侧接触，再激活受控搬运约束，
+  执行抬升并校验目标高度增加。最新证据为目标抬升 `0.197722m`、`lifted=true`、
+  `constraint_activated=true`。这证明了可审计的抓取搬运链路，不等价于真实硬件摩擦力
+  和负载能力认证。

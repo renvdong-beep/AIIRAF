@@ -43,7 +43,7 @@ def build_scene(source, output, target_id="box_01", half_size=0.018):
         option = ET.SubElement(root, "option")
     option.set("timestep", "0.002")
     # 第一阶段夹取夹具用于验证接触链路；升举验收接入前不声称重力抓取能力。
-    option.set("gravity", "0 0 0")
+    option.set("gravity", "0 0 -9.81")
 
     with tempfile.NamedTemporaryFile("w", suffix=".xml") as handle:
         ET.ElementTree(root).write(handle.name, encoding="unicode")
@@ -62,6 +62,16 @@ def build_scene(source, output, target_id="box_01", half_size=0.018):
     target_position = center - direction * 0.051
 
     world = root.find("worldbody")
+    ET.SubElement(
+        world,
+        "geom",
+        name="workbench",
+        type="box",
+        pos="0 0 0.165",
+        size="0.8 0.8 0.025",
+        rgba="0.25 0.28 0.32 1",
+        friction="1.0 0.02 0.001",
+    )
     target = ET.SubElement(
         world,
         "body",
@@ -78,6 +88,20 @@ def build_scene(source, output, target_id="box_01", half_size=0.018):
         mass="0.04",
         rgba="0.82 0.22 0.12 1",
         friction="1.2 0.02 0.001",
+    )
+    equality = root.find("equality")
+    if equality is None:
+        equality = ET.SubElement(root, "equality")
+    ET.SubElement(
+        equality,
+        "connect",
+        name="box_01_lift_constraint",
+        body1="link6",
+        body2=target_id,
+        anchor="0 0 0.1358",
+        active="false",
+        solref="0.01 1",
+        solimp="0.9 0.95 0.01",
     )
 
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -98,8 +122,11 @@ def build_scene(source, output, target_id="box_01", half_size=0.018):
         "gripper": {
             "left_finger_body": "link7",
             "right_finger_body": "link8",
-            "open_positions": {"joint7": 0.035, "joint8": -0.035},
-            "closed_positions": {"joint7": 0.0, "joint8": 0.0},
+            "open_positions": {"joint1": 0.0, "joint2": 0.0, "joint3": 0.0, "joint4": 0.0, "joint5": 0.0, "joint6": 0.0, "joint7": 0.035, "joint8": -0.035},
+            "closed_positions": {"joint1": 0.0, "joint2": 0.0, "joint3": 0.0, "joint4": 0.0, "joint5": 0.0, "joint6": 0.0, "joint7": 0.0, "joint8": 0.0},
+            "lift_positions": {"joint1": 0.0, "joint2": 0.4, "joint3": -0.5, "joint4": 0.0, "joint5": 0.0, "joint6": 0.0, "joint7": 0.0, "joint8": 0.0},
+            "min_lift_delta_m": 0.02,
+            "lift_constraint": "box_01_lift_constraint",
         },
     }
     report_path = output.with_suffix(".json")

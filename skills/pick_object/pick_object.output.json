@@ -21,7 +21,10 @@
         "target_body": {"type": "string", "minLength": 1},
         "left_finger_body": {"type": "string", "minLength": 1},
         "right_finger_body": {"type": "string", "minLength": 1},
-        "bilateral_contact": {"const": true}
+        "bilateral_contact": {"const": true},
+        "lifted": {"const": true},
+        "constraint_activated": {"type": "boolean"},
+        "lift_delta_m": {"type": "number", "minimum": 0}
       }
     }
   }

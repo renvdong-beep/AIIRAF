@@ -56,6 +56,7 @@ PYTHONPATH=src python scripts/verify_piper_pick.py \
 场景、场景清单和执行报告分别写入 `build/models/` 与
 `build/acceptance/piper-pick/`。
 
-远端固定 Conda 环境验证结果：全量 `80 tests` 全部通过；真实 Piper MJCF 验收执行
-状态为 `SUCCEEDED`，目标为 `box_01`，确认类型为 `contact`，左右接触体分别为
-`link7` 和 `link8`。报告路径为 `build/acceptance/piper-pick/report.json`。
+重力搬运验收中发现 Piper 原始网格在当前姿态下的纯摩擦夹持会滑脱。为避免掩盖真实
+限制，场景增加“接触后激活”的 MuJoCo connect 约束：只有先观察到 `link7`、`link8`
+与目标双侧接触，才激活约束并执行抬升。验收成功的确认类型为 `constraint`，报告同时
+保留 `bilateral_contact` 和 `constraint_activated`，不宣称纯摩擦抓取已经通过。
