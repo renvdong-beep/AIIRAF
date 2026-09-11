@@ -39,6 +39,8 @@ def main(argv=None):
             "left_finger_body": "link7", "right_finger_body": "link8",
             "open_positions": {"joint1": 0, "joint2": 0, "joint3": 0, "joint4": 0, "joint5": 0, "joint6": 0, "joint7": 0.035, "joint8": -0.035},
             "closed_positions": {"joint1": 0, "joint2": 0, "joint3": 0, "joint4": 0, "joint5": 0, "joint6": 0, "joint7": 0, "joint8": 0},
+            "approach_positions": {"joint1": -0.000002, "joint2": 0.505878, "joint3": -0.107894, "joint4": 0.0, "joint5": -0.060631, "joint6": 0.0},
+            "grasp_positions": {"joint1": 0.0, "joint2": 0.0, "joint3": 0.0, "joint4": 0.0, "joint5": 0.0, "joint6": 0.0},
             "lift_positions": {"joint1": 0, "joint2": 0.2, "joint3": -0.25, "joint4": 0, "joint5": 0, "joint6": 0, "joint7": 0, "joint8": 0},
             "min_lift_delta_m": 0.02, "min_normal_force_n": 0.2,
             "max_force_imbalance_ratio": 4.0,
