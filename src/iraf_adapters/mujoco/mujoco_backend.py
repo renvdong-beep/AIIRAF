@@ -1,7 +1,9 @@
 """带连续步进、指标和受控故障注入的 MuJoCo 3 后端。"""
 
 from pathlib import Path
+import json
 import math
+import os
 import threading
 import time
 
@@ -194,6 +196,26 @@ class MujocoBackend:
                 )
             )
         self.stopped = False
+        if os.environ.get("IRAF_DEBUG_PICK") == "1":
+            print(
+                "PICK_CONTACT_EVIDENCE "
+                + json.dumps(
+                    {
+                        "bilateral_contact": bool(bilateral),
+                        "target_position_m": [float(v) for v in self.data.xpos[target_body]],
+                        "left_finger_position_m": [float(v) for v in self.data.xpos[left_body]],
+                        "right_finger_position_m": [float(v) for v in self.data.xpos[right_body]],
+                        **force_evidence,
+                        "force_ok": bool(force_ok),
+                        "lifted": bool(lifted),
+                        "lift_delta_m": round(
+                            (float(self.data.xpos[target_body][2]) - before_lift_z), 6
+                        ),
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
         return {
             "target_id": target_id,
             "grasped": bool(force_ok and lifted),
