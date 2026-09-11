@@ -60,13 +60,6 @@ def main(argv=None):
     runtime = SkillRuntime(profile, safety, backend, SkillRegistry().load_directory(root / "skills"), authority, SqliteExecutionStore(":memory:"))
     # MuJoCo 模型的 qpos 可能来自闭合姿态；演示必须从张开夹爪开始，避免初始与目标重叠。
     backend._set_gripper_controls(manipulation["gripper"]["open_positions"])
-    # 演示从显式抬升 Home 姿态开始，避免模型初始零位看起来像断电不动。
-    home_positions = {
-        "joint1": 0.0, "joint2": 0.65, "joint3": -1.15,
-        "joint4": 0.0, "joint5": 0.35, "joint6": 0.0,
-    }
-    backend._set_controls(home_positions)
-    backend._advance_for(1800)
     target_id = backend._body_id("box_01")
     target = backend.data.xpos[target_id].copy()
     vision_file = root / "build/calibration/piper-vision-target.json"
@@ -109,6 +102,18 @@ def main(argv=None):
         viewer.cam.distance = 1.05
         viewer.cam.azimuth = 180
         viewer.cam.elevation = -8
+        # Home 动作必须在 Viewer 已打开后执行，否则用户看不到起始运动。
+        home_positions = {
+            "joint1": 0.0, "joint2": 0.65, "joint3": -1.15,
+            "joint4": 0.0, "joint5": 0.35, "joint6": 0.0,
+        }
+        backend._set_controls(home_positions)
+        home_deadline = time.monotonic() + 3.0
+        while viewer.is_running() and time.monotonic() < home_deadline:
+            with backend._data_lock:
+                backend.step()
+                viewer.sync()
+            time.sleep(0.02)
         threading.Thread(target=run_pick, daemon=True).start()
         started = time.monotonic()
         while viewer.is_running():
