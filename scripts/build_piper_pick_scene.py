@@ -50,6 +50,13 @@ def build_scene(source, output, target_id="box_01", half_size=0.030):
     right_geom.set("name", "piper_right_finger")
     left_geom.set("friction", "2.0 0.05 0.001")
     right_geom.set("friction", "2.0 0.05 0.001")
+    actuators = root.find("actuator")
+    if actuators is not None:
+        for actuator in actuators:
+            name = actuator.get("name", "")
+            if name in {f"joint{i}" for i in range(1, 7)} and actuator.tag == "position":
+                # 原始 Piper MJCF 的默认 kp 过低，轨迹阶段会在未收敛时进入抓取门禁。
+                actuator.set("kp", "200")
 
     option = root.find("option")
     if option is None:
@@ -137,6 +144,7 @@ def build_scene(source, output, target_id="box_01", half_size=0.030):
         "target_half_size_m": half_size,
         "workbench_top_z_m": WORKBENCH_TOP_Z,
         "gravity_fixture": True,
+        "arm_position_kp": 200.0,
         "gripper": {
             "left_finger_body": "link7",
             "right_finger_body": "link8",
