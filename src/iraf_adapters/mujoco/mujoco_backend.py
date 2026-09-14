@@ -9,6 +9,8 @@ import time
 
 import mujoco
 
+from iraf_skills.common.trajectory import quintic_position
+
 
 class MujocoBackend:
     @classmethod
@@ -161,16 +163,13 @@ class MujocoBackend:
         home_positions = gripper.get("home_positions")
         if home_positions:
             self._log_pick_phase("HOME_HOLD", target_body)
-            self._set_controls(home_positions)
-            self._advance_for(max(1, duration_ms // 5))
+            self._move_trajectory(home_positions, max(1, duration_ms // 5))
         if approach_positions:
             self._log_pick_phase("APPROACH", target_body)
-            self._set_controls(approach_positions)
-            self._advance_for(max(1, duration_ms // 5))
+            self._move_trajectory(approach_positions, max(1, duration_ms // 5))
         if grasp_positions:
             self._log_pick_phase("DESCEND", target_body)
-            self._set_controls(grasp_positions)
-            self._advance_for(max(1, duration_ms // 5))
+            self._move_trajectory(grasp_positions, max(1, duration_ms // 5))
         self._log_pick_phase("GRIP_OPEN", target_body)
         self._set_gripper_controls(gripper["open_positions"])
         self._advance_for(open_ms)
@@ -214,11 +213,11 @@ class MujocoBackend:
         lifted = not lift_ms
         if lift_ms and force_ok:
             self._log_pick_phase("LIFT", target_body)
-            self._set_controls(gripper["lift_positions"])
+            self._move_trajectory(gripper["lift_positions"], lift_ms)
             if constraint_activated and gripper.get("lift_anchor_body"):
-                self._advance_with_grasp_anchor(lift_ms, target_body, left_body, right_body, gripper["lift_anchor_body"])
+                self._advance_with_grasp_anchor(0, target_body, left_body, right_body, gripper["lift_anchor_body"])
             else:
-                self._advance_for(lift_ms, contact_bodies=(target_body, left_body, right_body))
+                self._advance_for(0, contact_bodies=(target_body, left_body, right_body))
             with self._data_lock:
                 after_lift_z = float(self.data.xpos[target_body][2])
             lifted = (
@@ -508,6 +507,24 @@ class MujocoBackend:
         if not finger_positions:
             raise ValueError("夹爪开合配置必须包含 joint7/joint8")
         self._set_controls(finger_positions)
+
+    def _move_trajectory(self, target_positions, duration_ms):
+        """以五次多项式从实际关节状态平滑移动到目标状态。"""
+        names = list(target_positions)
+        with self._data_lock:
+            starts = []
+            for name in names:
+                actuator = self._actuators.get(name)
+                if actuator is None:
+                    raise ValueError("actuator not found: " + name)
+                joint_id = int(self.model.actuator_trnid[actuator, 0])
+                starts.append(float(self.data.qpos[self.model.jnt_qposadr[joint_id]]))
+        steps = max(1, int(math.ceil((int(duration_ms) / 1000.0) / self.model.opt.timestep)))
+        for step in range(1, steps + 1):
+            elapsed = step * float(self.model.opt.timestep)
+            values = quintic_position(starts, [float(target_positions[name]) for name in names], duration_ms / 1000.0, elapsed)
+            self._set_controls(dict(zip(names, values)))
+            self._advance_for(0)
 
     def _advance_for(self, duration_ms, contact_bodies=None):
         bilateral = False
