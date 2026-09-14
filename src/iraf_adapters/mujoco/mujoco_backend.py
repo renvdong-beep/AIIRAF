@@ -176,7 +176,8 @@ class MujocoBackend:
                 "末端未到达目标抓取位姿: "
                 f"distance={alignment['center_distance_m']:.6f}m "
                 f"tolerance={target['pose_tolerance_m']:.6f}m "
-                f"delta={alignment['center_delta_m']}"
+                f"delta={alignment['center_delta_m']} "
+                f"qpos={alignment['joint_qpos']}"
             )
         self._log_pick_phase("GRIP_OPEN", target_body)
         self._set_gripper_controls(gripper["open_positions"])
@@ -563,6 +564,9 @@ class MujocoBackend:
             values = quintic_position(starts, [float(target_positions[name]) for name in names], duration_ms / 1000.0, elapsed)
             self._set_controls(dict(zip(names, values)))
             self._advance_for(0)
+        # 位置执行器有自身阻尼和力矩限制，轨迹结束后必须留出稳定时间。
+        self._set_controls({name: float(target_positions[name]) for name in names})
+        self._advance_for(max(250, min(2000, int(duration_ms // 2))))
 
     def _advance_for(self, duration_ms, contact_bodies=None):
         bilateral = False
