@@ -4,7 +4,7 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-def solve(model_path, target_path, output, iterations=200, body_name="link6"):
+def solve(model_path, target_path, output, iterations=200, body_name="link6", geom_name=None):
     model = mujoco.MjModel.from_xml_path(str(Path(model_path).resolve()))
     data = mujoco.MjData(model)
     target_data = json.loads(Path(target_path).read_text())
@@ -19,10 +19,15 @@ def solve(model_path, target_path, output, iterations=200, body_name="link6"):
     qadr = [int(model.jnt_qposadr[j]) for j in joint_ids]
     for _ in range(iterations):
         mujoco.mj_forward(model, data)
-        err = target - data.xpos[body]
+        current = data.geom_xpos[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, geom_name)] if geom_name else data.xpos[body]
+        err = target - current
         if float(np.linalg.norm(err)) < 1e-4:
             break
-        jac = np.zeros((3, model.nv)); mujoco.mj_jacBody(model, data, jac, np.zeros((3, model.nv)), body)
+        jac = np.zeros((3, model.nv))
+        if geom_name:
+            mujoco.mj_jacGeom(model, data, jac, np.zeros((3, model.nv)), mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, geom_name))
+        else:
+            mujoco.mj_jacBody(model, data, jac, np.zeros((3, model.nv)), body)
         delta = 0.45 * np.linalg.pinv(jac[:, [int(model.jnt_dofadr[j]) for j in joint_ids]]) @ err
         for joint_id, adr, value in zip(joint_ids, qadr, delta):
             data.qpos[adr] += float(value)
@@ -31,8 +36,9 @@ def solve(model_path, target_path, output, iterations=200, body_name="link6"):
                 data.qpos[adr] = float(np.clip(data.qpos[adr], lo, hi))
         mujoco.mj_normalizeQuat(model, data.qpos)
     mujoco.mj_forward(model, data)
-    result = {"schema_version":"iraf.piper-ik/v1","body":body_name,"target_position_m":target.tolist(),"solved_position_m":data.xpos[body].tolist(),"position_error_m":float(np.linalg.norm(target-data.xpos[body])),"iterations":_+1,"joint_positions":{"joint%d"%(i+1):float(data.qpos[qadr[i]]) for i in range(6)}}
+    solved = data.geom_xpos[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, geom_name)] if geom_name else data.xpos[body]
+    result = {"schema_version":"iraf.piper-ik/v1","body":body_name,"geom":geom_name,"target_position_m":target.tolist(),"solved_position_m":solved.tolist(),"position_error_m":float(np.linalg.norm(target-solved)),"iterations":_+1,"joint_positions":{"joint%d"%(i+1):float(data.qpos[qadr[i]]) for i in range(6)}}
     Path(output).parent.mkdir(parents=True, exist_ok=True); Path(output).write_text(json.dumps(result,ensure_ascii=True,indent=2)+"\n"); print(json.dumps(result,ensure_ascii=True,indent=2))
 
 if __name__ == "__main__":
-    p=argparse.ArgumentParser(description=__doc__); p.add_argument("--model",required=True); p.add_argument("--target",required=True); p.add_argument("--output",default="build/calibration/piper-ik.json"); p.add_argument("--body",default="link6"); a=p.parse_args(); solve(a.model,a.target,a.output,body_name=a.body)
+    p=argparse.ArgumentParser(description=__doc__); p.add_argument("--model",required=True); p.add_argument("--target",required=True); p.add_argument("--output",default="build/calibration/piper-ik.json"); p.add_argument("--body",default="link6"); p.add_argument("--geom"); a=p.parse_args(); solve(a.model,a.target,a.output,body_name=a.body,geom_name=a.geom)
