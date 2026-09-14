@@ -58,25 +58,25 @@
             </body>
         </body>
         <geom name="workbench" type="box" pos="0 0 -0.025" size="0.8 0.8 0.025" rgba="0.25 0.28 0.32 1" friction="1.0 0.02 0.001" />
-        <body name="box_01" pos="0.139440363 -0.000001065 0.055000000" gravcomp="1">
+        <body name="box_01" pos="0.139440363 -0.000001065 0.030000000" gravcomp="1">
             <freejoint name="box_01_free" />
             <geom name="box_01_geom" type="box" size="0.03 0.03 0.03" mass="0.04" rgba="0.82 0.22 0.12 1" friction="2.0 0.05 0.001" />
         </body>
         <camera name="overhead_camera" mode="targetbody" target="box_01" pos="0.28 -0.72 0.72" fovy="78" />
-        <body name="grasp_anchor" pos="0.139440363 -0.000001065 0.055000000" mocap="true" />
+        <body name="grasp_anchor" pos="0.139440363 -0.000001065 0.030000000" mocap="true" />
     </worldbody>
     <actuator>
-        <position name="joint1" ctrllimited="true" ctrlrange="-2.618 2.618" joint="joint1" kp="10000" user="1" forcelimited="true" forcerange="-20000 20000" />
-        <position name="joint2" ctrllimited="true" ctrlrange="0 3.14158" joint="joint2" kp="2000" user="1" forcelimited="true" forcerange="-20000 20000" />
-        <position name="joint3" ctrllimited="true" ctrlrange="-2.697 0" joint="joint3" kp="500" user="1" forcelimited="true" forcerange="-1000 1000" />
-        <position name="joint4" ctrllimited="true" ctrlrange="-1.832 1.832" joint="joint4" kp="50" user="1" forcelimited="true" forcerange="-70 70" />
-        <position name="joint5" ctrllimited="true" ctrlrange="-1.22 1.22" joint="joint5" kp="20" user="1" forcelimited="true" forcerange="-50 50" />
-        <position name="joint6" ctrllimited="true" ctrlrange="-3.14158 3.14158" joint="joint6" kp="5" user="1" forcelimited="true" forcerange="-6 6" />
+        <position name="joint1" ctrllimited="true" ctrlrange="-2.618 2.618" joint="joint1" kp="200" user="1" forcelimited="true" forcerange="-20000 20000" />
+        <position name="joint2" ctrllimited="true" ctrlrange="0 3.14158" joint="joint2" kp="200" user="1" forcelimited="true" forcerange="-20000 20000" />
+        <position name="joint3" ctrllimited="true" ctrlrange="-2.697 0" joint="joint3" kp="200" user="1" forcelimited="true" forcerange="-1000 1000" />
+        <position name="joint4" ctrllimited="true" ctrlrange="-1.832 1.832" joint="joint4" kp="200" user="1" forcelimited="true" forcerange="-70 70" />
+        <position name="joint5" ctrllimited="true" ctrlrange="-1.22 1.22" joint="joint5" kp="200" user="1" forcelimited="true" forcerange="-50 50" />
+        <position name="joint6" ctrllimited="true" ctrlrange="-3.14158 3.14158" joint="joint6" kp="200" user="1" forcelimited="true" forcerange="-6 6" />
         <position name="joint7" ctrllimited="true" ctrlrange="0 0.0475" joint="joint7" kp="10000" user="1" forcelimited="true" forcerange="-100 100" />
         <position name="joint8" ctrllimited="true" ctrlrange="-0.0475 0" joint="joint8" kp="10000" user="1" forcelimited="true" forcerange="-100 100" />
     </actuator>
     <option timestep="0.002" gravity="0 0 -9.81" />
     <equality>
-        <connect name="box_01_lift_constraint" body1="grasp_anchor" body2="box_01" anchor="0.139440363 -0.000001065 0.055000000" active="false" solref="0.01 1" solimp="0.9 0.95 0.01" />
+        <connect name="box_01_lift_constraint" body1="grasp_anchor" body2="box_01" anchor="0.139440363 -0.000001065 0.030000000" active="false" solref="0.01 1" solimp="0.9 0.95 0.01" />
     </equality>
 </mujoco>
