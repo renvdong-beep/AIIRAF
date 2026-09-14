@@ -175,7 +175,8 @@ class MujocoBackend:
             raise ValueError(
                 "末端未到达目标抓取位姿: "
                 f"distance={alignment['center_distance_m']:.6f}m "
-                f"tolerance={target['pose_tolerance_m']:.6f}m"
+                f"tolerance={target['pose_tolerance_m']:.6f}m "
+                f"delta={alignment['center_delta_m']}"
             )
         self._log_pick_phase("GRIP_OPEN", target_body)
         self._set_gripper_controls(gripper["open_positions"])
@@ -307,7 +308,18 @@ class MujocoBackend:
             "center_delta_m": delta.tolist(),
             "center_distance_m": float((delta @ delta) ** 0.5),
             "z_error_m": float(delta[2]),
+            "joint_qpos": {
+                name: self._joint_qpos(name)
+                for name in ("joint1", "joint2", "joint3", "joint4", "joint5", "joint6")
+            },
         }
+
+    def _joint_qpos(self, name):
+        actuator = self._actuators.get(name)
+        if actuator is None:
+            return None
+        joint_id = int(self.model.actuator_trnid[actuator, 0])
+        return float(self.data.qpos[self.model.jnt_qposadr[joint_id]])
 
     def move_joint(self, positions, duration_ms, lease):
         self.authority.validate(lease)
