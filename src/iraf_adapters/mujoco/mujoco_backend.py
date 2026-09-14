@@ -170,6 +170,13 @@ class MujocoBackend:
         if grasp_positions:
             self._log_pick_phase("DESCEND", target_body)
             self._move_trajectory(grasp_positions, max(1, duration_ms // 5))
+        alignment = self._grasp_alignment_evidence(target_body, left_body, right_body)
+        if alignment["center_distance_m"] > target["pose_tolerance_m"]:
+            raise ValueError(
+                "末端未到达目标抓取位姿: "
+                f"distance={alignment['center_distance_m']:.6f}m "
+                f"tolerance={target['pose_tolerance_m']:.6f}m"
+            )
         self._log_pick_phase("GRIP_OPEN", target_body)
         self._set_gripper_controls(gripper["open_positions"])
         self._advance_for(open_ms)
@@ -265,6 +272,7 @@ class MujocoBackend:
                 "lift_delta_m": round(
                     (float(self.data.xpos[target_body][2]) - before_lift_z), 6
                 ),
+                "grasp_alignment": alignment,
             },
         }
 
@@ -282,6 +290,24 @@ class MujocoBackend:
                 }, ensure_ascii=False),
                 flush=True,
             )
+
+    def _grasp_alignment_evidence(self, target_body, left_body, right_body):
+        with self._data_lock:
+            mujoco.mj_forward(self.model, self.data)
+            target = self.data.xpos[target_body].copy()
+            left = self.data.xpos[left_body].copy()
+            right = self.data.xpos[right_body].copy()
+        center = (left + right) / 2.0
+        delta = center - target
+        return {
+            "target_position_m": target.tolist(),
+            "left_finger_position_m": left.tolist(),
+            "right_finger_position_m": right.tolist(),
+            "finger_center_position_m": center.tolist(),
+            "center_delta_m": delta.tolist(),
+            "center_distance_m": float((delta @ delta) ** 0.5),
+            "z_error_m": float(delta[2]),
+        }
 
     def move_joint(self, positions, duration_ms, lease):
         self.authority.validate(lease)
