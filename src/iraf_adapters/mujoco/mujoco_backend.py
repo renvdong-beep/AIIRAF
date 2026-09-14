@@ -99,7 +99,24 @@ class MujocoBackend:
         position = data.get("vision_world_position_m")
         if not isinstance(position, list) or len(position) != 3:
             raise RuntimeError("视觉目标坐标无效")
-        return self.pick_object(inputs["target_id"], {"frame_id": "world", "position": dict(zip(("x", "y", "z"), position)), "orientation": {"x": 0, "y": 0, "z": 0, "w": 1}}, int(inputs.get("duration_ms", 10000)), lease)
+        if data.get("target_id") != inputs["target_id"]:
+            raise RuntimeError("视觉目标 ID 与请求不一致")
+        frame_id = data.get("frame_id", "world")
+        if frame_id != "world":
+            raise RuntimeError("视觉目标必须已转换到 world 坐标系")
+        result = self.pick_object(inputs["target_id"], {"frame_id": frame_id, "position": dict(zip(("x", "y", "z"), position)), "orientation": {"x": 0, "y": 0, "z": 0, "w": 1}}, int(inputs.get("duration_ms", 10000)), lease)
+        result.setdefault("evidence", {}).update({
+            "vision": {
+                "source": data.get("source", "unknown"),
+                "frame_id": frame_id,
+                "pixel_center": data.get("pixel_center"),
+                "pixel_bbox": data.get("pixel_bbox"),
+                "depth_m": data.get("depth_m"),
+                "vision_world_position_m": position,
+                "evidence_file": str(path),
+            }
+        })
+        return result
 
     def pick_object(self, target_id, grasp_pose, duration_ms, lease):
         """闭合双指并以目标和两侧手指的真实接触作为抓取确认。"""
