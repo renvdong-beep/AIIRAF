@@ -297,8 +297,10 @@ class MujocoBackend:
         with self._data_lock:
             mujoco.mj_forward(self.model, self.data)
             target = self.data.xpos[target_body].copy()
-            left = self.data.xpos[left_body].copy()
-            right = self.data.xpos[right_body].copy()
+            left_geom = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "piper_left_finger")
+            right_geom = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "piper_right_finger")
+            left = self.data.geom_xpos[left_geom].copy() if left_geom >= 0 else self.data.xpos[left_body].copy()
+            right = self.data.geom_xpos[right_geom].copy() if right_geom >= 0 else self.data.xpos[right_body].copy()
         center = (left + right) / 2.0
         delta = center - target
         return {
