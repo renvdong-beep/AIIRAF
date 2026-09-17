@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["answers"],
+  "additionalProperties": false,
+  "properties": {
+    "answers": {
+      "type": "object",
+      "description": "客户问卷答案；必填项缺失由向导显式拒绝，不做默认值兜底",
+      "required": [
+        "robot_id",
+        "preset",
+        "joints",
+        "joint_limits",
+        "arm_joints",
+        "control_frequency_hz",
+        "wrist_body",
+        "finger_geoms",
+        "gripper_drive_joints",
+        "open_positions",
+        "closed_positions"
+      ],
+      "properties": {
+        "robot_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "preset": {
+          "type": "string",
+          "enum": ["piper", "franka", "generic"]
+        },
+        "joints": {
+          "type": "array",
+          "minItems": 2,
+          "items": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"}
+        },
+        "joint_limits": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": {"type": "number"}
+          }
+        },
+        "arm_joints": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string"}
+        },
+        "control_frequency_hz": {"type": "number", "exclusiveMinimum": 0},
+        "wrist_body": {"type": "string", "minLength": 1},
+        "finger_geoms": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "gripper_drive_joints": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "open_positions": {
+          "type": "object",
+          "additionalProperties": {"type": "number"}
+        },
+        "closed_positions": {
+          "type": "object",
+          "additionalProperties": {"type": "number"}
+        },
+        "simulation": {"type": "boolean"},
+        "pad_offset_m": {"type": "number", "minimum": 0},
+        "camera_pos_m": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {"type": "number"}
+        },
+        "camera_look_at_m": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {"type": "number"}
+        }
+      }
+    },
+    "output_dir": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "工件落点目录；既有文件默认拒绝覆写"
+    },
+    "allow_overwrite": {
+      "type": "boolean",
+      "description": "显式允许覆写既有工件；缺省 false 以保证失败即显式"
+    }
+  }
+}

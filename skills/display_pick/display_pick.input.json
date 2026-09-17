@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["target_id", "grasp_pose"],
+  "additionalProperties": false,
+  "properties": {
+    "target_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "grasp_pose": {
+      "type": "object",
+      "required": ["frame_id", "position", "orientation"],
+      "additionalProperties": false,
+      "properties": {
+        "frame_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "position": {
+          "type": "object",
+          "required": ["x", "y", "z"],
+          "additionalProperties": false,
+          "properties": {
+            "x": {"type": "number"},
+            "y": {"type": "number"},
+            "z": {"type": "number"}
+          }
+        },
+        "orientation": {
+          "type": "object",
+          "required": ["x", "y", "z", "w"],
+          "additionalProperties": false,
+          "properties": {
+            "x": {"type": "number"},
+            "y": {"type": "number"},
+            "z": {"type": "number"},
+            "w": {"type": "number"}
+          }
+        }
+      }
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 180000,
+      "description": "抓取动作时长上限放宽到 180s，以支持 realtime=True 下的完整过程播放"
+    },
+    "vision_file": {
+      "type": "string",
+      "minLength": 1,
+      "description": "视觉目标证据文件路径，缺省由 Backend 使用默认路径"
+    }
+  }
+}

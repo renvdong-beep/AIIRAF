@@ -1,0 +1,14 @@
+apiVersion: iraf.intewell.io/v1
+kind: SafetyPolicy
+metadata:
+  name: engineering_tooling
+  version: 1.0.0
+spec:
+  verification: development
+  # 构建期工件生成不产生物理动作，因此允许在非仿真环境使用；
+  # 但本策略只放行 engineering.* 能力，运动能力一律不放行，
+  # 以保证"工程向导"不可能被误用为机器人操作入口。
+  simulation_only: false
+  default: deny
+  allowed_skills: [engineering.robot_adapter]
+  max_duration_ms: 30000

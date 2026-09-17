@@ -104,3 +104,38 @@ class CalibrateCameraProvider:
         if not hasattr(self.backend, "calibrate_camera_to_base"):
             raise SkillRejected("Backend 未实现 calibrate_camera_to_base")
         return self.backend.calibrate_camera_to_base(inputs, lease)
+
+
+"""显示专用 Provider：复用 visual_pick 的 Backend 闭环，仅放宽时长上限。
+
+设计边界（务必保持）：
+- **不新增任何物理行为**：直接委托 backend.visual_pick(...)，
+  与 VisualPickProvider 是同一个调用，因此抓取语义完全一致；
+- **不放宽验收判据**：本 Provider 只用于"看得见完整过程"的显示场景，
+  验收链仍走 visual_pick + profiles/safety/simulation_lab.yaml；
+- **仍经完整策略链**：作为普通 skill 由 Runtime 调度，
+  运动租约、安全策略、审计记录一律不绕过（AGENTS.md 铁律 2）。
+"""
+
+from .motion import SkillRejected
+
+
+class DisplayPickProvider:
+    """与 VisualPickProvider 同源，仅把时长上限交给显示用 skill 声明。"""
+
+    def __init__(self, profile, backend):
+        self.profile = profile
+        self.backend = backend
+
+    def execute(self, inputs, lease):
+        if not hasattr(self.backend, "visual_pick"):
+            raise SkillRejected("Backend 未实现 visual_pick，拒绝回退到先验坐标")
+        result = self.backend.visual_pick(inputs, lease)
+        if not isinstance(result, dict) or result.get("grasped") is not True:
+            raise SkillRejected("视觉抓取未通过目标位姿或接触力验收")
+        return {
+            "skill": "display_pick",
+            "accepted": True,
+            "target_id": inputs["target_id"],
+            "evidence": result.get("evidence", {}),
+        }

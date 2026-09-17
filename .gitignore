@@ -7,3 +7,12 @@ build/*
 o/
 .venv/
 .tmp/
+
+# 厂商机器人模型：第三方代码，不入库。
+# 通过 vendor/*/source-lock.json 锁定来源与哈希，需要时按锁文件重新拉取。
+vendor/agilex_piper/piper_description
+# source-lock.json 内含开发者本机的绝对路径，不适合入库。
+vendor/*/source-lock.json
+
+# 显示/调试产物的临时备份
+*.bak

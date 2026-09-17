@@ -1,1 +1,24 @@
-{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","required":["target_id"],"additionalProperties":false,"properties":{"target_id":{"type":"string","minLength":1},"duration_ms":{"type":"integer","minimum":1000,"maximum":30000}}}
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "target_id"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "target_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 30000
+    },
+    "vision_file": {
+      "type": "string",
+      "minLength": 1,
+      "description": "\u89c6\u89c9\u76ee\u6807\u8bc1\u636e\u6587\u4ef6\u8def\u5f84\uff0c\u7f3a\u7701\u7531 Backend \u4f7f\u7528\u9ed8\u8ba4\u8def\u5f84"
+    }
+  }
+}

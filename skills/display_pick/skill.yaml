@@ -1,0 +1,24 @@
+apiVersion: iraf.intewell.io/v1
+kind: Skill
+metadata: {name: display_pick, version: 1.0.0}
+spec:
+  verification: development
+  inputSchema: display_pick.input.json
+  outputSchema: display_pick.output.json
+  # 显示专用 skill：与 visual_pick 走**同一条** Backend 抓取闭环，
+  # 唯一差别是把 timeoutSeconds 与 duration_ms 上限放宽，
+  # 使 realtime=True 下约 92 秒的完整抓取过程不被租约截断。
+  # 它不新增任何物理行为，也不改写验收口径（验收仍用 visual_pick + simulation_lab）。
+  requires: [visual_pick]
+  preconditions: [safety.estop == false, manipulation.target_visible == true]
+  intentExamples: [演示完整抓取过程, 可视化抓取, display pick with full timing]
+  timeoutSeconds: 180
+  cancellation: cooperative_stop
+  recovery: [stop, reacquire_target, request_handover]
+  safetyClass: controlled_motion
+  providers:
+    - name: common_display_pick
+      type: python_adapter
+      entrypoint: "iraf_skills.common.manipulation:DisplayPickProvider"
+      selector: {mode: simulation}
+      priority: 100

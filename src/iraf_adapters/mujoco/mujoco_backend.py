@@ -8,6 +8,8 @@ import threading
 import time
 
 import mujoco
+import numpy as np
+import yaml
 
 from iraf_skills.common.trajectory import quintic_position
 
@@ -25,6 +27,10 @@ class MujocoBackend:
             fault_injection_enabled=fault_injection_enabled,
             manipulation_config=config.get("manipulation"),
             realtime=bool(config.get("realtime", False)),
+            display_size=(
+                int(config.get("display_width", 640)),
+                int(config.get("display_height", 480)),
+            ),
         )
 
     def __init__(
@@ -35,6 +41,7 @@ class MujocoBackend:
         fault_injection_enabled=False,
         manipulation_config=None,
         realtime=False,
+        display_size=(640, 480),
     ):
         self.profile = profile
         self.authority = authority
@@ -64,6 +71,12 @@ class MujocoBackend:
         self._manipulation = self._parse_manipulation_config(manipulation_config)
         self._realtime = bool(realtime)
         self._reset_metrics()
+        # 离屏显示通道：惰性创建，供 render_frames 使用（与物理步进解耦）。
+        width, height = display_size
+        if int(width) < 1 or int(height) < 1:
+            raise ValueError("display_size 必须是正整数对")
+        self._display_size = (int(width), int(height))
+        self._display_renderer_cache = None
 
     def runtime_inventory(self):
         return {
@@ -89,36 +102,391 @@ class MujocoBackend:
         center = (l + r) / 2.0; offset = center - w; norm = max(float((offset @ offset) ** 0.5), 1e-9)
         return {"wrist_position_m": w.tolist(), "left_finger_position_m": l.tolist(), "right_finger_position_m": r.tolist(), "grasp_center_m": center.tolist(), "finger_separation_m": float(((l-r) @ (l-r)) ** 0.5), "tcp_offset_from_link6_m": offset.tolist(), "approach_axis_world": (offset / norm).tolist(), "recommended_pregrasp_offset_m": 0.04}
 
+    def _calibrate_intrinsics(self, samples, image_size, rotation, translation):
+        """标定针孔内参：principal_point_px 与 focal_px（Levenberg-Marquardt）。
+
+        残差为每个样本的 (预测像素 - 观测像素)。初值由 fovy 与图像中心给出，
+        迭代中若出现非物理解（焦距非正）则拒绝该步，保证结果可审计。
+        """
+        rotation_matrix = np.asarray(rotation, dtype=float).reshape(3, 3)
+        offset = np.asarray(translation, dtype=float).reshape(3)
+        points = np.zeros((len(samples), 3), dtype=float)
+        pixels = np.zeros((len(samples), 2), dtype=float)
+        for index, sample in enumerate(samples):
+            pixel = sample.get("pixel")
+            base = sample.get("base_m")
+            if not isinstance(pixel, (list, tuple)) or len(pixel) != 2:
+                raise ValueError("内参标定 pixel 必须是 2 个数值")
+            if not isinstance(base, (list, tuple)) or len(base) != 3:
+                raise ValueError("内参标定 base_m 必须是 3 个数值")
+            base_point = np.asarray([float(value) for value in base], dtype=float)
+            pixel_point = np.asarray([float(pixel[0]), float(pixel[1])], dtype=float)
+            if not np.isfinite(base_point).all() or not np.isfinite(pixel_point).all():
+                raise ValueError("内参标定必须是有限数值")
+            # 相机坐标系：p_base = R @ p_cam + t  =>  p_cam = R.T @ (p_base - t)
+            points[index] = rotation_matrix.T @ (base_point - offset)
+            pixels[index] = pixel_point
+        # MuJoCo 相机前方为 -Z，统一取正深度。
+        depths = -points[:, 2]
+        if float(depths.min()) <= 1e-6:
+            raise ValueError("内参标定样本必须位于相机前方")
+        lateral = float(np.abs(points[:, :2]).max())
+        if lateral < 1e-4:
+            raise ValueError("内参标定样本横向散布过小，无法约束主点: %.9f" % lateral)
+
+        width, height = float(image_size[0]), float(image_size[1])
+
+        def residuals(params):
+            focal, cu, cv = (float(value) for value in params)
+            if focal <= focal_floor:
+                return None
+            # 经验证：u 随相机系 X 同向（u = f*X/d + cu），v 随 Y 反向（v = -f*Y/d + cv）。
+            predicted_u = focal * points[:, 0] / depths + cu
+            predicted_v = -focal * points[:, 1] / depths + cv
+            return np.concatenate((predicted_u - pixels[:, 0], predicted_v - pixels[:, 1]))
+
+        # 焦距物理下界：不允许小于图像短边的 10%，避免滑向焦距趋零的退化解。
+        focal_floor = 0.1 * min(width, height)
+        # 初值：焦距由垂直视场角推算，主点取图像中心。
+        params = np.array([0.5 * height / 0.8097, width / 2.0, height / 2.0], dtype=float)
+        base_residual = residuals(params)
+        if base_residual is None:
+            raise ValueError("内参标定初值无效")
+        cost = float(base_residual @ base_residual)
+        damping = 1e-3
+        for _ in range(200):
+            jacobian = np.zeros((base_residual.size, 3), dtype=float)
+            for column in range(3):
+                # 用相对步长做数值差分：焦距量级约 300，绝对步长 1e-6 会让
+                # Jacobian 全为零，优化器就会滑向焦距趋零的退化解。
+                step_size = max(abs(params[column]) * 1e-6, 1e-6)
+                probe = params.copy()
+                probe[column] += step_size
+                probe_residual = residuals(probe)
+                if probe_residual is None:
+                    jacobian[:, column] = 0.0
+                    continue
+                jacobian[:, column] = (probe_residual - base_residual) / step_size
+            current = residuals(params)
+            normal = jacobian.T @ jacobian + damping * np.eye(3)
+            gradient = jacobian.T @ current
+            try:
+                delta = np.linalg.solve(normal, -gradient)
+            except np.linalg.LinAlgError:
+                break
+            candidate = params + delta
+            candidate_residual = residuals(candidate)
+            if candidate_residual is None:
+                damping *= 10.0
+                if damping > 1e12:
+                    break
+                continue
+            candidate_cost = float(candidate_residual @ candidate_residual)
+            if candidate_cost < cost:
+                params = candidate
+                base_residual = candidate_residual
+                cost = candidate_cost
+                damping = max(damping * 0.3, 1e-9)
+            else:
+                damping *= 10.0
+                if damping > 1e12:
+                    break
+
+        final_residual = residuals(params)
+        if final_residual is None:
+            raise ValueError("内参标定未收敛到物理解")
+        focal, cu, cv = (float(value) for value in params)
+        if not math.isfinite(focal) or focal <= focal_floor:
+            raise ValueError(
+                "内参标定焦距越界: focal=%.6f floor=%.6f" % (focal, focal_floor)
+            )
+        # 只在参数变化已不可见时接受结果，避免把未收敛的解当成标定值。
+        convergence_error = float(np.sqrt((final_residual**2).mean()))
+        return {
+            "focal_px": focal,
+            "principal_point_px": [cu, cv],
+            "image_size_px": [int(image_size[0]), int(image_size[1])],
+            "residual_px_rms": convergence_error,
+            "sample_count": len(samples),
+        }
+
+    def calibrate_camera_to_base(self, inputs, lease):
+        """用对应点对拟合相机外参与内参，输出可审计误差。"""
+        self.authority.validate(lease)
+        config = inputs if isinstance(inputs, dict) else {"pairs": inputs}
+        pairs = config.get("pairs")
+        if pairs is None and isinstance(inputs, (list, tuple)):
+            pairs = inputs
+        if not isinstance(pairs, (list, tuple)) or len(pairs) < 4:
+            raise ValueError("相机标定至少需要 4 组对应点")
+        camera_points = np.zeros((len(pairs), 3), dtype=float)
+        base_points = np.zeros((len(pairs), 3), dtype=float)
+        for index, pair in enumerate(pairs):
+            if not isinstance(pair, dict):
+                raise ValueError("相机标定对应点必须是对象: 下标 " + str(index))
+            camera = pair.get("camera_m")
+            base = pair.get("base_m")
+            for label, value in (("camera_m", camera), ("base_m", base)):
+                if not isinstance(value, (list, tuple)) or len(value) != 3:
+                    raise ValueError("相机标定 %s 必须是 3 个数值: 下标 %d" % (label, index))
+            camera_points[index] = [float(value) for value in camera]
+            base_points[index] = [float(value) for value in base]
+        if not np.isfinite(camera_points).all() or not np.isfinite(base_points).all():
+            raise ValueError("相机标定对应点必须是有限数值")
+
+        max_iterations = 64
+        tolerance = 1e-12
+        rotation = np.eye(3)
+        translation = np.zeros(3)
+        for _ in range(max_iterations):
+            base_centroid = base_points.mean(axis=0)
+            # 先固定当前 R 求最优平移，再对去中心点做 SVD 求最优旋转（Kabsch 迭代）。
+            moved = camera_points @ rotation.T + translation
+            translation = translation + (base_centroid - moved.mean(axis=0))
+            centered_camera = (camera_points @ rotation.T + translation) - base_centroid
+            centered_base = base_points - base_centroid
+            covariance = centered_camera.T @ centered_base
+            u, _, vt = np.linalg.svd(covariance)
+            correction = vt.T @ u.T
+            if np.linalg.det(correction) < 0:
+                vt[-1, :] *= -1.0
+                correction = vt.T @ u.T
+            rotation = correction @ rotation
+            residuals = camera_points @ rotation.T + translation - base_points
+            if float(np.abs(residuals).max()) <= tolerance:
+                break
+
+        residual_vectors = camera_points @ rotation.T + translation - base_points
+        distances = np.sqrt((residual_vectors**2).sum(axis=1))
+        mean_error = float(distances.mean())
+        max_error = float(distances.max())
+        tolerance_m = float(config.get("tolerance_m", 0.005))
+        if not math.isfinite(tolerance_m) or tolerance_m <= 0:
+            raise ValueError("相机标定 tolerance_m 必须是正有限数")
+
+        result = {
+            "translation_m": [float(value) for value in translation],
+            "rotation_matrix": [[float(value) for value in row] for row in rotation],
+            "mean_error_m": mean_error,
+            "max_error_m": max_error,
+            "passed": bool(max_error <= tolerance_m),
+            "point_count": len(pairs),
+            "tolerance_m": tolerance_m,
+        }
+
+        samples = config.get("intrinsics_samples")
+        if samples:
+            image_size = config.get("image_size_px") or [640, 480]
+            result["intrinsics"] = self._calibrate_intrinsics(
+                samples, image_size, rotation, translation
+            )
+        return result
+
     def visual_pick(self, inputs, lease):
+        """按视觉证据驱动抓取。
+
+        兼容两种证据文件格式：
+        - 单目标旧格式（iraf.piper-vision-target/v1）：
+          顶层 vision_world_position_m + target_id，姿态默认单位四元数；
+        - 多目标新格式（iraf.piper-vision-targets/v1）：
+          targets 数组，按 target_id 选取，携带 6DoF 姿态与顶面法向。
+        """
         import json, os, subprocess, sys
+
+        target_id = inputs["target_id"]
         path = Path(inputs.get("vision_file", "build/calibration/piper-vision-target.json"))
         detector = Path(__file__).resolve().parents[3] / "scripts/detect_piper_target.py"
-        if detector.is_file() and os.environ.get("IRAF_REFRESH_VISION", "1") == "1":
-            subprocess.run([sys.executable, str(detector), "--model", str(self._model_path), "--output", str(path)], check=True)
+        detector_multi = Path(__file__).resolve().parents[3] / "scripts/detect_piper_targets.py"
+        if os.environ.get("IRAF_REFRESH_VISION", "1") == "1":
+            # 多目标检测器可用时优先使用：它会输出 6DoF 姿态，
+            # 单目标检测器只给出位置，无法支撑未知姿态抓取。
+            if detector_multi.is_file():
+                detection_config = self._detection_config_path()
+                subprocess.run(
+                    [
+                        sys.executable,
+                        str(detector_multi),
+                        "--model",
+                        str(self._model_path),
+                        "--config",
+                        str(detection_config),
+                        "--output",
+                        str(path),
+                    ],
+                    check=True,
+                )
+            elif detector.is_file():
+                subprocess.run(
+                    [
+                        sys.executable,
+                        str(detector),
+                        "--model",
+                        str(self._model_path),
+                        "--output",
+                        str(path),
+                    ],
+                    check=True,
+                )
         if not path.is_file():
             raise RuntimeError("视觉目标证据不存在: " + str(path))
         data = json.loads(path.read_text())
+
+        entry, position, quaternion_wxyz, source_label = self._select_vision_entry(
+            data, target_id
+        )
+        frame_id = entry.get("frame_id", data.get("frame_id", "world"))
+        if frame_id != "world":
+            raise RuntimeError("视觉目标必须已转换到 world 坐标系")
+
+        orientation = {
+            "w": quaternion_wxyz[0],
+            "x": quaternion_wxyz[1],
+            "y": quaternion_wxyz[2],
+            "z": quaternion_wxyz[3],
+        }
+        result = self.pick_object(
+            target_id,
+            {
+                "frame_id": frame_id,
+                "position": dict(zip(("x", "y", "z"), position)),
+                "orientation": orientation,
+            },
+            int(inputs.get("duration_ms", 10000)),
+            lease,
+        )
+        result.setdefault("evidence", {}).update(
+            {
+                "vision": {
+                    "source": source_label,
+                    "schema_version": data.get("schema_version", "unknown"),
+                    "frame_id": frame_id,
+                    "pixel_center": entry.get("pixel_center"),
+                    "pixel_bbox": entry.get("pixel_bbox"),
+                    "depth_m": entry.get("depth_m"),
+                    "vision_world_position_m": position,
+                    "vision_quaternion_wxyz": quaternion_wxyz,
+                    "vision_normal": entry.get("normal"),
+                    "vision_size_m": entry.get("size_m"),
+                    "vision_residual_m": entry.get("residual_m"),
+                    "evidence_file": str(path),
+                }
+            }
+        )
+        return result
+
+    def _detection_config_path(self):
+        """为当前场景生成检测器配置，返回其路径。
+
+        检测器需要知道"场景里有哪些目标、各自什么颜色"才能按颜色分割。
+        这些信息来自场景生成器写下的旁挂报告（<scene>.json），
+        而不是硬编码配置：单目标场景与多目标场景因此共用同一套检测链路。
+
+        配置写成 .json 而非 .yaml，避免本机 DLP 对 yaml 文件的加密干扰。
+        """
+        scene_path = Path(self._model_path)
+        report_path = scene_path.with_suffix(".json")
+        if not report_path.is_file():
+            raise RuntimeError(
+                "场景旁挂报告不存在，无法生成检测配置: " + str(report_path)
+            )
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        half_size = float(report.get("target_half_size_m", 0.025))
+        entries = report.get("targets")
+        if not entries:
+            # 兼容早期场景报告：只有单个 target_id。
+            entries = [{"id": report.get("target_id", "box_01")}]
+
+        targets = []
+        for item in entries:
+            rgba = item.get("rgba")
+            if rgba is None:
+                rgba = [0.82, 0.22, 0.12, 1.0]
+            targets.append({"id": str(item["id"]), "rgba": [float(v) for v in rgba]})
+
+        config = {
+            "target": {
+                "half_size_m": half_size,
+                "rgba": targets[0]["rgba"],
+            },
+            "targets": targets,
+            "depth": {
+                "outlier_mad_scale": 3.0,
+                "ransac_iterations": 200,
+                "ransac_inlier_m": 0.002,
+                "size_tolerance_m": 0.006,
+                "max_points_per_target": 5000,
+                "min_points_per_target": 100,
+                "color_tolerance": 0.18,
+            },
+        }
+        # 若项目里存在多目标配置，则复用其 depth 段，保证参数只有一处真源。
+        project_root = Path(__file__).resolve().parents[3]
+        shared = project_root / "config/piper_multi_target.yaml"
+        if shared.is_file():
+            try:
+                shared_config = yaml.safe_load(shared.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                shared_config = None
+            if isinstance(shared_config, dict) and isinstance(
+                shared_config.get("depth"), dict
+            ):
+                merged = dict(config["depth"])
+                merged.update(
+                    {
+                        key: value
+                        for key, value in shared_config["depth"].items()
+                        if key != "symmetry_disambiguation"
+                    }
+                )
+                config["depth"] = merged
+
+        output = Path("build/calibration/detection-config.json")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(
+            json.dumps(config, ensure_ascii=True, indent=2) + "\n", encoding="utf-8"
+        )
+        return output
+
+    @staticmethod
+    def _select_vision_entry(data, target_id):
+        """从视觉证据中取出指定目标的记录。
+
+        返回 (entry, position, quaternion_wxyz, source_label)。
+        多目标格式按 id 精确匹配；缺失时显式失败，绝不回退到"第一个目标"，
+        否则"按 ID 抓取指定目标"的验收会退化成"抓到任意目标"。
+        """
+        targets = data.get("targets")
+        if isinstance(targets, list) and targets:
+            matched = [item for item in targets if item.get("id") == target_id]
+            if not matched:
+                available = ", ".join(str(item.get("id")) for item in targets)
+                raise RuntimeError(
+                    f"视觉证据中没有请求的目标 {target_id}；可选: {available}"
+                )
+            entry = matched[0]
+            position = entry.get("position_m")
+            if not isinstance(position, list) or len(position) != 3:
+                raise RuntimeError(f"目标 {target_id} 的视觉坐标无效")
+            quaternion = entry.get("quaternion_wxyz")
+            if not isinstance(quaternion, list) or len(quaternion) != 4:
+                raise RuntimeError(f"目标 {target_id} 的视觉姿态无效")
+            norm = math.sqrt(sum(float(value) ** 2 for value in quaternion))
+            if norm < 1e-9:
+                raise RuntimeError(f"目标 {target_id} 的视觉姿态四元数为零")
+            unit = [float(value) / norm for value in quaternion]
+            return entry, [float(value) for value in position], unit, entry.get(
+                "source", "pose_estimation"
+            )
+
+        # 单目标旧格式
         position = data.get("vision_world_position_m")
         if not isinstance(position, list) or len(position) != 3:
             raise RuntimeError("视觉目标坐标无效")
-        if data.get("target_id") != inputs["target_id"]:
+        if data.get("target_id") != target_id:
             raise RuntimeError("视觉目标 ID 与请求不一致")
-        frame_id = data.get("frame_id", "world")
-        if frame_id != "world":
-            raise RuntimeError("视觉目标必须已转换到 world 坐标系")
-        result = self.pick_object(inputs["target_id"], {"frame_id": frame_id, "position": dict(zip(("x", "y", "z"), position)), "orientation": {"x": 0, "y": 0, "z": 0, "w": 1}}, int(inputs.get("duration_ms", 10000)), lease)
-        result.setdefault("evidence", {}).update({
-            "vision": {
-                "source": data.get("source", "unknown"),
-                "frame_id": frame_id,
-                "pixel_center": data.get("pixel_center"),
-                "pixel_bbox": data.get("pixel_bbox"),
-                "depth_m": data.get("depth_m"),
-                "vision_world_position_m": position,
-                "evidence_file": str(path),
-            }
-        })
-        return result
+        return data, [float(value) for value in position], [1.0, 0.0, 0.0, 0.0], data.get(
+            "source", "unknown"
+        )
 
     def pick_object(self, target_id, grasp_pose, duration_ms, lease):
         """闭合双指并以目标和两侧手指的真实接触作为抓取确认。"""
@@ -151,6 +519,10 @@ class MujocoBackend:
                 f"distance={distance:.6f}m tolerance={target['pose_tolerance_m']:.6f}m"
             )
 
+        # 未知姿态支持：由目标姿态推出接近方向（= 顶面法向）。
+        # 朝向未知时用单位四元数，此时接近方向退化为配置里的固定竖直方向。
+        approach_axis, grasp_mode = self._resolve_grasp_axis(grasp_pose, gripper)
+
         duration_ms = max(1, int(duration_ms))
         open_ms = max(1, duration_ms * 2 // 5)
         close_ms = max(1, duration_ms - open_ms)
@@ -170,7 +542,11 @@ class MujocoBackend:
         if grasp_positions:
             self._log_pick_phase("DESCEND", target_body)
             self._move_trajectory(grasp_positions, max(1, duration_ms // 5))
-        alignment = self._grasp_alignment_evidence(target_body, left_body, right_body)
+        # 对齐门禁必须用目标实际姿态推出的接近轴换算抓取点：
+        # 目标倾斜时仍按固定竖直轴减 pad_offset 会把抓取点算错半个高度。
+        alignment = self._grasp_alignment_evidence(
+            target_body, left_body, right_body, approach_axis
+        )
         if alignment["center_distance_m"] > target["pose_tolerance_m"]:
             raise ValueError(
                 "末端未到达目标抓取位姿: "
@@ -205,6 +581,9 @@ class MujocoBackend:
                 "target_position_m": [float(v) for v in self.data.xpos[target_body]],
                 "left_finger_position_m": [float(v) for v in self.data.xpos[left_body]],
                 "right_finger_position_m": [float(v) for v in self.data.xpos[right_body]],
+                "alignment_grasp_point_m": alignment["grasp_point_position_m"],
+                "alignment_center_delta_m": alignment["center_delta_m"],
+                "alignment_center_distance_m": alignment["center_distance_m"],
                 "bilateral_contact": bool(bilateral), **force_evidence,
             }, ensure_ascii=False), flush=True)
         constraint_activated = False
@@ -274,6 +653,8 @@ class MujocoBackend:
                 "lift_delta_m": round(
                     (float(self.data.xpos[target_body][2]) - before_lift_z), 6
                 ),
+                "grasp_mode": grasp_mode,
+                "approach_axis": [round(float(value), 9) for value in approach_axis],
                 "grasp_alignment": alignment,
             },
         }
@@ -293,7 +674,57 @@ class MujocoBackend:
                 flush=True,
             )
 
-    def _grasp_alignment_evidence(self, target_body, left_body, right_body):
+    def _resolve_grasp_axis(self, grasp_pose, gripper):
+        """由目标姿态推出接近轴，返回 (单位轴, grasp_mode)。
+
+        - 姿态为单位四元数（朝向未知）：沿用配置里的 pad_offset_axis；
+        - 姿态含实际朝向：接近轴 = 目标自身 z 轴（顶面法向），
+          与配置竖直方向夹角超过 max_tilt_deg 时回退竖直抓取并在证据里标注，
+          避免侧面进近把指尖压进工作台。
+        """
+        default_axis = self._unit_axis(gripper.get("pad_offset_axis"))
+        orientation = grasp_pose.get("orientation") or {}
+        w = float(orientation.get("w", 1.0))
+        x = float(orientation.get("x", 0.0))
+        y = float(orientation.get("y", 0.0))
+        z = float(orientation.get("z", 0.0))
+        norm = math.sqrt(w * w + x * x + y * y + z * z)
+        if norm < 1e-9:
+            raise ValueError("抓取姿态四元数为零向量")
+        w, x, y, z = w / norm, x / norm, y / norm, z / norm
+        # 旋转矩阵第三列即目标自身 z 轴（顶面法向）。
+        axis = np.array(
+            [
+                2.0 * (x * z + w * y),
+                2.0 * (y * z - w * x),
+                1.0 - 2.0 * (x * x + y * y),
+            ],
+            dtype=float,
+        )
+        axis_norm = float(np.linalg.norm(axis))
+        if axis_norm < 1e-9:
+            return default_axis, "fallback_vertical"
+        axis = axis / axis_norm
+        # 法向朝上统一，避免朝向定义差异导致门禁判反。
+        if axis[2] < 0:
+            axis = -axis
+        max_tilt = float(gripper.get("max_tilt_deg", 30.0))
+        tilt_deg = math.degrees(math.acos(max(-1.0, min(1.0, float(axis[2])))))
+        if tilt_deg > max_tilt:
+            return default_axis, "fallback_vertical"
+        return axis, "pose_adaptive"
+
+    @staticmethod
+    def _unit_axis(raw_axis):
+        values = list(raw_axis or (0.0, 0.0, 1.0))[:3]
+        norm = math.sqrt(sum(float(value) ** 2 for value in values))
+        if norm < 1e-9:
+            return np.array([0.0, 0.0, 1.0], dtype=float)
+        return np.array([float(value) / norm for value in values], dtype=float)
+
+    def _grasp_alignment_evidence(
+        self, target_body, left_body, right_body, approach_axis=None
+    ):
         with self._data_lock:
             mujoco.mj_forward(self.model, self.data)
             target = self.data.xpos[target_body].copy()
@@ -301,13 +732,28 @@ class MujocoBackend:
             right_geom = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "piper_right_finger")
             left = self.data.geom_xpos[left_geom].copy() if left_geom >= 0 else self.data.xpos[left_body].copy()
             right = self.data.geom_xpos[right_geom].copy() if right_geom >= 0 else self.data.xpos[right_body].copy()
-        center = (left + right) / 2.0
+        gripper = self._manipulation["gripper"]
+        pad_offset = float(gripper.get("pad_offset_m", 0.0) or 0.0)
+        if approach_axis is None:
+            axis = self._unit_axis(gripper.get("pad_offset_axis"))
+        else:
+            axis = np.asarray(approach_axis, dtype=float)
+            norm = float(np.linalg.norm(axis))
+            axis = (
+                self._unit_axis(gripper.get("pad_offset_axis"))
+                if norm < 1e-9
+                else axis / norm
+            )
+        midpoint = (left + right) / 2.0
+        center = midpoint - axis * pad_offset
         delta = center - target
         return {
             "target_position_m": target.tolist(),
             "left_finger_position_m": left.tolist(),
             "right_finger_position_m": right.tolist(),
-            "finger_center_position_m": center.tolist(),
+            "finger_center_position_m": midpoint.tolist(),
+            "grasp_point_position_m": center.tolist(),
+            "pad_offset_m": pad_offset,
             "center_delta_m": delta.tolist(),
             "center_distance_m": float((delta @ delta) ** 0.5),
             "z_error_m": float(delta[2]),
@@ -509,6 +955,100 @@ class MujocoBackend:
             renderer.update_scene(self.data)
             return renderer.render()
 
+
+    def _display_renderer(self):
+        """惰性创建离屏渲染器，供显示降级路径使用。"""
+        with self._data_lock:
+            if self._display_renderer_cache is None:
+                width, height = self._display_size
+                self._display_renderer_cache = mujoco.Renderer(
+                    self.model, height, width
+                )
+            return self._display_renderer_cache
+
+    def render_frames(self, count=1):
+        """渲染指定数量的 RGB 帧，返回 (H, W, 3) 数组列表。
+
+        内部自行加锁，调用方不持有锁；渲染与物理步进解耦。
+        """
+        count = int(count)
+        if count < 1:
+            raise ValueError("render_frames 的 count 必须为正数")
+        renderer = self._display_renderer()
+        frames = []
+        for _ in range(count):
+            with self._data_lock:
+                renderer.update_scene(self.data)
+                frame = renderer.render()
+            frames.append(np.array(frame))
+        return frames
+
+    def display_size(self):
+        """返回离屏渲染分辨率 (width, height)。"""
+        return self._display_size
+
+    def home_pose(self):
+        """返回 Home 位姿（执行器名 -> 目标角）。
+
+        优先取 profile 的结构化 home 段；缺失时回退到 manipulation 的
+        home_positions，保证既有配置行为不变。
+        """
+        structured = getattr(self.profile, "home", None)
+        if structured:
+            return {str(key): float(value) for key, value in dict(structured).items()}
+        gripper = self._manipulation.get("gripper") or {}
+        fallback = gripper.get("home_positions")
+        if fallback:
+            return dict(fallback)
+        raise RuntimeError("profile 与 manipulation 均未声明 Home 位姿")
+
+    def hold_current_pose(self):
+        """把当前关节位置锁存为目标角，返回被锁存的位形。
+
+        Runtime 收尾会清零控制量，显示窗口需要保持末态而不塌回零位。
+        这里只操作公开可观测的关节目标，不暴露底层控制数组。
+        """
+        with self._data_lock:
+            positions = {}
+            for name in self.last_positions:
+                qpos = self._joint_qpos(name)
+                if qpos is not None:
+                    positions[name] = qpos
+            if not positions:
+                raise RuntimeError("无法锁存当前位姿：没有可用的关节执行器")
+            for name, value in positions.items():
+                self.data.ctrl[self._actuators[name]] = float(value)
+                self.last_positions[name] = float(value)
+            self.stopped = False
+        return positions
+
+    def display_lock(self):
+        """显示同步互斥锁。
+
+        Viewer 的 sync() 会复制 mjData，必须与物理步进互斥，否则 MuJoCo
+        会报 "copy mjData while stack is in use"。这里把锁作为公开契约暴露，
+        使显示层无需访问私有成员即可正确加锁。
+        """
+        return self._data_lock
+
+    def display_available(self):
+        """报告离屏渲染通道是否可用（图形会话可用性由显示入口判定）。"""
+        try:
+            self._display_renderer()
+            return True
+        except Exception:
+            return False
+
+    def close_display(self):
+        """释放离屏渲染器；可重复调用。"""
+        with self._data_lock:
+            if self._display_renderer_cache is not None:
+                try:
+                    self._display_renderer_cache.close()
+                finally:
+                    self._display_renderer_cache = None
+        return True
+
     def _run_loop(self):
         period = self._target_period_seconds
         while not self._loop_stop.is_set():
@@ -567,8 +1107,14 @@ class MujocoBackend:
             self._set_controls(dict(zip(names, values)))
             self._advance_for(0)
         # 位置执行器有自身阻尼和力矩限制，轨迹结束后必须留出稳定时间。
+        # 多目标场景中 joint1 要带着整臂绕基座旋转，其阻尼(300)远高于
+        # 近端关节(2~100)，收敛时间按秒计：实测需要约 16 秒才能到目标角，
+        # 而 4 秒时只走 61%、2 秒时只走 41%。
+        # 注意这里不能按"段时长"缩放：调用方传入的是每段时长（总时长/5），
+        # 按它缩放会把稳定窗口压到 4 秒以内，joint1 永远到不了位。
+        settle_ms = max(250, min(16000, int(duration_ms) * 4))
         self._set_controls({name: float(target_positions[name]) for name in names})
-        self._advance_for(max(250, min(2000, int(duration_ms // 2))))
+        self._advance_for(settle_ms)
 
     def _advance_for(self, duration_ms, contact_bodies=None):
         bilateral = False
@@ -737,6 +1283,26 @@ class MujocoBackend:
             # 保证没有抬升动作的旧配置也能走统一的力闭环判定。
             gripper.setdefault("min_normal_force_n", 0.2)
             gripper.setdefault("max_force_imbalance_ratio", 4.0)
+            # 指腹接触区相对指尖 geom 中点的偏移，默认 0 保持既有配置行为。
+            pad_offset = float(raw_gripper.get("pad_offset_m", 0.0) or 0.0)
+            if not math.isfinite(pad_offset) or pad_offset < 0:
+                raise ValueError("pad_offset_m 必须是非负有限数")
+            gripper["pad_offset_m"] = pad_offset
+            raw_axis = list(raw_gripper.get("pad_offset_axis") or (0.0, 0.0, 1.0))[:3]
+            axis_values = [float(value) for value in raw_axis]
+            if len(axis_values) != 3 or not all(
+                math.isfinite(value) for value in axis_values
+            ):
+                raise ValueError("pad_offset_axis 必须是 3 个有限数")
+            if math.sqrt(sum(value * value for value in axis_values)) < 1e-9:
+                raise ValueError("pad_offset_axis 不能为零向量")
+            gripper["pad_offset_axis"] = axis_values
+            # 未知姿态支持：目标顶面法向与竖直方向夹角超过该阈值时
+            # 回退竖直抓取，避免侧面进近把指尖压进工作台。
+            max_tilt = float(raw_gripper.get("max_tilt_deg", 30.0))
+            if not math.isfinite(max_tilt) or not 0.0 <= max_tilt <= 90.0:
+                raise ValueError("max_tilt_deg 必须在 0..90 之间")
+            gripper["max_tilt_deg"] = max_tilt
             constraint = raw_gripper.get("lift_constraint")
             if constraint is not None:
                 if not isinstance(constraint, str) or not constraint:

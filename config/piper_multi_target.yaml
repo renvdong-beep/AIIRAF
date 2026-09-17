@@ -1,0 +1,183 @@
+schema_version: iraf.piper-simulation-baseline/v1
+description: Piper 受控仿真抓取基线（无视觉真值验收）
+
+model:
+  vendor_dir: vendor/agilex_piper
+  source_lock: vendor/agilex_piper/source-lock.json
+  source: vendor/agilex_piper/piper_description/mujoco_model/piper_description.xml
+  arm_joints: [joint1, joint2, joint3, joint4, joint5, joint6]
+  bodies:
+    wrist: link6
+    left_finger: link7
+    right_finger: link8
+  finger_geoms:
+    left: piper_left_finger
+    right: piper_right_finger
+
+workbench:
+  top_z_m: 0.0
+  half_size_m: 0.8
+  half_thickness_m: 0.025
+  friction: "1.0 0.02 0.001"
+
+target:
+  id: box_01
+  # 夹爪最大开度为 joint7/8 = 0.035m，指尖内表面间距约 70mm；
+  # 50mm 方块在完全张开时两侧各留约 10mm 进近余量，避免下降阶段刮碰目标。
+  half_size_m: 0.025
+  mass_kg: 0.04
+  friction: "2.0 0.05 0.001"
+  rgba: "0.82 0.22 0.12 1"
+
+grasp:
+  # 双指指尖 geom 中点的目标抓取位置（世界坐标）。
+  # z 不在此声明，必须由 workbench.top_z_m + target.half_size_m 推出，保证方块贴台面。
+  finger_center_xy_m: [0.19, 0.0]
+  # 多目标场景中 APPROACH 需要明显高于目标：目标分布在基座两侧，
+  # 由 HOME 运动到 APPROACH 会让 joint1 大角度旋转，
+  # 进近高度不足时夹爪会横向扫过并撞飞邻近目标（实测把目标顶到 0.14m 高）。
+  # 抬高到 0.14m 后 HOME -> APPROACH -> DESCEND 全程近似竖直。
+  pregrasp_offset_m: 0.20
+
+
+  # 预抓取相对抓取点后退的方向，默认沿重力反方向抬起，避免沿夹爪朝向撞入工作台
+  approach_direction: [0.0, 0.0, 1.0]
+  # 指尖相对台面的最小间隙。指腹 geom 中心比抓取点高约 25mm，
+  # 直接用方块中心作为指尖中心会让指尖扎进工作台，因此由求解器自动配平高度。
+  tip_clearance_m: 0.005
+  clearance_iterations: 8
+  # 抬升阶段相对抓取点沿接近方向抬起的位移
+  lift_offset_m: 0.08
+  # 多目标场景的 HOME 抬高量：HOME 放在预抓取位正上方这么高处，
+  # 使 HOME -> APPROACH 近似竖直下降，避免横扫台面撞飞干扰目标。
+  # 目标分布在 y=±60mm 处时 APPROACH 需要 joint1 大角度旋转，
+  # 抬高量必须让整个 HOME 与 APPROACH 之间的构型都远离台面。
+  home_rise_m: 0.25
+
+
+  # 未知姿态运行时：接近方向取自目标顶面法向；
+  # 法向与竖直夹角超过该值时回退竖直抓取，避免侧面进近导致指尖撞台面。
+  max_tilt_deg: 30.0
+  solver:
+    iterations: 800
+    step: 0.5
+    tolerance_m: 1.0e-05
+
+gripper:
+  joints: [joint7, joint8]
+  open:
+    joint7: 0.035
+    joint8: -0.035
+  # 闭合不能命令到 0：夹爪是位置控制，命令到行程末端会以巨大接触力挤压目标并让仿真发散。
+  # 0.023 对应约 2mm 挤压量，与单目标验收保持一致（法向力约 0.25N）。
+  # 继续收紧（如 0.019）会把 50mm 方块从指间挤出并推走 25mm，属于过度挤压。
+  closed:
+    joint7: 0.023
+    joint8: -0.023
+
+
+  lift:
+    joint1: 0.0
+    joint2: 0.2
+    joint3: -0.25
+    joint4: 0.0
+    joint5: 0.0
+    joint6: 0.0
+
+scene:
+  # 位置增益：800 会因缺少阻尼在 2ms 步长下发散，200 是稳定值。
+  # 注意只调这一个值会连带改变 joint2/joint3 的动力学：
+  # 实测把整体 kp 提到 400 反而让 joint1 收敛更差（-0.18 vs -0.25），
+  # 因此 joint1 的增益由"不得低于自身阻尼"的规则单独提高，不在此统一放大。
+  arm_position_kp: 200.0
+
+
+  timestep_s: 0.002
+  gravity: "0 0 -9.81"
+  finger_friction: "2.0 0.05 0.001"
+  # 相机固定并对准抓取点。相机位姿可标定是视觉精度可审计的前提：
+  # targetbody 模式相机随目标移动，检测误差无法通过标定消除。
+  camera:
+    name: overhead_camera
+    pos_m: [0.28, -0.72, 0.72]
+    fovy_deg: 78
+    # 多目标场景注视点取三个目标的几何中心，保证全部目标落在视场内。
+    look_at_m: [0.202, -0.008, 0.025]
+
+
+
+acceptance:
+  pose_tolerance_m: 0.005
+  min_lift_delta_m: 0.02
+  min_normal_force_n: 0.2
+  max_force_imbalance_ratio: 4.0
+  # 求解残差必须显著小于门禁容差，避免用临界解伪造成功
+  solver_error_factor: 0.1
+  # true 时不使用抓取锚点焊接夹具，抬升位移必须完全由双指摩擦力承担
+  require_friction_lift: true
+  # 多目标 / 未知姿态验收：检测位置与真值的最大允许误差、姿态角最大允许误差。
+  max_position_error_m: 0.005
+  max_orientation_error_deg: 10.0
+
+# ---------------------------------------------------------------------------
+# 多目标 / 未知姿态扩展段
+# ---------------------------------------------------------------------------
+
+# 多目标场景：每个目标有独立 ID 与颜色，感知层按颜色分割后用 ID 标注。
+# 该段缺省时由上面的 target 单目标构造单元素列表，既有单目标验收不受影响。
+# pos_m / euler_deg 只作为场景生成与验收比对的真值，感知路径禁止读取。
+# 目标布局说明：
+# 1) 三个目标沿 x 方向排开（y 接近 0），使机械臂无需绕 joint1 大幅旋转。
+#    joint1 阻尼(300)远高于其它关节，大角度构型下的稳态跟踪误差会把
+#    抓取点带偏 2cm 以上；本验收要考察的是"多目标区分 + 6DoF 感知精度"，
+#    不应被关节伺服精度掩盖。
+# 2) 姿态 yaw 取 90° 的整数倍：正方体有 90° 对称等价类，夹爪是平行指，
+#    只有面内朝向与夹爪张开方向一致时才能无干涉夹取。
+# 3) r/p（倾斜）保持 0：倾斜目标需要夹爪随姿态自适应旋转，
+#    当前抓取执行链尚未实现绕进近轴的姿态对齐，故不在本验收中考察。
+# 4) 相邻目标中心沿 x 至少间隔 105mm：方块边长 50mm、夹爪张开内距 70mm，
+#    间距不足时夹爪会同时碰到相邻目标（validate_grasp_pose 会显式拦截）。
+targets:
+  - id: box_red
+    rgba: [0.85, 0.15, 0.15, 1.0]
+    pos_m: [0.19, 0.0, 0.025]
+    euler_deg: [0.0, 0.0, 0.0]
+  - id: box_green
+    rgba: [0.15, 0.75, 0.25, 1.0]
+    pos_m: [0.30, 0.075, 0.025]
+    euler_deg: [0.0, 0.0, 90.0]
+  - id: box_blue
+    rgba: [0.15, 0.30, 0.85, 1.0]
+    pos_m: [0.225, 0.145, 0.025]
+    euler_deg: [0.0, 0.0, 180.0]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 深度通道与姿态拟合参数（多目标 / 未知姿态验收使用）。
+depth:
+  # MAD 离群剔除的尺度阈值：超过 median + k * 1.4826 * MAD 的点视为背景/台面。
+  outlier_mad_scale: 3.0
+  ransac_iterations: 200
+  ransac_inlier_m: 0.002
+  # 拟合出的边长与配置边长之差超过该容差即判检测失败，不做静默兜底。
+  size_tolerance_m: 0.006
+  max_points_per_target: 5000
+  # 平面内最少点数，低于该值认为是噪声掩码。
+  # 50mm 方块在约 1m 视距下只有 15x15 像素左右（约 220 个有效深度点），
+  # 门槛设得过高会把正常目标误判为噪声。
+  min_points_per_target: 80
+  # 颜色分割容差（归一化颜色距离）。工作台与方块色相差异很大，
+  # 0.18 足以分离，同时容忍光照带来的明暗漂移。
+  color_tolerance: 0.18
+

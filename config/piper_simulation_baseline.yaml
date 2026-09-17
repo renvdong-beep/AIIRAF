@@ -1,0 +1,91 @@
+schema_version: iraf.piper-simulation-baseline/v1
+description: Piper 受控仿真抓取基线（无视觉真值验收）
+
+model:
+  vendor_dir: vendor/agilex_piper
+  source_lock: vendor/agilex_piper/source-lock.json
+  source: vendor/agilex_piper/piper_description/mujoco_model/piper_description.xml
+  arm_joints: [joint1, joint2, joint3, joint4, joint5, joint6]
+  bodies:
+    wrist: link6
+    left_finger: link7
+    right_finger: link8
+  finger_geoms:
+    left: piper_left_finger
+    right: piper_right_finger
+
+workbench:
+  top_z_m: 0.0
+  half_size_m: 0.8
+  half_thickness_m: 0.025
+  friction: "1.0 0.02 0.001"
+
+target:
+  id: box_01
+  # 夹爪最大开度为 joint7/8 = 0.035m，指尖内表面间距约 70mm；
+  # 50mm 方块在完全张开时两侧各留约 10mm 进近余量，避免下降阶段刮碰目标。
+  half_size_m: 0.025
+  mass_kg: 0.04
+  friction: "2.0 0.05 0.001"
+  rgba: "0.82 0.22 0.12 1"
+
+grasp:
+  # 双指指尖 geom 中点的目标抓取位置（世界坐标）。
+  # z 不在此声明，必须由 workbench.top_z_m + target.half_size_m 推出，保证方块贴台面。
+  finger_center_xy_m: [0.19, 0.0]
+  pregrasp_offset_m: 0.04
+  # 预抓取相对抓取点后退的方向，默认沿重力反方向抬起，避免沿夹爪朝向撞入工作台
+  approach_direction: [0.0, 0.0, 1.0]
+  # 指尖相对台面的最小间隙。指腹 geom 中心比抓取点高约 25mm，
+  # 直接用方块中心作为指尖中心会让指尖扎进工作台，因此由求解器自动配平高度。
+  tip_clearance_m: 0.005
+  clearance_iterations: 8
+  # 抬升阶段相对抓取点沿接近方向抬起的位移
+  lift_offset_m: 0.08
+  solver:
+    iterations: 800
+    step: 0.5
+    tolerance_m: 1.0e-05
+
+gripper:
+  joints: [joint7, joint8]
+  open:
+    joint7: 0.035
+    joint8: -0.035
+  # 闭合不能命令到 0：夹爪是位置控制，命令到行程末端会以巨大接触力挤压目标并让仿真发散。
+  # 0.023 对应约 2mm 挤压量，足以产生稳定法向接触力。
+  closed:
+    joint7: 0.023
+    joint8: -0.023
+  lift:
+    joint1: 0.0
+    joint2: 0.2
+    joint3: -0.25
+    joint4: 0.0
+    joint5: 0.0
+    joint6: 0.0
+
+scene:
+  # 位置增益：800 会因缺少阻尼在 2ms 步长下发散，200 是稳定上限附近的安全值。
+  arm_position_kp: 200.0
+  timestep_s: 0.002
+  gravity: "0 0 -9.81"
+  finger_friction: "2.0 0.05 0.001"
+  # 相机固定并对准抓取点。相机位姿可标定是视觉精度可审计的前提：
+  # targetbody 模式相机随目标移动，检测误差无法通过标定消除。
+  camera:
+    name: overhead_camera
+    pos_m: [0.28, -0.72, 0.72]
+    fovy_deg: 78
+    # 缺省注视抓取点；显式声明便于视觉标定与检测复现一致。
+    look_at_m: [0.19, 0.0, 0.025]
+
+acceptance:
+  pose_tolerance_m: 0.005
+  min_lift_delta_m: 0.02
+  min_normal_force_n: 0.2
+  max_force_imbalance_ratio: 4.0
+  # 求解残差必须显著小于门禁容差，避免用临界解伪造成功
+  solver_error_factor: 0.1
+  # true 时不使用抓取锚点焊接夹具，抬升位移必须完全由双指摩擦力承担
+  require_friction_lift: true

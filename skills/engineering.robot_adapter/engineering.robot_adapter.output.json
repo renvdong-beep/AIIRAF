@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["skill", "accepted", "robot_id", "artifacts", "blocked_overwrites", "report"],
+  "additionalProperties": false,
+  "properties": {
+    "skill": {"type": "string", "const": "engineering.robot_adapter"},
+    "accepted": {
+      "type": "boolean",
+      "description": "全部工件均成功写出才为 true；任一被拒写（如文件已存在）即为 false"
+    },
+    "robot_id": {"type": "string", "minLength": 1},
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "path", "bytes"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["profile", "adapter", "baseline", "validation_report"]
+          },
+          "path": {"type": "string", "minLength": 1},
+          "bytes": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
+    "blocked_overwrites": {
+      "type": "array",
+      "description": "因目标文件已存在而被拒绝的工件；用于显式暴露未完成项",
+      "items": {
+        "type": "object",
+        "required": ["kind", "path", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": {"type": "string"},
+          "path": {"type": "string"},
+          "reason": {"type": "string"}
+        }
+      }
+    },
+    "report": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "robot_id",
+        "preset",
+        "declared_capabilities",
+        "remaining_manual_work"
+      ],
+      "properties": {
+        "schema_version": {"type": "string", "const": "iraf.robot-adapter-wizard/v1"},
+        "robot_id": {"type": "string"},
+        "preset": {"type": "string"},
+        "preset_display_name": {"type": "string"},
+        "dof": {"type": "integer"},
+        "gripper_type": {"type": "string"},
+        "declared_capabilities": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "remaining_manual_work": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "preset_notes": {"type": "string"}
+      }
+    }
+  }
+}

@@ -1,13 +1,31 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "required": ["skill", "accepted", "target_id", "confirmation"],
+  "required": [
+    "skill",
+    "accepted",
+    "target_id",
+    "confirmation"
+  ],
   "additionalProperties": false,
   "properties": {
-    "skill": {"const": "pick_object"},
-    "accepted": {"const": true},
-    "target_id": {"type": "string", "minLength": 1},
-    "confirmation": {"enum": ["contact", "constraint", "gripper_state"]},
+    "skill": {
+      "const": "pick_object"
+    },
+    "accepted": {
+      "const": true
+    },
+    "target_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "confirmation": {
+      "enum": [
+        "contact",
+        "constraint",
+        "gripper_state"
+      ]
+    },
     "evidence": {
       "type": "object",
       "required": [
@@ -18,17 +36,81 @@
       ],
       "additionalProperties": false,
       "properties": {
-        "target_body": {"type": "string", "minLength": 1},
-        "left_finger_body": {"type": "string", "minLength": 1},
-        "right_finger_body": {"type": "string", "minLength": 1},
-        "bilateral_contact": {"const": true},
-        "lifted": {"const": true},
-        "constraint_activated": {"type": "boolean"},
-        "lift_delta_m": {"type": "number", "minimum": 0}
-        ,"left_normal_force_n": {"type": "number", "minimum": 0}
-        ,"right_normal_force_n": {"type": "number", "minimum": 0}
-        ,"force_imbalance_ratio": {"type": ["number", "null"], "minimum": 1}
-        ,"force_ok": {"const": true}
+        "target_body": {
+          "type": "string",
+          "minLength": 1
+        },
+        "left_finger_body": {
+          "type": "string",
+          "minLength": 1
+        },
+        "right_finger_body": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bilateral_contact": {
+          "const": true
+        },
+        "lifted": {
+          "const": true
+        },
+        "constraint_activated": {
+          "type": "boolean"
+        },
+        "lift_delta_m": {
+          "type": "number",
+          "minimum": 0
+        },
+        "left_normal_force_n": {
+          "type": "number",
+          "minimum": 0
+        },
+        "right_normal_force_n": {
+          "type": "number",
+          "minimum": 0
+        },
+        "force_imbalance_ratio": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "force_ok": {
+          "const": true
+        },
+        "grasp_alignment": {
+          "type": "object",
+          "required": [
+            "center_distance_m"
+          ],
+          "properties": {
+            "center_distance_m": {
+              "type": "number",
+              "minimum": 0
+            },
+            "pad_offset_m": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        },
+        "grasp_mode": {
+          "enum": [
+            "pose_adaptive",
+            "fallback_vertical"
+          ],
+          "description": "未知姿态抓取模式：pose_adaptive 按目标顶面法向适应，fallback_vertical 回退竖直抓取"
+        },
+        "approach_axis": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "实际使用的接近轴（世界系单位向量）"
+        }
       }
     }
   }

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["skill", "accepted", "target_id", "evidence"],
+  "additionalProperties": false,
+  "properties": {
+    "skill": {"const": "display_pick"},
+    "accepted": {"const": true},
+    "target_id": {"type": "string"},
+    "evidence": {
+      "type": "object",
+      "required": ["vision"],
+      "properties": {
+        "vision": {
+          "type": "object",
+          "required": ["source", "frame_id", "vision_world_position_m", "evidence_file"]
+        }
+      }
+    }
+  }
+}

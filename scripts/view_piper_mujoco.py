@@ -1,139 +1,268 @@
-"""在 Ubuntu X11 图形会话中打开 Piper Viewer 并演示一次 pick_object。"""
+"""打开 Piper MuJoCo Viewer 并演示一次抓取全过程。
+
+本脚本是薄封装：显示编排全部委托给 iraf_adapters.mujoco.viewer_runner，
+抓取参数取自基线配置与 RobotProfile，不再内联任何魔数。
+
+命令行接口保持向后兼容（--model / --seconds / --pick-duration-ms）。
+"""
 
 import argparse
 import json
-import subprocess
 import sys
-import threading
-import time
 from pathlib import Path
 
-import mujoco.viewer
+import yaml
 
-from iraf_adapters.mujoco.mujoco_backend import MujocoBackend
-from iraf_core.authority import ControlAuthorityManager
+from iraf_adapters.bootstrap import build_runtime_from_env
+from iraf_adapters.mujoco import viewer_runner
 from iraf_core.policy import AuthenticatedContext
-from iraf_core.profile import load_robot_profile, load_safety_policy
-from iraf_core.registry import SkillRegistry
-from iraf_core.runtime import SkillRuntime
-from iraf_core.store import SqliteExecutionStore
+
+
+def _manipulation_from_scene_report(scene_report, target_id):
+    """从场景旁挂报告构造 manipulation 段。
+
+    场景构建器已通过 IK 求出 approach/grasp/lift 位形与 pad_offset_m，
+    这里直接复用，避免在显示入口里重算或内联任何魔数。
+    """
+    targets = scene_report.get("targets") or []
+    entry = None
+    for item in targets:
+        if str(item.get("id")) == str(target_id):
+            entry = item
+            break
+    if entry is None:
+        raise ValueError("场景报告中找不到目标: " + str(target_id))
+
+    gripper = scene_report.get("gripper") or {}
+    required = (
+        "left_finger_body",
+        "right_finger_body",
+        "open_positions",
+        "closed_positions",
+        "approach_positions",
+        "grasp_positions",
+    )
+    missing = [key for key in required if not gripper.get(key)]
+    if missing:
+        raise ValueError(
+            "场景报告缺少夹爪字段 " + str(missing) + "，请重新构建场景"
+        )
+
+    gripper_entry = {
+        key: gripper[key]
+        for key in (
+            "left_finger_body",
+            "right_finger_body",
+            "open_positions",
+            "closed_positions",
+            "approach_positions",
+            "grasp_positions",
+            "lift_positions",
+            "home_positions",
+            "min_lift_delta_m",
+            "min_normal_force_n",
+            "max_force_imbalance_ratio",
+            "pad_offset_m",
+            "pad_offset_axis",
+        )
+        if gripper.get(key) is not None
+    }
+    gripper_entry.setdefault("max_tilt_deg", 30.0)
+
+    target_entry = {
+        "body": str(entry.get("body", target_id)),
+        "pose_tolerance_m": float(scene_report.get("pose_tolerance_m", 0.005)),
+    }
+    return {"targets": {str(target_id): target_entry}, "gripper": gripper_entry}
+
+
+def _load_scene_report(model_path):
+    """读取场景旁挂报告（与模型同目录、同名 .json）。"""
+    report_path = model_path.with_suffix(".json")
+    if not report_path.is_file():
+        raise ViewerError(
+            "缺少场景报告 " + str(report_path) + "，请先运行 scripts/build_piper_baseline.py"
+        )
+    return json.loads(report_path.read_text(encoding="utf-8"))
+
+
+def _default_model(root):
+    return root / "build/models/piper-pick-scene.xml"
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", type=Path, default=Path("build/models/piper-pick-scene.xml"))
-    parser.add_argument("--seconds", type=float, default=0, help="0 表示保持窗口")
+    parser.add_argument("--model", type=Path, default=None)
+    parser.add_argument("--seconds", type=float, default=0.0, help="0 表示保持窗口")
     parser.add_argument("--pick-duration-ms", type=int, default=12000)
+    parser.add_argument(
+        "--baseline",
+        type=Path,
+        default=None,
+        help="基线配置路径（默认 config/piper_simulation_baseline.yaml）",
+    )
+    parser.add_argument("--target-id", default=None, help="抓取目标 ID")
+    parser.add_argument("--correlation-id", default="viewer-pick")
     args = parser.parse_args(argv)
-    if not args.model.is_file():
-        parser.error("模型文件不存在: " + str(args.model))
-    if args.seconds < 0:
-        parser.error("seconds 不能为负数")
-    if args.pick_duration_ms < 1000 or args.pick_duration_ms > 30000:
-        parser.error("pick-duration-ms 必须在 1000..30000 之间")
 
     root = Path(__file__).resolve().parents[1]
+    model = (args.model or _default_model(root)).resolve()
+    baseline_path = (args.baseline or root / "config/piper_simulation_baseline.yaml")
+    if not model.is_file():
+        parser.error("模型文件不存在: " + str(model))
+    if not baseline_path.is_file():
+        parser.error("基线配置不存在: " + str(baseline_path))
+    if args.seconds < 0:
+        parser.error("seconds 不能为负数")
+    if not 1000 <= args.pick_duration_ms <= 30000:
+        parser.error("pick-duration-ms 必须在 1000..30000 之间")
+
+    baseline = yaml.safe_load(baseline_path.read_text(encoding="utf-8")) or {}
+    scene_report = _load_scene_report(model)
+    target_id = (
+        args.target_id
+        or str(scene_report.get("target_id") or "")
+        or str((baseline.get("target") or {}).get("id", "box_01"))
+    )
+
+    # 显示通道先探测后使用：不可用即显式失败，不静默假装成功。
+    display_mode, detail, fallback_reason = viewer_runner.resolve_display_mode()
+    print("DISPLAY_MODE", display_mode, flush=True)
+    print("DISPLAY_DETAIL", detail, flush=True)
+    if fallback_reason:
+        print("FALLBACK_REASON", fallback_reason, flush=True)
+    if display_mode == viewer_runner.DISPLAY_UNAVAILABLE:
+        print("VIEWER_UNAVAILABLE", detail, file=sys.stderr, flush=True)
+        return 2
+
+    import os
+
+    # realtime=False：抓取在仿真时间内完成（实测约 2 秒，SUCCEEDED）。
+    # 若开启 realtime，每步强制等待一个 timestep，pick_object 需约 92 秒，
+    # 必然超出技能声明的 30 秒租约——这是显示实时性与超时预算的固有冲突，
+    # 由显示层通过"抓取快速完成 + 主循环持续渲染回放"解耦，而非放宽后端时序。
+    os.environ["IRAF_BACKEND_CONFIG"] = json.dumps(
+        {
+            "model_path": str(model),
+            "manipulation": _manipulation_from_scene_report(scene_report, target_id),
+            "realtime": False,
+        }
+    )
+    os.environ.setdefault(
+        "IRAF_PROFILE", str(root / "profiles/piper_mujoco.yaml")
+    )
+    os.environ.setdefault(
+        "IRAF_SAFETY_POLICY", str(root / "profiles/safety/simulation_lab.yaml")
+    )
+    os.environ.setdefault("IRAF_SKILL_ROOT", str(root / "skills"))
+    os.environ.setdefault(
+        "IRAF_BACKEND_ENTRYPOINT", "iraf_adapters.mujoco.mujoco_backend:MujocoBackend"
+    )
+    os.environ.setdefault(
+        "IRAF_EVENT_STORE", str(root / "build/iraf-viewer.db")
+    )
+
+    runtime = build_runtime_from_env()
+    profile = runtime.profile
+    backend = runtime.backend
+
+    # 抓取位姿：优先用视觉坐标，缺失时回退场景真值（仅自检，不作为感知输入）。
     vision_file = root / "build/calibration/piper-vision-target.json"
-    try:
-        subprocess.run([sys.executable, str(Path(__file__).resolve().parent / "detect_piper_target.py"), "--model", str(args.model), "--output", str(vision_file)], check=True, cwd=root)
-    except Exception as exc:
-        print("VISION_REFRESH_ERROR", exc, flush=True)
-    profile = load_robot_profile(root / "profiles/piper_mujoco.yaml")
-    safety = load_safety_policy(root / "profiles/safety/simulation_lab.yaml")
-    authority = ControlAuthorityManager()
-    manipulation = {
-        "targets": {"box_01": {"body": "box_01", "pose_tolerance_m": 0.005}},
-        "gripper": {
-            "left_finger_body": "link7", "right_finger_body": "link8",
-            "open_positions": {"joint1": 0, "joint2": 0, "joint3": 0, "joint4": 0, "joint5": 0, "joint6": 0, "joint7": 0.035, "joint8": -0.035},
-            "closed_positions": {"joint1": 0, "joint2": 0, "joint3": 0, "joint4": 0, "joint5": 0, "joint6": 0, "joint7": 0, "joint8": 0},
-            "home_positions": {"joint1": 0.0, "joint2": 0.65, "joint3": -1.15, "joint4": 0.0, "joint5": 0.35, "joint6": 0.0},
-            "approach_positions": {"joint1": -0.142458, "joint2": 0.230688, "joint3": 0.0, "joint4": 0.005682, "joint5": 0.272035, "joint6": 0.015265},
-            "grasp_positions": {"joint1": -0.141073, "joint2": 1.204377, "joint3": -0.018321, "joint4": -0.021591, "joint5": -0.024751, "joint6": -0.001866},
-            "lift_positions": {"joint1": 0, "joint2": 0.2, "joint3": -0.25, "joint4": 0, "joint5": 0, "joint6": 0, "joint7": 0, "joint8": 0},
-            "min_lift_delta_m": 0.02, "min_normal_force_n": 0.2,
-            "max_force_imbalance_ratio": 4.0,
-            "lift_constraint": "box_01_lift_constraint",
-            "lift_anchor_body": "grasp_anchor",
-        },
-    }
-    backend = MujocoBackend.from_config({"model_path": str(args.model.resolve()), "manipulation": manipulation, "realtime": True}, profile, authority)
-    runtime = SkillRuntime(profile, safety, backend, SkillRegistry().load_directory(root / "skills"), authority, SqliteExecutionStore(":memory:"))
-    # MuJoCo 模型的 qpos 可能来自闭合姿态；演示必须从张开夹爪开始，避免初始与目标重叠。
-    backend._set_gripper_controls(manipulation["gripper"]["open_positions"])
-    target_id = backend._body_id("box_01")
-    target = backend.data.xpos[target_id].copy()
-    vision_file = root / "build/calibration/piper-vision-target.json"
-    vision_source = "scene"
+    source = "scene"
     if vision_file.is_file():
-        vision = json.loads(vision_file.read_text())
+        vision = json.loads(vision_file.read_text(encoding="utf-8"))
         observed = vision.get("vision_world_position_m")
         if isinstance(observed, list) and len(observed) == 3:
-            target = observed
-            vision_source = "camera"
-    print("PICK_TARGET_SOURCE", vision_source, flush=True)
-    pick_done = threading.Event()
-    pick_error = []
-
-    def run_pick():
-        try:
-            time.sleep(1.0)
-            now = int(time.time() * 1000)
-            request = {
-            "request_id": "viewer-pick", "idempotency_key": "viewer-pick-" + str(now), "correlation_id": "viewer-pick",
-            "skill": "pick_object", "skill_version_constraint": "1.0.0",
-            "parameters": {"target_id": "box_01", "grasp_pose": {"frame_id": "world", "position": {"x": float(target[0]), "y": float(target[1]), "z": float(target[2])}, "orientation": {"x": 0, "y": 0, "z": 0, "w": 1}}, "duration_ms": args.pick_duration_ms},
-            "deadline_unix_ms": now + max(90000, args.pick_duration_ms * 8), "profile_name": profile.name, "profile_version": profile.version, "profile_digest": profile.digest,
-            "safety_policy_name": safety.name, "safety_policy_version": safety.version, "safety_policy_digest": safety.digest,
-            "resource_id": "piper-mujoco", "controller": "viewer-pick",
-        }
-            result = runtime.execute(request, AuthenticatedContext("viewer-pick", frozenset({"task.submit", "task.read"}), "local"))
-            report = root / "build/acceptance/piper-pick/viewer-result.json"
-            report.parent.mkdir(parents=True, exist_ok=True)
-            report.write_text(__import__("json").dumps(result, ensure_ascii=True, indent=2) + "\n")
-            print(result, flush=True)
-        except Exception as exc:
-            pick_error.append(f"{type(exc).__name__}: {exc}")
-            print("VIEWER_SKILL_ERROR", pick_error[-1], flush=True)
-        finally:
-            pick_done.set()
-
-    with mujoco.viewer.launch_passive(backend.model, backend.data) as viewer:
-        viewer.cam.lookat[:] = [0.06, 0.0, 0.12]
-        viewer.cam.distance = 1.05
-        viewer.cam.azimuth = 180
-        viewer.cam.elevation = -8
-        # Home 动作必须在 Viewer 已打开后执行，否则用户看不到起始运动。
-        home_positions = {
-            "joint1": 0.0, "joint2": 0.65, "joint3": -1.15,
-            "joint4": 0.0, "joint5": 0.35, "joint6": 0.0,
-        }
-        backend._set_controls(home_positions)
-        home_deadline = time.monotonic() + 3.0
-        while viewer.is_running() and time.monotonic() < home_deadline:
-            with backend._data_lock:
-                backend.step()
-                viewer.sync()
-            time.sleep(0.02)
-        threading.Thread(target=run_pick, daemon=True).start()
-        started = time.monotonic()
-        hold_applied = False
-        while viewer.is_running():
-            # Viewer 和 Runtime 共用同一 MjData；同步时持有 Backend 锁，避免 GLFW
-            # 渲染线程与 Skill 物理步进并发访问 MuJoCo 数据导致段错误。
-            with backend._data_lock:
-                viewer.sync()
-                if pick_done.is_set() and not hold_applied:
-                    # Runtime 收尾会清零控制量；演示窗口保持最后抓取姿态，避免机械臂在重力下塌回零位。
-                    backend._set_controls(manipulation["gripper"]["grasp_positions"])
-                    backend._set_gripper_controls(manipulation["gripper"]["closed_positions"])
-                    hold_applied = True
-            if args.seconds and time.monotonic() - started >= args.seconds:
+            position = [float(v) for v in observed]
+            source = "camera"
+        else:
+            position = None
+    else:
+        position = None
+    if position is None:
+        body_name = target_id
+        for item in scene_report.get("targets") or []:
+            if str(item.get("id")) == str(target_id):
+                body_name = str(item.get("body", target_id))
                 break
-            time.sleep(0.02)
-        pick_done.wait(timeout=5.0)
-    print("VIEWER_OK")
+        position = _scene_target_position(backend, body_name)
+    print("PICK_TARGET_SOURCE", source, flush=True)
+
+    session = viewer_runner.ViewerSession(
+        profile,
+        runtime.safety_policy,
+        backend,
+        runtime,
+        AuthenticatedContext(
+            "viewer-pick", frozenset({"task.submit", "task.read"}), "local"
+        ),
+    )
+    session.home(args.pick_duration_ms)
+    camera = viewer_runner.camera_settings(profile)
+
+    if display_mode == viewer_runner.DISPLAY_INTERACTIVE:
+        holder, held = viewer_runner.run_interactive(
+            session,
+            target_id,
+            position,
+            args.pick_duration_ms,
+            args.correlation_id,
+            camera,
+            seconds=args.seconds,
+        )
+    else:
+        holder, held, _ = viewer_runner.run_offscreen(
+            session,
+            target_id,
+            position,
+            args.pick_duration_ms,
+            args.correlation_id,
+            root / "build/acceptance/piper-mujoco-view/frames",
+            24,
+        )
+
+    report = {
+        "schema_version": viewer_runner.REPORT_SCHEMA,
+        "display_mode": display_mode,
+        "display_detail": detail,
+        "fallback_reason": fallback_reason,
+        "target_id": target_id,
+        "target_source": source,
+        "camera": camera,
+        "phases": session.phases,
+        "hold_pose_applied": bool(held),
+        "pick_result": holder["result"],
+        "pick_error": holder["error"],
+    }
+    report_path = root / "build/acceptance/piper-mujoco-view/viewer-report.json"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2, default=str) + "\n",
+        encoding="utf-8",
+    )
+
+    if holder["error"]:
+        print("VIEWER_SKILL_ERROR", holder["error"], flush=True)
+        return 1
+    print("VIEWER_OK", flush=True)
     return 0
+
+
+def _scene_target_position(backend, body_name):
+    """回退路径：从场景取目标当前位置（显示自检兜底，非感知输入）。
+
+    只使用后端的公开属性 model/data 与 MuJoCo 公开 API，不触碰私有成员；
+    真值仅在验收脚本中用于比对。
+    """
+    import mujoco
+
+    mujoco.mj_forward(backend.model, backend.data)
+    body_id = mujoco.mj_name2id(
+        backend.model, mujoco.mjtObj.mjOBJ_BODY, str(body_name)
+    )
+    if body_id < 0:
+        raise ValueError("场景中找不到目标 body: " + str(body_name))
+    return [float(v) for v in backend.data.xpos[body_id]]
 
 
 if __name__ == "__main__":

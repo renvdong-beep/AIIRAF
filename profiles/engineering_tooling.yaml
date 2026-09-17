@@ -1,0 +1,16 @@
+apiVersion: iraf.intewell.io/v1
+kind: RobotProfile
+metadata:
+  name: engineering_tooling
+  version: 1.0.0
+spec:
+  # 构建期工具 Profile：不声明任何运动能力，只声明工程向导能力。
+  # 这样做的意义是把"工程向导"与"机器人操作"在 Profile 层就分开：
+  # 用工程 Profile 驱动的 Runtime 根本无法通过任何运动 skill 的策略校验。
+  simulation: true
+  verification: development
+  control_frequency_hz: 100
+  joints: [placeholder_joint]
+  joint_limits:
+    placeholder_joint: [-1.0, 1.0]
+  capabilities: [engineering.robot_adapter]

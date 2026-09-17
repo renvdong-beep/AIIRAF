@@ -1,0 +1,28 @@
+apiVersion: iraf.intewell.io/v1
+kind: Skill
+metadata: {name: engineering.robot_adapter, version: 1.0.0}
+spec:
+  verification: development
+  inputSchema: engineering.robot_adapter.input.json
+  outputSchema: engineering.robot_adapter.output.json
+  # 关键：本 skill 只产出构建期工件（profile.yaml / adapter 骨架 / 校验报告），
+  # 不驱动机器人、不申请运动租约，因此声明独立的 engineering.* 能力命名空间，
+  # 与 move_joint / pick_object / visual_pick / stop 等运动能力严格隔离。
+  # 依据 AGENTS.md 铁律 2："适配不是任务请求，不得用 skill 去做适配"——
+  # 这里的适配指的是"把适配流程封装为可复用的工程向导"，它不产生物理动作。
+  requires: [engineering.robot_adapter]
+  # 无任何运动前置条件：不依赖 estop 或 target_visible，因为它不动机械臂。
+  preconditions: []
+  intentExamples: [适配新机器人, 生成机器人配置文件, 机器人接入向导, robot adapter wizard]
+  timeoutSeconds: 30
+  # 无物理动作，无需协作式停止；保留 stop 语义以便未来支持长时生成任务。
+  cancellation: cooperative_stop
+  recovery: [request_handover]
+  # 非运动类：内容生成不涉及受控运动，避免与 controlled_motion 混淆。
+  safetyClass: build_tooling
+  providers:
+    - name: engineering_robot_adapter
+      type: python_adapter
+      entrypoint: "iraf_skills.engineering.robot_adapter:RobotAdapterWizardProvider"
+      selector: {mode: simulation}
+      priority: 100

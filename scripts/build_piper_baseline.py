@@ -1,0 +1,472 @@
+"""按受控基线配置求解 Piper 参考关节姿态并构建抓取场景。
+
+模型来源、参考姿态、工作台几何和验收条件全部来自
+config/piper_simulation_baseline.yaml，避免在脚本里散落硬编码。
+"""
+
+import argparse
+import hashlib
+import json
+import tempfile
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+import mujoco
+import numpy as np
+import yaml
+
+from build_piper_pick_scene import build_scene
+from iraf_core.kinematics import solve_position_ik
+
+DEFAULT_BASELINE = "config/piper_simulation_baseline.yaml"
+
+
+def load_baseline(path):
+    data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("基线配置格式无效: " + str(path))
+    return data
+
+
+def _resolve(root, value):
+    candidate = Path(value)
+    if not candidate.is_absolute():
+        candidate = (root / candidate).resolve()
+    return candidate
+
+
+def _sha256(path):
+    digest = hashlib.sha256()
+    with open(str(path), "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _collect_model_files(source):
+    files = [source]
+    root = ET.parse(str(source)).getroot()
+    for mesh in root.findall("./asset/mesh"):
+        file_value = mesh.get("file")
+        if not file_value:
+            continue
+        candidate = Path(file_value)
+        if not candidate.is_absolute():
+            candidate = (source.parent / candidate).resolve()
+        files.append(candidate)
+    return files
+
+
+def verify_source_lock(root, baseline):
+    """校验 Piper 模型来源并维护 source-lock.json。"""
+    model_cfg = baseline.get("model") or {}
+    source = _resolve(root, model_cfg.get("source"))
+    if not source.is_file():
+        raise FileNotFoundError("Piper MJCF 不存在: " + str(source))
+
+    files = _collect_model_files(source)
+    missing = [str(path) for path in files if not path.is_file()]
+    if missing:
+        raise FileNotFoundError("Piper 模型文件缺失: " + ", ".join(missing))
+
+    lock_path = _resolve(root, model_cfg.get("source_lock") or "vendor/agilex_piper/source-lock.json")
+    entries = []
+    for path in files:
+        entries.append(
+            {
+                "path": str(path),
+                "relative_path": str(Path(path).relative_to(source.parent.parent)) if str(path).startswith(str(source.parent.parent)) else Path(path).name,
+                "bytes": int(path.stat().st_size),
+                "sha256": _sha256(path),
+            }
+        )
+    lock = {
+        "schema_version": "iraf.piper-model-source-lock/v1",
+        "name": "agilex_piper",
+        "source": str(source),
+        "file_count": len(entries),
+        "files": entries,
+    }
+
+    mismatches = []
+    if lock_path.is_file():
+        try:
+            previous = json.loads(lock_path.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            previous = {}
+        known = {
+            item.get("relative_path"): item.get("sha256")
+            for item in (previous.get("files") or [])
+        }
+        for entry in entries:
+            old = known.get(entry["relative_path"])
+            if old is not None and old != entry["sha256"]:
+                mismatches.append(entry["relative_path"])
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_text(json.dumps(lock, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return {
+        "source": str(source),
+        "lock": str(lock_path),
+        "file_count": len(entries),
+        "mismatches": mismatches,
+    }
+
+
+def _joint_ids(model, names):
+    ids = []
+    for name in names:
+        joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+        if joint_id < 0:
+            raise ValueError("MJCF 缺少关节: " + name)
+        ids.append(int(joint_id))
+    return ids
+
+
+def _geom_id(model, name):
+    geom_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, name)
+    if geom_id < 0:
+        raise ValueError("MJCF 缺少 geom: " + name)
+    return int(geom_id)
+
+
+def _body_id(model, name):
+    body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
+    if body_id < 0:
+        raise ValueError("MJCF 缺少 body: " + name)
+    return int(body_id)
+
+
+def _finger_center(model, data, left_geom, right_geom):
+    return (data.geom_xpos[left_geom] + data.geom_xpos[right_geom]) / 2.0
+
+
+def _finger_tip_z(model, data, geom_ids):
+    """返回手指网格在世界坐标下的最低点，用于校验指尖是否扎入工作台。"""
+    lowest = float("inf")
+    for geom_id in geom_ids:
+        mesh_id = int(model.geom_dataid[geom_id])
+        count = int(model.mesh_vertnum[mesh_id]) if mesh_id >= 0 else 0
+        if count > 0:
+            start = int(model.mesh_vertadr[mesh_id])
+            verts = np.asarray(model.mesh_vert[start : start + count], dtype=float)
+            rot = np.asarray(data.geom_xmat[geom_id], dtype=float).reshape(3, 3)
+            world = np.asarray(data.geom_xpos[geom_id], dtype=float) + verts @ rot.T
+            lowest = min(lowest, float(world[:, 2].min()))
+        else:
+            center = np.asarray(data.geom_xpos[geom_id], dtype=float)
+            half = float(np.abs(np.asarray(model.geom_size[geom_id], dtype=float)).max())
+            lowest = min(lowest, float(center[2]) - half)
+    return lowest
+
+
+def _contact_pairs(model, data):
+    pairs = []
+    for index in range(int(data.ncon)):
+        contact = data.contact[index]
+        pairs.append(
+            (
+                mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, contact.geom1) or "?",
+                mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, contact.geom2) or "?",
+                round(float(contact.dist), 6),
+            )
+        )
+    return pairs
+
+
+def solve_finger_center_pose(
+    model, data, target, arm_joints, joint_names, left_geom, right_geom, solver_cfg
+):
+    """以双指指尖 geom 中点为目标求解臂关节姿态。
+
+    IK 算法已提取到机器人无关的 iraf_core.kinematics 契约层
+    （见 src/iraf_core/kinematics.py）；本函数只负责把 Piper 侧的
+    关节 id / geom id 与 solver 配置翻译成契约参数，返回值结构保持不变，
+    以保证既有调用方（build_reference_poses、_raised_home_pose）零改动。
+
+    等价性由 scripts/verify_ik_equivalence.py 逐位验证
+    （同初值同目标同参数下 max_joint_abs_diff_rad = 0.0）。
+    """
+    solver = {
+        "iterations": int(solver_cfg.get("iterations", 800)),
+        "step": float(solver_cfg.get("step", 0.5)),
+        "tolerance_m": float(solver_cfg.get("tolerance_m", 1e-5)),
+    }
+    result = solve_position_ik(
+        model,
+        data,
+        target,
+        arm_joints,
+        [
+            {"kind": "geom", "id": int(left_geom)},
+            {"kind": "geom", "id": int(right_geom)},
+        ],
+        **solver
+    )
+    return {
+        "joint_positions": {
+            name: float(result.joint_positions[name]) for name in joint_names
+        },
+        "finger_center_m": [float(value) for value in result.solved_position_m],
+        "target_m": [float(value) for value in result.target_position_m],
+        "position_error_m": float(result.position_error_m),
+        "iterations": int(result.iterations),
+    }
+
+def build_reference_poses(root, baseline, target_id=None):
+    """求解 home/approach/grasp 三个参考关节姿态。
+
+    target_id 用于多目标场景：显式指定本次求解针对哪个目标，
+    缺省沿用配置 target.id，保持单目标场景行为不变。
+    """
+    model_cfg = baseline["model"]
+    source = _resolve(root, model_cfg["source"])
+    arm_names = list(model_cfg.get("arm_joints") or [f"joint{i}" for i in range(1, 7)])
+    target_cfg = baseline.get("target") or {}
+    # 指尖 geom 名称、摩擦、kp 与重力由场景生成器统一写入，
+    # 因此参考姿态必须在生成后的探测场景上求解，保证与验收模型一致。
+    workdir = Path(tempfile.mkdtemp(prefix="piper-baseline-"))
+    probe_scene = workdir / "probe-scene.xml"
+    build_scene(
+        source,
+        probe_scene,
+        target_id=target_id or target_cfg.get("id", "box_01"),
+        half_size=float(target_cfg.get("half_size_m", 0.03)),
+        config=baseline,
+    )
+
+    model = mujoco.MjModel.from_xml_path(str(probe_scene))
+    data = mujoco.MjData(model)
+
+    arm_joints = _joint_ids(model, arm_names)
+    left_geom = _geom_id(model, model_cfg["finger_geoms"]["left"])
+    right_geom = _geom_id(model, model_cfg["finger_geoms"]["right"])
+    wrist_body = _body_id(model, model_cfg["bodies"]["wrist"])
+
+    workbench = baseline.get("workbench") or {}
+    target_cfg = baseline.get("target") or {}
+    grasp_cfg = baseline.get("grasp") or {}
+    half_size = float(target_cfg.get("half_size_m", 0.03))
+    top_z = float(workbench.get("top_z_m", 0.0))
+    finger_xy = grasp_cfg.get("finger_center_xy_m")
+    if not finger_xy or len(finger_xy) != 2:
+        raise ValueError("基线配置缺少 grasp.finger_center_xy_m")
+    grasp_target = [float(finger_xy[0]), float(finger_xy[1]), top_z + half_size]
+
+    solver_cfg = grasp_cfg.get("solver") or {}
+    offset = float(grasp_cfg.get("pregrasp_offset_m", 0.04))
+    direction = np.asarray(grasp_cfg.get("approach_direction") or [0.0, 0.0, 1.0], dtype=float)
+    direction_norm = float(np.linalg.norm(direction))
+    if direction_norm < 1e-9:
+        raise ValueError("grasp.approach_direction 不能为零向量")
+    direction = direction / direction_norm
+    tip_clearance = float(grasp_cfg.get("tip_clearance_m", 0.005))
+    base_target = np.asarray(grasp_target, dtype=float)
+
+    mujoco.mj_forward(model, data)
+    # 指腹 geom 中心并不是抓取点：指尖比它再低约 50mm。
+    # 直接用方块中心作为指尖中心会让指尖扎进工作台，因此按指尖离台间隙自动配平抓取高度。
+    height_correction = 0.0
+    tip_z = None
+    for _ in range(int(grasp_cfg.get("clearance_iterations", 8))):
+        target = base_target + direction * height_correction
+        grasp = solve_finger_center_pose(
+            model, data, target, arm_joints, arm_names, left_geom, right_geom, solver_cfg
+        )
+        tip_z = _finger_tip_z(model, data, (left_geom, right_geom))
+        deficit = (top_z + tip_clearance) - tip_z
+        if deficit <= 1e-4:
+            break
+        height_correction += float(deficit)
+    else:
+        raise ValueError(
+            "指尖离台间隙配平未收敛: "
+            f"tip_z={float(tip_z):.9f} required={top_z + tip_clearance:.9f}"
+        )
+    grasp_target_corrected = base_target + direction * height_correction
+
+    wrist = data.xpos[wrist_body].copy()
+    axis = np.asarray(grasp["finger_center_m"], dtype=float) - np.asarray(wrist, dtype=float)
+    axis_norm = float(np.linalg.norm(axis))
+    if axis_norm < 1e-9:
+        raise ValueError("腕部到指尖中点距离过小，无法计算夹爪朝向")
+    axis = axis / axis_norm
+
+    # 预抓取方向可与接近方向不同：
+    # 多目标场景中让 APPROACH 沿纯竖直抬高，保证 APPROACH -> DESCEND 是竖直下降，
+    # 避免下降时还需要 joint1 微调（夹爪已环抱目标，微调会被摩擦锁死）。
+    pregrasp_direction = np.asarray(
+        grasp_cfg.get("pregrasp_direction") or direction, dtype=float
+    )
+    pregrasp_norm = float(np.linalg.norm(pregrasp_direction))
+    if pregrasp_norm < 1e-9:
+        raise ValueError("grasp.pregrasp_direction 不能为零向量")
+    pregrasp_direction = pregrasp_direction / pregrasp_norm
+
+    approach_target = grasp_target_corrected + pregrasp_direction * offset
+    if float(approach_target[2]) <= top_z:
+        raise ValueError(
+            "预抓取位置未离开工作台: "
+            f"approach_z={float(approach_target[2]):.9f} workbench_top_z={top_z:.9f}"
+        )
+    approach = solve_finger_center_pose(
+        model, data, approach_target, arm_joints, arm_names, left_geom, right_geom, solver_cfg
+    )
+
+
+    lift_offset = float(grasp_cfg.get("lift_offset_m", 0.08))
+    # 抬升同样沿预抓取方向（多目标场景下即竖直）：夹爪已夹住目标，
+    # 沿倾斜方向抬升会让目标产生水平拖拽，而竖直抬升只考验摩擦力。
+    lift_target = grasp_target_corrected + pregrasp_direction * lift_offset
+    lift = solve_finger_center_pose(
+        model, data, lift_target, arm_joints, arm_names, left_geom, right_geom, solver_cfg
+    )
+
+
+    home_qpos = {name: 0.0 for name in grasp["joint_positions"]}
+    reference = {
+        "schema_version": "iraf.piper-reference-pose/v1",
+        "source": str(source),
+        "gripper_axis_world": [round(float(value), 9) for value in axis],
+        # 抓取点沿该方向从指尖中点回退，场景生成器据此写入 pad_offset_axis。
+        "approach_direction_world": [round(float(value), 9) for value in direction],
+        # 预抓取/抬升的偏移方向（多目标场景为纯竖直，保证竖直进近与抬升）。
+        "pregrasp_direction_world": [
+            round(float(value), 9) for value in pregrasp_direction
+        ],
+        "pregrasp_offset_m": offset,
+
+        "tip_clearance_m": tip_clearance,
+        "finger_tip_z_m": round(float(tip_z), 9),
+        "finger_height_correction_m": round(float(height_correction), 9),
+        "grasp_point_m": [round(float(value), 9) for value in base_target],
+        "finger_center_m": grasp["finger_center_m"],
+        "target_z_m": top_z + half_size,
+        "lift_offset_m": lift_offset,
+        "home": home_qpos,
+        "approach": approach,
+        "grasp": grasp,
+        "lift": lift,
+    }
+    return reference
+
+
+def validate_grasp_pose(scene_path, baseline, reference):
+    """在最终场景上校验参考抓取姿态：指尖不碰台、张开时手指不与任何物体接触。"""
+    model_cfg = baseline["model"]
+    arm_names = list(model_cfg.get("arm_joints") or [f"joint{i}" for i in range(1, 7)])
+    finger_names = (
+        model_cfg["finger_geoms"]["left"],
+        model_cfg["finger_geoms"]["right"],
+    )
+    gripper_cfg = baseline.get("gripper") or {}
+    open_positions = dict(gripper_cfg.get("open") or {"joint7": 0.035, "joint8": -0.035})
+    workbench = baseline.get("workbench") or {}
+    grasp_cfg = baseline.get("grasp") or {}
+    top_z = float(workbench.get("top_z_m", 0.0))
+    tip_clearance = float(grasp_cfg.get("tip_clearance_m", 0.005))
+
+    model = mujoco.MjModel.from_xml_path(str(scene_path))
+    data = mujoco.MjData(model)
+    for name in arm_names:
+        joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+        data.qpos[int(model.jnt_qposadr[joint_id])] = float(
+            reference["grasp"]["joint_positions"][name]
+        )
+    for name, value in open_positions.items():
+        joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+        data.qpos[int(model.jnt_qposadr[joint_id])] = float(value)
+    mujoco.mj_forward(model, data)
+
+    geom_ids = tuple(_geom_id(model, name) for name in finger_names)
+    tip_z = _finger_tip_z(model, data, geom_ids)
+    pairs = _contact_pairs(model, data)
+    touching = [pair for pair in pairs if pair[0] in finger_names or pair[1] in finger_names]
+    if tip_z < top_z + tip_clearance - 1e-4:
+        raise ValueError(
+            "参考抓取姿态指尖扎入工作台: "
+            f"tip_z={tip_z:.9f} required={top_z + tip_clearance:.9f}"
+        )
+    if touching:
+        raise ValueError(
+            "参考抓取姿态下手指与场景发生接触: "
+            + ", ".join(f"{pair[0]}|{pair[1]}({pair[2]})" for pair in touching)
+        )
+    return {
+        "finger_tip_z_m": round(float(tip_z), 9),
+        "tip_clearance_m": tip_clearance,
+        "contact_count": len(pairs),
+        "finger_contacts": [],
+    }
+
+
+def build(root, baseline_path, scene_path, calibration_path=None):
+    """校验模型来源、求解参考姿态并生成受控场景。"""
+    root = Path(root).resolve()
+    baseline = load_baseline(_resolve(root, baseline_path))
+    lock_report = verify_source_lock(root, baseline)
+    if lock_report["mismatches"]:
+        raise ValueError(
+            "Piper 模型与来源清单不一致: " + ", ".join(lock_report["mismatches"])
+        )
+
+    reference = build_reference_poses(root, baseline)
+    acceptance = baseline.get("acceptance") or {}
+    tolerance = float(acceptance.get("pose_tolerance_m", 0.005))
+    factor = float(acceptance.get("solver_error_factor", 0.1))
+    error = float(reference["grasp"]["position_error_m"])
+    if error > tolerance * factor:
+        raise ValueError(
+            "参考抓取姿态残差超出门禁容差: "
+            f"error={error:.9f}m limit={tolerance * factor:.9f}m"
+        )
+
+    target_cfg = baseline.get("target") or {}
+    scene = build_scene(
+        _resolve(root, baseline["model"]["source"]),
+        _resolve(root, scene_path),
+        target_id=target_cfg.get("id", "box_01"),
+        half_size=float(target_cfg.get("half_size_m", 0.03)),
+        config=baseline,
+        reference=reference,
+    )
+
+    scene["grasp_pose_validation"] = validate_grasp_pose(
+        _resolve(root, scene_path), baseline, reference
+    )
+
+    if calibration_path is not None:
+        pose_path = _resolve(root, calibration_path)
+        pose_path.parent.mkdir(parents=True, exist_ok=True)
+        pose_path.write_text(
+            json.dumps(reference, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        reference["pose_evidence"] = str(pose_path)
+    scene["model_source_lock"] = lock_report
+    scene["reference_poses"] = reference
+    return scene
+
+
+def build_baseline_scene(root, baseline_path, source, scene_path):
+    """供 verify_piper_pick.py 调用：忽略 --source，统一使用基线声明的模型来源。"""
+    del source
+    return build(root, baseline_path, scene_path, calibration_path="build/calibration/piper-baseline-pose.json")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--baseline", type=Path, default=Path(DEFAULT_BASELINE))
+    parser.add_argument("--scene", type=Path, default=Path("build/models/piper-pick-scene.xml"))
+    parser.add_argument(
+        "--pose-evidence",
+        type=Path,
+        default=Path("build/calibration/piper-baseline-pose.json"),
+    )
+    parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
+    args = parser.parse_args(argv)
+    scene = build(args.root, args.baseline, args.scene, calibration_path=args.pose_evidence)
+    print(json.dumps(scene, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

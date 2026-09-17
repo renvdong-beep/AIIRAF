@@ -1,0 +1,15 @@
+apiVersion: iraf.intewell.io/v1
+kind: SafetyPolicy
+metadata:
+  name: display_showcase
+  version: 1.0.0
+spec:
+  verification: development
+  simulation_only: true
+  default: deny
+  # 显示专用策略：只为"看得见完整抓取过程"放行，
+  # 把时长上限提到 180s，使 realtime=True 下约 92 秒的抓取不被租约截断。
+  # 关键：本策略只用于显示/演示，既有验收链仍使用 simulation_lab.yaml
+  # （max_duration_ms=30000），因此验收口径不受影响。
+  allowed_skills: [move_joint, pick_object, visual_pick, stop, display_pick]
+  max_duration_ms: 180000

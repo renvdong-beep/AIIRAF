@@ -1,4 +1,9 @@
-"""生成 Piper 场景并通过完整 Skill Runtime 验证双指接触抓取。"""
+"""生成 Piper 场景并通过视觉抓取 Skill Runtime 验证完整闭环。
+
+与 verify_piper_pick.py 的区别：抓取点不再来自场景报告，而是由
+scripts/detect_piper_target.py 从相机渲染中检测、写入视觉证据文件，
+再由 MuJoCo Backend.visual_pick 读取并驱动 pick_object。
+"""
 
 import argparse
 import json
@@ -22,14 +27,20 @@ def main(argv=None):
         "--scene", type=Path, default=Path("build/models/piper-pick-scene.xml")
     )
     parser.add_argument(
-        "--output", type=Path, default=Path("build/acceptance/piper-pick")
+        "--output", type=Path, default=Path("build/acceptance/piper-visual-pick")
     )
-    parser.add_argument("--duration-ms", type=int, default=2500)
+    parser.add_argument("--duration-ms", type=int, default=10000)
     parser.add_argument(
         "--baseline",
         type=Path,
         default=None,
         help="受控仿真基线配置；提供时按基线求解参考姿态并生成场景",
+    )
+    parser.add_argument(
+        "--vision-file",
+        type=Path,
+        default=Path("build/calibration/piper-vision-target.json"),
+        help="视觉目标证据文件路径",
     )
     args = parser.parse_args(argv)
     if args.duration_ms < 1 or args.duration_ms > 30000:
@@ -72,19 +83,15 @@ def main(argv=None):
     )
     now = int(time.time() * 1000)
     request = {
-        "request_id": "piper-pick-acceptance",
-        "idempotency_key": "piper-pick-acceptance-" + str(now),
-        "correlation_id": "piper-pick-acceptance",
-        "skill": "pick_object",
+        "request_id": "piper-visual-pick-acceptance",
+        "idempotency_key": "piper-visual-pick-acceptance-" + str(now),
+        "correlation_id": "piper-visual-pick-acceptance",
+        "skill": "visual_pick",
         "skill_version_constraint": "1.0.0",
         "parameters": {
             "target_id": scene["target_id"],
-            "grasp_pose": {
-                "frame_id": "world",
-                "position": scene["target_position"],
-                "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
-            },
             "duration_ms": args.duration_ms,
+            "vision_file": str(args.vision_file),
         },
         "deadline_unix_ms": now + 60000,
         "profile_name": profile.name,
@@ -94,18 +101,21 @@ def main(argv=None):
         "safety_policy_version": safety.version,
         "safety_policy_digest": safety.digest,
         "resource_id": "piper-mujoco",
-        "controller": "piper-pick-acceptance",
+        "controller": "piper-visual-pick-acceptance",
     }
     result = runtime.execute(
         request,
         AuthenticatedContext(
-            "piper-pick-acceptance", frozenset({"task.submit", "task.read"}), "local"
+            "piper-visual-pick-acceptance",
+            frozenset({"task.submit", "task.read"}),
+            "local",
         ),
     )
     report = {
-        "schema_version": "iraf.piper-pick-acceptance/v1",
+        "schema_version": "iraf.piper-visual-pick-acceptance/v1",
         "simulation_only": True,
         "scene": scene,
+        "vision_file": str(args.vision_file),
         "execution": result,
     }
     args.output.mkdir(parents=True, exist_ok=True)
