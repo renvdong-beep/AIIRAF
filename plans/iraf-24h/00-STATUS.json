@@ -70,11 +70,11 @@
     {
       "id": "06",
       "title": "build_sdk.sh 打包与 manifest",
-      "status": "TODO",
-      "evidence": null,
-      "commit": null,
-      "updated_at": null,
-      "note": null
+      "status": "DONE",
+      "evidence": "build/iraf-24h/06/{build-sdk.txt,preflight.json,manifest-run1.json,manifest-run2.json,run_acceptance.sh,check_manifest.py,tamper.py,wheel_install_check.py,compare_repro.py,import_probe.py,toolchain-probe.txt,pystub-import-probe.txt,unittest-full.txt,commands.log,commit-plan.txt,commit-msg.txt,tick-report.md}",
+      "commit": "a343b74",
+      "updated_at": "2026-09-20T16:22:00+0800",
+      "note": "新增 deploy/sdk/build_sdk.sh + deploy/sdk/lib_manifest.py + tests/unit/test_sdk_manifest.py（43 用例）+ docs/debug/2026-09-20-sdk-wheel-build-offline.md（步骤「失败/阻塞处理」明文要求写调试记录）。验收（/usr/bin/python3，证据 06/build-sdk.txt）：--dry-run exit=0 且未创建 build/sdk；完整构建 exit=0；manifest schema=iraf.package-manifest/v1 / artifacts=2 / 逐文件条目 112；两道负向+两道增强负向：包内 deflate 字节被改（外层哈希已重写）→ exit=4（命中「产物内文件被篡改 … mujoco_backend.py」）、翻转一字节不动清单 → exit=4（同时命中外层 SHA-256 不符 + 内层被篡改）、重打包改成员 → exit=4（config/piper-left-contact.json）、manifest 缺失 → exit=2；正向：wheel 离线安装（pip --no-index --no-deps --target）exit=0，导入探针 {version:0.2.0, known_codes:19, heavy_loaded:[]}；可复算：连续两次构建产物 SHA-256 逐位相同=True（gzip mtime=0 + 成员 mtime=0/uid=gid=0 + 路径排序）；manifest 内本机绝对路径 0（grep '/home/coretek'=0，结构化扫描=0）；全量单测 Ran 403 / failures=1 / errors=4 / skipped=4（基线 360/1/4/4，失败集合逐项一致，+43 为本步新增）。关键实测（未放宽任何门禁）：pypa/build 未安装，pip wheel . --no-build-isolation 在 setuptools 59.6.0 下 exit=0 却产出 UNKNOWN-0.0.0 空包（961B）——已用手工 PEP 427 组装 + 文件名/版本/标签/METADATA/RECORD/零依赖五重校验把这种「绿灯+假产物」变成硬失败，并把该实测形状钉成负向单测。未验证/缺口（不伪造）：本机 protobuf 4.25.7 < 声明 5.29，protoc 3.12.4 生成的 gencode 与既有 5.29 gencode 在本机均不可导入 ⇒ 不覆盖既有 stub，manifest 记 stubs.importable_locally=false + 原因；grpc 层无 grpc_python_plugin 不可复现（按 prebuilt 登记 sha256）；IDL stub 未纳入 runtime bundle（步骤只声明 src/skills/profiles/config/deploy 五个目录，步骤 08 需声明 stub 安装位置）；只翻转 gzip 尾部 ISIZE 字节且外层哈希被重写时 --verify 退出 0（tarfile 不校验 gzip 尾部，已知边界，已显式记录并标注「不是通过」）；目标端安装/健康检查 DEFERRED（板卡不在场）。未触碰另一窗口路径；提交前 git status 仅本步 4 个路径。"
     },
     {
       "id": "07",
