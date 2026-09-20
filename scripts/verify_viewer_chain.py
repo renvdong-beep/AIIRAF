@@ -123,6 +123,8 @@ def main(argv=None):
         {
             "model_path": str(model),
             "manipulation": _manipulation_from_scene_report(scene, target_id),
+            # 视觉 Provider 声明随场景报告下传（后端无机型默认路径）。
+            "vision": scene.get("vision"),
             # realtime=False：抓取在仿真时间内完成，避免超出技能租约预算。
             "realtime": False,
         }

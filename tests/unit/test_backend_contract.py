@@ -124,15 +124,23 @@ class BackendContractTests(unittest.TestCase):
         self.assertIn("teleport", str(context.exception))
         self.assertIn("未登记", str(context.exception))
 
-    def test_undeclared_motion_capability_is_exposed(self):
-        """实现了 move_joint/stop 但 Profile 未声明 → 任务会被策略静默拒绝。"""
+    def test_undeclared_motion_capability_is_recorded_not_fatal(self):
+        """实现了但未声明的运动能力只记录、不拦装配。
+
+        真实场景（本项目实测）：同一个 MuJoCo 后端类同时服务 Piper 与 UR5e，
+        而 UR5e 尚未接入视觉 Provider，profile **诚实地**不声明 visual_pick。
+        若这里强制"实现即必须声明"，就等于逼 profile 声明它做不到的能力 ——
+        反而制造虚假声明。要防的是反向的悬空能力（声明了却没有实现）。
+        """
         profile = _Profile([])
-        with self.assertRaises(BackendContractError) as context:
-            verify_backend_contract(_CompleteBackend, profile)
-        message = str(context.exception)
-        self.assertIn("未声明", message)
-        self.assertIn("move_joint", message)
-        self.assertIn("pick_object", message)
+        report = verify_backend_contract(_CompleteBackend, profile)
+        self.assertTrue(report["passed"])
+        self.assertEqual(
+            ["move_joint", "pick_object", "stop"],
+            report["undeclared_motion_capabilities"],
+        )
+        # 非运动能力（step/home_pose）不进该字段：它们不驱动机械臂。
+        self.assertNotIn("step", report["undeclared_motion_capabilities"])
 
     def test_non_motion_extra_methods_are_allowed(self):
         """home_pose 等非运动能力方法不需要在 capabilities 中声明。"""
@@ -148,6 +156,13 @@ class BackendContractTests(unittest.TestCase):
             verify_backend_contract(_NoFromConfigBackend, profile)
         self.assertIn("from_config", str(context.exception))
 
+    def test_declared_capability_without_method_still_fails(self):
+        """单向化的只是"反向"，"声明必须实现"这一方向不能放松。"""
+        profile = _Profile(["move_joint", "visual_pick", "stop"])
+        with self.assertRaises(BackendContractError) as context:
+            verify_backend_contract(_MoveAndStopBackend, profile)
+        self.assertIn("visual_pick", str(context.exception))
+
     def test_report_is_json_serialisable(self):
         import json
 
@@ -155,12 +170,13 @@ class BackendContractTests(unittest.TestCase):
         report = verify_backend_contract(_MoveAndStopBackend, profile)
         json.dumps(report)
 
-    def test_declaring_subset_of_implemented_motion_fails(self):
-        """只声明部分已实现运动能力会被判为配置漂移，必须显式失败。"""
+    def test_declaring_subset_records_remaining_implemented_capabilities(self):
+        """只声明部分已实现能力：装配通过，未声明的部分进入审计报告。"""
         profile = _Profile(["move_joint", "stop"])
-        with self.assertRaises(BackendContractError) as context:
-            verify_backend_contract(_CompleteBackend, profile)
-        self.assertIn("pick_object", str(context.exception))
+        report = verify_backend_contract(_CompleteBackend, profile)
+        self.assertTrue(report["passed"])
+        self.assertEqual(["pick_object"], report["undeclared_motion_capabilities"])
+        self.assertEqual(["move_joint", "stop"], report["declared_capabilities"])
 
 
 if __name__ == "__main__":

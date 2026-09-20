@@ -153,6 +153,9 @@ def main(argv=None):
         {
             "model_path": str(model),
             "manipulation": _manipulation_from_scene_report(scene_report, target_id),
+            # 视觉 Provider 声明随场景报告下传：后端已无任何机型默认路径，
+            # 未声明时 visual_pick 会要求请求显式给出 vision_file。
+            "vision": scene_report.get("vision"),
             "realtime": False,
         }
     )
