@@ -187,11 +187,11 @@
     {
       "id": "19",
       "title": "架构图与文档同步",
-      "status": "TODO",
-      "evidence": null,
-      "commit": null,
-      "updated_at": null,
-      "note": null
+      "status": "DONE",
+      "evidence": "build/iraf-24h/19/{acceptance.txt,acceptance-run1-fail.txt,acceptance-rerun.txt,check_svg.py,check_docs.py,check_dot_repro.py,check_unittest.py,neg_control.py,docs_gates.py,run_acceptance.sh,dot-repro.txt,unittest-full.txt,commit-plan.txt,commit-msg.txt,commands.log,tick-report.md}",
+      "commit": "4a36601",
+      "updated_at": "2026-09-20T20:29:00+0800",
+      "note": "新增 docs/diagrams/iraf-sdk-delivery.{dot,svg}（34911 字节，sha256 d58131190382df8f…）与 docs/diagrams/iraf-unitree-scene-stack.{dot,svg}（43683 字节，sha256 96e473489f0f1431…），两图均为 .dot 源 + SVG 同时入库、可由 /usr/bin/dot 2.43.0 逐字节复现。SDK 交付图：开发端 x86_64 → 产物（wheel / runtime bundle / 离线 wheelhouse / 板级 bundle）→ 目标端 aarch64 → 证据，标注 L1/L2/L3 与可达级别（L1 可达；L2 无 buildx 且 registry-1.docker.io 不可达、L3 无 aarch64 交叉工具链且板卡不在场，均不可执行），并区分演练证据与目标端证据。宇树场景栈图：场景包 → scene_check → build_scene → adapter → Skill → Runtime，标注厂商 MJCF 只读（按 source-lock.json 对账）、传感器由构建器注入（厂商模型 ncam=0）、人形仅静态模型。文档同步：docs/iraf-engineering-design.md §3 补 config/sdk/、deploy/sdk/、profiles/boards/ 并附「已交付路径/已实现入口/当前状态」表；§8.1 新增 8.1.1 段把 `iraf …` 产品契约与已落地脚本入口分列（未实现的显式标注「尚未实现」）；顶部入口登记两张新图。docs/iraf-v1.8-architecture-baseline.md 登记两张新图（说明/依据/复跑命令）+ 登记 M1.7 欠债：根级 agentos机器人应用框架-更新版.svg（11338 B）与 IRAF详细技术架构图.svg（16918 B）无 .dot 源，给出 4 步补源计划并明确补源前不纳入「每个 svg 必须有同名 dot」的 CI 门禁（避免恒红）。验收（/usr/bin/python3 3.10.12，bash build/iraf-24h/19/run_acceptance.sh -> EXIT=0，通过 9 项、失败 0 项）：两张 SVG size>0、XML 可解析、根元素 svg 带 viewBox、含 text 元素 89/111 个、关键决策点可检索、无内网 IP；grep -c deploy/sdk docs/iraf-engineering-design.md=11（要求 >=1）；.dot 重新生成与入库 SVG 逐字节一致（MISMATCH=0）；文档一致性门禁 §8.1.1 段内 17 条仓库路径全部存在、两图两件套齐全且已登记、§3 含三项、欠债登记与实际一致；负向对照 9 条全部证明门禁会失败；7 个提交路径内网 IP 0 命中；全量单测 Ran 794 / failures=1 / errors=4 / skipped=4，失败集合（4 项 stub 导入 ERROR + test_vision_processing）与步骤 18 基线逐项一致，本步纯文档+图不新增用例，无回归。首跑暴露并修复自身缺陷 2 处（未放宽任何门禁）：① check_docs.py 的 B1 门禁恒通过——路径正则锚定整段反引号，而表格单元格是 `scripts/x.py --flag <arg>` ⇒ 抽取恒为 0 条却报 PASS；改为不锚定 + 显式要求抽取数 > 0（checked 0→17），并新增 neg_control.py 用同一份原语（docs_gates.py）钉住「旧写法恒匹配 0 条」；② A8 断言写错（期望 unittest exit=0，实际基线即为 exit=1），改为逐项比对失败集合（check_unittest.py），首跑输出另存 acceptance-run1-fail.txt 未覆盖。多出步骤「涉及文件」1 条路径与理由见 build/iraf-24h/19/commit-plan.txt：docs/iraf-multiplatform-sdk-design.md 仅改 §5 一行（fetch_wheelhouse.sh 由 pip download 改为标准库直读 PEP 503），系步骤 07 台账明文登记的本步待办 + AGENTS.md 6.6 图文一致，非扩大范围。诚实边界（不伪造）：根级两张总图仍无 .dot 源，本步只登记欠债与补源计划，未声称已同步总图；目标端真实安装 / /health / AgentOS 联通一律 DEFERRED（板卡不在场），图中如实标注；宇树图内结论 simulation=true 且无平衡控制器。未触碰另一窗口路径（examples/demo3_arm/、scripts/view_mujoco.py、viewer_runner.py、config/*_baseline.yaml）；提交前 git status 仅本步 7 个路径。本轮额度未触发紧张；无未提交残留。下一轮：步骤 20 收尾汇总与缺口清单。"
     },
     {
       "id": "20",
