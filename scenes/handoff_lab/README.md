@@ -3,8 +3,10 @@
 Piper 机械臂 + 宇树 Go2（模型待锁定）+ 人形静态实体。本场景包是 `delivery_handoff`
 「机器狗停靠 → 机械臂抓取 → 放入托盘 → 载荷确认」演示与回归的**载体**：场景是声明，不是代码。
 
-> 状态：**未实现**。本目录目前只交付三份声明与它们的校验入口；场景构建器（步骤 13）、
-> Go2 loopback（步骤 15）、S2 执行器（步骤 18）尚未交付。**在它们落地前不得按本文命令声称可跑**。
+> 状态：**部分实现**。场景构建器已由步骤 13 交付（下面的"怎么生成模型"可用，产物是仿真模型）；
+> 但 Go2 loopback（步骤 15）、S2 执行器（步骤 18）尚未交付 —— 本场景的**运动与交接**能力
+> 仍不可跑，也不得按本文声称可跑（`AGENTS.md` 6.4）。四足本体当前 `capabilities: []`
+> 是事实：`stand`/`stop`/`locomote` 属 U4，逐项验收后才回填。
 
 ## 文件
 
@@ -37,6 +39,29 @@ PYTHONPATH=src python3 scripts/scene_check.py --scene scenes/handoff_lab \
     --model build/scenes/handoff_lab/handoff_lab.xml --require-model
 ```
 
+## 怎么生成模型（步骤 13 起可用）
+
+```bash
+PYTHONPATH=src python3 scripts/build_scene.py --scene scenes/handoff_lab --robot unitree_go2
+```
+
+产物：`build/scenes/handoff_lab/handoff_lab.xml` 与同名 `.json` 报告（`build/` 是 gitignore 的证据区）。
+厂商 MJCF 只读：构建前先与 `vendor/unitree_go2/source-lock.json` 对账 SHA-256，不一致即拒绝生成。
+退出码：`0` 成功 / `1` 用法错误 / `2` 声明非法 / `3` 引用完整性失败 / `4` 厂商锁校验失败
+/ `5` 模型编译或注入校验失败。
+
+模型层校验（三个传感器锚点必须真的在生成模型里）：
+
+```bash
+PYTHONPATH=src python3 scripts/scene_check.py --scene scenes/handoff_lab \
+    --model build/scenes/handoff_lab/handoff_lab.xml
+```
+
+生成后的模型里：`overhead_camera` 是**世界固定相机**（绝对位姿，`anchor.entity` 只登记归属）、
+`payload_lidar_site` 是挂在躯干 `base_link` 上的 site（雷达扫描契约 360 线 / 8 m，点云射线统计
+属步骤 14）、`imu` 是厂商自带 site（只读引用）、`tray_01` 挂在 `tray_frame` 上。
+本机型**没有夹爪**，因此报告里 `target_id`/`gripper`/`vision` 显式为 `null`。
+
 ## 怎么跑（依赖后续步骤，尚未可用）
 
 ```bash
@@ -59,7 +84,8 @@ PYTHONPATH=src python3 scripts/scenario.py interact --scene scenes/handoff_lab  
 
 1. 先跑 `scene_check.py`：它区分「声明缺字段」（2）、「引用的文件/本体不存在」（1）、
    「生成模型里锚点不存在」（3）三类失败，逐条给中文原因。
-2. `pending_refs` / `pending_steps` 里的每一项都是**未交付**而不是"已通过"：Go2 profile 由步骤 13 关闭，
+2. `pending_refs` / `pending_steps` 里的每一项都是**未交付**而不是"已通过"：Go2 的 profile 引用
+   （能力声明）由步骤 16 关闭、机型基线同样在步骤 16，站立参考位形由步骤 15 关闭，
    人形资产由步骤 12 关闭，`place_object` 属 U6。它们出现在报告里即表示该能力当前不可用。
 3. 仿真结论必须带 `simulation: true`；本场景的任何数字都不得表述为真机或实时能力（AGENTS.md 1.7）。
 4. 人形条目一律带 `evidence_level: 仅模型`：仅作静态场景实体，不代表人形运动能力（决策 4.B）。
