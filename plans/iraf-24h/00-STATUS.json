@@ -88,11 +88,11 @@
     {
       "id": "08",
       "title": "板级 bundle 与 install.sh",
-      "status": "TODO",
-      "evidence": null,
-      "commit": null,
-      "updated_at": null,
-      "note": "bundle 组装与 install.sh --dry-run 在 x86 侧完成；目标端真实安装 DEFERRED（板卡不在）。"
+      "status": "DONE",
+      "evidence": "build/iraf-24h/08/{acceptance.txt,acceptance-rerun.txt,unittest-full.txt,cases/,run_acceptance.sh,check_json.py,tamper_bundle.py,clean_stage.py,dry-run-1.json,preflight-after-delivery.json,commit-plan.txt,commit-msg.txt,tick-report.md}",
+      "commit": "74647d1",
+      "updated_at": "2026-09-20T18:05:00+0800",
+      "note": "【额度耗尽续跑轮完成】本轮不重写已有代码，只做「复核 → 补 commit-plan → 提交 → 回写台账」。独立复核（原始数字）：bash build/iraf-24h/08/run_acceptance.sh -> EXIT=0，汇总「通过 37 项，失败 0 项」（证据 build/iraf-24h/08/acceptance-rerun.txt）；PYTHONPATH=src /usr/bin/python3 -m unittest tests.unit.test_install_prechecks -> Ran 50 / OK；全量单测 Ran 510 / failures=1 / errors=4 / skipped=4（基线 460/1/4/4，失败集合逐项一致：4 项 stub 导入 ERROR + test_vision_processing FAIL，+50 为本步新增，无回归）；内网 IP 自查覆盖本步全部 7 个路径 -> 0 命中。关键验收数字（原样引用）：bundle-refuse-unverified=2、bundle-allow-unverified=0、tamper-{outer,inner,extra,traversal,missing}=4、bundle-missing-checksum=2、install-fail-rollback=3（回滚后激活链接恢复为旧目标 0.1.0、新版本目录已删除、/etc 下无安装痕迹）；bundle=build/sdk/iraf-board-e300-0.2.0-aarch64.tar.gz 47441421 字节 / manifest member_count=22 / 解包 23 个成员 / 两次组装 SHA-256 逐位相同。提交：feat: 新增板级 bundle 组装与目标端安装脚本（7 个路径）。多出步骤声明 3 条路径，理由见 build/iraf-24h/08/commit-plan.txt：deploy/sdk/lib_board_bundle.py 是 package_board_bundle.sh 与 install.sh 共同依赖的实现库（不加则入口不可运行）；config/sdk/package_matrix.{yaml,schema.json} 新增必需 delivery 段与对应 schema（铁律 5.3 路径配置集中声明，否则这些值只能硬编码在脚本里），并配「删掉必需键必须失败」的负向单测。诚实边界（不伪造）：目标端真实安装 DEFERRED（板卡不在场），本轮未做任何 aarch64 真机安装，未用 dry-run/mock 冒充；dry-run 报告自身标注 mode=rehearsal / evidence_scope=rehearsal_only / simulation=true / install_performed=true（仅沙箱）；bundle 内 post_verify_status=pending_step_09（verify.sh 由步骤 09 交付），演练登记为 REHEARSAL_BLOCKED，真实安装遇该状态必须失败并回滚，不得静默跳过；P4 宿主事实比对演练返回 4 项不合格（x86 宿主 ≠ aarch64 目标），演练只登记，真实安装据此拒绝。未触碰另一窗口路径（examples/demo3_arm/、scripts/view_mujoco.py、viewer_runner.py、config/*_baseline.yaml）；提交前 git status 仅本步 7 个路径 + 本台账。下一轮：步骤 09 verify.sh 与 uninstall.sh。"
     },
     {
       "id": "09",
