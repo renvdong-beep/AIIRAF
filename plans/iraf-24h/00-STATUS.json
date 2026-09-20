@@ -178,11 +178,11 @@
     {
       "id": "18",
       "title": "S2 脚本化场景入口 scenario.py",
-      "status": "TODO",
-      "evidence": null,
-      "commit": null,
-      "updated_at": null,
-      "note": null
+      "status": "DONE",
+      "evidence": "build/iraf-24h/18/{acceptance.txt,acceptance-rerun.txt,scenario.txt,scenario-run1-before-fix.txt,collect_scenario_evidence.sh,run_acceptance.sh,check_report.py,make_broken_scenarios.py,probe-step-metrics.json,probe_stand.py,list-before.json,unittest-step18.txt,unittest-full.txt,unittest-full-rerun.txt,cases/,tmp/,commit-plan.txt,commit-msg.txt,tick-report.md}；报告 build/acceptance/handoff_lab/stand_stop/report.json",
+      "commit": "4224300",
+      "updated_at": "2026-09-20T20:21:46+0800",
+      "note": "【额度耗尽续跑轮完成】上一轮（20:08–20:18）已产出全部实现与验收证据但未提交（台账仍为 TODO），调度器把那一轮判为失败；本轮按 00-执行规则.md §1 第 6 条的续跑语义只做「复核 → 补 commit-plan → 提交 → 回写台账」，未重写已有实现。独立复核（本轮重跑，不引用上一轮数字）：bash build/iraf-24h/18/run_acceptance.sh -> EXIT=0，汇总「通过 27 项，失败 0 项」（证据 acceptance-rerun.txt，与上一轮 acceptance.txt 的 27/0 一致）；PYTHONPATH=src /usr/bin/python3 -m unittest tests.unit.test_scenario_runner -v -> Ran 30 / OK；全量单测 Ran 794 / failures=1 / errors=4 / skipped=4（基线 764/1/4/4，失败集合 4 项 stub 导入 ERROR + test_vision_processing 逐项一致，+30 为本步新增，无回归）；内网 IP 自查覆盖本步全部 5 个路径 -> 0 命中。关键验收数字（原样引用）：stand 墙钟 0.3899381598457694 s / 仿真时间推进 7.999999999999341 s / 末速 3.0387117402068175e-05 m/s；stop 墙钟 0.6374013870954514 s / 推进 3.000000000001002 s / 末速 0.0009179901099397197 m/s；报告 passed=true；fault_sensor_unavailable（注入点 stand，可执行）injected=true / fake_success=false / verified=true / unverified_faults=0。负向退出码：未支持故障类型 / 不可评测判据 / stop 参数非法 -> 2；piper 未声明 robot.backend（未接入）-> 3；未知场景名 -> 3；场景目录不存在 -> 1；未注入故障在 --require-injected-faults 下 -> 5；判据收紧到不可达 -> 5（证明判据真的接线，不是恒真门禁）。提交：feat: 新增 S2 脚本化场景执行入口与验收报告（5 个路径，+1791/−24）。多出步骤「涉及文件」2 条路径与逐条理由见 build/iraf-24h/18/commit-plan.txt：config/go2_loopback.yaml 新增 robot.backend 绑定（契约先于实现——验收命令不带额外 flag，后端绑定只能住声明；缺键即退出码 3，禁止在脚本里猜后端入口）、scenes/handoff_lab/README.md（原文写「步骤 18 未交付、不得声称可跑」，交付后即失效，AGENTS.md 6.4/6.6 要求同文）。声明校正（非放宽门禁）：scenario.yaml 原 max_speed_m_s: 0.0 是未实测的愿望值（实测末速 3.04e-05 m/s 永不通过），改用机型声明已有的 stop.speed_tolerance_mps = 0.05 并在注释写明来由；f03_safe_hold 的 params.reason 被删除（stop 的输入 schema 是 additionalProperties: false 且无 properties，塞参数会被 Policy 拒，属声明合法但运行期才炸的声明缺陷）。执行语义：故障后只允许 skills/<name>/skill.yaml 里 spec.safetyClass=safety_action 的步骤继续（规则来自声明，不是代码里的动作表），报告按 REFUSED_FAULT / SAFETY_ACTION_AFTER_FAULT / NOT_EXECUTED_AFTER_FAULT / SKIPPED_PENDING 四类计数；fake_success / verified 回到实测执行记录去算，不在构造故障记录时预置。证据时效性（修复晚于证据的处置）：scenario.txt 首版（20:13）早于实现修复（20:15），其 A4/A5/A6 记录的是修复前行为（待交付步骤的不可评测判据被预检一起拦下、整条场景退出码 2 = 「预检把不会被下发的步骤也拦了」的自伤形态），已另存 scenario-run1-before-fix.txt 并由 collect_scenario_evidence.sh 按当前实现重生成 scenario.txt（A1/A2/A3 exit=0、A7 exit=5、A8/A9 exit=3、A10 exit=1）。本轮纪律：第一份正向验收绿了立即提交（20:21），未再犯步骤 08/09/18-上一轮「验收全绿却没提交」的事故形态。诚实边界（不伪造）：全部结论 simulation=true；min_stable_hold_s 只是仿真时间推进量，物理稳定性证据在步骤 15 的 loopback 验收里，两者不可互换（报告 not_proved 明写）；故障注入只证明「未继续下发运动指令、未伪造成功」，不构成真机/物理安全停机证据；目标端/真机验收 DEFERRED（板卡不在场），未用 dry-run/mock 冒充。未触碰另一窗口路径（examples/demo3_arm/、scripts/view_mujoco.py、viewer_runner.py、config/*_baseline.yaml）；提交前 git status 仅本步 5 个路径 + 本台账。下一轮：步骤 19（架构图与文档同步）。"
     },
     {
       "id": "19",
