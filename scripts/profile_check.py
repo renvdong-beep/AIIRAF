@@ -128,7 +128,63 @@ def check(baseline, baseline_path, profile_path, backend_entrypoint=BACKEND_ENTR
             if mujoco.mj_name2id(model, obj, str(name)) < 0:
                 failures.append("bodies.%s 引用的对象不存在: %s" % (key, name))
 
-    # 6) build 段齐备（统一入口依赖它分派）
+    # 6) 场景物理参数必须显式声明且真的生效
+    # 背景（真实事故）：2026-09-20 改光源时误删了 config 的 scene 段物理键，
+    # 场景静默回落到模型默认值 —— 夹爪接触力从 17.45N 掉到 8.84N、抬升位移
+    # 从 0.041208 变成 0.050928，而所有门禁仍然"通过"。因此这里把
+    # "显式声明" 与 "声明已生效" 都变成硬门禁。
+    scene_cfg = baseline.get("scene") or {}
+    friction_key = next(
+        (k for k in ("pad_friction", "finger_friction") if k in scene_cfg), None
+    )
+    for key, label in (
+        ("timestep_s", "物理步长"),
+        ("gravity", "重力"),
+        (friction_key, "指腹摩擦"),
+    ):
+        if key is None or key not in scene_cfg:
+            failures.append(
+                "基线 scene 段缺少 %s（%s）：场景会静默回落到模型默认值，"
+                "实测会让夹持力/抬升位移变化而不报错" % (key, label)
+            )
+
+    if model is not None:
+        if "timestep_s" in scene_cfg:
+            declared_step = float(scene_cfg["timestep_s"])
+            if abs(float(model.opt.timestep) - declared_step) > 1e-12:
+                failures.append(
+                    "生成场景的步长 %.9f 与声明 %.9f 不一致（声明未生效）"
+                    % (float(model.opt.timestep), declared_step)
+                )
+        if "gravity" in scene_cfg:
+            declared_gravity = [float(v) for v in str(scene_cfg["gravity"]).split()]
+            actual_gravity = [float(v) for v in model.opt.gravity]
+            if len(declared_gravity) != 3 or any(
+                abs(a - b) > 1e-9 for a, b in zip(declared_gravity, actual_gravity)
+            ):
+                failures.append(
+                    "生成场景的重力 %s 与声明 %s 不一致（声明未生效）"
+                    % (actual_gravity, declared_gravity)
+                )
+        if friction_key and friction_key in scene_cfg:
+            declared_friction = [float(v) for v in str(scene_cfg[friction_key]).split()]
+            for name in (
+                (model_cfg.get("finger_geoms") or {}).get("left"),
+                (model_cfg.get("finger_geoms") or {}).get("right"),
+            ):
+                if not name:
+                    continue
+                gid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, str(name))
+                if gid < 0:
+                    continue
+                actual = [float(v) for v in model.geom_friction[gid]]
+                if any(abs(a - b) > 1e-9 for a, b in zip(declared_friction, actual)):
+                    failures.append(
+                        "生成场景中 %s 的摩擦 %s 与声明 %s 不一致（声明未生效）"
+                        % (name, [round(v, 4) for v in actual], declared_friction)
+                    )
+
+    # 7) build 段齐备（统一入口依赖它分派）
     build = baseline.get("build") or {}
     for key, label in (
         ("baseline_module", "构建器模块"),

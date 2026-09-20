@@ -66,7 +66,7 @@
             <freejoint name="box_01_free" />
             <geom name="box_01_geom" type="box" size="0.025 0.025 0.025" mass="0.04" material="box_01_material" rgba="0.820000 0.220000 0.120000 1.000000" friction="2.0 0.05 0.001" />
         </body>
-        <camera name="overhead_camera" mode="fixed" pos="0.280000000 -0.720000000 0.720000000" quat="0.917927446 0.391852131 0.024395986 0.057148458" fovy="78" />
+        <camera name="overhead_camera" mode="fixed" pos="0.280000000 -0.720000000 0.720000000" quat="0.917927478 0.391852118 0.024395831 0.057148098" fovy="78" />
         <body name="grasp_anchor" pos="0.189999426 -0.000000000 0.025000000" mocap="true" />
     </worldbody>
     <actuator>
