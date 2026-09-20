@@ -4,6 +4,9 @@ from pathlib import Path
 import json
 import math
 import os
+import re
+import subprocess
+import sys
 import threading
 import time
 
@@ -33,6 +36,133 @@ GRIPPER_GEOMETRY_FIELDS = (
 )
 
 
+#: 视觉证据的刷新策略：always（每次抓取前刷新，默认）/ on_missing（仅证据缺失时）
+#: / never（只读现有证据）。
+VISION_REFRESH_MODES = ("always", "on_missing", "never")
+
+#: 视觉检测器命令允许的占位符。写错占位符＝配置错误，必须在执行前显式失败，
+#: 否则会出现"命令跑了但参数没传进去"这类难查的静默故障。
+VISION_COMMAND_PLACEHOLDERS = ("python", "model", "evidence", "config", "target_id")
+
+#: 生成的检测器输入配置落盘位置（属构建产物，按仓库约定写在 build/ 下）。
+DEFAULT_DETECTION_CONFIG_OUTPUT = "build/calibration/detection-config.json"
+
+#: 刷新策略的调试用环境变量覆盖（不是契约，契约见 vision.refresh）。
+VISION_REFRESH_ENV = "IRAF_REFRESH_VISION"
+
+
+def _project_root():
+    """仓库根目录（本文件位于 <root>/src/iraf_adapters/mujoco/）。"""
+    return Path(__file__).resolve().parents[3]
+
+
+def _resolve_project_path(value):
+    """解析配置里的路径：绝对路径原样，相对路径相对仓库根目录。"""
+    path = Path(str(value))
+    return path if path.is_absolute() else _project_root() / path
+
+
+def _render_detector_command(command, values):
+    """把视觉检测器命令里的占位符替换为实际值。
+
+    未知占位符显式失败：`{modle}` 这类拼写错误若被静默忽略，
+    检测器会带着默认参数跑出一个"看起来成功"的错误证据。
+    """
+    rendered = []
+    for arg in command:
+        for name in re.findall(r"\{([^{}]*)\}", arg):
+            if name not in values:
+                raise ValueError(
+                    "视觉检测器命令含未知占位符 {%s}（可用: %s）"
+                    % (name, sorted(values))
+                )
+        rendered.append(arg.format(**values))
+    return rendered
+
+
+def _parse_vision_config(config):
+    """解析后端配置的可选 `vision` 段（声明式视觉 Provider）。
+
+    背景：早期实现把证据文件路径与检测器脚本路径**写死在后端里**
+    （build/calibration/piper-vision-target.json、scripts/detect_piper_target*.py），
+    违反铁律 6.5（只依赖能力，不依赖具体模型名/设备路径）：换机器人后要么
+    静默复用了别机型的检测器，要么报错指向一个与调用方无关的路径。
+
+    现在后端只认声明，且**任何字段都不是必填**：
+
+        vision:
+          evidence_file: <证据文件路径>          # 可选
+          refresh: always | on_missing | never  # 可选，默认 always
+          detector:                             # 可选；不声明＝不刷新，只读证据
+            command: [argv, ...]                # 支持占位符 {python}/{model}/{evidence}/{config}/{target_id}
+            config_file: <检测器参数真源>        # 可选；其 depth 段覆盖内置默认值
+            config_output: <生成物落盘位置>      # 可选
+
+    未声明 `vision` 段时，`visual_pick` 必须由请求显式给出 `vision_file`，否则显式失败。
+    """
+    if config is None:
+        return None
+    if not isinstance(config, dict):
+        raise ValueError("vision 配置必须是对象")
+    unknown = sorted(set(config) - {"evidence_file", "refresh", "detector"})
+    if unknown:
+        raise ValueError("vision 含未知字段: " + str(unknown))
+
+    evidence_file = config.get("evidence_file")
+    if evidence_file is not None and (
+        not isinstance(evidence_file, str) or not evidence_file
+    ):
+        raise ValueError("vision.evidence_file 必须是非空字符串")
+
+    refresh = str(config.get("refresh", "always"))
+    if refresh not in VISION_REFRESH_MODES:
+        raise ValueError(
+            "vision.refresh 必须是 %s 之一，实际: %s"
+            % (list(VISION_REFRESH_MODES), refresh)
+        )
+
+    detector_raw = config.get("detector")
+    detector = None
+    if detector_raw is not None:
+        if not isinstance(detector_raw, dict):
+            raise ValueError("vision.detector 必须是对象")
+        unknown = sorted(
+            set(detector_raw) - {"command", "config_file", "config_output"}
+        )
+        if unknown:
+            raise ValueError("vision.detector 含未知字段: " + str(unknown))
+        command = detector_raw.get("command")
+        if not isinstance(command, (list, tuple)) or not command:
+            raise ValueError("vision.detector.command 必须是非空命令数组")
+        command = [str(item) for item in command]
+        if not all(item for item in command):
+            raise ValueError("vision.detector.command 元素不能为空字符串")
+        allowed = set(VISION_COMMAND_PLACEHOLDERS)
+        for arg in command:
+            for name in re.findall(r"\{([^{}]*)\}", arg):
+                if name not in allowed:
+                    raise ValueError(
+                        "vision.detector.command 含未知占位符 {%s}（可用: %s）"
+                        % (name, sorted(allowed))
+                    )
+        config_file = detector_raw.get("config_file")
+        if config_file is not None and (
+            not isinstance(config_file, str) or not config_file
+        ):
+            raise ValueError("vision.detector.config_file 必须是非空字符串")
+        config_output = detector_raw.get("config_output")
+        if config_output is not None and (
+            not isinstance(config_output, str) or not config_output
+        ):
+            raise ValueError("vision.detector.config_output 必须是非空字符串")
+        detector = {
+            "command": command,
+            "config_file": config_file,
+            "config_output": config_output or DEFAULT_DETECTION_CONFIG_OUTPUT,
+        }
+    return {"evidence_file": evidence_file, "refresh": refresh, "detector": detector}
+
+
 def _declared_gripper_geometry(gripper):
     """取出夹爪几何声明的必需字段；缺失即显式失败（不提供机型默认值）。"""
     missing = [key for key in GRIPPER_GEOMETRY_FIELDS if not gripper.get(key)]
@@ -56,6 +186,7 @@ class MujocoBackend:
             authority,
             fault_injection_enabled=fault_injection_enabled,
             manipulation_config=config.get("manipulation"),
+            vision_config=config.get("vision"),
             realtime=bool(config.get("realtime", False)),
             display_size=(
                 int(config.get("display_width", 640)),
@@ -70,6 +201,7 @@ class MujocoBackend:
         authority,
         fault_injection_enabled=False,
         manipulation_config=None,
+        vision_config=None,
         realtime=False,
         display_size=(640, 480),
     ):
@@ -115,6 +247,9 @@ class MujocoBackend:
         self._fault_delay_seconds = 0.0
         self._fault_remaining = 0
         self._manipulation = self._parse_manipulation_config(manipulation_config)
+        # 视觉 Provider 声明（可选）：证据文件、刷新策略、检测器命令。
+        # 后端不提供任何机型默认路径，未声明即"只能读请求显式给出的证据"。
+        self._vision = _parse_vision_config(vision_config)
         self._realtime = bool(realtime)
         self._reset_metrics()
         # 离屏显示通道：惰性创建，供 render_frames 使用（与物理步进解耦）。
@@ -342,48 +477,21 @@ class MujocoBackend:
     def visual_pick(self, inputs, lease):
         """按视觉证据驱动抓取。
 
-        兼容两种证据文件格式：
+        证据来源与刷新方式**全部由配置声明**（见 `_parse_vision_config`），
+        后端不含任何机型专有路径：未声明 `vision` 时只能读请求里的 `vision_file`。
+
+        证据文件格式兼容两种：
         - 单目标旧格式（iraf.piper-vision-target/v1）：
           顶层 vision_world_position_m + target_id，姿态默认单位四元数；
         - 多目标新格式（iraf.piper-vision-targets/v1）：
           targets 数组，按 target_id 选取，携带 6DoF 姿态与顶面法向。
         """
-        import json, os, subprocess, sys
-
         target_id = inputs["target_id"]
-        path = Path(inputs.get("vision_file", "build/calibration/piper-vision-target.json"))
-        detector = Path(__file__).resolve().parents[3] / "scripts/detect_piper_target.py"
-        detector_multi = Path(__file__).resolve().parents[3] / "scripts/detect_piper_targets.py"
-        if os.environ.get("IRAF_REFRESH_VISION", "1") == "1":
-            # 多目标检测器可用时优先使用：它会输出 6DoF 姿态，
-            # 单目标检测器只给出位置，无法支撑未知姿态抓取。
-            if detector_multi.is_file():
-                detection_config = self._detection_config_path()
-                subprocess.run(
-                    [
-                        sys.executable,
-                        str(detector_multi),
-                        "--model",
-                        str(self._model_path),
-                        "--config",
-                        str(detection_config),
-                        "--output",
-                        str(path),
-                    ],
-                    check=True,
-                )
-            elif detector.is_file():
-                subprocess.run(
-                    [
-                        sys.executable,
-                        str(detector),
-                        "--model",
-                        str(self._model_path),
-                        "--output",
-                        str(path),
-                    ],
-                    check=True,
-                )
+        path = self._resolve_vision_evidence(inputs)
+        # 只判定一次：on_missing 模式下刷新成功后文件已存在，再判一次会得到相反结果。
+        refreshed = self._should_refresh_vision(path)
+        if refreshed:
+            self._run_vision_detector(target_id, path)
         if not path.is_file():
             raise RuntimeError("视觉目标证据不存在: " + str(path))
         data = json.loads(path.read_text())
@@ -426,20 +534,87 @@ class MujocoBackend:
                     "vision_size_m": entry.get("size_m"),
                     "vision_residual_m": entry.get("residual_m"),
                     "evidence_file": str(path),
+                    # 留证：证据是自己刷新的还是外部提供的，以及声明式的刷新策略。
+                    "refreshed": bool(refreshed),
+                    "refresh_mode": (self._vision or {}).get("refresh", "always")
+                    if self._vision
+                    else "undeclared",
                 }
             }
         )
         return result
 
-    def _detection_config_path(self):
-        """为当前场景生成检测器配置，返回其路径。
+    def _resolve_vision_evidence(self, inputs):
+        """确定视觉证据文件路径：请求显式给出优先，其次配置声明。
 
-        检测器需要知道"场景里有哪些目标、各自什么颜色"才能按颜色分割。
-        这些信息来自场景生成器写下的旁挂报告（<scene>.json），
-        而不是硬编码配置：单目标场景与多目标场景因此共用同一套检测链路。
+        两者都没有时显式失败 —— 不再回退到某个机型的固定路径。
+        """
+        declared = (self._vision or {}).get("evidence_file")
+        value = inputs.get("vision_file") or declared
+        if not value:
+            raise RuntimeError(
+                "未提供视觉证据路径：请在请求参数里给 vision_file，"
+                "或在后端配置的 vision.evidence_file 中声明（后端不提供机型默认路径）"
+            )
+        return _resolve_project_path(value)
+
+    def _should_refresh_vision(self, path):
+        """是否在抓取前刷新视觉证据。
+
+        优先级：环境变量 `IRAF_REFRESH_VISION`（0/1，调试用显式覆盖）
+        ＞ 配置声明 `vision.refresh`（always / on_missing / never）。
+        未声明 detector 命令时一律不刷新。
+        """
+        detector = (self._vision or {}).get("detector")
+        if not detector:
+            return False
+        override = os.environ.get(VISION_REFRESH_ENV)
+        if override is not None:
+            if override not in ("0", "1"):
+                raise ValueError(
+                    "%s 只能是 0 或 1，实际: %s" % (VISION_REFRESH_ENV, override)
+                )
+            return override == "1"
+        mode = (self._vision or {}).get("refresh", "always")
+        if mode == "always":
+            return True
+        if mode == "never":
+            return False
+        return not path.is_file()
+
+    def _run_vision_detector(self, target_id, evidence_path):
+        """执行声明式检测器命令刷新视觉证据；失败即显式失败（不沿用旧证据）。"""
+        detector = (self._vision or {}).get("detector") or {}
+        config_path = self._detection_config_path(detector)
+        values = {
+            "python": sys.executable,
+            "model": self._model_path,
+            "evidence": str(evidence_path),
+            "config": str(config_path),
+            "target_id": str(target_id),
+        }
+        command = _render_detector_command(detector["command"], values)
+        try:
+            subprocess.run(command, check=True, cwd=str(_project_root()))
+        except (OSError, subprocess.CalledProcessError) as exc:
+            raise RuntimeError(
+                "视觉检测器执行失败: %s（命令: %s）" % (exc, command)
+            ) from exc
+
+    def _detection_config_path(self, detector_cfg=None):
+        """生成检测器输入配置，返回其路径。
+
+        检测器需要知道"场景里有哪些目标、各自什么颜色"才能按颜色分割：
+        这些是**场景事实**，来自场景生成器写下的旁挂报告（<scene>.json），
+        因此单目标与多目标场景共用同一条检测链路，不写死在配置里。
+
+        参数真源（depth 段）可由 `vision.detector.config_file` 声明；
+        未声明则使用内置默认值。声明的文件不存在或格式不对**显式失败**，
+        不再静默忽略（静默忽略会让"改了参数却没生效"无法察觉）。
 
         配置写成 .json 而非 .yaml，避免本机 DLP 对 yaml 文件的加密干扰。
         """
+        detector_cfg = detector_cfg or {}
         scene_path = Path(self._model_path)
         report_path = scene_path.with_suffix(".json")
         if not report_path.is_file():
@@ -476,17 +651,20 @@ class MujocoBackend:
                 "color_tolerance": 0.18,
             },
         }
-        # 若项目里存在多目标配置，则复用其 depth 段，保证参数只有一处真源。
-        project_root = Path(__file__).resolve().parents[3]
-        shared = project_root / "config/piper_multi_target.yaml"
-        if shared.is_file():
-            try:
-                shared_config = yaml.safe_load(shared.read_text(encoding="utf-8"))
-            except Exception:  # noqa: BLE001
-                shared_config = None
-            if isinstance(shared_config, dict) and isinstance(
-                shared_config.get("depth"), dict
-            ):
+        # 参数真源：声明了就用声明的，保证参数只有一处真源；未声明用内置默认值。
+        config_file = detector_cfg.get("config_file")
+        if config_file:
+            shared = _resolve_project_path(config_file)
+            if not shared.is_file():
+                raise RuntimeError(
+                    "vision.detector.config_file 不存在: " + str(shared)
+                )
+            shared_config = yaml.safe_load(shared.read_text(encoding="utf-8"))
+            if not isinstance(shared_config, dict):
+                raise ValueError(
+                    "vision.detector.config_file 必须是对象: " + str(shared)
+                )
+            if isinstance(shared_config.get("depth"), dict):
                 merged = dict(config["depth"])
                 merged.update(
                     {
@@ -497,7 +675,9 @@ class MujocoBackend:
                 )
                 config["depth"] = merged
 
-        output = Path("build/calibration/detection-config.json")
+        output = _resolve_project_path(
+            detector_cfg.get("config_output") or DEFAULT_DETECTION_CONFIG_OUTPUT
+        )
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(
             json.dumps(config, ensure_ascii=True, indent=2) + "\n", encoding="utf-8"

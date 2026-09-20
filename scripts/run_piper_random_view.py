@@ -288,6 +288,7 @@ def main(argv=None):
         os.environ["IRAF_BACKEND_CONFIG"] = json.dumps(
             {
                 "model_path": str(scene_path),
+                "vision": scene_report.get("vision"),
                 "manipulation": _manipulation_from_scene_report(scene_report, target_id),
                 "realtime": bool(args.realtime),
             }

@@ -516,6 +516,10 @@ def build_scene(
         "require_friction_lift": bool(acceptance.get("require_friction_lift", False)),
         "arm_position_kp": arm_kp,
         "gripper": gripper,
+        # 视觉 Provider 声明（来自基线配置的 vision 段）：证据文件、刷新策略、
+        # 检测器命令。**必须随 report 一起下传**，后端已不再内置任何机型路径；
+        # 未声明时后端只能读请求里显式给出的 vision_file。
+        "vision": config.get("vision"),
     }
     report_path = output.with_suffix(".json")
     report_path.write_text(json.dumps(report, ensure_ascii=True, indent=2) + "\n")

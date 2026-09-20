@@ -203,6 +203,7 @@ def _run_single_target(
     backend = MujocoBackend.from_config(
         {
             "model_path": str(Path(scene_path).resolve()),
+            "vision": scene.get("vision"),
             "manipulation": {"targets": targets_config, "gripper": scene["gripper"]},
         },
         profile,

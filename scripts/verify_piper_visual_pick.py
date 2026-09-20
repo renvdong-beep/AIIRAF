@@ -60,6 +60,7 @@ def main(argv=None):
     backend = MujocoBackend.from_config(
         {
             "model_path": str(args.scene.resolve()),
+            "vision": scene.get("vision"),
             "manipulation": {
                 "targets": {
                     scene["target_id"]: {

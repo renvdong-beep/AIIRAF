@@ -104,6 +104,7 @@ def _run_once(root, baseline, args, sample, scene_path, vision_file):
     backend = MujocoBackend.from_config(
         {
             "model_path": str(Path(scene_path).resolve()),
+            "vision": scene.get("vision"),
             "manipulation": {
                 "targets": {target_id: {"body": target_id, "pose_tolerance_m": tolerance}},
                 "gripper": scene["gripper"],

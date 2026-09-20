@@ -28,6 +28,15 @@ spec:
     # 官方 2F-85 driver 关节限位（Menagerie 2f85.xml）。
     rq2f85_right_driver_joint: [0.0, 0.8]
     rq2f85_left_driver_joint: [0.0, 0.8]
+  # 能力声明说明（UR5e 视觉现状）：`visual_pick` 仍在声明内，但**没有任何视觉证据**：
+  # - 视觉入口已改为声明式（后端配置 `vision` 段），UR5e 尚未接入检测器，
+  #   config/ur5_simulation_baseline.yaml 也没有 vision 段；
+  # - 因此对 UR5e 提交 visual_pick 会**显式失败**（"未提供视觉证据路径"），
+  #   不会伪造成功，但也不会在 profile 层被拦下。
+  # 待框架侧把 factory 的能力契约改为单向（declared ⊆ implemented）后，
+  # 应在本行去掉 visual_pick，并在接入检测器 + 跑通视觉验收后再加回。
+  # 另注：本能力与相机标定证据都尚未产出，属于已知缺口，见
+  # docs/debug/2026-09-20-ur5-tool-axis-flip.md。
   capabilities: [move_joint, pick_object, visual_pick, stop]
   # 结构化差异声明：把关节语义、夹爪位形、Home 位姿与相机视角
   # 从脚本魔数收敛为 profile 数据，换机械臂只需替换本文件。

@@ -89,3 +89,24 @@ acceptance:
   solver_error_factor: 0.1
   # true 时不使用抓取锚点焊接夹具，抬升位移必须完全由双指摩擦力承担
   require_friction_lift: true
+
+# --- 视觉 Provider 声明（声明式；后端不含任何机型专有路径）---
+# 检测器命令支持占位符：{python} {model} {evidence} {config} {target_id}。
+# 换机器人时只改本段：证据文件位置、检测器入口、参数真源都随配置走。
+vision:
+  # 目标在 world 系下的位姿证据（检测器输出或外部感知服务落盘）。
+  evidence_file: build/calibration/piper-vision-target.json
+  # always：每次抓取前刷新；on_missing：仅证据缺失时刷新；never：只读现有证据。
+  refresh: always
+  detector:
+    command:
+      - "{python}"
+      - scripts/detect_piper_targets.py
+      - --model
+      - "{model}"
+      - --config
+      - "{config}"
+      - --output
+      - "{evidence}"
+    # 检测器参数真源（其 depth 段覆盖后端内置默认值）。
+    config_file: config/piper_multi_target.yaml

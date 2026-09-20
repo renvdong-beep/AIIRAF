@@ -607,6 +607,9 @@ def build_scene(source, output, target_id=None, half_size=0.030, config=None,
         "finger_geoms": finger_geoms,
         "arm_joints": arm_joints,
         "gripper": gripper,
+        # 视觉 Provider 声明（可选，来自基线配置的 vision 段）。
+        # 未声明＝本机型未接入视觉；visual_pick 会要求请求显式给出 vision_file。
+        "vision": config.get("vision"),
     }
     output.with_suffix(".json").write_text(
         json.dumps(report, ensure_ascii=True, indent=2) + "\n", encoding="utf-8"
