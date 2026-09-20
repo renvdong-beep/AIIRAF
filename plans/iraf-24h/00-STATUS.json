@@ -124,11 +124,11 @@
     {
       "id": "12",
       "title": "vendor 锁定 unitree_mujoco",
-      "status": "TODO",
-      "evidence": null,
-      "commit": null,
-      "updated_at": null,
-      "note": null
+      "status": "DONE",
+      "evidence": "build/iraf-24h/12/{acceptance.txt,vendor-lock.txt,fresh-clone.txt,vendor-lock-require-readonly.json,mjcf-load-probe.json,check_lock_numbers.py,check_fresh_clone.py,run_acceptance.sh,unittest-full.txt,commit-plan.txt,commit-msg.txt,tick-report.md,commands.log}",
+      "commit": "8e8a97c",
+      "updated_at": "2026-09-20T19:01:15+0800",
+      "note": "【额度耗尽续跑轮完成】上一轮（18:55）已产出全部产物但未提交、台账仍为 TODO；本轮按纪律复核→补 commit-plan→提交→回写，未重写已有实现。关键验收数字（原样引用）：锁校验 exit=0（checked_files=22 / checked_bytes=29091323 / declared_total_bytes=29091323 / mismatches=[] / unexpected_files=[] / writable_files=[]）；--expect-commit 1eb6642e… exit=0 且 commit_matches_expectation=true；错锁点 exit=2；--require-readonly exit=0；步骤单测 Ran 32 / OK（原 27 + 本轮新增 5 条按锁重取入口用例）；补验收 A7 断言失败数=0（沙箱只放锁+BOM：锁校验 fail-closed exit=3 missing=22；--require-complete exit=3 planned_urls=22；--dry-run 文件数 2→2 不写盘；无资产时依赖资产的 2 条用例显式 skip、锁形状用例仍照跑）；全量单测 Ran 602 / failures=1 / errors=4 / skipped=4（基线 570/1/4/4，失败集合 4 项加载 ERROR + test_vision_processing 逐项一致，+32 为本步新增，无回归）。提交 8e8a97c（7 个路径，+1257 行）。多出步骤「涉及文件」的 3 个路径与逐条理由见 build/iraf-24h/12/commit-plan.txt：scripts/fetch_vendor_assets.py（把「按锁重取」做成可执行契约，AGENTS.md 5.2/5.3）、.gitignore（精准反忽略锁文件 + 把「厂商模型不入库」策略在同一步落到 unitree，diff 仅 +4 行、无行尾规范化噪声）、docs/debug/2026-09-20-vendor-asset-lock-unitree.md（AGENTS.md 5.4，留档 5 个实测坑）。**未提交但已在盘上**：vendor/unitree_go2/unitree_robots/go2/**（22 件 / 29 091 323 字节）——与仓库既有 .gitignore 策略「厂商机器人模型：第三方代码，不入库」冲突（22 件 28.4 MB 网格 vs 当前最大已跟踪文件 530740 B），属体积/策略决策，不替用户拍板；本轮按既有策略不入库并新增忽略行。**待人工决策的编号选项**：(A) 只入库锁+BOM+校验器+重取入口（本轮采用，推荐：与既有策略一致、可逆、仓库体积不变）/ (B) 连 22 件资产一起入库（需白名单并接受仓库体积约 +29 MB）。缺口（不伪造）：逐项资产许可审查与 SDK/固件授权收集未完成（license.review_state=pending_per_asset_review 为 fail-closed 分发门禁）、人形资产未锁定、新克隆无资产时依赖资产的 2 条单测显式 skip（由 A7 两向证明；CI 硬门禁用 --require-complete）、真机/目标端验收 DEFERRED（板卡不在场）。本步所有结论均 simulation=true（三模型实测 nq=19/nv=18/nu=12/nsensor=41/ncam=0 ⇒ 厂商模型不含相机雷达，传感器须由步骤 13 场景构建器按声明注入）。未触碰另一窗口路径（examples/demo3_arm/、scripts/view_mujoco.py、viewer_runner.py、config/*_baseline.yaml）；提交前 git status 仅本步 7 个路径。"
     },
     {
       "id": "13",
