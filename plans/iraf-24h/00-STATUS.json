@@ -61,11 +61,11 @@
     {
       "id": "05",
       "title": "iraf_sdk 最小层与中文诊断",
-      "status": "TODO",
-      "evidence": null,
-      "commit": null,
-      "updated_at": null,
-      "note": null
+      "status": "DONE",
+      "evidence": "build/iraf-24h/05/{acceptance.txt,unittest-full.txt,failures.txt,commands.log,status.txt,commit-plan.txt,commit-msg.txt,error-code-divergence.txt,env_probe.py,purity_probe.py,grpc-message-probe.txt,run_acceptance.sh,tick-report.md}",
+      "commit": "8122ef7",
+      "updated_at": "2026-09-20T16:05:43+0800",
+      "note": "新增 src/iraf_sdk/{__init__,errors,client}.py + tests/unit/test_sdk_errors.py + docs/debug/2026-09-20-sdk-error-code-contract-divergence.md（步骤「失败/阻塞处理」明文要求写入 docs/debug，已在 commit-plan.txt 说明）+ pyproject.toml 的 packages.find.include 加 iraf_sdk*（步骤声明的 4 个路径 + 1 个步骤授权的新增）。验收（/usr/bin/python3 3.10.12）：PYTHONPATH=src python3 -m unittest tests.unit.test_sdk_errors -v -> Ran 55 / OK (skipped=4) / EXIT=0（6 条负向用例：未知码、缺 error_code 字段、error_code=null、缺/未知 status、非法参数、缺身份三元组；含 3 条与 IDL §5 表逐行比对的门禁）；纯依赖探针 -> iraf_sdk 0.2.0 / 已知错误码 19 / mujoco、grpc、numpy、iraf_core、iraf_adapters、iraf.v1 全部已加载=False。错误码契约三方比对（实测数字）：IDL §5 表 9 项 / src 抛出点 15 项（含 scripts 16）/ SDK 映射 19 项；两侧都有 7；仅 IDL 声明 2（RESOURCE-BUSY、SAFETY-STOP，实现未落地 -> provenance=idl-only，诊断里写明不得假设可触发）；仅实现抛出 9（UNAUTHENTICATED、EXECUTION-CONFLICT、EXECUTION-NOT-ACTIVE、EXECUTION-FAILED、SAFETY-QUARANTINED、CANCEL-STOP-FAILED、INTENT-PARSE-FAILED、INTERNAL、TRANSPORT-FAILED -> code-only，契约缺口）；仅 API 契约目录 1（STREAM-LAGGED）。首跑暴露并修复 5 个自身缺陷（3 个测试断言写错：缺 timeout_s 应断言 TypeError、deadline 两次构造有毫秒差、未知码断言写反；2 个真实实现缺陷：Diagnosis 缺 contract_retryable 导致契约漂移提示漏报、error_code=null 被当成显式无错误 -> 改为契约违反），未放宽任何门禁，新增门禁更严。全量单测 Ran 360 / failures=1 / errors=4 / skipped=4，失败集合与基线（283/1/4）逐项一致（4 项 stub 导入 ERROR + 既有 test_vision_processing FAIL），+77 为本战役新增用例，无回归。未验证/缺口（不伪造）：gRPC RPC 通道未联调（/usr/bin/python3 无 grpcio，且 build/generated/python 的生成 stub 需 protobuf>=5.29 而本机 4.25.7，gRPC 消息层 4 例 SKIP，跳过原因原样在验收输出）；HTTP 路径仅用本机 loopback stub 证明协议与解析逻辑（stub 级证据，不构成运行时健康或目标端证据）；目标端验收 DEFERRED（板卡不在）。未触碰另一窗口路径（examples/demo3_arm/、scripts/view_mujoco.py、viewer_runner.py、config/*_baseline.yaml）。"
     },
     {
       "id": "06",
