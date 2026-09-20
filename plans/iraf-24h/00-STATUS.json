@@ -71,10 +71,10 @@
       "id": "06",
       "title": "build_sdk.sh 打包与 manifest",
       "status": "DONE",
-      "evidence": "build/iraf-24h/06/{build-sdk.txt,preflight.json,manifest-run1.json,manifest-run2.json,run_acceptance.sh,check_manifest.py,tamper.py,wheel_install_check.py,compare_repro.py,import_probe.py,toolchain-probe.txt,pystub-import-probe.txt,unittest-full.txt,commands.log,commit-plan.txt,commit-msg.txt,tick-report.md}",
+      "evidence": "build/iraf-24h/06/{build-sdk.txt,preflight.json,manifest-run1.json,manifest-run2.json,run_acceptance.sh,check_manifest.py,tamper.py,wheel_install_check.py,compare_repro.py,import_probe.py,toolchain-probe.txt,pystub-import-probe.txt,unittest-full.txt,commit-plan.txt,commit-msg.txt}",
       "commit": "a343b74",
       "updated_at": "2026-09-20T16:22:00+0800",
-      "note": "新增 deploy/sdk/build_sdk.sh + deploy/sdk/lib_manifest.py + tests/unit/test_sdk_manifest.py（43 用例）+ docs/debug/2026-09-20-sdk-wheel-build-offline.md（步骤「失败/阻塞处理」明文要求写调试记录）。验收（/usr/bin/python3，证据 06/build-sdk.txt）：--dry-run exit=0 且未创建 build/sdk；完整构建 exit=0；manifest schema=iraf.package-manifest/v1 / artifacts=2 / 逐文件条目 112；两道负向+两道增强负向：包内 deflate 字节被改（外层哈希已重写）→ exit=4（命中「产物内文件被篡改 … mujoco_backend.py」）、翻转一字节不动清单 → exit=4（同时命中外层 SHA-256 不符 + 内层被篡改）、重打包改成员 → exit=4（config/piper-left-contact.json）、manifest 缺失 → exit=2；正向：wheel 离线安装（pip --no-index --no-deps --target）exit=0，导入探针 {version:0.2.0, known_codes:19, heavy_loaded:[]}；可复算：连续两次构建产物 SHA-256 逐位相同=True（gzip mtime=0 + 成员 mtime=0/uid=gid=0 + 路径排序）；manifest 内本机绝对路径 0（grep '/home/coretek'=0，结构化扫描=0）；全量单测 Ran 403 / failures=1 / errors=4 / skipped=4（基线 360/1/4/4，失败集合逐项一致，+43 为本步新增）。关键实测（未放宽任何门禁）：pypa/build 未安装，pip wheel . --no-build-isolation 在 setuptools 59.6.0 下 exit=0 却产出 UNKNOWN-0.0.0 空包（961B）——已用手工 PEP 427 组装 + 文件名/版本/标签/METADATA/RECORD/零依赖五重校验把这种「绿灯+假产物」变成硬失败，并把该实测形状钉成负向单测。未验证/缺口（不伪造）：本机 protobuf 4.25.7 < 声明 5.29，protoc 3.12.4 生成的 gencode 与既有 5.29 gencode 在本机均不可导入 ⇒ 不覆盖既有 stub，manifest 记 stubs.importable_locally=false + 原因；grpc 层无 grpc_python_plugin 不可复现（按 prebuilt 登记 sha256）；IDL stub 未纳入 runtime bundle（步骤只声明 src/skills/profiles/config/deploy 五个目录，步骤 08 需声明 stub 安装位置）；只翻转 gzip 尾部 ISIZE 字节且外层哈希被重写时 --verify 退出 0（tarfile 不校验 gzip 尾部，已知边界，已显式记录并标注「不是通过」）；目标端安装/健康检查 DEFERRED（板卡不在场）。未触碰另一窗口路径；提交前 git status 仅本步 4 个路径。"
+      "note": "新增 deploy/sdk/build_sdk.sh + deploy/sdk/lib_manifest.py + tests/unit/test_sdk_manifest.py（43 用例）+ docs/debug/2026-09-20-sdk-wheel-build-offline.md（步骤「失败/阻塞处理」明文要求写调试记录）。验收（/usr/bin/python3，证据 06/build-sdk.txt）：--dry-run exit=0 且未创建 build/sdk；完整构建 exit=0；manifest schema=iraf.package-manifest/v1 / artifacts=2 / 逐文件条目 112；两道负向+两道增强负向：包内 deflate 字节被改（外层哈希已重写）→ exit=4（命中「产物内文件被篡改 … mujoco_backend.py」）、翻转一字节不动清单 → exit=4（同时命中外层 SHA-256 不符 + 内层被篡改）、重打包改成员 → exit=4（config/piper-left-contact.json）、manifest 缺失 → exit=2；正向：wheel 离线安装（pip --no-index --no-deps --target）exit=0，导入探针 {version:0.2.0, known_codes:19, heavy_loaded:[]}；可复算：连续两次构建产物 SHA-256 逐位相同=True（gzip mtime=0 + 成员 mtime=0/uid=gid=0 + 路径排序）；manifest 内本机绝对路径 0（grep '/home/coretek'=0，结构化扫描=0）；全量单测 Ran 403 / failures=1 / errors=4 / skipped=4（基线 360/1/4/4，失败集合逐项一致，+43 为本步新增）。关键实测（未放宽任何门禁）：pypa/build 未安装，pip wheel . --no-build-isolation 在 setuptools 59.6.0 下 exit=0 却产出 UNKNOWN-0.0.0 空包（961B）——已用手工 PEP 427 组装 + 文件名/版本/标签/METADATA/RECORD/零依赖五重校验把这种「绿灯+假产物」变成硬失败，并把该实测形状钉成负向单测。未验证/缺口（不伪造）：本机 protobuf 4.25.7 < 声明 5.29，protoc 3.12.4 生成的 gencode 与既有 5.29 gencode 在本机均不可导入 ⇒ 不覆盖既有 stub，manifest 记 stubs.importable_locally=false + 原因；grpc 层无 grpc_python_plugin 不可复现（按 prebuilt 登记 sha256）；IDL stub 未纳入 runtime bundle（步骤只声明 src/skills/profiles/config/deploy 五个目录，步骤 08 需声明 stub 安装位置）；只翻转 gzip 尾部 ISIZE 字节且外层哈希被重写时 --verify 退出 0（tarfile 不校验 gzip 尾部，已知边界，已显式记录并标注「不是通过」）；目标端安装/健康检查 DEFERRED（板卡不在场）。未触碰另一窗口路径；提交前 git status 仅本步 4 个路径。【收尾复核 2026-09-20（步骤 21 类收尾 tick）】evidence 字段按盘上实际存在性校正：本步声明的 commands.log 与 tick-report.md 盘上均不存在，已从 evidence 移除并登记为缺口（见本台账 wrapup.evidence_gaps 与 docs/progress/iraf-24h-证据索引.md §3）；不补写日志与报告（补写等于伪造记录）。其余 15 条声明逐条核对存在。"
     },
     {
       "id": "07",
@@ -143,10 +143,10 @@
       "id": "14",
       "title": "场景生成验收与传感器统计",
       "status": "DONE",
-      "evidence": "build/iraf-24h/14/{acceptance.txt,sensors.txt,check-report.txt,check_report.py,run_acceptance.sh,report-pretty.json,cases/,unittest-full.txt,unittest-runs*.txt,probe*.txt,commit-plan.txt,commit-msg.txt,tick-report.md,commands.log}；报告 build/acceptance/handoff-lab-scene-sensors/report.json",
+      "evidence": "build/iraf-24h/14/{acceptance.txt,cases/sensors.txt,cases/check-report.txt,check_report.py,run_acceptance.sh,report-pretty.json,cases/,unittest-full.txt,unittest-runs*.txt,probe*.txt,commit-plan.txt,commit-msg.txt,tick-report.md}；报告 build/acceptance/handoff-lab-scene-sensors/report.json",
       "commit": "4190ecf",
       "updated_at": "2026-09-20T19:28:00+0800",
-      "note": "新增 scripts/verify_scene_sensors.py（入口层）+ src/iraf_adapters/unitree/scene_sensor_evidence.py（实现层）+ tests/unit/test_scene_sensor_evidence.py（28 例）+ 契约先于实现的 scenes/handoff_lab/baseline.yaml 必需段 sensor_acceptance 与 config/scene.schema.json 同名必需段（收紧门禁）+ 已闭合场景包正向对照夹具补齐。验收（/usr/bin/python3 3.10.12，mujoco 3.3.3）：bash build/iraf-24h/14/run_acceptance.sh -> 通过 14 项，失败 0 项；A1 verify_scene_sensors --scene scenes/handoff_lab -> exit=0、15 条判据全过、failed_checks=[]；A2 场景目录不存在=1；A3 模型缺失=3；A4 --no-render=4（相机未验证不得当通过）；A5 未知本体=3；A6 --help=0；A7 check_report.py -> passed=True、camera.fovy_rel_error=0.010427987255182231、lidar.points=167、camera.render.status='ok'、lidar.miss_fraction=0.5361111111111111、lidar.ground_fraction=0.07777777777777778、lidar.rays=360、imu.acc.rel_error=2.0889954113422363e-16；相机 fovy 78.0 与声明逐位一致（rel=0.0）、标定 focal 292.111 vs 理想针孔 296.375 -> focal_rel_error=0.014387、EGL 离屏 640x480 成功（非全黑 0.5503、resolution_diff_px=0）；雷达 4 圈仰角×90 方位，台面点 28、量程 min/mean/max=0.074953/0.232360/0.919363 m、命中台面距离与按声明解析求交最大偏差 0.0；IMU 四元数模长偏差 0.0、陀螺仪 vs mj_objectVelocity 偏差 0.0、加速度计 vs mj_objectAcceleration 相对误差 2.09e-16、12 关节力矩 vs ctrl×gear 最大偏差 0.0；重建后模型 sha256 逐位一致 3d7b07c3a21e342e2cf0380062c025ca2a6176220d936fbc6c5d85c6b6d59ca4；A8 步骤单测 Ran 28 / OK、A9 步骤 11 契约 Ran 42 / OK、A10 步骤 13 构建器 Ran 20 / OK；全量单测 Ran 650 / failures=1 / errors=4 / skipped=4（基线 622/1/4/4，失败集合 4 项加载 ERROR + test_vision_processing 逐项一致，+28 为本步新增，无回归）。阈值全部来自声明（实现层另有必需键元组双门禁，缺键 -> 退出码 2，脚本内无数字默认值，A12 门禁命中 0）；判据均与独立计算比对而非硬编码常数（陀螺仪/加速度计/力矩/台面求交），6 条负向证明判据不会恒真 + 2 条 BLOCKED 分支（渲染抛错/--no-render：相机 blocked 且雷达与 IMU 仍完成）。首跑暴露并修复 5 处自身缺陷（renderer 未透传；缺键 KeyError；SceneBuildError 退出码口径未归一；夹具 -45° 射线被躯干自身 geom 挡住 -> 修夹具几何而非放宽阈值；负向用例覆盖主报告路径导致证据被冲 -> harness 命名空间化），未放宽任何既有门禁。诚实边界（不伪造）：全部结论 simulation=true；目标端/真机验收 DEFERRED（板卡不在场，未用 dry-run/mock 冒充）；本场景无平衡控制器，settle.steps=10 仅证明采样准静态（躯干漂移 0.001879794568108979 m），不代表站立/步态/导航能力（属步骤 16/17）；雷达仅光线投射统计，无点云消息/时序/噪声模型；单测使用渲染替身并在报告 render.implementation 留痕，真实离屏渲染由本步验收入口证明。多出「涉及文件」4 条路径（实现层、baseline.yaml、scene.schema.json、test_scene_schema.py 夹具）逐条理由见 build/iraf-24h/14/commit-plan.txt。未触碰另一窗口路径（examples/demo3_arm/、scripts/view_mujoco.py、viewer_runner.py、config/*_baseline.yaml）；提交前 git status 仅本步 6 个路径。下一轮：步骤 15 Go2 loopback 站立/停止/状态。"
+      "note": "新增 scripts/verify_scene_sensors.py（入口层）+ src/iraf_adapters/unitree/scene_sensor_evidence.py（实现层）+ tests/unit/test_scene_sensor_evidence.py（28 例）+ 契约先于实现的 scenes/handoff_lab/baseline.yaml 必需段 sensor_acceptance 与 config/scene.schema.json 同名必需段（收紧门禁）+ 已闭合场景包正向对照夹具补齐。验收（/usr/bin/python3 3.10.12，mujoco 3.3.3）：bash build/iraf-24h/14/run_acceptance.sh -> 通过 14 项，失败 0 项；A1 verify_scene_sensors --scene scenes/handoff_lab -> exit=0、15 条判据全过、failed_checks=[]；A2 场景目录不存在=1；A3 模型缺失=3；A4 --no-render=4（相机未验证不得当通过）；A5 未知本体=3；A6 --help=0；A7 check_report.py -> passed=True、camera.fovy_rel_error=0.010427987255182231、lidar.points=167、camera.render.status='ok'、lidar.miss_fraction=0.5361111111111111、lidar.ground_fraction=0.07777777777777778、lidar.rays=360、imu.acc.rel_error=2.0889954113422363e-16；相机 fovy 78.0 与声明逐位一致（rel=0.0）、标定 focal 292.111 vs 理想针孔 296.375 -> focal_rel_error=0.014387、EGL 离屏 640x480 成功（非全黑 0.5503、resolution_diff_px=0）；雷达 4 圈仰角×90 方位，台面点 28、量程 min/mean/max=0.074953/0.232360/0.919363 m、命中台面距离与按声明解析求交最大偏差 0.0；IMU 四元数模长偏差 0.0、陀螺仪 vs mj_objectVelocity 偏差 0.0、加速度计 vs mj_objectAcceleration 相对误差 2.09e-16、12 关节力矩 vs ctrl×gear 最大偏差 0.0；重建后模型 sha256 逐位一致 3d7b07c3a21e342e2cf0380062c025ca2a6176220d936fbc6c5d85c6b6d59ca4；A8 步骤单测 Ran 28 / OK、A9 步骤 11 契约 Ran 42 / OK、A10 步骤 13 构建器 Ran 20 / OK；全量单测 Ran 650 / failures=1 / errors=4 / skipped=4（基线 622/1/4/4，失败集合 4 项加载 ERROR + test_vision_processing 逐项一致，+28 为本步新增，无回归）。阈值全部来自声明（实现层另有必需键元组双门禁，缺键 -> 退出码 2，脚本内无数字默认值，A12 门禁命中 0）；判据均与独立计算比对而非硬编码常数（陀螺仪/加速度计/力矩/台面求交），6 条负向证明判据不会恒真 + 2 条 BLOCKED 分支（渲染抛错/--no-render：相机 blocked 且雷达与 IMU 仍完成）。首跑暴露并修复 5 处自身缺陷（renderer 未透传；缺键 KeyError；SceneBuildError 退出码口径未归一；夹具 -45° 射线被躯干自身 geom 挡住 -> 修夹具几何而非放宽阈值；负向用例覆盖主报告路径导致证据被冲 -> harness 命名空间化），未放宽任何既有门禁。诚实边界（不伪造）：全部结论 simulation=true；目标端/真机验收 DEFERRED（板卡不在场，未用 dry-run/mock 冒充）；本场景无平衡控制器，settle.steps=10 仅证明采样准静态（躯干漂移 0.001879794568108979 m），不代表站立/步态/导航能力（属步骤 16/17）；雷达仅光线投射统计，无点云消息/时序/噪声模型；单测使用渲染替身并在报告 render.implementation 留痕，真实离屏渲染由本步验收入口证明。多出「涉及文件」4 条路径（实现层、baseline.yaml、scene.schema.json、test_scene_schema.py 夹具）逐条理由见 build/iraf-24h/14/commit-plan.txt。未触碰另一窗口路径（examples/demo3_arm/、scripts/view_mujoco.py、viewer_runner.py、config/*_baseline.yaml）；提交前 git status 仅本步 6 个路径。下一轮：步骤 15 Go2 loopback 站立/停止/状态。【收尾复核 2026-09-20（步骤 21 类收尾 tick）】evidence 字段按盘上实际存在性校正：sensors.txt 与 check-report.txt 实际写在 cases/ 子目录（mtime 19:26 与本步 acceptance.txt 同轮，内容为该轮正向输出），已改为 cases/ 下的实际路径；声明的 commands.log 盘上不存在，已移除并登记为缺口（见本台账 wrapup.evidence_gaps）。tick-report.md 存在。"
     },
     {
       "id": "15",
@@ -203,6 +203,47 @@
       "note": "新增 docs/progress/2026-09-20-sdk-unitree-24h.md（24 小时汇总：分步结果表 20 行、产物清单 11 类、回归汇总 263→794、缺口清单 4 组、下一阶段建议 5 条 + 建议第一步、流程复盘 5 条）并在 docs/project-progress.md 追加 §13「2026-09-20 iraf-24h 24 小时战役：SDK 跨架构交付与宇树场景/技能」（只写事实与数字）。验收（/usr/bin/python3 3.10.12，`bash build/iraf-24h/20/run_acceptance.sh` -> **通过 9 项，失败 0 项，exit=0**）：A1 check_ledger.py -> exit=0「步骤数=20 / 状态集合=['DONE'] / 含 TODO 的步骤=[] / 提交 SHA 不可解析的步骤=[] / 缺证据路径的步骤=[]」；A2 **负向对照两例实测**（步骤 20 改回 TODO -> exit=2；commit 改成 40 个 0 -> exit=3；证据 build/iraf-24h/20/check_ledger-negative.txt + ledger-todo.json/ledger-bad-commit.json，证明 A1 不是恒通过门禁）；ls docs/progress/2026-09-20-sdk-unitree-24h.md exit=0；全量单测 Ran 794 / failures=1 / errors=4 / skipped=4（与步骤 19 逐项一致，本步纯文档无新增用例 ⇒ Ran 数不变即预期，无回归）；新增文本内网 IP：新文档 0 命中、project-progress.md 新增行 0 命中（历史遗留仍在同文件既有段落，按「不属本窗口」登记为缺口，不擅自扩大提交范围）；项目进度文档一致性：§13 存在、7 个章节、DEFERRED 出现 10 次。**收尾结论**：20/20 步 DONE，无 BLOCKED；目标端/真机验收按范围调整统一 DEFERRED（板卡不在场），未用 dry-run/mock/历史数据冒充。遗留缺口（下一阶段输入，均在汇总文档 §5 与原阻塞表）：wheelhouse 传递依赖 10 条仅 1 条覆盖（9 条缺失，需决策 A/B/C）、版本漂移 4 项未 pin、gRPC 通道未联调（protobuf 4.25.7 < 5.29）、人形运动与语音/S1/S3 未实现、厂商资产入库策略（A/B 待人工决策）、根级两张总图无 .dot 源（M1.7）、既有文档内网 IP 历史遗留（不属本窗口）。两次提交：产物 6b28a82（docs 2 路径）+ 台账三件套（本行回写，chore(plans)）。本轮额度未触发紧张，无未提交残留（`build/iraf-24h/20/` 为 gitignore 证据区）。"
     }
   ],
+  "wrapup": {
+    "state": "COMPLETE",
+    "reviewed_at": "2026-09-20",
+    "mode": "收尾模式（00-执行规则.md §1 第 7 条）：只做证据索引、汇总、缺口清单与计划文件夹整理，不新增实现",
+    "index": "docs/progress/iraf-24h-证据索引.md",
+    "commit": "46079a1",
+    "index_baseline_commit": "5b76c8df6f1ee784e44927f23c0de486fb94b6cc",
+    "reproducibility": "同一 HEAD 下重复生成逐字节相同（本轮已 cmp 验证）；HEAD 前进后重跑只有正文「核对基准提交」一行会变，判定结果（0 缺失 / 0 提交问题）不变",
+    "review_evidence": "build/iraf-24h/21/{build_evidence_index.py,make_broken_ledgers.py,run_negative.sh,evidence-index.txt,evidence-index.json,evidence-index-run1.txt,negative-control.txt,commit-plan.txt,commit-msg.txt,tick-report.md,commands.log} + build/iraf-24h/21/negative/（坏台账副本与逐例输出）",
+    "method": "解析本台账 steps[].evidence（展开花括号、裸文件名与通配写法）逐条核对盘上存在性；并对每个 commit 追加「对象存在 + git merge-base --is-ancestor 确在 HEAD 历史中」两重判定（步骤 20 的门禁只判 SHA 可解析，不判历史可达）",
+    "result": "步骤 20 个全部 DONE，无 BLOCKED/IN_PROGRESS/TODO；首跑声明证据路径 303 条 / 盘上存在 298 条（缺失 5，逐条给出明细）⇒ 定位为「2 条路径不精确 + 3 条真缺失」并按事实校正；校正后 311 条声明 / 311 条存在 / 0 缺失；提交问题 0 条（20/20 均在 HEAD 历史中）",
+    "corrections": [
+      "步骤 14 声明的 sensors.txt / check-report.txt 实际写在 cases/ 子目录（mtime 19:26 与本步 acceptance.txt 同轮，内容为该轮正向输出：points=167、fovy_rel_error=0.010427987255182231 等），evidence 已改为 cases/ 下的实际路径——原写法是路径不精确，不是证据丢失",
+      "步骤 06 声明的 commands.log、tick-report.md 与步骤 14 声明的 commands.log 盘上确实不存在，已从 evidence 声明中移除，并登记进本 wrapup.evidence_gaps（移除声明的唯一理由是「声明必须与盘上事实一致」，缺口本身不隐藏）"
+    ],
+    "evidence_gaps": [
+      {
+        "step": "06",
+        "path": "build/iraf-24h/06/commands.log",
+        "reason": "00-执行规则.md §5.5 要求每轮把命令与退出码落盘 commands.log；步骤 06 那一轮未落盘",
+        "impact": "该轮命令序列只能从 06/run_acceptance.sh 与 build-sdk.txt 复原，无法逐条审计退出码；不影响验收结论（build-sdk.txt 保留了原始输出）",
+        "closing_condition": "不补写（补写等于伪造记录）；如需逐条命令审计，按 06/run_acceptance.sh 重跑生成"
+      },
+      {
+        "step": "06",
+        "path": "build/iraf-24h/06/tick-report.md",
+        "reason": "同一轮未落盘 tick 汇报；06 是本战役 20 个步骤中唯一既无 commands.log 又无 tick-report.md 的步骤",
+        "impact": "该轮汇报文本缺失，调度器当轮输出仍在 ~/.hermes/cron/output/ 下（若未被轮转）",
+        "closing_condition": "不补写；结论以 06/tick-report 之外的台账 note 与 build-sdk.txt 为准"
+      },
+      {
+        "step": "14",
+        "path": "build/iraf-24h/14/commands.log",
+        "reason": "同上；步骤 14 的 tick-report.md 与其余证据齐全，仅缺 commands.log",
+        "impact": "同步骤 14 的验收输出（acceptance.txt + cases/）完整，命令序列可由 run_acceptance.sh 复原",
+        "closing_condition": "不补写；按 14/run_acceptance.sh 重跑即可重建"
+      }
+    ],
+    "not_fabricated": "缺失的命令日志与 tick 报告一律不补写；本节的证据键集合与 docs/progress/iraf-24h-证据索引.md §3 同文，且由 build/iraf-24h/21 的核对脚本可复跑（同一脚本在 0 缺失时才退 0）",
+    "next_action": "无未完成步骤：20/20 DONE 且无 BLOCKED。后续 tick 若无新增内容应保持静默（[SILENT]），不得重复生成索引、不得新增实现；板卡到位后按 00-执行规则.md §0 在既有脚本上执行目标端验收（DEFERRED 项），不改脚本语义"
+  },
   "scope": {
     "mode": "x86-first",
     "reason": "边缘板卡不在场：<边缘板卡A> / <边缘板卡B> 的 22 与 9119 端口实测均不通",
