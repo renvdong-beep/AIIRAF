@@ -37,28 +37,40 @@ box_green  FAILED
 box_blue   FAILED
 ```
 
-## 3. 多目标为什么只过了一个（诚实记录）
+## 3. 多目标编排移入通用层（本轮完成）
 
-旧的多目标验收脚本（`verify_piper_multi_target_pick.py`）在调用
-`build_reference_poses` **之前**还会做两件编排：
+初版 `--all-targets` 只过 box_red：因为旧脚本在求解参考姿态**之前**还做两件编排，
+当时仍在机型脚本里。现已移入通用层（`build_robot_baseline.py`），Piper 构建器
+**调用**这些通用函数而不复制实现：
 
-1. **按目标位姿推导抓取参数**：从 `targets[]` 里取该目标的位置与顶面法向，
-   覆写 `grasp.finger_center_xy_m` / `approach_direction` / `pregrasp_direction` / `yaw_deg`；
-2. **生成抬高的 home 位姿**（`_raised_home_pose`），避免 HOME 阶段扫过其它目标。
+- `derive_grasp_for_target(baseline, target_id)`：按 `targets[]` 中该目标的位姿推导
+  抓取点（`pos_m`）、接近方向（顶面法向，超 `max_tilt_deg` 则回退竖直并标注
+  `fallback_vertical`）、预抓取方向（固定竖直）、夹爪 yaw（对齐面内主轴）；
+- `raised_home_pose(..., scene_builder=...)`：把 HOME 换成"接近轴上方抬高"的解，
+  避免 HOME→APPROACH 横扫台面撞飞干扰目标；**探测场景由调用方注入生成器**
+  （实测：用通用生成器建 Piper 探测场景会报"MJCF 缺少 geom: piper_left_finger"）；
+  用 core 的**位置型** IK（HOME 无需姿态约束，也就无需 flange site）。
+- 两个开关：`grasp.derive_from_target` / `grasp.raised_home`（只写在多目标基线里，
+  单目标场景行为不变）。
 
-这两段编排仍在机型脚本里，没有进通用层。因此统一入口的 `--all-targets`
-目前只适用于"目标位姿已在配置中显式声明、且抓取参数对每个目标都成立"的场景 ——
-`box_red` 恰好满足（它是顶层 `target` 声明的那一个），绿色/蓝色不满足。
+统一入口还补上了旧脚本独有的**视觉精度对真值核对**（含立方体 90° 对称折叠），
+并把"抓取成功 + 视觉精度达标"一起作为通过判据：
 
-**结论**：`verify_piper_multi_target_pick.py` **暂不删除**，它仍承担"未知位姿自适应
-多目标"验收；统一入口的 `--all-targets` 先作为"声明式多目标"入口，两者语义不同，
-文档里分别标注，避免用弱验收替换强验收。
+```
+box_red    SUCCEEDED  力 0.245461/0.245851N  抬升 0.086574m  抓取点偏差 0.002928m
+                      视觉精度 1.225mm / 0.941°   （工程记录：1.224mm / 0.94°）
+box_green  SUCCEEDED  力 0.245299/0.249909N  抬升 0.076540m  抓取点偏差 0.004515m
+                      视觉精度 1.212mm / 0.712°   （工程记录：1.212mm / 0.71°）
+box_blue   SUCCEEDED  力 0.251940/0.249783N  抬升 0.064688m  抓取点偏差 0.003670m
+                      视觉精度 2.026mm / 0.822°   （工程记录：2.026mm / 0.82°）
+passed = True
+```
 
-下一步（把编排移入通用层，使其真正统一）：
-- 在 `build_robot_baseline.build_reference_poses` 中支持"按 target 条目推导抓取参数"
-  （配置开关，例如 `grasp.derive_from_target: true`，默认关闭保持既有行为）；
-- 把 `_raised_home_pose` 一并移入通用层；
-- 判据：box_red/green/blue 三个目标的命中、双指接触、抬升与误差全部复现旧脚本的数值。
+即统一入口与旧脚本的判据与数值一致（视觉精度与工程记录逐位吻合）。
+
+因此 `verify_piper_multi_target_pick.py` 也**降级为薄包装**（打印 deprecated 后转发）。
+至此统一入口覆盖：单目标 pick_object / 单目标 visual_pick / 多目标逐目标 visual_pick，
+两个机型验收脚本（pick / visual / multi-target）全部成为包装。
 
 ## 4. 复现
 

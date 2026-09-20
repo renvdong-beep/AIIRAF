@@ -40,6 +40,7 @@ UR5e 是 6 自由度通用臂，同一位置有**无穷多组关节角**。
 import argparse
 import hashlib
 import json
+import math
 from pathlib import Path
 
 import mujoco
@@ -49,6 +50,7 @@ import yaml
 from build_robot_pick_scene import build_scene
 from iraf_core.kinematics import (
     balance_tip_clearance,
+    solve_position_ik,
     gravity_hold_ctrl,
     lowest_mesh_point_z,
     solve_pose_ik,
@@ -709,6 +711,169 @@ def validate_grasp_pose(scene_path, baseline, reference):
     }
 
 
+def _grasp_axes(grasp_cfg):
+    """从基线声明取出（工具指向, 开合轴）。
+
+    语义：`approach_direction` 是**后退方向**（抓取点 → 预抓取点），
+    工具指向取其反向；开合轴必须与之垂直，否则显式失败。
+    """
+    retreat = np.asarray(
+        grasp_cfg.get("approach_direction") or [0.0, 0.0, 1.0], dtype=float
+    )
+    retreat = retreat / float(np.linalg.norm(retreat))
+    pointing = -retreat
+    spread = np.asarray(grasp_cfg.get("spread_axis") or [1.0, 0.0, 0.0], dtype=float)
+    spread = spread / float(np.linalg.norm(spread))
+    if abs(float(np.dot(retreat, spread))) > 1e-6:
+        raise ValueError("grasp.spread_axis 必须与 approach_direction 垂直")
+    return retreat, pointing, spread
+
+
+def _euler_deg_to_matrix(euler_deg):
+    """ZYX 外旋欧拉角 → 旋转矩阵（与场景生成器的姿态口径一致）。"""
+    rx, ry, rz = (math.radians(float(value)) for value in euler_deg)
+    rotation_x = np.array(
+        [[1, 0, 0], [0, math.cos(rx), -math.sin(rx)], [0, math.sin(rx), math.cos(rx)]]
+    )
+    rotation_y = np.array(
+        [[math.cos(ry), 0, math.sin(ry)], [0, 1, 0], [-math.sin(ry), 0, math.cos(ry)]]
+    )
+    rotation_z = np.array(
+        [[math.cos(rz), -math.sin(rz), 0], [math.sin(rz), math.cos(rz), 0], [0, 0, 1]]
+    )
+    return rotation_z @ rotation_y @ rotation_x
+
+
+def derive_grasp_for_target(baseline, target_id):
+    """按 `targets[]` 中该目标的位姿推导抓取参数，返回 (新基线, mode)。
+
+    为什么必须做：多目标场景里各目标的位置与朝向不同，沿用固定抓取点会让参考姿态
+    与目标错位（实测：box_green / box_blue 因此抓取失败）。推导内容：
+
+    - 抓取点水平位置 = 该目标 `pos_m` 的 x/y（z 仍由台面高度 + 半边长推出）；
+    - 接近方向 = 目标**顶面法向**（仅当倾斜角 ≤ `grasp.max_tilt_deg`；
+      超过则回退竖直并把 mode 标为 `fallback_vertical`，不做静默通过）；
+    - 预抓取方向固定为**竖直**：若 APPROACH 也沿倾斜法向偏移，
+      APPROACH 与 DESCEND 的 joint1 目标不一致，下降阶段的微调会被夹爪摩擦锁死
+      （实测 joint1 只走到目标的 23%）；抬升仍沿竖直只考验摩擦；
+    - 夹爪 yaw 对齐目标的**面内主轴**：否则张开的手指会撞到棱角并把目标推走
+      （实测 50mm 方块在 25° yaw 下被推开 57mm）。
+
+    该行为由 `grasp.derive_from_target: true` 开启（缺省关闭，单目标场景行为不变）。
+    """
+    targets = baseline.get("targets") or []
+    entry = next((item for item in targets if str(item.get("id")) == str(target_id)), None)
+    if entry is None:
+        raise ValueError("targets 中没有目标: " + str(target_id))
+    if not entry.get("pos_m"):
+        raise ValueError("targets[%s] 缺少 pos_m，无法推导抓取点" % target_id)
+
+    per_target = json.loads(json.dumps(baseline))
+    grasp_cfg = dict(per_target.get("grasp") or {})
+    per_target["grasp"] = grasp_cfg
+    position = [float(value) for value in entry["pos_m"]]
+    grasp_cfg["finger_center_xy_m"] = [position[0], position[1]]
+
+    euler = [float(value) for value in (entry.get("euler_deg") or [0.0, 0.0, 0.0])]
+    max_tilt = float(grasp_cfg.get("max_tilt_deg", 30.0))
+    if max(abs(euler[0]), abs(euler[1])) <= max_tilt:
+        rotation = _euler_deg_to_matrix(euler)
+        normal = rotation[:, 2]
+        if float(normal[2]) < 0.0:
+            normal = -normal
+        grasp_cfg["approach_direction"] = [
+            round(float(value), 9) for value in normal
+        ]
+        grasp_cfg["pregrasp_direction"] = [0.0, 0.0, 1.0]
+        grasp_cfg["yaw_deg"] = round(
+            float(math.degrees(math.atan2(rotation[1, 0], rotation[0, 0]))), 6
+        )
+        mode = "pose_adaptive"
+    else:
+        mode = "fallback_vertical"
+    return per_target, mode
+
+
+def raised_home_pose(root, baseline, target_id, reference, scene_builder=None):
+    """求"从 APPROACH 沿预抓取方向再抬高"的 HOME 关节姿态。
+
+    多目标场景里若沿用零姿态 HOME，从零姿态到 APPROACH 的直线运动会横扫台面、
+    把干扰目标撞飞（实测顶到 0.25m 高空）。把 HOME 放在 APPROACH 上方后，
+    HOME → APPROACH 近似竖直下降。由 `grasp.raised_home: true` 开启。
+
+    `scene_builder` 由调用方注入：探测场景必须与**最终场景同一个生成器**产出，
+    否则几何名可能对不上（实测：Piper 的指腹 geom 由 Piper 生成器写入，
+    用通用生成器建探测场景会报"MJCF 缺少 geom: piper_left_finger"）。
+    """
+    model_cfg = baseline["model"]
+    source = _resolve(root, model_cfg["source"])
+    arm_names = list(model_cfg["arm_joints"])
+    target_cfg = baseline.get("target") or {}
+    grasp_cfg = baseline.get("grasp") or {}
+    solver_cfg = grasp_cfg.get("solver") or {}
+
+    probe_scene = source.parent / (source.stem + "-home-probe.xml")
+    builder = scene_builder or build_scene
+    try:
+        builder(
+            source,
+            probe_scene,
+            target_id=target_id or target_cfg.get("id", "box_01"),
+            half_size=float(target_cfg.get("half_size_m", 0.025)),
+            config=baseline,
+        )
+        model = mujoco.MjModel.from_xml_path(str(probe_scene))
+    finally:
+        for leftover in (probe_scene, probe_scene.with_suffix(".json")):
+            if leftover.is_file():
+                leftover.unlink()
+    data = mujoco.MjData(model)
+
+    pad_names = list(model_cfg["finger_geoms"].get("pad_boxes") or (
+        model_cfg["finger_geoms"]["left"], model_cfg["finger_geoms"]["right"]
+    ))
+    pad_geoms = [_geom_id(model, name) for name in pad_names]
+    arm_joint_ids = [
+        int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name))
+        for name in arm_names
+    ]
+
+    # 先摆到 APPROACH 关节姿态，让迭代从相近构型出发
+    for name, value in reference["approach"]["joint_positions"].items():
+        joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+        if joint_id >= 0:
+            data.qpos[int(model.jnt_qposadr[joint_id])] = float(value)
+    mujoco.mj_forward(model, data)
+
+    direction = np.asarray(
+        grasp_cfg.get("pregrasp_direction")
+        or grasp_cfg.get("approach_direction")
+        or [0.0, 0.0, 1.0],
+        dtype=float,
+    )
+    direction = _unit(direction, "预抓取方向")
+    approach_center = np.asarray(reference["approach"]["finger_center_m"], dtype=float)
+    home_target = approach_center + direction * float(grasp_cfg.get("home_rise_m", 0.12))
+
+    # 用**位置型** IK：HOME 只需要落在 APPROACH 正上方，构型由 APPROACH 播种保持，
+    # 因此无需姿态约束 —— 也就不需要 flange site（Piper 的模型没有可用的工具 site）。
+    result = solve_position_ik(
+        model,
+        data,
+        home_target,
+        arm_joint_ids,
+        [{"kind": "geom", "id": int(geom)} for geom in pad_geoms],
+        iterations=int(solver_cfg.get("iterations", 800)),
+        step=float(solver_cfg.get("step", 0.5)),
+        tolerance_m=float(solver_cfg.get("tolerance_m", 1e-5)),
+    )
+    if float(result.position_error_m) > 1e-4:
+        raise ValueError(
+            "HOME 抬高姿态求解残差过大: %.9f m" % result.position_error_m
+        )
+    return {name: float(value) for name, value in result.joint_positions.items()}
+
+
 def build(root, baseline_path, scene_path, calibration_path=None, target_id=None):
     """校验模型来源、求解参考姿态、生成受控场景并校验。
 
@@ -719,7 +884,23 @@ def build(root, baseline_path, scene_path, calibration_path=None, target_id=None
     baseline = load_baseline(_resolve(root, baseline_path))
     output = _resolve(root, scene_path)
 
+    grasp_cfg = baseline.get("grasp") or {}
+    target_mode = None
+    if grasp_cfg.get("derive_from_target"):
+        # 多目标：按该目标的位姿推导抓取参数（缺 target_id 即显式失败）
+        if not target_id:
+            raise ValueError(
+                "grasp.derive_from_target=true 时必须指定 target_id（多目标基线）"
+            )
+        baseline, target_mode = derive_grasp_for_target(baseline, target_id)
+
     reference = build_reference_poses(root, baseline, target_id=target_id)
+    if (baseline.get("grasp") or {}).get("raised_home"):
+        # 多目标：HOME 换成"接近轴上方抬高"的解，避免 HOME→APPROACH 横扫台面
+        reference["home"] = raised_home_pose(root, baseline, target_id, reference)
+        reference["home_hold_mode"] = "raised_above_approach"
+    if target_mode:
+        reference["target_mode"] = target_mode
     acceptance = baseline.get("acceptance") or {}
     tolerance = float(acceptance.get("pose_tolerance_m", 0.005))
     factor = float(acceptance.get("solver_error_factor", 0.1))

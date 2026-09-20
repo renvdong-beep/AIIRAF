@@ -16,6 +16,10 @@ import numpy as np
 import yaml
 
 from build_piper_pick_scene import build_scene
+from build_robot_baseline import (  # noqa: E402  通用编排：与机型无关，只按声明调用
+    derive_grasp_for_target,
+    raised_home_pose,
+)
 from iraf_core.kinematics import (
     balance_tip_clearance,
     lowest_mesh_point_z,
@@ -434,7 +438,25 @@ def build(root, baseline_path, scene_path, calibration_path=None, target_id=None
             "Piper 模型与来源清单不一致: " + ", ".join(lock_report["mismatches"])
         )
 
+    # 多目标编排（按目标推导抓取参数 + 抬高 HOME）实现在通用构建器里，
+    # 这里只按声明调用，避免同一套逻辑在两处各写一遍。
+    grasp_cfg = baseline.get("grasp") or {}
+    target_mode = None
+    if grasp_cfg.get("derive_from_target"):
+        if not target_id:
+            raise ValueError(
+                "grasp.derive_from_target=true 时必须指定 target_id（多目标基线）"
+            )
+        baseline, target_mode = derive_grasp_for_target(baseline, target_id)
+
     reference = build_reference_poses(root, baseline, target_id=target_id)
+    if (baseline.get("grasp") or {}).get("raised_home"):
+        reference["home"] = raised_home_pose(
+            root, baseline, target_id, reference, scene_builder=build_scene
+        )
+        reference["home_hold_mode"] = "raised_above_approach"
+    if target_mode:
+        reference["target_mode"] = target_mode
     acceptance = baseline.get("acceptance") or {}
     tolerance = float(acceptance.get("pose_tolerance_m", 0.005))
     factor = float(acceptance.get("solver_error_factor", 0.1))

@@ -30,6 +30,11 @@ target:
   rgba: "0.82 0.22 0.12 1"
 
 grasp:
+  # 多目标必需：按 targets[] 中该目标的位姿推导抓取点/接近方向/夹爪 yaw，
+  # 并把 HOME 换成"接近轴上方抬高"的解（否则 HOME→APPROACH 会横扫台面撞飞干扰目标）。
+  # 单目标基线不声明这两项，行为不变。
+  derive_from_target: true
+  raised_home: true
   # 双指指尖 geom 中点的目标抓取位置（世界坐标）。
   # z 不在此声明，必须由 workbench.top_z_m + target.half_size_m 推出，保证方块贴台面。
   finger_center_xy_m: [0.19, 0.0]

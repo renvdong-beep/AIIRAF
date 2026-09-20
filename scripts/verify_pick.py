@@ -18,9 +18,11 @@
 
 import argparse
 import json
+import math
 import time
 from pathlib import Path
 
+import numpy as np
 import yaml
 
 from iraf_adapters.factory import load_backend
@@ -148,6 +150,81 @@ def _run_target(
     return result
 
 
+def _vision_accuracy(scene, result, config):
+    """把视觉估计与该目标的场景真值比对，返回精度证据（无视觉证据时返回 None）。
+
+    为什么需要：抓取成功只说明"夹爪到了它认为的位置"，不说明"它认为的位置对"。
+    旧的多目标验收脚本单独核对这一点，这里把它变成统一入口的一部分。
+
+    姿态比对必须折叠立方体的 **90° 对称等价类**：同一个几何朝向可以写成 4 个
+    不同四元数，直接比角度会把 0° 误报成 90°（历史实测）。
+    """
+    evidence = (result.get("result") or {}).get("evidence") or {}
+    vision = evidence.get("vision") or {}
+    estimate = vision.get("vision_world_position_m")
+    if not estimate:
+        return None
+    truth = scene.get("target_position") or {}
+    truth_position = [float(truth.get(axis, 0.0)) for axis in ("x", "y", "z")]
+    position_error = float(np.linalg.norm(np.asarray(estimate) - np.asarray(truth_position)))
+
+    acceptance = config.get("acceptance") or {}
+    tolerance_m = float(acceptance.get("vision_position_tolerance_m", 0.005))
+    tolerance_deg = float(acceptance.get("vision_orientation_tolerance_deg", 10.0))
+
+    orientation_error_deg = None
+    estimate_quat = vision.get("vision_quaternion_wxyz")
+    truth_entry = next(
+        (
+            item
+            for item in (scene.get("targets") or [])
+            if str(item.get("id")) == str(scene.get("target_id"))
+        ),
+        None,
+    )
+    truth_quat = (truth_entry or {}).get("quaternion_wxyz")
+    if estimate_quat and truth_quat:
+        estimate_rotation = _quat_to_matrix(estimate_quat)
+        truth_rotation = _quat_to_matrix(truth_quat)
+        best = 180.0
+        for quarter in range(4):  # 折叠 90° 对称等价类
+            angle = math.radians(90.0 * quarter)
+            fold = np.array([
+                [math.cos(angle), -math.sin(angle), 0.0],
+                [math.sin(angle), math.cos(angle), 0.0],
+                [0.0, 0.0, 1.0],
+            ])
+            relative = estimate_rotation @ (truth_rotation @ fold).T
+            cosine = max(-1.0, min(1.0, (float(np.trace(relative)) - 1.0) / 2.0))
+            best = min(best, math.degrees(math.acos(cosine)))
+        orientation_error_deg = best
+
+    return {
+        "vision_world_position_m": [float(v) for v in estimate],
+        "truth_position_m": truth_position,
+        "position_error_m": position_error,
+        "position_tolerance_m": tolerance_m,
+        "orientation_error_deg": orientation_error_deg,
+        "orientation_tolerance_deg": tolerance_deg,
+        "passed": bool(
+            position_error <= tolerance_m
+            and (
+                orientation_error_deg is None
+                or orientation_error_deg <= tolerance_deg
+            )
+        ),
+    }
+
+
+def _quat_to_matrix(quaternion_wxyz):
+    w, x, y, z = (float(v) for v in quaternion_wxyz)
+    return np.array([
+        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+    ])
+
+
 def _scene_target_ids(config, scene):
     """多目标 id 列表：优先取基线声明的 targets，其次取场景报告。"""
     for source in (config.get("targets"), scene.get("targets")):
@@ -237,9 +314,15 @@ def main(argv=None):
                 duration_ms,
                 target_id,
             )
-            entries.append(
-                {"target_id": target_id, "scene": target_scene, "execution": result}
-            )
+            entry = {
+                "target_id": target_id,
+                "scene": target_scene,
+                "execution": result,
+            }
+            accuracy = _vision_accuracy(target_scene, result, config)
+            if accuracy is not None:
+                entry["vision_accuracy"] = accuracy
+            entries.append(entry)
         report = {
             "schema_version": "iraf.pick-acceptance/v1",
             "simulation_only": True,
@@ -247,8 +330,12 @@ def main(argv=None):
             "skill": args.skill,
             "all_targets": True,
             "targets": entries,
+            # 通过判据 = 每个目标都抓取成功，且（若有视觉证据）视觉精度达标：
+            # 抓取成功只说明"夹爪到了它认为的位置"，视觉精度才说明"它认为的对"。
             "passed": all(
-                entry["execution"].get("status") == "SUCCEEDED" for entry in entries
+                entry["execution"].get("status") == "SUCCEEDED"
+                and (entry.get("vision_accuracy") or {}).get("passed", True)
+                for entry in entries
             ),
         }
         args.output.mkdir(parents=True, exist_ok=True)
