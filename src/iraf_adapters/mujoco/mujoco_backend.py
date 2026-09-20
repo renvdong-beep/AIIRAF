@@ -292,7 +292,7 @@ class MujocoBackend:
             l = geom(names["left_finger_geom"], "左指")
             r = geom(names["right_finger_geom"], "右指")
         center = (l + r) / 2.0; offset = center - w; norm = max(float((offset @ offset) ** 0.5), 1e-9)
-        return {"wrist_position_m": w.tolist(), "left_finger_position_m": l.tolist(), "right_finger_position_m": r.tolist(), "grasp_center_m": center.tolist(), "finger_separation_m": float(((l-r) @ (l-r)) ** 0.5), "wrist_body": names["wrist_body"], "tcp_offset_from_wrist_m": offset.tolist(), "tcp_offset_from_link6_m": offset.tolist(), "approach_axis_world": (offset / norm).tolist(), "recommended_pregrasp_offset_m": 0.04}
+        return {"wrist_position_m": w.tolist(), "left_finger_position_m": l.tolist(), "right_finger_position_m": r.tolist(), "grasp_center_m": center.tolist(), "finger_separation_m": float(((l-r) @ (l-r)) ** 0.5), "wrist_body": names["wrist_body"], "tcp_offset_from_wrist_m": offset.tolist(), "approach_axis_world": (offset / norm).tolist(), "recommended_pregrasp_offset_m": 0.04}
 
     def _calibrate_intrinsics(self, samples, image_size, rotation, translation):
         """标定针孔内参：principal_point_px 与 focal_px（Levenberg-Marquardt）。

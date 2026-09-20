@@ -9,7 +9,7 @@ class FakeBackend:
         return {
             "position_source": "geom_xpos",
             "finger_separation_m": 0.0203,
-            "tcp_offset_from_link6_m": [0.08, 0.0, 0.01],
+            "tcp_offset_from_wrist_m": [0.08, 0.0, 0.01],
             "approach_axis_world": [0.99, 0.0, 0.1],
             "recommended_pregrasp_offset_m": 0.04,
             "grasp_center_m": [0.1, 0.0, 0.2],
@@ -24,7 +24,7 @@ class CalibrateGraspProviderTests(unittest.TestCase):
         self.assertEqual(evidence["position_source"], "geom_xpos")
         self.assertGreater(evidence["finger_separation_m"], 0.0)
         self.assertGreater(evidence["recommended_pregrasp_offset_m"], 0.0)
-        self.assertTrue(math.isfinite(evidence["tcp_offset_from_link6_m"][0]))
+        self.assertTrue(math.isfinite(evidence["tcp_offset_from_wrist_m"][0]))
 
 
 if __name__ == "__main__":

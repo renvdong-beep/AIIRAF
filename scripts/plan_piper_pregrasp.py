@@ -8,7 +8,8 @@ def plan(calibration, output):
     data = json.loads(Path(calibration).read_text())
     center = data["grasp_center_m"]
     axis = data["approach_axis_world"]
-    tcp = data["tcp_offset_from_link6_m"]
+    # 通用字段名：wrist_body 由配置声明，不再假设机型叫 link6
+    tcp = data["tcp_offset_from_wrist_m"]
     offset = float(data["recommended_pregrasp_offset_m"])
     pregrasp = [float(center[i]) - float(axis[i]) * offset for i in range(3)]
     ik_target = [pregrasp[i] - float(tcp[i]) for i in range(3)]

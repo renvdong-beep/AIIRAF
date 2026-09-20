@@ -96,5 +96,6 @@ Piper 统一验收 SUCCEEDED 力 0.240676/0.244112N 抬升 0.087184m 偏差 0.00
 - 其它手写后端配置的入口（`render_piper_mujoco.py`、`verify_development_simulation.py`
   等经环境变量注入配置的脚本）尚未统一切到 `emit_backend_config.py`；
   它们的配置来源是部署环境文件，切换需要先统一"场景报告 → 配置"的生成路径。
-- `calibrate_grasp` 证据字段 `tcp_offset_from_link6_m`（Piper 命名）仍保留，
-  待调用方迁移后由其通用别名 `tcp_offset_from_wrist_m` 取代。
+- ~~`calibrate_grasp` 证据字段 `tcp_offset_from_link6_m`（Piper 命名）待迁移~~
+  已在后续一笔（D3）完成：调用方迁移到 `tcp_offset_from_wrist_m`，
+  Skill 输出 schema 同步更新，并新增契约测试锁定"实现 ⇄ schema"一致性。

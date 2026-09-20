@@ -42,7 +42,8 @@ def calibrate(model_path, output):
         "grasp_center_m": [round(float(v), 9) for v in midpoint],
         "finger_separation_m": round(float(((left_pos - right_pos) ** 2).sum() ** 0.5), 9),
         "position_source": "geom_xpos",
-        "tcp_offset_from_link6_m": [round(float(v), 9) for v in (midpoint - wrist)],
+        # 通用字段名（腕部 body 由配置声明）；旧名 tcp_offset_from_link6_m 已移除。
+        "tcp_offset_from_wrist_m": [round(float(v), 9) for v in (midpoint - wrist)],
         "approach_axis_world": [round(float(v), 9) for v in approach],
         "recommended_pregrasp_offset_m": 0.04,
     }
