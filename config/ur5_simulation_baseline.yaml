@@ -198,3 +198,26 @@ build:
   pose_evidence: build/calibration/ur5-baseline-pose.json
   profile: profiles/ur5_mujoco.yaml
   safety_policy: profiles/safety/simulation_lab.yaml
+
+# --- 视觉 Provider 声明（与 Piper 同结构；检测器用同一个通用脚本）---
+# UR5e 的相机由场景生成器按 scene.camera 写入（overhead_camera，fixed 模式）。
+vision:
+  # 目标在 world 系下的位姿证据（由下面的检测器刷新）
+  evidence_file: build/calibration/ur5-vision-target.json
+  refresh: always
+  detector:
+    command:
+      - "{python}"
+      - scripts/detect_targets.py
+      - --model
+      - "{model}"
+      - --config
+      - "{config}"
+      - --output
+      - "{evidence}"
+      - --extrinsics
+      - "{calibration}"
+    # 相机标定**按机型独立**：UR5e 的相机在 (-1.30,-0.75,0.85)、fovy 60°，
+    # 与 Piper 完全不同；复用 Piper 的标定不会报错，只会让坐标悄悄偏掉。
+    # 生成方式：scripts/verify_camera_calibration.py --scene ... --baseline 本文件
+    calibration_file: build/calibration/ur5-camera-to-base.json

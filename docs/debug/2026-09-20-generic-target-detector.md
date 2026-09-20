@@ -69,3 +69,88 @@ MUJOCO_GL=egl python3 scripts/detect_targets.py \
 2. `config/ur5_simulation_baseline.yaml` 增加 `vision` 段；
 3. 视觉验收纳入统一入口（给 `scripts/verify_pick.py` 增加 `--skill visual_pick`）；
 4. 验收通过后把 `visual_pick` 加回 `profiles/ur5_mujoco.yaml`。
+
+## 6. Step D1.2：UR5e 视觉接入完成（2026-09-20 续）
+
+D1.1 之后 UR5e 已能"零代码"跑检测器，D1.2 补上标定、声明与验收三件事。
+
+### 6.1 相机标定脚本去机型化
+
+`scripts/verify_camera_calibration.py` 的算法本就通用，但身份绑死在 Piper 上：
+
+| 原实现 | 改为 |
+| --- | --- |
+| 写死 body `box_01` / geom `box_01_geom` | `--target-id`（缺省 `box_01`） |
+| 写死 `profiles/piper_mujoco.yaml` | `--profile`，缺省读基线 `build.profile`（不再隐式假设机型） |
+| 写死 resource `piper-mujoco` | `profile.name + "-mujoco"` |
+| schema `iraf.piper-camera-extrinsics/v1` | `iraf.camera-extrinsics/v1` |
+
+**并修掉一条写死的机型假设门禁**：原判据 `200 < focal_px < 400` 是 Piper 相机
+（292px）留下的区间，UR5e 的 404.8px 被判 `CALIBRATION_FAILED`，而几何上完全正确
+（由 fovy=60° 推出的理论焦距 415.7px，相对偏差仅 2.6%）。
+改为**以模型自带 fovy 推出的理论焦距为基准**的判据：
+
+```
+focal_expected = (height/2) / tan(fovy/2)
+门禁：相对偏差 ≤ --focal-tolerance(0.15) 且 像素残差 RMS ≤ --residual-px(2.0)
+```
+
+两台机型实测均通过：
+
+```
+UR5e   focal 404.83 vs 理论 415.7（偏差 2.6%）  残差 RMS 1.29px  外参 max_error 2.2e-15 m
+Piper  focal 292.11 vs 理论 296.4（偏差 1.4%）  残差 RMS 1.08px  外参 max_error 1e-15 m
+```
+
+### 6.2 UR5e 视觉声明与验收
+
+`config/ur5_simulation_baseline.yaml` 新增 `vision` 段（与 Piper 同结构，
+检测器同一个通用脚本，只是 `calibration_file` 指向 UR5e 自己的标定）：
+
+```yaml
+vision:
+  evidence_file: build/calibration/ur5-vision-target.json
+  refresh: always
+  detector:
+    command: ["{python}", "scripts/detect_targets.py", "--model", "{model}",
+              "--config", "{config}", "--output", "{evidence}",
+              "--extrinsics", "{calibration}"]
+    calibration_file: build/calibration/ur5-camera-to-base.json
+```
+
+统一入口新增 `--skill visual_pick`（`scripts/verify_pick.py`），
+四判据与 `pick_object` 完全一致，只是位姿来自视觉证据而不是场景真值。
+
+### 6.3 结果
+
+```
+检测精度（UR5e，用自己的标定，独立于验收链路）：
+  视觉位置 [-0.551008, -0.131610, 0.025408]   真值 [-0.55, -0.134, 0.025]
+  误差 2.63mm（掩码 448 点，位姿残差 0.34mm）
+  对照：用模型自带内参时为 2.10mm —— 拟合内参残差 1.3px 带来约 0.5mm 额外偏差，
+  两者都远小于 5mm 容差。若要提高精度可增加采样或直接采用模型内参。
+
+四条验收全部 SUCCEEDED：
+  UR5e  visual_pick  SUCCEEDED  视觉位置误差 2.6mm  双指 17.451911/16.053349N
+                                抬升 0.041208m  抓取点偏差 0.000118763（与真值路径一致）
+  UR5e  pick_object  SUCCEEDED  同上数值
+  Piper pick_object  SUCCEEDED  0.240676/0.244112N  抬升 0.087184m  偏差 0.002826043
+  Piper visual_pick  SUCCEEDED  偏差 0.002912921（视觉链路）
+单元测试 263 项，失败项仍为既有 1 项 + 4 项导入错误。
+```
+
+`profiles/ur5_mujoco.yaml` 的 `visual_pick` 能力**已加回**：相机、独立标定、
+通用检测器、config vision 段与视觉验收证据齐备，不再是无凭据的声明。
+
+### 6.4 复现命令
+
+```
+PYTHONPATH=src python3 scripts/build_baseline.py --baseline config/ur5_simulation_baseline.yaml
+MUJOCO_GL=egl PYTHONPATH=src python3 scripts/verify_camera_calibration.py \
+    --scene build/models/ur5-pick-scene.xml \
+    --baseline config/ur5_simulation_baseline.yaml \
+    --extrinsics-output build/calibration/ur5-camera-to-base.json \
+    --output build/acceptance/ur5-camera-calibration
+PYTHONPATH=src python3 scripts/verify_pick.py --baseline config/ur5_simulation_baseline.yaml \
+    --skill visual_pick --output build/acceptance/ur5-visual-pick
+```

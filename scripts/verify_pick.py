@@ -56,6 +56,12 @@ def main(argv=None):
     parser.add_argument("--duration-ms", type=int, default=None)
     parser.add_argument("--target-id", default=None)
     parser.add_argument(
+        "--skill",
+        choices=("pick_object", "visual_pick"),
+        default="pick_object",
+        help="pick_object：用场景真值位姿；visual_pick：用声明的视觉证据（同一套判据）",
+    )
+    parser.add_argument(
         "--rebuild", action="store_true",
         help="先按配置声明的构建器重建参考姿态与场景（离线验收的常规做法）",
     )
@@ -148,22 +154,23 @@ def main(argv=None):
     )
 
     now = int(time.time() * 1000)
-    correlation = "pick-acceptance"
+    correlation = args.skill.replace("_", "-") + "-acceptance"
+    parameters = {"target_id": target_id, "duration_ms": duration_ms}
+    if args.skill == "pick_object":
+        # 无视觉链路：位姿来自场景真值（仅用于仿真验收，不作为感知输入）。
+        parameters["grasp_pose"] = {
+            "frame_id": "world",
+            "position": scene["target_position"],
+            "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+        }
+    # visual_pick 不传位姿：位姿由配置声明的视觉证据提供（见 vision 段）。
     request = {
         "request_id": correlation,
         "idempotency_key": correlation + "-" + str(now),
         "correlation_id": correlation,
-        "skill": "pick_object",
+        "skill": args.skill,
         "skill_version_constraint": "1.0.0",
-        "parameters": {
-            "target_id": target_id,
-            "grasp_pose": {
-                "frame_id": "world",
-                "position": scene["target_position"],
-                "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
-            },
-            "duration_ms": duration_ms,
-        },
+        "parameters": parameters,
         "deadline_unix_ms": now + 60000,
         "profile_name": profile.name,
         "profile_version": profile.version,
@@ -185,6 +192,7 @@ def main(argv=None):
         "schema_version": "iraf.pick-acceptance/v1",
         "simulation_only": True,
         "baseline": str(args.baseline),
+        "skill": args.skill,
         "scene": scene,
         "execution": result,
     }

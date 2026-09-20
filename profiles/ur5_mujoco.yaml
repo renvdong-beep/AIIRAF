@@ -29,14 +29,13 @@ spec:
     rq2f85_right_driver_joint: [0.0, 0.8]
     rq2f85_left_driver_joint: [0.0, 0.8]
   # 能力声明：**只声明本部署真正可用的能力**。
-  # `visual_pick` 不声明 —— 视觉入口已是声明式的（后端配置 `vision` 段），
-  # 而 UR5e 侧尚未接入任何检测器，也没有相机标定与视觉抓取证据；
-  # 声明的后果是策略层放行一个必然失败的任务（失败点在运行期而不是策略层）。
-  # 接入视觉时：在 config/ur5_simulation_baseline.yaml 增加 vision 段
-  # （evidence_file + detector.command），跑通视觉验收后再把 visual_pick 加回本行。
-  # 注：装配期的能力契约是单向的（declared ⊆ implemented），
-  # 因此"后端实现了 visual_pick 但本机不声明"是允许的，见 src/iraf_adapters/factory.py。
-  capabilities: [move_joint, pick_object, stop]
+  # `visual_pick` 于 2026-09-20 接入：相机（overhead_camera，fixed）、
+  # 独立标定（build/calibration/ur5-camera-to-base.json）、通用检测器
+  # （scripts/detect_targets.py）与 config 的 vision 段齐备，
+  # 视觉验收见 scripts/verify_pick.py --skill visual_pick。
+  # 注：装配期能力契约是单向的（declared ⊆ implemented）；
+  # 若将来去掉 vision 段，须同时去掉本行，否则策略层会放行必然失败的任务。
+  capabilities: [move_joint, pick_object, visual_pick, stop]
   # 结构化差异声明：把关节语义、夹爪位形、Home 位姿与相机视角
   # 从脚本魔数收敛为 profile 数据，换机械臂只需替换本文件。
   joint_roles:

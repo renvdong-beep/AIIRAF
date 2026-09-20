@@ -12,6 +12,7 @@
 
 import argparse
 import json
+import math
 import os
 import tempfile
 import xml.etree.ElementTree as ET
@@ -154,6 +155,15 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scene", type=Path, required=True)
     parser.add_argument("--camera", default="overhead_camera")
+    parser.add_argument("--target-id", default="box_01")
+    parser.add_argument(
+        "--profile",
+        type=Path,
+        default=None,
+        help="RobotProfile；缺省时读基线配置的 build.profile（不得隐式假设机型）",
+    )
+    parser.add_argument("--baseline", type=Path, default=None,
+                        help="基线配置；用于解析 build.profile")
     parser.add_argument("--target-offset", type=float, default=0.05)
     parser.add_argument(
         "--extrinsics-output",
@@ -164,24 +174,51 @@ def main(argv=None):
         "--output", type=Path, default=Path("build/acceptance/camera-calibration")
     )
     parser.add_argument("--tolerance-mm", type=float, default=1.0)
+    parser.add_argument(
+        "--focal-tolerance",
+        type=float,
+        default=0.15,
+        help="拟合焦距与模型理论焦距(fovy 推出)的最大相对偏差",
+    )
+    parser.add_argument(
+        "--residual-px",
+        type=float,
+        default=2.0,
+        help="内参拟合的像素残差 RMS 上限",
+    )
     args = parser.parse_args(argv)
 
     root = Path(__file__).resolve().parents[1]
     scene_path = args.scene.resolve()
     model = mujoco.MjModel.from_xml_path(str(scene_path))
     data = mujoco.MjData(model)
-    body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "box_01")
+    body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, args.target_id)
+    if body_id < 0:
+        raise SystemExit("场景里没有目标 body: " + args.target_id)
     mujoco.mj_forward(model, data)
     target_position = [float(value) for value in data.xpos[body_id]]
-    half_size = float(model.geom_size[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "box_01_geom")][2])
+    geom_name = args.target_id + "_geom"
+    geom_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, geom_name)
+    if geom_id < 0:
+        raise SystemExit("场景里没有目标 geom: " + geom_name)
+    half_size = float(model.geom_size[geom_id][2])
 
     pairs = sample_extrinsics(model, data, args.camera)
     intrinsics_samples = sample_intrinsics(scene_path, target_position, half_size)
 
     authority = ControlAuthorityManager()
-    profile = load_robot_profile(root / "profiles/piper_mujoco.yaml")
+    profile_path = args.profile
+    if profile_path is None:
+        declared = None
+        if args.baseline is not None:
+            import yaml
+            declared = (yaml.safe_load((root / args.baseline).read_text(encoding="utf-8")).get("build") or {}).get("profile")
+        if not declared:
+            raise SystemExit("请显式给出 --profile，或提供带 build.profile 的 --baseline")
+        profile_path = Path(declared)
+    profile = load_robot_profile((root / profile_path) if not profile_path.is_absolute() else profile_path)
     backend = MujocoBackend.from_config({"model_path": str(scene_path)}, profile, authority)
-    lease = authority.acquire("piper-mujoco", "camera-calibration")
+    lease = authority.acquire(profile.name + "-mujoco", "camera-calibration")
     evidence = backend.calibrate_camera_to_base(
         {
             "pairs": pairs,
@@ -193,7 +230,7 @@ def main(argv=None):
     )
 
     extrinsics = {
-        "schema_version": "iraf.piper-camera-extrinsics/v1",
+        "schema_version": "iraf.camera-extrinsics/v1",
         "camera": args.camera,
         "rotation_matrix": evidence["rotation_matrix"],
         "translation_m": evidence["translation_m"],
@@ -213,7 +250,7 @@ def main(argv=None):
     )
 
     report = {
-        "schema_version": "iraf.piper-camera-calibration-acceptance/v1",
+        "schema_version": "iraf.camera-calibration-acceptance/v1",
         "simulation_only": True,
         "scene": str(scene_path),
         "camera": args.camera,
@@ -229,7 +266,24 @@ def main(argv=None):
     )
     print(json.dumps(report, ensure_ascii=True, indent=2))
 
-    intrinsic_ok = bool(intrinsics) and 200.0 < intrinsics["focal_px"] < 400.0
+    # 内参门禁：以**模型自带 fovy 推出的理论焦距**为基准，判定相对偏差与像素残差。
+    # 原实现写死 200 < focal < 400 px —— 那是 Piper 相机（292px）留下的机型假设，
+    # 换相机就会误判（实测 UR5e 的 404.8px 被判 CALIBRATION_FAILED，而几何上完全正确：
+    # 由 fovy=60° 推出的理论焦距 415.7px，相对偏差仅 2.6%）。
+    intrinsic_ok = False
+    if intrinsics:
+        cam_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, args.camera)
+        if cam_id < 0:
+            raise SystemExit("场景里没有相机: " + args.camera)
+        half_height = float(HEIGHT) / 2.0
+        focal_expected = half_height / math.tan(
+            math.radians(float(model.cam_fovy[cam_id]) / 2.0)
+        )
+        relative_error = abs(float(intrinsics["focal_px"]) - focal_expected) / focal_expected
+        residual_ok = float(intrinsics.get("residual_px_rms", 0.0)) <= float(args.residual_px)
+        intrinsics["focal_expected_px"] = round(float(focal_expected), 4)
+        intrinsics["focal_relative_error"] = round(float(relative_error), 6)
+        intrinsic_ok = bool(relative_error <= args.focal_tolerance and residual_ok)
     passed = (
         bool(evidence["passed"])
         and evidence["max_error_m"] <= args.tolerance_mm / 1000.0
