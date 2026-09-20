@@ -151,11 +151,11 @@
     {
       "id": "15",
       "title": "Go2 loopback 站立/停止/状态",
-      "status": "TODO",
-      "evidence": null,
-      "commit": null,
-      "updated_at": null,
-      "note": null
+      "status": "DONE",
+      "evidence": "build/iraf-24h/15/{acceptance.txt,loopback.txt,check-report.txt,check_report.py,make_variants.py,run_acceptance.sh,cases/,pd-scan.json,probe-api.txt,diag_kit.py,kit_settle_probe.py,unittest-step15.txt,unittest-full.txt,scene-check.json,variants.txt,tight-height.txt,commit-plan.txt,commit-msg.txt,tick-report.md}；报告 build/acceptance/go2-loopback/report.json",
+      "commit": "ff2674e",
+      "updated_at": "2026-09-20T20:35:00+0800",
+      "note": "新增入口 scripts/verify_go2_loopback.py（退出码 0/1/2/3/4/5）+ 实现层 src/iraf_adapters/unitree/loopback.py + 声明 config/go2_loopback.yaml + tests/unit/test_go2_loopback_contract.py（40 例）。验收（/usr/bin/python3 3.10.12 + mujoco 3.3.3，bash build/iraf-24h/15/run_acceptance.sh -> 通过 16 项、失败 0 项）：正向 exit=0、报告 passed=True / simulation=True / stand.height_mean_m=0.2801007638069918 / height_std_m=7.351396160228674e-05 / hold_seconds=7.499999999999341（要求 6.0）/ max_attitude_error_deg=0.05779130222480239 / max_tracking_error_rad=0.04473942561095967 / ctrl_saturated_samples=0 / stop.static_entered=True / stop.final_speed_mps=0.003964950131491022 / stop.seconds_to_static=0.29000000000009685 / stop.collapsed=True，10 条判据全过；负向：缺 --config 与配置不存在=1、模型未生成与关键帧不存在=3、缺必需键与非法 stop.mode 与控制频率不整除=2、高度容差收紧到不可达=5（且负向报告命名空间化到 cases/，不覆盖正向证据）；scene_check 场景包契约=0。全量单测 Ran 690 / failures=1 / errors=4 / skipped=4（基线 650/1/4/4，失败集合 4 项 stub 导入 ERROR + test_vision_processing 逐项一致，+40 为本步新增，无回归）。首跑（kp=30/kd=1）**不达标**（高度 0.223974 m、下垂 46 mm、姿态 4.98°、跟踪 0.354 rad）——修的是增益**声明**而不是判据：增益扫描证据 build/iraf-24h/15/pd-scan.json（kp=80/150/250 达标，kp=400 与 kp=250/kd=12 发散、控制量饱和 8431/8846 次），最终声明 kp=150 N·m/rad、kd=4 N·m·s/rad，容差与跟踪上限按实测留余量并在注释里写明依据。判据与独立计算的模型量比对（陀螺仪 vs mj_objectVelocity、力矩传感器 vs 施加 ctrl、控制量 vs 模型 ctrlrange），不是与硬编码常数比；姿态判据取「相对竖直的倾斜角」（不含偏航），首版把偏航也算进去属自身缺陷、已修正。多出步骤「涉及文件」4 条路径，逐条理由见 build/iraf-24h/15/commit-plan.txt：src/iraf_adapters/unitree/loopback.py（与 13/14 同构的两层结构）、profiles/unitree_go2_mujoco.yaml 新增 spec.home（站立位形的单一事实来源，场景基线 pose_source 词表只有 profile|explicit|unverified，explicit 会造成两份事实）、scenes/handoff_lab/baseline.yaml 的 initial_state.unitree_go2.pose_source 由 unverified（closed_by 步骤 15）回填为 profile（不回填即静默缺口）、tests/unit/test_scene_schema.py 同文把该断言的 assertIn 改为 assertNotIn（收紧方向，其余断言不变）。诚实边界（不伪造）：全部结论 simulation=true；只证明「声明位形下站得住、能进入静止、状态可读」，不代表步态/导航/停靠能力；stop.mode=torque_zero_release 是松力停机，力矩型执行器松力后失能躺倒（报告显式给 collapsed）；重力前馈取自由浮动基的 qfrc_bias（不含地面约束反力），不是支撑力矩；目标端/真机验收 DEFERRED（板卡不在场），未用 dry-run/mock 冒充。未触碰另一窗口路径（examples/demo3_arm/、scripts/view_mujoco.py、viewer_runner.py、config/*_baseline.yaml）；提交前 git status 仅本步 7 个路径。本轮未触发额度紧张，无未提交残留。下一轮：步骤 16 QuadrupedAdapter 与 UnitreeGo2Adapter。"
     },
     {
       "id": "16",
