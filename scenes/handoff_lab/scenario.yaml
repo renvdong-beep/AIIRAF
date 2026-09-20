@@ -1,13 +1,72 @@
 schema_version: iraf.scenario-catalog/v1
 # S2 脚本化场景（决策 6.A：先 S2 再 S1，S3 遥操作本轮不做）。
-# 本文件只声明步骤、判据与故障注入项；**执行器尚未实现**（由步骤 18 的 scripts/scenario.py 交付），
-# 在它落地前不得在文档或命令里声称 `scenario.py run` 可用（AGENTS.md 6.4）。
+# 执行器已由步骤 18 交付（`scripts/scenario.py list|run`）；本文件只声明步骤、判据与故障注入项，
+# 阈值不在这里之外的地方出现（铁律 5.3）。执行器可评测的判据只有三个（口径见其模块 docstring）：
+# `min_stable_hold_s`（本步推进的仿真时间）、`max_speed_m_s`（步骤结束时实测末速）、`timeout_s`（墙钟）。
+# 其余判据名（pose_tolerance_m / min_lift_delta_m / …）属尚在研究中的步骤，声明它们会让预检失败（退出码 2）。
 # 步骤状态机沿用 docs/iraf-piper-quadruped-simulation.md §5 的 delivery_handoff：
 # VERIFY_READY -> DOG_DOCKING -> ARM_PERCEIVE -> ARM_GRASP -> PLACE_IN_TRAY -> DOG_CONFIRM -> DOG_DELIVER，异常进 SAFE_HOLD。
 scene: scene.yaml
 simulation: true
 
 scenarios:
+  # 本战役（x86-first）**可执行**的场景：只用已验收的 stand/stop 能力，判据取实测值 + 余量
+  # （实测证据 build/iraf-24h/18/probe-step-metrics.json：stand 推进 8.0 s / 末速 3.04e-05 m/s / 墙钟 0.43 s；
+  # stop 推进 3.0 s / 末速 9.18e-04 m/s / 墙钟 0.60 s）。停靠/抓取/放置/载荷确认属 U5/U6，
+  # 在 `nominal` 里登记为待交付。
+  stand_stop:
+    description: 可执行子集（S2 回归）：四足站立保持 → 松力停机。判据全部是"结果"判据（仿真时间推进量 + 实测末速 + 墙钟），不是"命令已发出"。
+    steps:
+      - id: ss01_stand
+        action: stand
+        robot: unitree_go2
+        params: {}
+        criteria:
+          # 8.0 s 推进量 ≥ 3.0：站立窗口成立（物理稳定性证据见步骤 15 的 loopback 验收，两者不可互换）。
+          min_stable_hold_s: 3.0
+          # 末速上限取机型声明里已有的 stop.speed_tolerance_mps = 0.05 m/s（不另造数字），实测 3.04e-05。
+          max_speed_m_s: 0.05
+          # 墙钟上限：实测 0.43 s，技能租约 30 s，留 23 倍余量。
+          timeout_s: 10.0
+      - id: ss02_stop
+        action: stop
+        robot: unitree_go2
+        params: {}
+        criteria:
+          # 停机同样要推进声明的停机时长（3.0 s），否则"停"只是一条命令。
+          min_stable_hold_s: 1.0
+          max_speed_m_s: 0.05
+          timeout_s: 5.0
+    faults: []
+
+  # 故障注入（本战役交付的"传感器不可用"类）：注入点必须是**可执行**步骤，
+  # 否则故障无法注入，只会被登记为"未注入"（见 fault_sensor_loss）。
+  fault_sensor_unavailable:
+    description: 站立阶段载荷雷达不可用：拒绝进入机动序列，只允许声明的安全动作（stop），进入 SAFE_HOLD，禁止伪造成功（AGENTS.md 1.5/1.6）。
+    steps:
+      - id: u01_stand
+        action: stand
+        robot: unitree_go2
+        params: {}
+        criteria:
+          min_stable_hold_s: 3.0
+          max_speed_m_s: 0.05
+      - id: u02_safe_hold
+        action: stop
+        robot: unitree_go2
+        params: {}
+        criteria:
+          min_stable_hold_s: 1.0
+          max_speed_m_s: 0.05
+    faults:
+      - id: lidar_loss
+        at_step: u01_stand
+        kind: sensor_unavailable
+        target: payload_lidar
+        expect:
+          terminal_state: SAFE_HOLD
+          fake_success_forbidden: true
+
   nominal:
     description: delivery_handoff 标称序列：四足站立并停靠 -> 机械臂抓取 -> 放入托盘 -> 载荷确认。判据全部是"结果"判据，不是"命令已发出"。
     steps:
@@ -16,8 +75,10 @@ scenarios:
         robot: unitree_go2
         params: {}
         criteria:
+          # 末速上限 0.05 = 机型声明的 stop.speed_tolerance_mps（原写 0.0 是未实测的愿望值：
+          # 实测末速 3.04e-05 m/s，永远不可能恰好为 0）。判据只允许来自声明与实测。
           min_stable_hold_s: 3.0
-          max_speed_m_s: 0.0
+          max_speed_m_s: 0.05
       - id: s02_dock
         action: dock_for_handoff
         robot: unitree_go2
@@ -30,12 +91,15 @@ scenarios:
         criteria:
           translation_error_max_m: 0.03
           yaw_error_max_deg: 2.0
-          max_speed_m_s: 0.0
+          max_speed_m_s: 0.05
       - id: s03_pick
         action: pick_object
         robot: piper
         params:
           target: box_01
+        # S2 执行器本战役**未接入 piper**：其机型基线（config/piper_simulation_baseline.yaml）
+        # 属另一编辑窗口且未声明 robot.backend 绑定，因此直接跑 `run --scenario nominal`
+        # 会在预检阶段以退出码 3 显式失败（不静默跳过该步）。可执行子集见 stand_stop。
         criteria:
           pose_tolerance_m: 0.005
           min_lift_delta_m: 0.02
@@ -73,7 +137,7 @@ scenarios:
         params: {}
         criteria:
           min_stable_hold_s: 3.0
-          max_speed_m_s: 0.0
+          max_speed_m_s: 0.05
       - id: f02_dock
         action: dock_for_handoff
         robot: unitree_go2
@@ -84,16 +148,21 @@ scenarios:
         criteria:
           translation_error_max_m: 0.03
           yaw_error_max_deg: 2.0
-          max_speed_m_s: 0.0
+          max_speed_m_s: 0.05
       - id: f03_safe_hold
         action: stop
         robot: unitree_go2
-        params:
-          reason: sensor_unavailable
+        # 停机原因由本场景的 fault 声明承载：`stop` 技能的输入 schema 是
+        # `additionalProperties: false` 且没有 properties，塞 `reason` 会被 Policy 判为参数非法
+        # （声明合法但参数非法 = 运行时才炸，属声明缺陷，已在步骤 18 修正）。
+        params: {}
         criteria:
           min_stable_hold_s: 3.0
-          max_speed_m_s: 0.0
+          max_speed_m_s: 0.05
     faults:
+      # 本故障的注入点是 f02_dock（待交付步骤）⇒ 本战役**无法注入**，只会被登记为未注入
+      # （报告 faults[].injected=false + 原因）；`--require-injected-faults` 会让它变成硬失败。
+      # 可注入的同型故障见 fault_sensor_unavailable（注入点是可执行的 stand）。
       - id: lidar_loss
         at_step: f02_dock
         kind: sensor_unavailable

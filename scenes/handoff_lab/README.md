@@ -3,10 +3,14 @@
 Piper 机械臂 + 宇树 Go2（模型待锁定）+ 人形静态实体。本场景包是 `delivery_handoff`
 「机器狗停靠 → 机械臂抓取 → 放入托盘 → 载荷确认」演示与回归的**载体**：场景是声明，不是代码。
 
-> 状态：**部分实现**。场景构建器已由步骤 13 交付（下面的"怎么生成模型"可用，产物是仿真模型）；
-> 但 Go2 loopback（步骤 15）、S2 执行器（步骤 18）尚未交付 —— 本场景的**运动与交接**能力
-> 仍不可跑，也不得按本文声称可跑（`AGENTS.md` 6.4）。四足本体当前 `capabilities: []`
-> 是事实：`stand`/`stop`/`locomote` 属 U4，逐项验收后才回填。
+> 状态：**部分实现**。已交付：场景构建器（步骤 13）、Go2 loopback 与适配器（步骤 15/16）、
+> 四足技能层（步骤 17）、S2 脚本化执行器（步骤 18）。因此下面标注为"可跑"的场景**真的可跑**：
+> `stand_stop`（站立 → 停机）与 `fault_sensor_unavailable`（传感器不可用 → 拒绝机动 + 安全动作）。
+> **停靠 / 抓取 / 放置 / 载荷确认仍未交付**（U5/U6 交接集成）：`nominal` 与 `fault_sensor_loss`
+> 里这些步骤要么显式登记为待交付（`pending_closed_by`/`pending_reason`），要么因为本体未接入
+> S2 执行器而在预检阶段失败（退出码 3）——不得按本文声称它们可跑（`AGENTS.md` 6.4）。
+> 四足本体 `capabilities: [stand, stop]`：`locomote` 未声明（首期无步态控制器），
+> 它的**拒绝路径**本身是验收项。
 
 ## 文件
 
@@ -62,21 +66,39 @@ PYTHONPATH=src python3 scripts/scene_check.py --scene scenes/handoff_lab \
 属步骤 14）、`imu` 是厂商自带 site（只读引用）、`tray_01` 挂在 `tray_frame` 上。
 本机型**没有夹爪**，因此报告里 `target_id`/`gripper`/`vision` 显式为 `null`。
 
-## 怎么跑（依赖后续步骤，尚未可用）
+## 怎么跑 S2 脚本化场景（步骤 18 起可用）
 
 ```bash
-# 步骤 18 交付后可用（当前会失败：入口不存在）
 PYTHONPATH=src python3 scripts/scenario.py list
-PYTHONPATH=src python3 scripts/scenario.py run --scene scenes/handoff_lab --scenario nominal [--viewer]
-PYTHONPATH=src python3 scripts/scenario.py run --scene scenes/handoff_lab --scenario fault_sensor_loss
-PYTHONPATH=src python3 scripts/scenario.py interact --scene scenes/handoff_lab   # S1，最后做
+PYTHONPATH=src python3 scripts/scenario.py run --scene scenes/handoff_lab --scenario stand_stop
+PYTHONPATH=src python3 scripts/scenario.py run --scene scenes/handoff_lab --scenario fault_sensor_unavailable
+PYTHONPATH=src python3 scripts/scenario.py run --scene scenes/handoff_lab --scenario fault_sensor_loss --require-injected-faults
 ```
+
+报告写到 `build/acceptance/<scene>/<scenario>/report.json`（逐步骤 `status` / 墙钟 / 实测值 / 判据 /
+错误码），`simulation: true`。执行链是 `scenario.yaml` → `SkillRuntime`（TaskFlow → Policy →
+租约 → Provider → 适配器 → MuJoCo），执行器不直接驱动后端。
+
+退出码：`0` 通过 / `1` 用法错误 / `2` 声明非法或超出执行器支持范围（未支持的故障类型、
+不可评测的判据）/ `3` 引用完整性（未登记的能力、本体未声明 `robot.backend` 绑定、模型未生成）
+/ `4` 后端装配失败 / `5` 判据未通过。
+
+哪些场景**现在跑不了**、为什么：`nominal` 需要 `piper` 的抓取/放置能力，而本战役的 S2 执行器
+未接入 piper（其机型基线未声明 `robot.backend`）⇒ 预检阶段退出码 3；`fault_sensor_loss` 的故障
+注入点在待交付的停靠步上 ⇒ 故障**不会被注入**，报告里 `faults[].injected=false` 并给出原因
+（`--require-injected-faults` 会把这种情况变成退出码 5）。S1 交互模式（`interact`）本战役不做
+（决策 6.A：先 S2 再 S1）。
 
 ## 看到什么 / 判据是什么
 
-标称序列（`nominal`）：四足站立稳定 ≥3 s（速度为零）→ 停靠（托盘参考系平移 ≤30 mm、偏航 ≤2°）
-→ 机械臂抓取（双指接触 + 抬升 ≥20 mm + 命中 `box_01`）→ 放入托盘 → 载荷确认。
-故障序列（`fault_sensor_loss`）：停靠阶段雷达不可用 → 必须进 `SAFE_HOLD`，且**禁止伪造成功**。
+可跑子集（`stand_stop`）：四足站立（仿真时间推进 ≥3 s、末速 ≤0.05 m/s、墙钟 ≤10 s）→ 松力停机
+（推进 ≥1 s、末速 ≤0.05 m/s、墙钟 ≤5 s）。判据口径是"时间推进量 + 实测末速 + 墙钟"，
+**不是**稳定性分析：物理稳定性证据在 `build/acceptance/go2-loopback/report.json`（步骤 15）。
+故障场景（`fault_sensor_unavailable`）：站立前置观测（载荷雷达）不可用 → 该步指令**不下发**
+（`IRAF-PRECONDITION-FAILED`，绝不 SUCCEEDED），其后只允许 `safetyAction` 步骤（`stop`）执行，
+进入 `SAFE_HOLD`。注入语义与诚实边界写在报告 `faults[].limitation` 里。
+标称序列（`nominal`，尚未可跑）：四足站立并停靠（托盘参考系平移 ≤30 mm、偏航 ≤2°）→ 机械臂抓取
+（双指接触 + 抬升 ≥20 mm + 命中 `box_01`）→ 放入托盘 → 载荷确认。
 
 判据都写在 `scenarios.<name>.steps[].criteria` 与 `baseline.yaml#acceptance`，脚本不许写死阈值。
 
@@ -84,8 +106,14 @@ PYTHONPATH=src python3 scripts/scenario.py interact --scene scenes/handoff_lab  
 
 1. 先跑 `scene_check.py`：它区分「声明缺字段」（2）、「引用的文件/本体不存在」（1）、
    「生成模型里锚点不存在」（3）三类失败，逐条给中文原因。
-2. `pending_refs` / `pending_steps` 里的每一项都是**未交付**而不是"已通过"：Go2 的 profile 引用
-   （能力声明）由步骤 16 关闭、机型基线同样在步骤 16，站立参考位形由步骤 15 关闭，
-   人形资产由步骤 12 关闭，`place_object` 属 U6。它们出现在报告里即表示该能力当前不可用。
+2. `pending_refs` / `pending_steps` 里的每一项都是**未交付**而不是"已通过"：人形资产的 profile 引用
+   由步骤 12 关闭；`place_object`（U6 交接集成）与停靠/载荷确认仍未交付 —— 它们出现在报告里
+   即表示该能力当前不可用。注意：`s02_dock` / `f02_dock` / `s04_place_in_tray` / `s05_confirm_payload`
+   的 `pending_closed_by` 仍写着"步骤 18"，但步骤 18 交付的是**执行器**而不是这些能力本身
+   （属 U5/U6，超出本战役范围）——这是声明的**过期关断点**，由本步如实登记为缺口，
+   不擅自改他步声明的关断目标。
 3. 仿真结论必须带 `simulation: true`；本场景的任何数字都不得表述为真机或实时能力（AGENTS.md 1.7）。
 4. 人形条目一律带 `evidence_level: 仅模型`：仅作静态场景实体，不代表人形运动能力（决策 4.B）。
+5. `scenario.py` 的失败按退出码定位：`2` 声明非法或超出执行器支持范围（未支持的故障类型 /
+   不可评测的判据）、`3` 引用完整性（未登记的能力 / 本体未接入 / 模型未生成）、`5` 判据未通过；
+   报错原因里带步骤 id 与维度，不要只看"失败了"。

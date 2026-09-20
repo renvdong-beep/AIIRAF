@@ -8,6 +8,10 @@ robot:
   id: unitree_go2
   # 关节身份来自 Profile（单一事实来源），不是脚本里的关节名单。
   profile: profiles/unitree_go2_mujoco.yaml
+  # S2 场景执行器（步骤 18）的后端绑定：只写 iraf_adapters.factory.KNOWN_BACKENDS 的登记键。
+  # 为什么写在机型声明里：「这台本体用哪个适配器」是部署事实，属声明而不是脚本常量（铁律 5.3）；
+  # 缺键即显式失败（执行器退出码 3），**禁止**在脚本里猜测/硬编码后端入口。
+  backend: unitree_go2_mujoco
 
 model:
   # 被测模型 = 场景构建产物（步骤 13）：保证"演示与验收走同一条链路"。
