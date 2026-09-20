@@ -5,7 +5,7 @@
   "source_plan": ".hermes/plans/2026-09-20_multiplatform-sdk-unitree-studio.md",
   "decisions": {
     "sdk_form": "A",
-    "wheelhouse_source": "B",
+    "wheelhouse_source": "A(更新 2026-09-20：先用 aliyun 镜像)",
     "board_python": "A",
     "unitree_scope": "B",
     "scene_package_dir": "A",
@@ -13,21 +13,23 @@
     "voice_role": "A"
   },
   "test_baseline": {
-    "recorded_at": null,
-    "failures": null,
-    "errors": null,
-    "runs": null
+    "recorded_at": "2026-09-20T15:24:48+0800",
+    "failures": 1,
+    "errors": 4,
+    "runs": 263,
+    "note": "PYTHONPATH=src python3 -m unittest discover -s tests/unit -t tests/unit；与战役前基线（4 导入错误 + 1 既有失败 test_vision_processing）一致",
+    "evidence": "build/iraf-24h/01/unittest-baseline.txt"
   },
   "blocked": [],
   "steps": [
     {
       "id": "01",
       "title": "决策记录与文件边界",
-      "status": "TODO",
-      "evidence": null,
-      "commit": null,
-      "updated_at": null,
-      "note": null
+      "status": "DONE",
+      "evidence": "build/iraf-24h/01/{status.txt,unittest-baseline.txt,commands.log,commit-plan.txt}",
+      "commit": "fb0453a",
+      "updated_at": "2026-09-20T15:24:48+0800",
+      "note": "决策记录已固化：需求1 §11/§12/§13、需求2 §9/§10、需求3 §7/§8；文件边界（本窗口 vs 另一窗口）写入需求1 §13；单测基线 Ran 263 / failures=1 / errors=4（与战役前一致）；台账本身随第二个提交入库（chore(plans)），步骤文件 01 的「涉及文件」原不含台账，已在 commit-plan.txt 说明原因"
     },
     {
       "id": "02",
