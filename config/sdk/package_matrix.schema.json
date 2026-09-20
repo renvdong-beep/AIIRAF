@@ -49,8 +49,8 @@
     "delivery": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["board_bundle", "install"],
-      "description": "交付形态：板级 bundle 的命名模板与目标端安装布局。install 下的路径是**目标端**路径（非构建机路径），由 install.sh 从 bundle 内的本声明读取；脚本里禁止再写一遍。",
+      "required": ["board_bundle", "install", "health"],
+      "description": "交付形态：板级 bundle 的命名模板、目标端安装布局与自检端点。install 下的路径是**目标端**路径（非构建机路径），由 install.sh 从 bundle 内的本声明读取；脚本里禁止再写一遍。",
       "properties": {
         "board_bundle": {
           "type": "object",
@@ -90,7 +90,8 @@
             "env_file",
             "current_link",
             "python_min",
-            "python_bin"
+            "python_bin",
+            "file_record"
           ],
           "properties": {
             "prefix": {
@@ -125,6 +126,58 @@
               "type": "string",
               "pattern": "^/[A-Za-z0-9._/-]+$",
               "description": "板级服务使用的解释器绝对路径（声明单一来源）。目标端实测 Python 版本未回填前，服务解释器只能来自本声明，不得由脚本猜。"
+            },
+            "file_record": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]*\\.json$",
+              "description": "安装记录文件名（写在 <prefix>/<version>/ 下）。verify.sh 安装后生成、uninstall.sh 唯一删除依据；缺它即拒绝卸载。"
+            }
+          }
+        },
+        "health": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "http_url",
+            "expect_http_status",
+            "grpc_target",
+            "timeout_s",
+            "event_store_env",
+            "event_store_default"
+          ],
+          "description": "目标端自检端点与参数（verify.sh 唯一来源）。脚本禁止写死 URL/端口/事件库路径（铁律 5.3）；缺字段即预检失败。",
+          "properties": {
+            "http_url": {
+              "type": "string",
+              "pattern": "^https?://[A-Za-z0-9._:-]+/[A-Za-z0-9._/-]*$",
+              "description": "/health 探针地址（HTTP 传输适配器）。连接失败即判定\"服务未启动\"（退出 5），不得视为通过。"
+            },
+            "expect_http_status": {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 599,
+              "description": "期望的 HTTP 状态码（健康即 200；非该码视为\"服务在但不健康\"）。"
+            },
+            "grpc_target": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._-]+:[0-9]{1,5}$",
+              "description": "gRPC 探针目标 host:port。探针三级降级（health service → channel ready → TCP），TCP 可达不得表述为\"健康检查通过\"。"
+            },
+            "timeout_s": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 120,
+              "description": "单个探针超时（秒）；有界超时是硬要求，禁止无超时等待。"
+            },
+            "event_store_env": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]*$",
+              "description": "事件库路径的环境变量名（与 src/iraf_adapters/bootstrap.py 保持一致）。"
+            },
+            "event_store_default": {
+              "type": "string",
+              "pattern": "^/[A-Za-z0-9._/-]+$",
+              "description": "未从 env 文件解析到时的默认事件库路径（目标端绝对路径；演练会重挂到沙箱）。"
             }
           }
         }

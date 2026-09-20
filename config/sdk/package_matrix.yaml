@@ -35,6 +35,19 @@ delivery:
     python_min: "3.9"
     # 板级服务解释器（声明单一来源）；目标端实测 Python 未回填前不得由脚本猜。
     python_bin: /usr/bin/python3
+    # 安装记录名：verify.sh 在安装后写入 <prefix>/<version>/<file_record>，
+    # uninstall.sh 只依据它决定删哪些文件（清单外文件即拒绝卸载）。
+    file_record: iraf-sdk-files.json
+  # 目标端自检端点与参数（verify.sh 唯一来源；脚本禁止写死 URL/端口/路径）。
+  # 端口取值与 deploy/iraf-runtime.env（IRAF_RUNTIME_PORT/IRAF_GRPC_PORT）一致；
+  # 事件库环境变量名与 src/iraf_adapters/bootstrap.py 的 IRAF_EVENT_STORE 一致。
+  health:
+    http_url: "http://127.0.0.1:8765/health"
+    expect_http_status: 200
+    grpc_target: "127.0.0.1:50051"
+    timeout_s: 5
+    event_store_env: IRAF_EVENT_STORE
+    event_store_default: /var/lib/iraf/iraf-events.db
 targets:
   - id: aarch64-manylinux_2_28-cp310
     arch: aarch64

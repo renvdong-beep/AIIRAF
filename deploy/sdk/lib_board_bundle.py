@@ -94,6 +94,8 @@ BUNDLE_SCRIPT_FILES = (
     "deploy/sdk/check_wheel_tags.py",
     "deploy/sdk/lib_manifest.py",
     "deploy/sdk/lib_board_bundle.py",
+    # 步骤 09 交付：目标端自检与卸载的实现层（verify.sh/uninstall.sh 同目录依赖它，必须随包交付）
+    "deploy/sdk/lib_target_verify.py",
     PROFILE_CHECK_SCRIPT,
 )
 #: 后续步骤交付的脚本：缺失只登记为 pending（步骤 09 verify/uninstall、步骤 10 deploy）；
@@ -1409,6 +1411,10 @@ class Installer:
 
     def postcheck(self, manifest: dict) -> None:
         assert self.staging is not None and self.state is not None
+        # 单元文件必须先落盘：后置 verify.sh 生成安装记录时要把 systemd 单元与 env 文件一并登记，
+        # 单元晚于后置校验渲染会让记录生成失败（实测：干净安装上 verify.sh 退出 2 → V2 假失败）。
+        # 阶段顺序（V1 → V2 → V3）与报告内容不变，仅把"写单元文件"提前到 V1 之前。
+        unit_member, unit_dest = self.render_unit(manifest)
         board_rel = str((manifest.get("board") or {}).get("profile_member"))
         result = run_profile_check(self.staging, board_rel, self.python_exe, self.allow_unverified)
         gate = board_gate_summary(result)
@@ -1441,8 +1447,14 @@ class Installer:
             env = dict(os.environ)
             env["IRAF_SDK_ROOT"] = str(self.root)
             env["IRAF_SDK_CONFIG_DIR"] = self.layout["config_dir"]
+            # 演练时把 --dry-run 传给后置校验：verify.sh 仍会**如实记录**服务未启动
+            # （service_state=SERVICE_NOT_RUNNING、verified=false），只是不据此判定失败——
+            # 目标端真实安装同一入口不带该参数，服务未启动即退出 5。
+            verify_args = ["bash", str(script), "--root", str(self.root)]
+            if self.mode == "rehearsal":
+                verify_args.append("--dry-run")
             proc = subprocess.run(
-                ["bash", str(script), "--root", str(self.root)],
+                verify_args,
                 capture_output=True,
                 text=True,
                 timeout=900,
@@ -1463,19 +1475,6 @@ class Installer:
             else:
                 self.stage("V2 后置校验 verify.sh", "PASS", "后置校验通过（exit=0）")
 
-        unit_member = str((manifest.get("systemd") or {}).get("unit_member"))
-        unit_src = self.state["version_dir"] / unit_member
-        unit_dir = self.root / self.layout["systemd_dir"].lstrip("/")
-        unit_dir.mkdir(parents=True, exist_ok=True)
-        unit_dest = unit_dir / self.layout["service_unit"]
-        unit_dest.write_text(
-            render_template(
-                unit_src.read_text(encoding="utf-8"),
-                self.render_values(manifest),
-                label="systemd 单元模板",
-            ),
-            encoding="utf-8",
-        )
         self.report["unit"] = {
             "member": unit_member,
             "installed_as": f"{self.layout['systemd_dir']}/{self.layout['service_unit']}",
@@ -1508,6 +1507,28 @@ class Installer:
             self.stage("V3 systemd 单元", "PASS", "服务已 enable --now（就绪占位单元）")
 
     # --- 子步骤 ---
+
+    def render_unit(self, manifest: dict) -> tuple[str, Path]:
+        """渲染 systemd 单元到目标位置；返回 (成员名, 落盘路径)。
+
+        与 env 文件一样属于"本 bundle 落地的目录外文件"，必须在后置校验（verify.sh 生成
+        安装记录）之前就位——顺序缺陷实测见 docs/debug/2026-09-20-verify-uninstall-scope-gates.md。
+        """
+        assert self.state is not None
+        unit_member = str((manifest.get("systemd") or {}).get("unit_member"))
+        unit_src = self.state["version_dir"] / unit_member
+        unit_dir = self.root / self.layout["systemd_dir"].lstrip("/")
+        unit_dir.mkdir(parents=True, exist_ok=True)
+        unit_dest = unit_dir / self.layout["service_unit"]
+        unit_dest.write_text(
+            render_template(
+                unit_src.read_text(encoding="utf-8"),
+                self.render_values(manifest),
+                label="systemd 单元模板",
+            ),
+            encoding="utf-8",
+        )
+        return unit_member, unit_dest
 
     def _extract_runtime(self, runtime_file: Path, dest: Path) -> list[str]:
         """展开 runtime bundle 到 dest，返回顶层目录名（供安装阶段原样搬运）。
