@@ -237,8 +237,10 @@ status = SUCCEEDED          confirmation = contact
 
 ```
 cd ~/AIIRAF
-PYTHONPATH=src python3 scripts/build_ur5_baseline.py
-PYTHONPATH=src python3 scripts/verify_ur5_pick.py
+# 统一入口（推荐，AGENTS.md 6.4 金路径；见 docs/debug/2026-09-20-unified-entry.md）
+PYTHONPATH=src python3 scripts/build_baseline.py --baseline config/ur5_simulation_baseline.yaml
+PYTHONPATH=src python3 scripts/verify_pick.py --baseline config/ur5_simulation_baseline.yaml
+# 机型脚本仍可用：verify_ur5_pick.py 已降级为薄包装（打印 deprecated 后转发）
 PYTHONPATH=src python3 -m unittest discover -s tests/unit -t tests/unit
 ```
 

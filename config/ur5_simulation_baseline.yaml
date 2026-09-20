@@ -187,3 +187,14 @@ acceptance:
   solver_error_factor: 0.1
   # true 时不使用抓取锚点焊接夹具，抬升位移必须完全由双指摩擦力承担
   require_friction_lift: true
+
+# --- 统一入口声明（AGENTS.md 6.4 金路径）---
+# scripts/build_baseline.py 与 scripts/verify_pick.py 按本段分派实现，
+# 使用者只提供 TaskFlow/Skill 参数与 Robot Profile，不需要挑机型脚本。
+build:
+  # 提供 build(root, baseline_path, scene_path, calibration_path) 的构建器模块
+  baseline_module: build_ur5_baseline
+  scene: build/models/ur5-pick-scene.xml
+  pose_evidence: build/calibration/ur5-baseline-pose.json
+  profile: profiles/ur5_mujoco.yaml
+  safety_policy: profiles/safety/simulation_lab.yaml

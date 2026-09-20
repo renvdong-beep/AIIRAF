@@ -110,3 +110,11 @@ vision:
       - "{evidence}"
     # 检测器参数真源（其 depth 段覆盖后端内置默认值）。
     config_file: config/piper_multi_target.yaml
+
+# --- 统一入口声明（AGENTS.md 6.4 金路径）---
+build:
+  baseline_module: build_piper_baseline
+  scene: build/models/piper-pick-scene.xml
+  pose_evidence: build/calibration/piper-baseline-pose.json
+  profile: profiles/piper_mujoco.yaml
+  safety_policy: profiles/safety/simulation_lab.yaml

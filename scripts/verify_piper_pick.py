@@ -1,118 +1,59 @@
-"""生成 Piper 场景并通过完整 Skill Runtime 验证双指接触抓取。"""
+"""兼容入口（已由 `scripts/verify_pick.py` 取代）。
+
+本脚本保留是为了不让既有文档/脚本立刻失效：解析原参数后**转发**给统一入口，
+验收判据、链路与报告内容完全一致。新代码请直接用：
+
+    PYTHONPATH=src python3 scripts/verify_pick.py \
+        --baseline config/piper_simulation_baseline.yaml [--rebuild]
+"""
 
 import argparse
-import json
-import time
+import sys
 from pathlib import Path
 
-from build_piper_pick_scene import build_scene
-from iraf_adapters.mujoco.mujoco_backend import MujocoBackend
-from iraf_core.authority import ControlAuthorityManager
-from iraf_core.policy import AuthenticatedContext
-from iraf_core.profile import load_robot_profile, load_safety_policy
-from iraf_core.registry import SkillRegistry
-from iraf_core.runtime import SkillRuntime
-from iraf_core.store import SqliteExecutionStore
+import verify_pick
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", type=Path, required=True)
-    parser.add_argument(
-        "--scene", type=Path, default=Path("build/models/piper-pick-scene.xml")
+    print(
+        "[deprecated] %s 已由 scripts/verify_pick.py 取代，本脚本仅转发参数；"
+        "请更新调用方。" % Path(__file__).name,
+        file=sys.stderr,
     )
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--baseline", type=Path, default=None)
+    parser.add_argument("--scene", type=Path, default=None)
+    parser.add_argument("--output", type=Path, default=Path("build/acceptance/piper-pick"))
+    parser.add_argument("--profile", type=Path, default=None)
+    parser.add_argument("--safety", type=Path, default=None)
     parser.add_argument(
-        "--output", type=Path, default=Path("build/acceptance/piper-pick")
+        "--source", type=Path, default=None,
+        help="（已废弃）模型来源由配置的 model.source 决定；仅为了兼容旧调用而接受",
     )
     parser.add_argument("--duration-ms", type=int, default=2500)
-    parser.add_argument(
-        "--baseline",
-        type=Path,
-        default=None,
-        help="受控仿真基线配置；提供时按基线求解参考姿态并生成场景",
-    )
-    args = parser.parse_args(argv)
-    if args.duration_ms < 1 or args.duration_ms > 30000:
-        parser.error("duration-ms 必须在 1..30000 之间")
+    parser.add_argument("--target-id", default=None)
+    # 旧行为：给了 --baseline 就重建场景；转发时保持该语义。
+    parser.add_argument("--rebuild", action="store_true", default=False)
+    args, unknown = parser.parse_known_args(argv)
+    if unknown:
+        raise SystemExit("未知参数: " + str(unknown))
 
-    root = Path(__file__).resolve().parents[1]
-    if args.baseline is not None:
-        from build_piper_baseline import build_baseline_scene
-
-        scene = build_baseline_scene(root, args.baseline, args.source, args.scene)
-    else:
-        scene = build_scene(args.source, args.scene)
-    tolerance = float(scene.get("pose_tolerance_m", 0.005))
-    profile = load_robot_profile(root / "profiles/piper_mujoco.yaml")
-    safety = load_safety_policy(root / "profiles/safety/simulation_lab.yaml")
-    authority = ControlAuthorityManager()
-    backend = MujocoBackend.from_config(
-        {
-            "model_path": str(args.scene.resolve()),
-            "manipulation": {
-                "targets": {
-                    scene["target_id"]: {
-                        "body": scene["target_id"],
-                        "pose_tolerance_m": tolerance,
-                    }
-                },
-                "gripper": scene["gripper"],
-            },
-        },
-        profile,
-        authority,
-    )
-    runtime = SkillRuntime(
-        profile,
-        safety,
-        backend,
-        SkillRegistry().load_directory(root / "skills"),
-        authority,
-        SqliteExecutionStore(":memory:"),
-    )
-    now = int(time.time() * 1000)
-    request = {
-        "request_id": "piper-pick-acceptance",
-        "idempotency_key": "piper-pick-acceptance-" + str(now),
-        "correlation_id": "piper-pick-acceptance",
-        "skill": "pick_object",
-        "skill_version_constraint": "1.0.0",
-        "parameters": {
-            "target_id": scene["target_id"],
-            "grasp_pose": {
-                "frame_id": "world",
-                "position": scene["target_position"],
-                "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
-            },
-            "duration_ms": args.duration_ms,
-        },
-        "deadline_unix_ms": now + 60000,
-        "profile_name": profile.name,
-        "profile_version": profile.version,
-        "profile_digest": profile.digest,
-        "safety_policy_name": safety.name,
-        "safety_policy_version": safety.version,
-        "safety_policy_digest": safety.digest,
-        "resource_id": "piper-mujoco",
-        "controller": "piper-pick-acceptance",
-    }
-    result = runtime.execute(
-        request,
-        AuthenticatedContext(
-            "piper-pick-acceptance", frozenset({"task.submit", "task.read"}), "local"
-        ),
-    )
-    report = {
-        "schema_version": "iraf.piper-pick-acceptance/v1",
-        "simulation_only": True,
-        "scene": scene,
-        "execution": result,
-    }
-    args.output.mkdir(parents=True, exist_ok=True)
-    report_path = args.output / "report.json"
-    report_path.write_text(json.dumps(report, ensure_ascii=True, indent=2) + "\n")
-    print(json.dumps(report, ensure_ascii=True, indent=2))
-    return 0 if result.get("status") == "SUCCEEDED" else 1
+    forwarded = [
+        "--baseline", str(args.baseline or "config/piper_simulation_baseline.yaml"),
+        "--duration-ms", str(args.duration_ms),
+    ]
+    for flag, value in (
+        ("--scene", args.scene),
+        ("--output", args.output),
+        ("--profile", args.profile),
+        ("--safety", args.safety),
+        ("--target-id", args.target_id),
+    ):
+        if value is not None:
+            forwarded += [flag, str(value)]
+    if args.rebuild or args.baseline is not None:
+        forwarded.append("--rebuild")
+    return verify_pick.main(forwarded)
 
 
 if __name__ == "__main__":
