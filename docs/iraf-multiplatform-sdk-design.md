@@ -12,7 +12,7 @@
 目标：让"把 IRAF 交付到一块 aarch64 边缘板并跑起来"变成一条**可重复、可离线、可审计**的脚本化路径：
 
 ```text
-开发端 x86_64（本机 10.203.247.145）
+开发端 x86_64（本机 <仿真主机>）
   iraf-sdk 源码 + 声明式矩阵
         |  sh 脚本：构建 → 打包 → 校验和 → （可选）签名
         v
@@ -38,7 +38,7 @@
 
 | 项 | 实测值 | 命令 |
 |---|---|---|
-| 本机身份 | `coretek-System-Product-Name`，`x86_64`，IP `10.203.247.145` | `uname -m` / `hostname -I` |
+| 本机身份 | `coretek-System-Product-Name`，`x86_64`，IP `<仿真主机>` | `uname -m` / `hostname -I` |
 | 系统 Python | `Python 3.10.12 (main, Aug 31 2026) [GCC 11.4.0]` | `python3 -VV` |
 | Conda 环境 | `~/miniconda3/envs/mujoco_graspnet` 为 `Python 3.9.21`；服务当前用它启动 | `deploy/iraf-runtime.service` |
 | docker | `29.1.3 x86_64 linux`，**`docker buildx` 不存在** | `docker info` / `docker buildx ls` |
@@ -49,8 +49,8 @@
 | PyPI 官方源 | `pypi.org` **不可达** | `curl` |
 | 发行版镜像源 | `mirrors.aliyun.com/pypi/simple` 与 `pypi.tuna.tsinghua.edu.cn` 均 `200` | `curl` |
 | GitHub / Gitee | `github.com` `200`、`gitee.com` `200`（https 可用；仓库 push 另受限制） | `curl` |
-| 板卡 `10.203.247.72` | 22 与 9119 **均不通** | `/dev/tcp` 探测 |
-| 板卡 `10.203.247.86` | 22 与 9119 **均不通** | `/dev/tcp` 探测 |
+| 板卡 `<边缘板卡A>` | 22 与 9119 **均不通** | `/dev/tcp` 探测 |
+| 板卡 `<边缘板卡B>` | 22 与 9119 **均不通** | `/dev/tcp` 探测 |
 | 已存在目录 | `deploy/`（systemd + 1 个 sh）、`api/proto/iraf/v1/`、`build/generated/python/` | `find` |
 | 尚不存在 | `sdk/`、`profiles/boards/`、任何打包产物（无 `.whl/.tar.gz/.deb`） | `find` |
 
@@ -268,7 +268,7 @@ S DK 层如需暴露"提交任务/查询执行"，必须复用既有 `runtime.pr
 | L1 纯 Python SDK + aarch64 离线 wheelhouse | **做** | wheel 抓取是网络行为，不需要板卡；平台标签必须按声明过滤，错标签即失败（退出码 2） |
 | 打包、`manifest.json`、校验和 | **做** | `deploy/sdk/build_sdk.sh`，SHA-256 全部复算一致 |
 | 安装 / 验证 / 部署脚本 + `--dry-run` + 负向用例 | **做（x86 侧）** | 只证明解析、预检与拒绝逻辑；**不证明目标端可用** |
-| 目标端真实安装 / `/health` / AgentOS 联通 / ssh 真机部署 | **排除（DEFERRED）** | 边缘板卡不在场（`10.203.247.72`/`.86` 的 22 与 9119 实测不通）；不得用 dry-run、mock、本地 stub 或历史数据冒充 |
+| 目标端真实安装 / `/health` / AgentOS 联通 / ssh 真机部署 | **排除（DEFERRED）** | 边缘板卡不在场（`<边缘板卡A>`/`.86` 的 22 与 9119 实测不通）；不得用 dry-run、mock、本地 stub 或历史数据冒充 |
 | 多架构 OCI 镜像 | **排除** | 无 `docker buildx` 且 `registry-1.docker.io` 不可达（§2 实测） |
 | 目标端编译（Rust/C++/现场总线 SDK） | **排除** | §1 非目标 2 |
 | 签名服务（cosign/minisign） | **排除（只留占位）** | 决策 4 未确认，见 §11 |

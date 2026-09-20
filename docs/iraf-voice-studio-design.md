@@ -65,7 +65,7 @@ Studio 是**开发工作台**，不是新的控制面，也不复制 Runtime 逻
 
 | 组件 | 位置 | 契约 |
 |---|---|---|
-| ASR / 意图模型 | 边缘板 NPU（`10.203.247.86` 类板卡，当前 22/9119 均不通） | 通过 `model-provider` 契约暴露；模型名、版本、量化格式由 BoardProfile/配置声明 |
+| ASR / 意图模型 | 边缘板 NPU（`<边缘板卡B>` 类板卡，当前 22/9119 均不通） | 通过 `model-provider` 契约暴露；模型名、版本、量化格式由 BoardProfile/配置声明 |
 | AgentOS | 边缘 VM（`AgentOSBridge` 北向） | 版本协商、健康、drain、shutdown 走既有管理契约 |
 | IRAF 控制面 | 边缘 VM 或开发机（按 BoardProfile 决定） | 同一 IDL 与 TaskFlow 语义，二进制不跨架构 |
 | 仿真 | 开发机 x86_64 + MuJoCo（当前） | `simulation=true`；真机切换需 HIL 证据 |
