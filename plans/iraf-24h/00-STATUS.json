@@ -142,11 +142,11 @@
     {
       "id": "14",
       "title": "场景生成验收与传感器统计",
-      "status": "TODO",
-      "evidence": null,
-      "commit": null,
-      "updated_at": null,
-      "note": null
+      "status": "DONE",
+      "evidence": "build/iraf-24h/14/{acceptance.txt,sensors.txt,check-report.txt,check_report.py,run_acceptance.sh,report-pretty.json,cases/,unittest-full.txt,unittest-runs*.txt,probe*.txt,commit-plan.txt,commit-msg.txt,tick-report.md,commands.log}；报告 build/acceptance/handoff-lab-scene-sensors/report.json",
+      "commit": "4190ecf",
+      "updated_at": "2026-09-20T19:28:00+0800",
+      "note": "新增 scripts/verify_scene_sensors.py（入口层）+ src/iraf_adapters/unitree/scene_sensor_evidence.py（实现层）+ tests/unit/test_scene_sensor_evidence.py（28 例）+ 契约先于实现的 scenes/handoff_lab/baseline.yaml 必需段 sensor_acceptance 与 config/scene.schema.json 同名必需段（收紧门禁）+ 已闭合场景包正向对照夹具补齐。验收（/usr/bin/python3 3.10.12，mujoco 3.3.3）：bash build/iraf-24h/14/run_acceptance.sh -> 通过 14 项，失败 0 项；A1 verify_scene_sensors --scene scenes/handoff_lab -> exit=0、15 条判据全过、failed_checks=[]；A2 场景目录不存在=1；A3 模型缺失=3；A4 --no-render=4（相机未验证不得当通过）；A5 未知本体=3；A6 --help=0；A7 check_report.py -> passed=True、camera.fovy_rel_error=0.010427987255182231、lidar.points=167、camera.render.status='ok'、lidar.miss_fraction=0.5361111111111111、lidar.ground_fraction=0.07777777777777778、lidar.rays=360、imu.acc.rel_error=2.0889954113422363e-16；相机 fovy 78.0 与声明逐位一致（rel=0.0）、标定 focal 292.111 vs 理想针孔 296.375 -> focal_rel_error=0.014387、EGL 离屏 640x480 成功（非全黑 0.5503、resolution_diff_px=0）；雷达 4 圈仰角×90 方位，台面点 28、量程 min/mean/max=0.074953/0.232360/0.919363 m、命中台面距离与按声明解析求交最大偏差 0.0；IMU 四元数模长偏差 0.0、陀螺仪 vs mj_objectVelocity 偏差 0.0、加速度计 vs mj_objectAcceleration 相对误差 2.09e-16、12 关节力矩 vs ctrl×gear 最大偏差 0.0；重建后模型 sha256 逐位一致 3d7b07c3a21e342e2cf0380062c025ca2a6176220d936fbc6c5d85c6b6d59ca4；A8 步骤单测 Ran 28 / OK、A9 步骤 11 契约 Ran 42 / OK、A10 步骤 13 构建器 Ran 20 / OK；全量单测 Ran 650 / failures=1 / errors=4 / skipped=4（基线 622/1/4/4，失败集合 4 项加载 ERROR + test_vision_processing 逐项一致，+28 为本步新增，无回归）。阈值全部来自声明（实现层另有必需键元组双门禁，缺键 -> 退出码 2，脚本内无数字默认值，A12 门禁命中 0）；判据均与独立计算比对而非硬编码常数（陀螺仪/加速度计/力矩/台面求交），6 条负向证明判据不会恒真 + 2 条 BLOCKED 分支（渲染抛错/--no-render：相机 blocked 且雷达与 IMU 仍完成）。首跑暴露并修复 5 处自身缺陷（renderer 未透传；缺键 KeyError；SceneBuildError 退出码口径未归一；夹具 -45° 射线被躯干自身 geom 挡住 -> 修夹具几何而非放宽阈值；负向用例覆盖主报告路径导致证据被冲 -> harness 命名空间化），未放宽任何既有门禁。诚实边界（不伪造）：全部结论 simulation=true；目标端/真机验收 DEFERRED（板卡不在场，未用 dry-run/mock 冒充）；本场景无平衡控制器，settle.steps=10 仅证明采样准静态（躯干漂移 0.001879794568108979 m），不代表站立/步态/导航能力（属步骤 16/17）；雷达仅光线投射统计，无点云消息/时序/噪声模型；单测使用渲染替身并在报告 render.implementation 留痕，真实离屏渲染由本步验收入口证明。多出「涉及文件」4 条路径（实现层、baseline.yaml、scene.schema.json、test_scene_schema.py 夹具）逐条理由见 build/iraf-24h/14/commit-plan.txt。未触碰另一窗口路径（examples/demo3_arm/、scripts/view_mujoco.py、viewer_runner.py、config/*_baseline.yaml）；提交前 git status 仅本步 6 个路径。下一轮：步骤 15 Go2 loopback 站立/停止/状态。"
     },
     {
       "id": "15",
