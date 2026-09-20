@@ -79,11 +79,11 @@
     {
       "id": "07",
       "title": "离线 wheelhouse 抓取",
-      "status": "TODO",
-      "evidence": null,
-      "commit": null,
-      "updated_at": null,
-      "note": "x86 侧可完整执行（下载不需要板卡）；源用 aliyun 镜像。目标端安装属于 DEFERRED。"
+      "status": "DONE",
+      "evidence": "build/iraf-24h/07/{wheelhouse.txt,fetch.json,dry-run-resolve.json,dry-run-resolve.txt,acceptance.txt,unittest-wheel-tags.txt,unittest-full.txt,requires-gap.json,requires-gap.txt,repro-generator-truthiness.txt,env-probe.txt,index-probe.txt,broken-matrix-*.yaml,run_acceptance.sh,make_broken_matrix.py,analyze_requires.py,env_probe.py,index_probe.py,repro-generator-truthiness.py,commit-plan.txt,commit-msg.txt,commands.log,tick-report.md}；产物 build/wheelhouse/aarch64-manylinux_2_28-cp310/{7 个 wheel,wheelhouse.json,verify-tags.json}",
+      "commit": "de2ada3",
+      "updated_at": "2026-09-20T16:32:26+0800",
+      "note": "新增 deploy/sdk/fetch_wheelhouse.sh + deploy/sdk/check_wheel_tags.py + tests/unit/test_wheel_tags.py（57 用例，全部离线可跑）+ docs/debug/2026-09-20-wheelhouse-fetch-index-api.md（AGENTS.md 5.4 授权，已在 commit-plan.txt 说明）。x86 侧完整执行真实抓取（无需板卡）：aliyun 镜像（决策 2 更新为 A），7 个 wheel / 47620905 字节，全部通过 cp310+manylinux_2_28_aarch64 标签校验，退出码 0；选中 mujoco 3.13.0(exact)/numpy 2.2.6(compatible 2.17≤2.28)/grpcio 1.84.0(compatible)/protobuf 7.36.1(pure_python)/pyyaml 6.0.3(exact)/pillow 12.3.0(exact)/jsonschema 4.26.0(pure_python)，逐文件 SHA-256 写入 wheelhouse.json（iraf.wheelhouse/v1）。验收（bash build/iraf-24h/07/run_acceptance.sh）15 项，失败项 0：--help/--dry-run/--dry-run --no-resolve→0；空源/非法源(file://)/pins 不可达版本(mujoco==0.0.1)/缺 reject_platform_tags→2；用法错误→1；真实目录标签校验→0；混入 win_arm64+macosx→4；空目录→4；目录不存在→2；单测 Ran 57 / OK / EXIT=0；全量单测 Ran 460 / failures=1 / errors=4 / skipped=4（基线 403/1/4/4，失败集合 4 项导入 ERROR + test_vision_processing 逐项一致，+57 为本步新增，无回归）。关键实测缺陷与偏差（未放宽任何门禁）：① 首跑 7 个包全部被判「没有可用 wheel」→ 根因是 `if rejected and (生成器)` 恒真，已改 any() 并加三条正例对照单测（机制复现 build/iraf-24h/07/repro-generator-truthiness.txt）；② 设计 §5 的 `pip download` 路径被无人值守审批门拦截（tirith:pip_url_install，非偶发，步骤 05 已记录同类拦截）→ 抓取机制改为标准库直读 PEP 503 索引，声明语义不变（换源仍只改 index_url 一行），设计文档 §5 表述待步骤 19 同步；③ 候选排序由「平台档位优先」改为「版本优先」（避免旧二进制压过新版本，protobuf≥5.29 类要求）。未验证/缺口（不伪造）：传递依赖不闭合，实测 10 条 Requires-Dist 仅 1 条覆盖、9 条缺失（absl-py/attrs/etils/glfw/jsonschema-specifications/pyopengl/referencing/rpds-py/typing-extensions），当前 wheelhouse 不足以支撑离线安装，是否补抓属声明变更（未私自扩清单）；版本漂移 4 项（mujoco 3.13.0 vs 本机 3.3.3、protobuf 7.36.1 vs 4.25.7、pyyaml 6.0.3 vs 5.4.1、pillow 12.3.0 vs 9.0.1），pins 能力已实现但矩阵未声明；目标端安装/健康检查 DEFERRED（板卡不在场），wheelhouse.json 内 simulation_note 已标注；首跑原始输出未落盘（tee 被覆盖），已如实登记并用机制复现补证。未触碰另一窗口路径；提交前 git status 仅本步 4 个路径。"
     },
     {
       "id": "08",
