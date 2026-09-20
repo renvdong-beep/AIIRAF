@@ -115,11 +115,11 @@
     {
       "id": "11",
       "title": "场景包契约与 handoff_lab 骨架",
-      "status": "TODO",
-      "evidence": null,
-      "commit": null,
-      "updated_at": null,
-      "note": null
+      "status": "DONE",
+      "evidence": "build/iraf-24h/11/{scene-check.json,scene-check.stdout.json,scene-check.stderr.txt,strict-mode.stderr.txt,require-model.stderr.txt,unittest-scene-schema.txt,unittest-full.txt,commit-plan.txt,commit-msg.txt,tick-report.md,commands.log}",
+      "commit": "0e55043",
+      "updated_at": "2026-09-20T18:23:09+0800",
+      "note": "新增 config/scene.schema.json（同文件交付三份子契约：根结构=scenes/<id>/scene.yaml，definitions.scene_baseline、definitions.scenario_catalog 各自把辅助定义嵌套在自己名下、内部只用相对 $ref，故可整体提取后单独校验）+ scenes/handoff_lab/ 四件套（scene.yaml/baseline.yaml/scenario.yaml/README.md）+ scripts/scene_check.py + tests/unit/test_scene_schema.py。严格按步骤「涉及文件」的 7 个路径提交，**未**新增 profiles/ 或 config/*_baseline.yaml（Go2/人形 profile 未交付，按 fail-closed 写 {state: unverified, closed_by, reason} 占位，不猜值、不造带猜测值的 profile）。验收（/usr/bin/python3 3.10.12，证据 11/scene-check.*）：--scene scenes/handoff_lab → exit=0 且 pending_refs=7 / pending_steps=8（显式登记的缺口，不是通过）；--require-resolved-refs → exit=5（逐条列出未交付引用与步骤）；--require-model → exit=4；--scene /nope → exit=6；PYTHONPATH=src python3 -m unittest tests.unit.test_scene_schema -v → Ran 42 / OK / EXIT=0（含 3 条步骤要求的负向：缺 simulation、本体 profile 不存在、光照为空；另有未知字段、模糊占位、缺 reason 的占位、mesh 不存在、重复 id、baseline 键集合不一致、两处占位状态不一致、能力超出 profile、未知本体、未登记的能力缺口、仅模型实体进 Skill 步骤、人形声明运动能力、故障 at_step/target 悬空、fake_success_forbidden=false、构建器路径不存在 → 各 1 条，以及模型层 4 条含 MJCF include 展开的正反用例）；全量单测 Ran 570 / failures=1 / errors=4 / skipped=4（基线 528/1/4/4，失败集合 4 项 stub 导入 ERROR + test_vision_processing 逐项一致，+42 为本步新增，无回归）。新增门禁（未放宽任何既有门禁）：① 引用完整性含 baseline.robots / initial_state 键集合必须与 scene.robots[].id 完全一致、两侧占位状态必须一致、scene.id 必须等于目录名；② 场景步骤使用本体未声明具备的能力时必须显式登记 pending_closed_by/reason，否则失败（避免脚本里悄悄声明不存在的能力）；③ 决策 4.B 落成硬门禁——humanoid 必须 model_only=true + evidence_level=仅模型、能力只能是 static_model_only、且不得出现在任何 Skill 步骤里；④ 只有 --require-resolved-refs / --require-model 能把「待交付」变成硬失败，另有已闭合场景包正向对照证明门禁不是恒失败。首跑暴露并修复 4 处自身缺陷（未放宽任何门禁）：schema 漏 note 字段导致 sensor 声明非法；model.builder 的 unverified 占位被声明却从未进 pending_refs（静默缺口，已改为 unverified_or_path + 上报）；测试夹具改错了 include 子文件；字面量 tbd/unverified 能当路径用（已在 repo_relative_path 加 not-enum）。用户明确要求「复用 config/*.yaml 既有字段名」：workbench/target 尺寸/finger 摩擦/lights（name/directional/dir/diffuse/specular/castshadow）/camera（pos_m/look_at_m/fovy_deg）字段名全部沿用既有基线，未新造同义字段（映射见 00-日志.md 本行）。诚实边界（不伪造）：场景构建器（步骤 13）、Go2 profile 与机型基线（步骤 13）、loopback（步骤 15）、S2 执行器 scripts/scenario.py（步骤 18）均未实现，模型层校验本轮记 model_check.status=pending_generation + 中文原因（不是「已通过」），README 已标注「未实现」；本轮无板卡相关目标端验收（无 mock/dry-run 冒充）；全部声明带 simulation: true。内网 IP 自查覆盖本步 7 个路径 → 0 命中。未触碰另一窗口路径（examples/demo3_arm/、scripts/view_mujoco.py、viewer_runner.py、config/*_baseline.yaml）。下一轮：步骤 12 vendor 锁定 unitree_mujoco。"
     },
     {
       "id": "12",
