@@ -13,6 +13,12 @@ import yaml
 
 from iraf_skills.common.trajectory import quintic_position
 
+#: 伺服前馈（重力静差补偿）的单关节上限，单位 rad。
+#: 用途是拦截"单位/符号写错"这类配置错误（例如误把力矩 N·m 填进来、
+#: 或把方向写反），而不是限制正常取值：实测纯 PD 的 UR5e 需要最大 0.017 rad。
+#: 前馈量级必须远小于关节行程，否则它就不再是"补偿"而是另一条动作指令。
+GRAVITY_FEEDFORWARD_LIMIT_RAD = 0.1
+
 
 class MujocoBackend:
     @classmethod
@@ -48,6 +54,22 @@ class MujocoBackend:
         self._model_path = str(Path(model_path).resolve())
         self.model = mujoco.MjModel.from_xml_path(self._model_path)
         self.data = mujoco.MjData(self.model)
+        # **按模型自带的关键帧初始化位形**（存在时）。
+        # 为什么必须做：MjData 的默认 qpos 是**全零**，而全零位形对多数
+        # 6 轴臂意味着"手臂竖直向上 / 夹爪水平伸出"。pick_object 的
+        # HOME_HOLD 段是从**当前位形**插值到 HOME 的：
+        # 从全零位插到"夹爪朝下"的 HOME，中途 pad 会降到台面以下
+        # （实测 UR5e：t=0.33 处 pad_z=-0.0047m），沿途把方块顶飞
+        # （实测方块被推到 z=5.3m，对齐门禁随即报 59m 偏差）。
+        # MJCF 的 keyframe[0] 是模型作者声明的"合理初始位形"
+        # （UR5e 官方 home / 我们的场景会把它写成抓取起始位形），
+        # 用它初始化即可消除跨台面扫掠。
+        # 无 keyframe 时保持全零，行为与改动前一致（Piper 不受影响）。
+        # 用 getattr 探测而非直接取属性：单测会用 SimpleNamespace 替身，
+        # 没有 nkey 字段（直接取会在装配期抛 AttributeError）。
+        key_count = int(getattr(self.model, "nkey", 0) or 0)
+        if key_count > 0:
+            mujoco.mj_resetDataKeyframe(self.model, self.data, 0)
         mujoco.mj_forward(self.model, self.data)
         self._actuators = {
             mujoco.mj_id2name(
@@ -92,7 +114,10 @@ class MujocoBackend:
         self.authority.validate(lease)
         def body(name):
             return self._body_id(name)
-        wrist, left, right = body("link6"), body("link7"), body("link8")
+        gripper_cfg = (self._manipulation.get("gripper") or {})
+        wrist = body(gripper_cfg.get("wrist_body", "link6"))
+        left = body(gripper_cfg.get("left_finger_body", "link7"))
+        right = body(gripper_cfg.get("right_finger_body", "link8"))
         def geom(name, fallback):
             ident = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, name)
             return self.data.geom_xpos[ident].copy() if ident >= 0 else self.data.xpos[fallback].copy()
@@ -535,13 +560,21 @@ class MujocoBackend:
         home_positions = gripper.get("home_positions")
         if home_positions:
             self._log_pick_phase("HOME_HOLD", target_body)
-            self._move_trajectory(home_positions, max(1, duration_ms // 5))
+            self._move_trajectory(
+                home_positions, max(1, duration_ms // 5), self._pick_ctrl_offsets("home")
+            )
         if approach_positions:
             self._log_pick_phase("APPROACH", target_body)
-            self._move_trajectory(approach_positions, max(1, duration_ms // 5))
+            self._move_trajectory(
+                approach_positions, max(1, duration_ms // 5),
+                self._pick_ctrl_offsets("approach"),
+            )
         if grasp_positions:
             self._log_pick_phase("DESCEND", target_body)
-            self._move_trajectory(grasp_positions, max(1, duration_ms // 5))
+            self._move_trajectory(
+                grasp_positions, max(1, duration_ms // 5),
+                self._pick_ctrl_offsets("grasp"),
+            )
         # 对齐门禁必须用目标实际姿态推出的接近轴换算抓取点：
         # 目标倾斜时仍按固定竖直轴减 pad_offset 会把抓取点算错半个高度。
         alignment = self._grasp_alignment_evidence(
@@ -601,7 +634,9 @@ class MujocoBackend:
         lifted = not lift_ms
         if lift_ms and force_ok:
             self._log_pick_phase("LIFT", target_body)
-            self._move_trajectory(gripper["lift_positions"], lift_ms)
+            self._move_trajectory(
+                gripper["lift_positions"], lift_ms, self._pick_ctrl_offsets("lift")
+            )
             if constraint_activated and gripper.get("lift_anchor_body"):
                 self._advance_with_grasp_anchor(0, target_body, left_body, right_body, gripper["lift_anchor_body"])
             else:
@@ -664,7 +699,13 @@ class MujocoBackend:
             return
         with self._data_lock:
             mujoco.mj_forward(self.model, self.data)
-            wrist = self._body_id("link6")
+            # 腕部 body 名由配置声明（缺省仍是 Piper 的 link6），
+            # 避免换构型后诊断日志直接抛"缺少 body: link6"。
+            wrist = self._body_id(
+                (self._manipulation.get("gripper") or {}).get(
+                    "wrist_body", "link6"
+                )
+            )
             print(
                 "PICK_PHASE " + json.dumps({
                     "phase": phase,
@@ -728,10 +769,41 @@ class MujocoBackend:
         with self._data_lock:
             mujoco.mj_forward(self.model, self.data)
             target = self.data.xpos[target_body].copy()
-            left_geom = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "piper_left_finger")
-            right_geom = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "piper_right_finger")
+            # 接触面 geom 名必须由配置声明，不能写死 Piper 的名字：
+            # 2F-85 的 pad body 原点在铰链处，与 pad box 中心相差约 2cm，
+            # 回退到 body 位置会让对齐门禁把正确抓取误报成 94mm 偏差。
+            # 缺省值仍指向 Piper 的指腹网格，保证 Piper 行为逐位不变。
+            gripper_cfg = self._manipulation.get("gripper") or {}
+            left_geom_name = gripper_cfg.get("left_finger_geom", "piper_left_finger")
+            right_geom_name = gripper_cfg.get("right_finger_geom", "piper_right_finger")
+            left_geom = mujoco.mj_name2id(
+                self.model, mujoco.mjtObj.mjOBJ_GEOM, str(left_geom_name)
+            )
+            right_geom = mujoco.mj_name2id(
+                self.model, mujoco.mjtObj.mjOBJ_GEOM, str(right_geom_name)
+            )
             left = self.data.geom_xpos[left_geom].copy() if left_geom >= 0 else self.data.xpos[left_body].copy()
             right = self.data.geom_xpos[right_geom].copy() if right_geom >= 0 else self.data.xpos[right_body].copy()
+            # **夹持区中点必须与 IK / 参考姿态证据同一口径**：
+            # 求解器把"配置声明的全部 pad box 中点"对齐到目标点，门禁若改用
+            # 左右单个 pad 的中点，两者会差一个固定几何量（UR5e + 2F-85 实测
+            # 9.37mm，且随工具指向翻转而变号）。未声明 pad_boxes 时回退到
+            # 左右代表接触面，保证 Piper 的既有行为逐位不变。
+            grip_region = [str(name) for name in (gripper_cfg.get("pad_boxes") or ())]
+            if grip_region:
+                grip_positions = []
+                for name in grip_region:
+                    ident = mujoco.mj_name2id(
+                        self.model, mujoco.mjtObj.mjOBJ_GEOM, name
+                    )
+                    if ident < 0:
+                        raise ValueError(
+                            "夹持区声明的 geom 不存在: " + name
+                        )
+                    grip_positions.append(self.data.geom_xpos[ident].copy())
+                grip_midpoint = sum(grip_positions) / float(len(grip_positions))
+            else:
+                grip_midpoint = None
         gripper = self._manipulation["gripper"]
         pad_offset = float(gripper.get("pad_offset_m", 0.0) or 0.0)
         if approach_axis is None:
@@ -744,7 +816,9 @@ class MujocoBackend:
                 if norm < 1e-9
                 else axis / norm
             )
-        midpoint = (left + right) / 2.0
+        # 夹持区中点：优先用配置声明的**夹持区**（与 IK / 参考姿态证据同一口径），
+        # 未声明时才回退到左右代表接触面的中点（Piper 既有行为，逐位不变）。
+        midpoint = grip_midpoint if grip_midpoint is not None else (left + right) / 2.0
         center = midpoint - axis * pad_offset
         delta = center - target
         return {
@@ -753,22 +827,55 @@ class MujocoBackend:
             "right_finger_position_m": right.tolist(),
             "finger_center_position_m": midpoint.tolist(),
             "grasp_point_position_m": center.tolist(),
+            # 抓取点口径留证：换夹爪后必须能一眼看出门禁用的是哪一种定义，
+            # 否则"IK 用 4 点、门禁用 2 点"这类口径错位会以
+            # "精度莫名不达标（固定偏差）"的形式反复出现。
+            "grasp_point_source": (
+                "grip_region" if grip_midpoint is not None else "finger_pair"
+            ),
+            "grip_region_geoms": grip_region,
             "pad_offset_m": pad_offset,
             "center_delta_m": delta.tolist(),
             "center_distance_m": float((delta @ delta) ** 0.5),
             "z_error_m": float(delta[2]),
+            # 取证用的关节列表取自 profile 声明的 arm 角色关节，
+            # 这样换构型后自检信息仍然可读（原实现写死 joint1..joint6）。
             "joint_qpos": {
                 name: self._joint_qpos(name)
-                for name in ("joint1", "joint2", "joint3", "joint4", "joint5", "joint6")
+                for name in self._arm_joint_names()
             },
         }
 
+    def _arm_joint_names(self):
+        """返回 profile 声明为 arm 角色的关节名（按 profile.joints 顺序）。
+
+        语义说明：这里返回的是**关节名**，而 `_joint_qpos` 按 actuator 名
+        查 ctrl 通道；两者在 Piper 上同名，在 UR5 上不同名
+        （joint: shoulder_pan_joint / actuator: shoulder_pan）。
+        因此 `_joint_qpos` 需同时支持两种命名：先按 actuator 名查，
+        查不到再按同名关节查 qpos。
+        """
+        roles = getattr(self.profile, "joint_roles", None) or {}
+        names = [name for name in self.profile.joints if roles.get(name) == "arm"]
+        return names or list(self.profile.joints)
+
     def _joint_qpos(self, name):
+        """读取关节角：既接受执行器名，也接受关节名。
+
+        - 执行器名：走 actuator_trnid 反查它驱动的关节；
+        - 关节名：直接查 jnt_qposadr（UR5 的 actuator 名与关节名不同，
+          只查 actuator 会全部返回 None，自检信息失去意义）。
+        """
         actuator = self._actuators.get(name)
-        if actuator is None:
+        if actuator is not None:
+            joint_id = int(self.model.actuator_trnid[actuator, 0])
+            return float(self.data.qpos[self.model.jnt_qposadr[joint_id]])
+        joint_id = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_JOINT, str(name)
+        )
+        if joint_id < 0:
             return None
-        joint_id = int(self.model.actuator_trnid[actuator, 0])
-        return float(self.data.qpos[self.model.jnt_qposadr[joint_id]])
+        return float(self.data.qpos[int(self.model.jnt_qposadr[joint_id])])
 
     def move_joint(self, positions, duration_ms, lease):
         self.authority.validate(lease)
@@ -1079,19 +1186,52 @@ class MujocoBackend:
                 self.data.ctrl[self._actuators[actuator]] = float(value)
 
     def _set_gripper_controls(self, positions):
-        """只更新夹爪指关节，避免开合动作覆盖机械臂 1-6 号关节。"""
+        """只更新夹爪通道，避免开合动作覆盖机械臂关节。
+
+        泛化说明（原实现写死 joint7/joint8）：
+        夹爪驱动通道的**名字由构型决定**——Piper 是 joint7/joint8 两个位置
+        关节，Robotiq 2F-85 是单个 tendon 执行器 `rq2f85_fingers_actuator`。
+        调用方传入的 `positions` 来自场景配置的 `gripper.open/closed`，
+        本来就**只含夹爪通道**，因此直接使用即可，不能再按写死的名字过滤
+        （否则 UR5 会被过滤成空集并误报"必须包含 joint7/joint8"）。
+        """
         finger_positions = {
-            name: value
-            for name, value in positions.items()
-            if name in {"joint7", "joint8"}
+            str(name): float(value) for name, value in positions.items()
         }
         if not finger_positions:
-            raise ValueError("夹爪开合配置必须包含 joint7/joint8")
+            raise ValueError("夹爪开合配置不能为空")
         self._set_controls(finger_positions)
 
-    def _move_trajectory(self, target_positions, duration_ms):
-        """以五次多项式从实际关节状态平滑移动到目标状态。"""
+    def _pick_ctrl_offsets(self, phase):
+        """取某抓取段的伺服前馈（ctrl 通道名 → 增量，rad）；未声明＝零前馈。
+
+        数据来源是场景 report 的 `gripper.gravity_feedforward`，由参考姿态求解器
+        按 model 的 qfrc_bias 与 gainprm[0] 算出（见
+        `scripts/build_ur5_baseline._gravity_hold_ctrl`）。
+        这是**构型无关的平台参数**：纯 PD 执行器需要它抵消稳态静差，
+        真机或已做重力补偿的模型不声明即零前馈，行为与既有实现逐位一致。
+        """
+        gripper = self._manipulation.get("gripper") or {}
+        offsets = (gripper.get("gravity_feedforward") or {}).get(str(phase))
+        return dict(offsets) if offsets else {}
+
+    def _move_trajectory(self, target_positions, duration_ms, ctrl_offsets=None):
+        """以五次多项式从实际关节状态平滑移动到目标状态。
+
+        `ctrl_offsets` 是逐段伺服前馈（ctrl 通道名 → 增量）：重力矩不为零的
+        位形下纯 PD 执行器会停在 `ctrl - τ_g / gain`，必须把指令偏置
+        `τ_g / gain` 加回去，才能让**稳态落点**等于目标关节角。
+        含未在目标位形里声明的通道时显式失败（静默忽略会让前馈失效而难以察觉）。
+        """
         names = list(target_positions)
+        offsets = {str(name): float(value) for name, value in (ctrl_offsets or {}).items()}
+        unknown = sorted(set(offsets) - set(names))
+        if unknown:
+            raise ValueError("轨迹前馈含未声明的控制通道: " + str(unknown))
+        commands = {
+            name: float(target_positions[name]) + offsets.get(name, 0.0)
+            for name in names
+        }
         with self._data_lock:
             starts = []
             for name in names:
@@ -1103,7 +1243,7 @@ class MujocoBackend:
         steps = max(1, int(math.ceil((int(duration_ms) / 1000.0) / self.model.opt.timestep)))
         for step in range(1, steps + 1):
             elapsed = step * float(self.model.opt.timestep)
-            values = quintic_position(starts, [float(target_positions[name]) for name in names], duration_ms / 1000.0, elapsed)
+            values = quintic_position(starts, [commands[name] for name in names], duration_ms / 1000.0, elapsed)
             self._set_controls(dict(zip(names, values)))
             self._advance_for(0)
         # 位置执行器有自身阻尼和力矩限制，轨迹结束后必须留出稳定时间。
@@ -1113,7 +1253,7 @@ class MujocoBackend:
         # 注意这里不能按"段时长"缩放：调用方传入的是每段时长（总时长/5），
         # 按它缩放会把稳定窗口压到 4 秒以内，joint1 永远到不了位。
         settle_ms = max(250, min(16000, int(duration_ms) * 4))
-        self._set_controls({name: float(target_positions[name]) for name in names})
+        self._set_controls(commands)
         self._advance_for(settle_ms)
 
     def _advance_for(self, duration_ms, contact_bodies=None):
@@ -1283,6 +1423,68 @@ class MujocoBackend:
             # 保证没有抬升动作的旧配置也能走统一的力闭环判定。
             gripper.setdefault("min_normal_force_n", 0.2)
             gripper.setdefault("max_force_imbalance_ratio", 4.0)
+            # 伺服前馈（逐段 ctrl 增量）。**这是平台参数，不是机器人名**：
+            # 纯 PD 执行器（如 Menagerie 的 UR5e，官方模型没有真机控制器自带的
+            # 重力补偿）在重力矩不为零的位形下必然有稳态误差 Δq = τ_g / gain，
+            # 实测 shoulder_lift 约 0.015 rad ≈ 末端 15mm，超过抓取容差。
+            # 未声明 = 零前馈（真机或已做补偿的模型），行为与既有实现逐位一致。
+            feedforward_raw = raw_gripper.get("gravity_feedforward")
+            if feedforward_raw is None:
+                gripper["gravity_feedforward"] = {}
+            else:
+                if not isinstance(feedforward_raw, dict):
+                    raise ValueError("gravity_feedforward 必须是对象")
+                phase_positions = {
+                    "home": "home_positions",
+                    "approach": "approach_positions",
+                    "grasp": "grasp_positions",
+                    "lift": "lift_positions",
+                }
+                unknown_phases = sorted(set(feedforward_raw) - set(phase_positions))
+                if unknown_phases:
+                    raise ValueError(
+                        "gravity_feedforward 含未知段名: " + str(unknown_phases)
+                    )
+                feedforward = {}
+                for phase, positions_key in phase_positions.items():
+                    declared = feedforward_raw.get(phase)
+                    if declared is None:
+                        continue
+                    if not isinstance(declared, dict):
+                        raise ValueError(
+                            "gravity_feedforward.%s 必须是对象" % phase
+                        )
+                    positions = gripper.get(positions_key)
+                    if not positions:
+                        raise ValueError(
+                            "gravity_feedforward.%s 缺少对应的 %s 声明"
+                            % (phase, positions_key)
+                        )
+                    unknown = sorted(set(declared) - set(positions))
+                    if unknown:
+                        raise ValueError(
+                            "gravity_feedforward.%s 含未在该段位置指令中声明的"
+                            "通道: %s" % (phase, unknown)
+                        )
+                    offsets = {}
+                    for name, value in declared.items():
+                        offset = float(value)
+                        if not math.isfinite(offset):
+                            raise ValueError(
+                                "gravity_feedforward.%s.%s 必须是有限数"
+                                % (phase, name)
+                            )
+                        # 前馈是"伺服静差补偿"，量级必须远小于关节行程。
+                        # 上限用于拦截单位/符号写错（例如误填 N·m 或写反方向），
+                        # 而不是用来限制正常取值（实测最大 0.017 rad）。
+                        if abs(offset) > GRAVITY_FEEDFORWARD_LIMIT_RAD:
+                            raise ValueError(
+                                "gravity_feedforward.%s.%s=%.6f 超出上限 %.3f rad"
+                                % (phase, name, offset, GRAVITY_FEEDFORWARD_LIMIT_RAD)
+                            )
+                        offsets[str(name)] = offset
+                    feedforward[phase] = offsets
+                gripper["gravity_feedforward"] = feedforward
             # 指腹接触区相对指尖 geom 中点的偏移，默认 0 保持既有配置行为。
             pad_offset = float(raw_gripper.get("pad_offset_m", 0.0) or 0.0)
             if not math.isfinite(pad_offset) or pad_offset < 0:
@@ -1313,6 +1515,39 @@ class MujocoBackend:
                 if not isinstance(anchor_body, str) or not anchor_body:
                     raise ValueError("lift_anchor_body 必须是非空字符串")
                 gripper["lift_anchor_body"] = anchor_body
+            # 构型相关的名字必须**原样保留**：本解析器只对已知字段做
+            # 类型校验，但下面的字段是"由配置声明替代写死名字"的载体，
+            # 不在这里透传就会在运行时被静默丢弃——
+            # 实测表现为 UR5 场景下报 "body not found: link6"
+            # （配置里明明写了 wrist_body=wrist_3_link）。
+            for key in (
+                "wrist_body",
+                "left_finger_geom",
+                "right_finger_geom",
+            ):
+                value = raw_gripper.get(key)
+                if value is None:
+                    continue
+                if not isinstance(value, str) or not value:
+                    raise ValueError(key + " 必须是非空字符串")
+                gripper[key] = value
+            # 夹持区定义（夹持区中点 = 这些 geom 中心的算术平均）。
+            # **必须透传**：IK、参考姿态证据与运行时对齐门禁都按它定义"抓取点"，
+            # 只让 left/right 两个代表接触面参与会让三方口径不一致
+            # （UR5e + 2F-85 实测差 9.37mm，直接顶穿 5mm 容差）。
+            # 未声明时保持 None，门禁回退到左右代表接触面（Piper 既有行为）。
+            pad_boxes = raw_gripper.get("pad_boxes")
+            if pad_boxes is not None:
+                if not isinstance(pad_boxes, (list, tuple)) or not pad_boxes:
+                    raise ValueError("pad_boxes 必须是非空的 geom 名列表")
+                names = []
+                for item in pad_boxes:
+                    if not isinstance(item, str) or not item:
+                        raise ValueError("pad_boxes 元素必须是非空字符串")
+                    if item in names:
+                        raise ValueError("pad_boxes 含重复 geom: " + item)
+                    names.append(item)
+                gripper["pad_boxes"] = names
         return {"targets": targets, "gripper": gripper}
 
     def _consume_fault(self):

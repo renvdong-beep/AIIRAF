@@ -21,22 +21,51 @@ def _parse_joint_roles(spec, joints):
 
 
 def _parse_gripper(spec, joints, joint_roles):
-    """解析夹爪结构；未声明时返回 None。"""
+    """解析夹爪结构；未声明时返回 None。
+
+    契约泛化（支持异构夹爪）：
+    - `drive_joints` 由"恰好两个"放宽为 **1..N 个**。原因：不同厂商夹爪的
+      驱动方式本质不同——Piper 是两个独立位置关节（joint7/joint8），
+      而 Robotiq 2F-85 是单 tendon 驱动（ctrlrange 0..255），
+      并不存在两个独立驱动关节。硬性要求 2 个会让后者无法声明。
+    - 新增 `type`：parallel（平行二指，左右独立）/ tendon（欠驱动腱驱动）。
+      缺省按 drive_joints 个数推断：2 个视为 parallel，1 个视为 tendon。
+    - 驱动量的量纲由配置自行声明，本层只要求为有限数值：
+      parallel 通常是米/弧度，tendon 通常是归一化开合度（如 0..255）。
+      不在解析层做范围裁剪，避免把厂商语义写死进核心校验器。
+    - 仍然强制 `open_positions` / `closed_positions` 与 drive_joints 键一一对应，
+      且各驱动量的维度必须一致（不能一个关节一个值、另一个关节两个值）。
+
+    向后兼容：既有两个驱动关节的 profile 行为完全不变。
+    """
     raw = spec.get('gripper')
     if raw is None:
         return None
     if not isinstance(raw, dict):
         raise ProfileError('gripper 必须是对象')
     drive = raw.get('drive_joints')
-    if not isinstance(drive, (list, tuple)) or len(drive) != 2:
-        raise ProfileError('gripper.drive_joints 必须恰好声明两个驱动关节')
+    if not isinstance(drive, (list, tuple)) or not drive:
+        raise ProfileError('gripper.drive_joints 必须声明至少一个驱动关节')
     drive = [str(item) for item in drive]
     declared = set(joints)
     for joint in drive:
         if joint not in declared:
             raise ProfileError('gripper.drive_joints 引用了未声明的关节: ' + joint)
-    if drive[0] == drive[1]:
-        raise ProfileError('gripper.drive_joints 的两个关节不能相同')
+    if len(set(drive)) != len(drive):
+        raise ProfileError('gripper.drive_joints 不能包含重复关节')
+
+    kind = raw.get('type')
+    if kind is None:
+        # 缺省推断：两个驱动关节视为平行二指，单个驱动视为腱驱动。
+        kind = 'parallel' if len(drive) == 2 else 'tendon'
+    kind = str(kind)
+    if kind not in ('parallel', 'tendon'):
+        raise ProfileError('gripper.type 必须是 parallel 或 tendon: ' + kind)
+    if kind == 'parallel' and len(drive) != 2:
+        raise ProfileError(
+            'gripper.type=parallel 要求恰好两个驱动关节，实际: ' + str(len(drive))
+        )
+
     for key in ('open_positions', 'closed_positions'):
         block = raw.get(key)
         if not isinstance(block, dict) or set(str(k) for k in block) != set(drive):
@@ -62,10 +91,19 @@ def _parse_gripper(spec, joints, joint_roles):
             if not 0.0 <= value <= 90.0:
                 raise ProfileError('gripper.max_tilt_deg 必须在 0..90 之间')
             extra[key] = value
+    left_index = int(raw.get('left_index', 0))
+    right_index = int(raw.get('right_index', 0 if kind == 'tendon' else 1))
+    for label, index in (('left_index', left_index), ('right_index', right_index)):
+        if not 0 <= index < len(drive):
+            raise ProfileError(
+                'gripper.%s 越界: %d（drive_joints 共 %d 个）'
+                % (label, index, len(drive))
+            )
     return {
+        'type': kind,
         'drive_joints': drive,
-        'left_index': int(raw.get('left_index', 0)),
-        'right_index': int(raw.get('right_index', 1)),
+        'left_index': left_index,
+        'right_index': right_index,
         'open_positions': {
             str(k): float(v) for k, v in raw['open_positions'].items()
         },
@@ -75,7 +113,6 @@ def _parse_gripper(spec, joints, joint_roles):
         'pad_offset_m': pad,
         **extra,
     }
-
 
 def _parse_home(spec, joints):
     """解析 Home 位姿；未声明时返回 None。"""
