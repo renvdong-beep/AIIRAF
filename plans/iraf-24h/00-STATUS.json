@@ -97,11 +97,11 @@
     {
       "id": "09",
       "title": "verify.sh 与 uninstall.sh",
-      "status": "TODO",
-      "evidence": null,
-      "commit": null,
-      "updated_at": null,
-      "note": "verify/uninstall 在 x86 侧用 dry-run + 本地 stub 验证解析逻辑；目标端 /health DEFERRED。"
+      "status": "DONE",
+      "evidence": "build/iraf-24h/09/{acceptance.txt,acceptance-rerun.txt,unittest-full.txt,unittest-uninstall-scope-v2.txt,cases/,run_acceptance.sh,check_evidence.py,tamper_bundle.py,clean_stage.py,inject_extra.py,bundle-build-rebuild.txt,verify-evidence-dryrun.json,verify-evidence-installed.json,verify-evidence-not-running.json,install-dry-run.json,install-dry-run-probe.json,uninstall-dryrun.json,uninstall-apply.json,commit-plan.txt,commit-msg.txt,tick-report.md,commands.log}",
+      "commit": "87a4b4b",
+      "updated_at": "2026-09-20T18:08:34+0800",
+      "note": "【额度耗尽续跑轮完成】本轮不重写已有实现，只做「复核 → 重新组装 bundle → 重跑验收 → 补写 commit-plan → 提交 → 回写台账」。关键发现：上一轮末（17:53）已把自指安装记录的修复补到写入侧，但验收证据（17:52）与 bundle（17:51）都早于该修复，旧结论不可用——重新组装 bundle 后重跑验收，由「通过 24 项，失败 2 项」变为「通过 26 项，失败 0 项」（证据 build/iraf-24h/09/acceptance-rerun.txt）；重组 bundle sha256=43f61c48aa9e7eefcf517481fb1c3bc08c9dde20f9d89212a51c82718c793573、成员 26、post_verify=available。原 2 项失败＝自指缺陷的第二次表现：只修比对侧排除会让写入侧把上一份记录登记进 files，卸载报「记录内文件缺失 1 个：iraf-sdk-files.json」并整树拒绝（记录被生成两次才暴露，只生成一次的小沙箱测不出）；修法为写入侧与比对侧用同一 record_name **双向对称**排除（写入侧 item.path != install.file_record，比对侧 actual.pop(record_name)），并在结果里显式写 record_file_excluded。本轮补强：新增回归用例 test_record_regenerated_twice_stays_consistent（显式生成两次记录，即那 2 项失败的最小复现），test_uninstall_scope 8→9 例；修正调试记录中两处过期数字（27 项→26 项）并补记该第二次表现。关键验收数字（原样引用）：verify-help=0、verify-no-args=1、verify-bundle-missing=2、verify-dryrun-positive=0（S1 sha256 与伴随校验和文件一致、26 成员逐一复算一致、S3 板卡 unverified 17 项+2 pending 显式放行）、verify-board-gate-refuses=2、篡改 outer/inner/extra/traversal/missing 全=4、install-dry-run=0、verify-bundle-and-installed=0、uninstall-dry-run=0、uninstall-dryrun-kept-nothing（removed=[]）、注入清单外文件后=1、uninstall-apply=0（file_count_record=161 == file_count_actual=161、extras=[]、missing=[]、removed=4、日志目录与前缀下邻居文件保留）、二次卸载=1、verify-service-not-running=5（service_state=SERVICE_NOT_RUNNING、verified=false）、单测 test_uninstall_scope Ran 9/OK、test_target_verify_evidence Ran 9/OK。全量单测 Ran 528 / failures=1 / errors=4 / skipped=4（基线 510/1/4/4，失败集合 4 项 stub 导入 ERROR + test_vision_processing 逐项一致，+18 为本步新增，无回归）。未放宽任何门禁：schema 只**增加**必需字段；profile_check --board e300 --allow-unverified 仍 exit=0（证据 09/profile-check-after-schema.txt）。诚实边界（不伪造）：目标端 /health、systemd、真实事件库写入一律 DEFERRED（板卡不在场），证据 evidence_scope=rehearsal_only / simulation=true / verified=false；本机 8765 端口确有开发仿真服务（HTTP 200），S5 通过属「本机开发服务证据」，不得表述为目标端健康检查通过；「服务未启动」分支用关闭端口 127.0.0.1:1 确定性复现；gRPC 只到 tcp_connect 时必须写 limitation。未触碰另一窗口路径（examples/demo3_arm/、scripts/view_mujoco.py、viewer_runner.py、config/*_baseline.yaml）；提交前 git status 仅本步 9 个路径（3 个步骤声明 + 6 个额外：deploy/sdk/lib_target_verify.py、deploy/sdk/lib_board_bundle.py、config/sdk/package_matrix.{yaml,schema.json}、tests/unit/test_target_verify_evidence.py、docs/debug/2026-09-20-verify-uninstall-scope-gates.md，逐条理由见 commit-plan.txt）。本轮未触发额度紧张，无未提交残留。下一轮：步骤 10 deploy.sh 双通道传输。"
     },
     {
       "id": "10",
