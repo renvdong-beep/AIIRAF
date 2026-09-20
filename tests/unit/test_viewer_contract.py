@@ -144,13 +144,71 @@ class StructuredSectionValidationTests(unittest.TestCase):
         with self.assertRaises(ProfileError):
             load_robot_profile(path)
 
-    def test_gripper_requires_two_drive_joints(self):
+    def test_gripper_accepts_single_tendon_drive(self):
+        """单驱动关节合法：Robotiq 2F-85 为单 tendon 驱动，不存在两个独立关节。
+
+        契约由"恰好两个"放宽为 1..N，缺省类型按键数推断为 tendon。
+        """
         path = self._write(
             "  gripper:\n"
             "    drive_joints: [j1]\n"
+            "    open_positions: {j1: 0.0}\n"
+            "    closed_positions: {j1: 255.0}\n",
+            "tendondrive",
+        )
+        profile = load_robot_profile(path)
+        self.assertEqual(["j1"], profile.gripper["drive_joints"])
+        self.assertEqual("tendon", profile.gripper["type"])
+        # 单驱动下左右索引都指向该通道。
+        self.assertEqual(0, profile.gripper["left_index"])
+        self.assertEqual(0, profile.gripper["right_index"])
+        # 归一化开合度（0..255）必须原样保留，不在解析层做量纲裁剪。
+        self.assertEqual(255.0, profile.gripper["closed_positions"]["j1"])
+
+    def test_gripper_parallel_requires_exactly_two_drives(self):
+        """显式声明 parallel 时仍必须恰好两个驱动关节。"""
+        path = self._write(
+            "  gripper:\n"
+            "    type: parallel\n"
+            "    drive_joints: [j1]\n"
             "    open_positions: {j1: 1.0}\n"
             "    closed_positions: {j1: 0.0}\n",
-            "baddrive",
+            "badparallel",
+        )
+        with self.assertRaises(ProfileError):
+            load_robot_profile(path)
+
+    def test_gripper_unknown_type_rejected(self):
+        path = self._write(
+            "  gripper:\n"
+            "    type: magic\n"
+            "    drive_joints: [j1, j2]\n"
+            "    open_positions: {j1: 1.0, j2: 0.0}\n"
+            "    closed_positions: {j1: 0.0, j2: 1.0}\n",
+            "badtype",
+        )
+        with self.assertRaises(ProfileError):
+            load_robot_profile(path)
+
+    def test_gripper_duplicate_drive_joints_rejected(self):
+        path = self._write(
+            "  gripper:\n"
+            "    drive_joints: [j1, j1]\n"
+            "    open_positions: {j1: 1.0}\n"
+            "    closed_positions: {j1: 0.0}\n",
+            "dupdrive",
+        )
+        with self.assertRaises(ProfileError):
+            load_robot_profile(path)
+
+    def test_gripper_index_out_of_range_rejected(self):
+        path = self._write(
+            "  gripper:\n"
+            "    drive_joints: [j1]\n"
+            "    left_index: 3\n"
+            "    open_positions: {j1: 1.0}\n"
+            "    closed_positions: {j1: 0.0}\n",
+            "badindex",
         )
         with self.assertRaises(ProfileError):
             load_robot_profile(path)

@@ -3,16 +3,17 @@
     <compiler angle="radian" />
     <size njmax="500" nconmax="100" />
     <asset>
-        <mesh name="base_link" file="/home/coretek/piper_ros/install/piper_description/share/piper_description/meshes/base_link.STL" />
-        <mesh name="link1" file="/home/coretek/piper_ros/install/piper_description/share/piper_description/meshes/link1.STL" />
-        <mesh name="link2" file="/home/coretek/piper_ros/install/piper_description/share/piper_description/meshes/link2.STL" />
-        <mesh name="link3" file="/home/coretek/piper_ros/install/piper_description/share/piper_description/meshes/link3.STL" />
-        <mesh name="link4" file="/home/coretek/piper_ros/install/piper_description/share/piper_description/meshes/link4.STL" />
-        <mesh name="link5" file="/home/coretek/piper_ros/install/piper_description/share/piper_description/meshes/link5.STL" />
-        <mesh name="link6" file="/home/coretek/piper_ros/install/piper_description/share/piper_description/meshes/link6.STL" />
-        <mesh name="gripper_base" file="/home/coretek/piper_ros/install/piper_description/share/piper_description/meshes/gripper_base.STL" />
-        <mesh name="link7" file="/home/coretek/piper_ros/install/piper_description/share/piper_description/meshes/link7.STL" />
-        <mesh name="link8" file="/home/coretek/piper_ros/install/piper_description/share/piper_description/meshes/link8.STL" />
+        <mesh name="base_link" file="../../../piper_ros/src/piper_description/meshes/base_link.STL" />
+        <mesh name="link1" file="../../../piper_ros/src/piper_description/meshes/link1.STL" />
+        <mesh name="link2" file="../../../piper_ros/src/piper_description/meshes/link2.STL" />
+        <mesh name="link3" file="../../../piper_ros/src/piper_description/meshes/link3.STL" />
+        <mesh name="link4" file="../../../piper_ros/src/piper_description/meshes/link4.STL" />
+        <mesh name="link5" file="../../../piper_ros/src/piper_description/meshes/link5.STL" />
+        <mesh name="link6" file="../../../piper_ros/src/piper_description/meshes/link6.STL" />
+        <mesh name="gripper_base" file="../../../piper_ros/src/piper_description/meshes/gripper_base.STL" />
+        <mesh name="link7" file="../../../piper_ros/src/piper_description/meshes/link7.STL" />
+        <mesh name="link8" file="../../../piper_ros/src/piper_description/meshes/link8.STL" />
+        <material name="box_01_material" rgba="0.820000 0.220000 0.120000 1.000000" />
     </asset>
     <worldbody>
         <geom type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="base_link" />
@@ -57,26 +58,26 @@
                 </body>
             </body>
         </body>
-        <geom name="workbench" type="box" pos="0 0 -0.025" size="0.8 0.8 0.025" rgba="0.25 0.28 0.32 1" friction="1.0 0.02 0.001" />
-        <body name="box_01" pos="0.139440363 -0.000001065 0.030000000" gravcomp="1">
+        <geom name="workbench" type="box" pos="0 0 -0.025000000" size="0.8 0.8 0.025" rgba="0.25 0.28 0.32 1" friction="1.0 0.02 0.001" />
+        <body name="box_01" pos="0.189999426 -0.000000000 0.025000000" quat="1.000000000 0.000000000 0.000000000 0.000000000" gravcomp="1">
             <freejoint name="box_01_free" />
-            <geom name="box_01_geom" type="box" size="0.03 0.03 0.03" mass="0.04" rgba="0.82 0.22 0.12 1" friction="2.0 0.05 0.001" />
+            <geom name="box_01_geom" type="box" size="0.025 0.025 0.025" mass="0.04" material="box_01_material" rgba="0.820000 0.220000 0.120000 1.000000" friction="2.0 0.05 0.001" />
         </body>
-        <camera name="overhead_camera" mode="targetbody" target="box_01" pos="0.28 -0.72 0.72" fovy="78" />
-        <body name="grasp_anchor" pos="0.139440363 -0.000001065 0.030000000" mocap="true" />
+        <camera name="overhead_camera" mode="fixed" pos="0.280000000 -0.720000000 0.720000000" quat="0.917927478 0.391852118 0.024395831 0.057148098" fovy="78" />
+        <body name="grasp_anchor" pos="0.189999426 -0.000000000 0.025000000" mocap="true" />
     </worldbody>
     <actuator>
-        <position name="joint1" ctrllimited="true" ctrlrange="-2.618 2.618" joint="joint1" kp="200" user="1" forcelimited="true" forcerange="-20000 20000" />
-        <position name="joint2" ctrllimited="true" ctrlrange="0 3.14158" joint="joint2" kp="200" user="1" forcelimited="true" forcerange="-20000 20000" />
-        <position name="joint3" ctrllimited="true" ctrlrange="-2.697 0" joint="joint3" kp="200" user="1" forcelimited="true" forcerange="-1000 1000" />
-        <position name="joint4" ctrllimited="true" ctrlrange="-1.832 1.832" joint="joint4" kp="200" user="1" forcelimited="true" forcerange="-70 70" />
-        <position name="joint5" ctrllimited="true" ctrlrange="-1.22 1.22" joint="joint5" kp="200" user="1" forcelimited="true" forcerange="-50 50" />
-        <position name="joint6" ctrllimited="true" ctrlrange="-3.14158 3.14158" joint="joint6" kp="200" user="1" forcelimited="true" forcerange="-6 6" />
+        <position name="joint1" ctrllimited="true" ctrlrange="-2.618 2.618" joint="joint1" kp="450.000000" user="1" forcelimited="true" forcerange="-20000 20000" />
+        <position name="joint2" ctrllimited="true" ctrlrange="0 3.14158" joint="joint2" kp="200.000000" user="1" forcelimited="true" forcerange="-20000 20000" />
+        <position name="joint3" ctrllimited="true" ctrlrange="-2.697 0" joint="joint3" kp="200.000000" user="1" forcelimited="true" forcerange="-1000 1000" />
+        <position name="joint4" ctrllimited="true" ctrlrange="-1.832 1.832" joint="joint4" kp="200.000000" user="1" forcelimited="true" forcerange="-70 70" />
+        <position name="joint5" ctrllimited="true" ctrlrange="-1.22 1.22" joint="joint5" kp="200.000000" user="1" forcelimited="true" forcerange="-50 50" />
+        <position name="joint6" ctrllimited="true" ctrlrange="-3.14158 3.14158" joint="joint6" kp="200.000000" user="1" forcelimited="true" forcerange="-6 6" />
         <position name="joint7" ctrllimited="true" ctrlrange="0 0.0475" joint="joint7" kp="10000" user="1" forcelimited="true" forcerange="-100 100" />
         <position name="joint8" ctrllimited="true" ctrlrange="-0.0475 0" joint="joint8" kp="10000" user="1" forcelimited="true" forcerange="-100 100" />
     </actuator>
     <option timestep="0.002" gravity="0 0 -9.81" />
     <equality>
-        <connect name="box_01_lift_constraint" body1="grasp_anchor" body2="box_01" anchor="0.139440363 -0.000001065 0.030000000" active="false" solref="0.01 1" solimp="0.9 0.95 0.01" />
+        <connect name="box_01_lift_constraint" body1="grasp_anchor" body2="box_01" anchor="0.189999426 -0.000000000 0.025000000" active="false" solref="0.01 1" solimp="0.9 0.95 0.01" />
     </equality>
 </mujoco>
