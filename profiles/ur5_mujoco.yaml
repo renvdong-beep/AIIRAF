@@ -1,0 +1,100 @@
+apiVersion: iraf.intewell.io/v1
+kind: RobotProfile
+metadata:
+  name: ur5_mujoco
+  version: 0.1.0
+spec:
+  simulation: true
+  verification: development
+  control_frequency_hz: 100
+  # UR5e 6 个臂关节 + Robotiq 2F-85 的 8 个机构关节。
+  # 注意：夹爪的 8 个关节里**只有 4 个是"驱动相关"**（左右各 driver/coupler），
+  # 但 MuJoCo 里这 8 个关节都在 qpos 中，未列出的关节不参与 profile 校验，
+  # 因此这里只声明"臂 6 个 + 夹爪欠驱动执行器所依赖的 2 个 driver"。
+  # 其余 4 个（spring_link/follower）由 equality + tendon 自动跟随，
+  # 声明它们反而会让 move_joint 去直接控制它们，破坏 4 杆机构的一致性。
+  joints:
+    [shoulder_pan_joint, shoulder_lift_joint, elbow_joint,
+     wrist_1_joint, wrist_2_joint, wrist_3_joint,
+     rq2f85_right_driver_joint, rq2f85_left_driver_joint]
+  joint_limits:
+    # 官方 UR5e 限位（Menagerie ur5e.xml）。
+    shoulder_pan_joint: [-6.28319, 6.28319]
+    shoulder_lift_joint: [-6.28319, 6.28319]
+    elbow_joint: [-3.1415, 3.1415]
+    wrist_1_joint: [-6.28319, 6.28319]
+    wrist_2_joint: [-6.28319, 6.28319]
+    wrist_3_joint: [-6.28319, 6.28319]
+    # 官方 2F-85 driver 关节限位（Menagerie 2f85.xml）。
+    rq2f85_right_driver_joint: [0.0, 0.8]
+    rq2f85_left_driver_joint: [0.0, 0.8]
+  capabilities: [move_joint, pick_object, visual_pick, stop]
+  # 结构化差异声明：把关节语义、夹爪位形、Home 位姿与相机视角
+  # 从脚本魔数收敛为 profile 数据，换机械臂只需替换本文件。
+  joint_roles:
+    shoulder_pan_joint: arm
+    shoulder_lift_joint: arm
+    elbow_joint: arm
+    wrist_1_joint: arm
+    wrist_2_joint: arm
+    wrist_3_joint: arm
+    # 2F-85 是欠驱动腱驱动夹爪：左右 driver 由同一个 tendon 执行器带动，
+    # 因此驱动角色是"腱驱动"而非"左右独立平行指"。
+    rq2f85_right_driver_joint: gripper_drive
+    rq2f85_left_driver_joint: gripper_drive
+  gripper:
+    # type=tendon：**单执行器 + 欠驱动**。2F-85 在 MuJoCo 里 8 个关节
+    # （左右各 driver/coupler/spring_link/follower）由**一个** tendon
+    # 执行器 `rq2f85_fingers_actuator` 通过 tendon + equality 联动，
+    # 不存在"两个独立位置关节"。
+    #
+    # drive_joints 声明的是**被驱动的关节**（左右 driver），不是执行器名：
+    # 本字段的语义是"夹爪开合所驱动的关节"，Piper 的 joint7/joint8 与
+    # 2F-85 的左右 driver 在这一层是同类概念。执行器名与 ctrl 量纲由
+    # config 的 gripper.joints / open / closed 承担（见
+    # config/ur5_simulation_baseline.yaml），两者职责不同、不可混用。
+    type: tendon
+    drive_joints: [rq2f85_right_driver_joint, rq2f85_left_driver_joint]
+    # 欠驱动夹爪两指由 tendon 同步，没有"左右独立"的概念；
+    # left/right_index 在这里都指向驱动关节组，仅用于结构完整性校验。
+    # 双侧接触判定用的是 pad geom（config 的 finger_geoms），不是索引。
+    left_index: 0
+    right_index: 1
+    # 驱动量纲 = driver 关节角（rad），官方 range [0, 0.8]。
+    # 实测（probe_ur5_gripper_dynamic.py）关节角与 pad 间隙的对应：
+    #   driver=0.000 → pad 间隙 0.0851 m（张开）
+    #   driver=0.285 → pad 间隙 0.0570 m
+    #   driver=0.571 → pad 间隙 0.0251 m
+    #   driver=0.781 → pad 间隙 0.0004 m（闭合，行程 84.7mm）
+    # 闭合值取 0.40 rad ≈ 间隙 50mm，即 pad 内表面刚贴住 50mm 方块两侧，
+    # 产生稳定法向接触力而不把目标挤出。驱动到 0.8 会以最大行程挤压方块。
+    open_positions: {rq2f85_right_driver_joint: 0.0, rq2f85_left_driver_joint: 0.0}
+    closed_positions: {rq2f85_right_driver_joint: 0.40, rq2f85_left_driver_joint: 0.40}
+    # pad 内表面相对 pinch site 沿夹爪指向的偏移。
+    # 实测 pinch 在 pad 中心上方约 5mm，该偏移由 config 的
+    # grasp.tip_clearance 自动配平，此处填 0 表示由求解器负责；
+    # 非 0 会与求解器重复补偿。
+    pad_offset_m: 0.0
+    max_tilt_deg: 30.0
+  home:
+    # 官方 UR5e home 关键帧：肩/肘构成"上举"位形，末端在基座 +y 方向
+    # 0.49m 高 0.34m 处（见 build/calibration/ur5-workspace.json）。
+    # 该位形离台面（z=0）足够远，适合作为 HOME。
+    shoulder_pan_joint: -1.5708
+    shoulder_lift_joint: -1.5708
+    elbow_joint: 1.5708
+    wrist_1_joint: -1.5708
+    wrist_2_joint: -1.5708
+    wrist_3_joint: 0.0
+  camera:
+    # 相机位姿用于 Viewer 视角与视觉验收；与 Piper 的"俯视抓取点"策略一致：
+    # 固定相机、对准场景中心，位姿可标定。
+    lookat_m: [-0.45, -0.13, 0.10]
+    distance_m: 1.60
+    azimuth_deg: 135.0
+    elevation_deg: -25.0
+  manipulation:
+    targets:
+      box_01:
+        body: box_01
+        pose_tolerance_m: 0.005

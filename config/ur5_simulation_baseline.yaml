@@ -1,0 +1,189 @@
+schema_version: iraf.ur5-simulation-baseline/v1
+description: UR5e + Robotiq 2F-85 受控仿真抓取基线（无视觉真值验收）
+
+model:
+  # 由 scripts/assemble_ur5e_2f85.py 从 Menagerie 官方模型组装。
+  # source_lock 记录来源哈希与**有意偏离官方的改动**（可审计）。
+  source: build/models/ur5e_2f85/ur5e_2f85.xml
+  source_lock: build/models/ur5e_2f85/ur5e_2f85-source-lock.json
+  arm_joints:
+    [shoulder_pan_joint, shoulder_lift_joint, elbow_joint,
+     wrist_1_joint, wrist_2_joint, wrist_3_joint]
+  # 双指不是 body 而是 **pad geom**：2F-85 的 pad 挂在
+  # follower → spring_link 上，body 层还有 silicone_pad 子体，
+  # 用 geom 才能拿到真正的接触面（也是 mj_contactForce 的判定对象）。
+  #
+  # left/right 是**对齐门禁**与外层契约用的"代表接触面"（每侧一个）；
+  # pad_boxes 是**IK 目标**用的完整夹持面列表（每侧两个）。
+  # 两者职责不同、不可互相替代，原因见下方 pad_boxes 的说明。
+  finger_geoms:
+    left: rq2f85_left_pad1
+    right: rq2f85_right_pad1
+    # 2F-85 每侧 pad 是**上下两个 box**（pad1 在局部 +z、pad2 在 -z），
+    # 真正的"夹持区中心"是这 4 个 box 的中点，而不是任一 pad1 的中点。
+    #
+    # 实测代价（probe_pad_vs_block.py + 本仓库 ur5-status.md 记录的阻塞点）：
+    # 用 pad1 中心当 IK 目标时，整套 pad 相对方块**下沉约 34mm** ——
+    # pad1 底面比方块顶面低 34.4mm，pad2 底面扎进台面 3.1mm，
+    # DESCEND 段下侧 pad 先撞方块侧面，跟踪误差单调涨到 0.498 rad。
+    #
+    # 声明 4 个 box 后由 IK 求这 4 点的中点，几何自洽、不引入魔数，
+    # 换块高或换夹爪只改本字段。
+    # 顺序有意义：先左后右、每侧先 pad1 后 pad2，开合轴雅可比取
+    # "各侧两点的均值"再由左右相减（见 build_ur5_baseline.OrientedGraspSolver）。
+    pad_boxes:
+      - rq2f85_left_pad1
+      - rq2f85_left_pad2
+      - rq2f85_right_pad1
+      - rq2f85_right_pad2
+  bodies:
+    wrist: wrist_3_link
+    left_finger: rq2f85_left_pad
+    right_finger: rq2f85_right_pad
+    # 法兰 site：姿态求解用它定义"夹爪指向 = 法兰 → pad 中点"。
+    # 由构型声明而不是写死，与其它名字字段同一口径。
+    flange_site: attachment_site
+
+workbench:
+  top_z_m: 0.0
+  half_size_m: 0.8
+  half_thickness_m: 0.025
+  friction: "1.0 0.02 0.001"
+
+target:
+  id: box_01
+  # 实测 pad 全行程 84.7mm（ctrl=255 时内表面间隙 0.4mm）。
+  # 50mm 方块在 ctrl=163（间隙≈50mm）附近被夹持，
+  # 完全张开（ctrl=0，间隙 85mm）时两侧各留 17mm 进近余量。
+  half_size_m: 0.025
+  mass_kg: 0.04
+  friction: "2.0 0.05 0.001"
+  rgba: "0.82 0.22 0.12 1"
+
+grasp:
+  # 夹持区中点（**四个 pad box 的中点**，见 model.finger_geoms.pad_boxes）
+  # 的目标抓取位置（世界坐标）。
+  # UR5e 基座在原点、z 轴朝上、肩轴沿 y，工作空间主要在 **-x 方向**
+  # （与 Piper 的 +x 相反，见 build/calibration/ur5-workspace.json）。
+  # z 不在此声明，必须由 workbench.top_z_m + target.half_size_m 推出，
+  # 保证方块贴台面。
+  finger_center_xy_m: [-0.55, -0.134]
+  # 预抓取后退距离。取 0.16m 而不是 Piper 的 0.20m：UR5e 在官方 home 种子位形下
+  # 夹爪指向已经是竖直向下（法兰 z 轴 = [0,0,-1]，见 gripper.seed 注释），
+  # 竖直进近天然成立；但位移太小时 DESCEND 段会在 pad 已环抱方块后仍做微调，
+  # 被摩擦锁死。
+  pregrasp_offset_m: 0.16
+  # ⚠️ 这是**后退方向**（抓取点 → 预抓取点），此场景沿重力反方向朝上。
+  # 它**不是**工具指向：工具指向 = 本字段的**反向**（法兰 → 夹持区中点），
+  # 由 scripts/build_ur5_baseline.py 内部取反后交给求解器。
+  # 历史事故：把本字段直接当工具指向，法兰 z 轴朝上、夹持区被抬到法兰上方
+  # 134mm，抓取点落在台面以下（法兰 z=-0.109m）而不可达，
+  # 实际执行时 wrist_2_link 碰撞体先压在方块顶面上，表现为 shoulder_lift
+  # 跟踪误差 0.484 rad、末端距目标 0.314m。详见
+  # docs/debug/2026-09-20-ur5-tool-axis-flip.md。
+  approach_direction: [0.0, 0.0, 1.0]
+  # 开合轴：左 pad → 右 pad 的期望世界方向，必须与 approach_direction 垂直。
+  # 为什么必须显式声明：UR5e 是 6 自由度通用臂，同一个 pad 中点位置有无穷
+  # 多组关节角。只约束位置时求解器会落到"夹爪横着伸出去"的解
+  # （实测开合轴 [0.749,0.143,-0.647]、两 pad 高度差 60.5mm、
+  #  夹爪指向与 -Z 夹角 71.3°），DESCEND 时下侧 pad 直接把方块顶飞。
+  # 固定开合轴即可唯一确定绕接近轴的滚转，排除这类病态解。
+  spread_axis: [1.0, 0.0, 0.0]
+  # 姿态达标门禁：夹爪指向与开合轴相对期望值的最大允许偏差（度）。
+  max_orientation_error_deg: 3.0
+  # 与 approach_direction 分开声明是必须的：DESCEND 段必须是**纯竖直**下降，
+  # 否则夹爪会横掠台面、从侧面撞飞方块。
+  # 实测（probe_descent.py）：只声明 approach_direction 时，
+  # APPROACH 与 DESCEND 的 pad 中点水平差虽只有 2mm，但整臂在段间摆动
+  # （shoulder_lift -1.266 → -0.991 rad），pad 扫过方块把它顶到 z=0.108、
+  # 水平漂移 45mm，对齐门禁随即报 0.097m 偏差。
+  pregrasp_direction: [0.0, 0.0, 1.0]
+  # HOME 抬升量：HOME 放在预抓取位正上方这么高处，使 HOME → APPROACH
+  # 近似竖直下降，避免横扫台面撞飞目标（Piper 多目标场景同口径）。
+  home_rise_m: 0.30
+  # 指尖相对台面的最小间隙。**pad2 在每个 pad 局部 -z 侧**，是整个夹爪
+  # 最低的碰撞体，因此配平必须按"4 个 pad box 的最低面"来算
+  # （求解器用 _finger_tip_z 扫全部 pad_boxes，而不是只看 pad1）。
+  # 3mm 的取值要求 pad 底面高于台面 3mm：夹持区中心离方块底面 25mm，
+  # 而 pad2 底面相对夹持区中心低约 22mm，余量因此只有几毫米，
+  # 该间隙不可随意调小。
+  tip_clearance_m: 0.003
+  clearance_iterations: 8
+  # 抬升阶段相对抓取点沿接近方向抬起的位移
+  lift_offset_m: 0.08
+  solver:
+    iterations: 1200
+    step: 0.5
+    tolerance_m: 1.0e-05
+  # 未知姿态运行时：接近方向取自目标顶面法向；
+  # 法向与竖直夹角超过该值时回退竖直抓取，避免侧面进近导致 pad 撞台面。
+  max_tilt_deg: 30.0
+
+gripper:
+  # IK 种子位形（**只影响收敛到哪一支解，不影响最终精度**）。
+  # 取官方 home：实测该位形下夹爪指向已经是 [0,0,-1]（与 -Z 夹角 0.00°）、
+  # 开合轴已是 [1,0,0]（与 +X 夹角 0.00°），即**姿态初始就满足约束**，
+  # 零空间修正只需负责保持它，收敛最稳（见 probe_seed_orientation.py）。
+  # 对照：UR5e 全零位下夹爪指向与 -Z 夹角 90°、reach_forward_down 下开合轴
+  # 在 y 方向（与期望的 x 差 90°），都会让三维姿态修正走出收敛域。
+  seed:
+    shoulder_pan_joint: -1.5708
+    shoulder_lift_joint: -1.5708
+    elbow_joint: 1.5708
+    wrist_1_joint: -1.5708
+    wrist_2_joint: -1.5708
+    wrist_3_joint: 0.0
+  # 2F-85 是**欠驱动腱驱动**夹爪：只有一个 tendon 执行器
+  # `rq2f85_fingers_actuator`，ctrl 是 0..255 的归一化开合度。
+  # 不要写成 joint7/joint8 那种"两个独立位置关节"，那会把
+  # driver/coupler/spring_link/follower 之间的 4 杆关系冲掉。
+  #
+  # 这里写的是**执行器名**（后端 _set_controls 按 actuator 名索引 ctrl），
+  # 而 profile 的 gripper.drive_joints 写的是**被驱动的关节名**。
+  # 两个字段职责不同：本字段决定"给哪个 ctrl 通道写值"。
+  joints: [rq2f85_fingers_actuator]
+  # ctrl 量纲：0 = 完全张开（间隙 85.1mm），255 = 完全闭合（间隙 0.4mm）。
+  open:
+    rq2f85_fingers_actuator: 0.0
+  # 闭合命令取 163：由实测 ctrl→gap 曲线反解，对应间隙约 50mm，
+  # 即 pad 内表面刚贴住 50mm 方块两侧，产生稳定法向接触力而不挤出目标。
+  # 命令到 255 会以最大行程挤压方块，实测会让目标被顶飞并触发 QACC 发散。
+  closed:
+    rq2f85_fingers_actuator: 163.0
+  # 抬升阶段的臂位形**由求解器算出**（`grasp.lift_offset_m` 沿预抓取方向
+  # 抬升后解 IK），不在这里写死。
+  # 为什么必须交给求解器：写死一组关节角会与 `grasp_positions` 不一致。
+  # UR5e 的腕部构型是被姿态约束唯一确定的（wrist_2 ≈ -4.712，
+  # 即夹爪朝下的那一支），而手写值常见的是 wrist_2 = -1.5708 的
+  # 另一支解；两者相差 180°，抬升段会把方块从指间拽出或直接撞飞。
+  # 实测：手写 lift 与求解出的 grasp 相差 wrist_2 约 3.14 rad，
+  # 后端执行到 LIFT 时会以极大力矩扭转腕部。
+
+scene:
+  # UR5e 的 <general> 执行器自带 gainprm=2000 / biasprm=[0,-2000,-400]
+  # （腕部为 500/-500/-100），本身就是带阻尼的位置伺服，
+  # 因此**不需要** Piper 那样额外注入 arm_position_kp：那会把官方增益覆盖掉，
+  # 反而破坏官方标定过的伺服特性。
+  # 实测臂关节在官方增益下 mj_step 稳定（无 QACC 告警）。
+  inject_arm_position_gains: false
+  timestep_s: 0.002
+  gravity: "0 0 -9.81"
+  # pad geom 的官方摩擦是 0.7/0.6，滑块接触需要更高摩擦才能纯摩擦抬升。
+  pad_friction: "2.0 0.05 0.001"
+  camera:
+    name: overhead_camera
+    # 相机固定并对准抓取点：可标定是视觉精度可审计的前提。
+    # 位置在基座 -x 斜上方，俯视工作台。
+    pos_m: [-1.30, -0.75, 0.85]
+    fovy_deg: 60
+    look_at_m: [-0.55, -0.134, 0.025]
+
+acceptance:
+  pose_tolerance_m: 0.005
+  min_lift_delta_m: 0.02
+  min_normal_force_n: 0.2
+  max_force_imbalance_ratio: 4.0
+  # 求解残差必须显著小于门禁容差，避免用临界解伪造成功
+  solver_error_factor: 0.1
+  # true 时不使用抓取锚点焊接夹具，抬升位移必须完全由双指摩擦力承担
+  require_friction_lift: true
