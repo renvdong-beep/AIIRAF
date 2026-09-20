@@ -27,7 +27,7 @@ iraf-task = "iraf_tools.run_task:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["iraf_core*", "iraf_adapters*", "iraf_skills*", "iraf_tools*"]
+include = ["iraf_sdk*", "iraf_core*", "iraf_adapters*", "iraf_skills*", "iraf_tools*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
