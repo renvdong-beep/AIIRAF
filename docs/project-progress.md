@@ -204,3 +204,38 @@ Ubuntu 系统 MuJoCo/EGL 渲染已成功。远端 Conda MuJoCo 绑定因 EGL 驱
   接近位姿、指尖接触几何、摩擦参数和执行器力，而不是伪造成功。
 - 参数扫描确认 0.030m 半边长方块可形成约 12.045N/12.134N 的平衡夹持（比值 1.007:1），
   默认开发验收目标已调整为该尺寸；小目标仍必须通过独立 IK/接触几何验收。
+
+## 13. 2026-09-20 `iraf-24h` 24 小时战役：SDK 跨架构交付与宇树场景/技能
+
+> 本节只写事实与实测数字；完整汇总见 `docs/progress/2026-09-20-sdk-unitree-24h.md`，逐步台账见 `plans/iraf-24h/00-STATUS.json`。
+
+- 范围调整为 **x86-first**：边缘板卡不在场（`<边缘板卡A>` / `<边缘板卡B>` 的 22 与 9119 端口实测不通），
+  目标端验收统一标记 `DEFERRED`（延后，不是失败）；**未**用 dry-run、mock 或历史数据冒充目标端证据。
+- 20 步中 19 步完成（01–19），收尾步骤 20 产出本节与汇总文档；无 `BLOCKED` 步骤。
+- SDK 层：新增纯 Python `iraf_sdk`（零第三方依赖，子进程导入纯净性证明不 import `iraf_core`/`iraf_adapters`），
+  错误码映射 19 项（IDL §5 表 9 / `src` 抛出点 15 / 仅实现 9，逐项标 `provenance`）。
+- 打包与安装：`build_sdk.sh` 产出 wheel + runtime bundle，`manifest` 逐文件条目 112，两次构建 SHA-256 **逐位相同**；
+  板级 bundle 当前 **47 478 361 字节 / 26 成员 / sha256 `43f61c48…`**；`install.sh` / `verify.sh` / `uninstall.sh` / `deploy.sh`
+  均有 `--dry-run` 与负向退出码（篡改 → 4、缺声明 → 2、用法 → 1），`uninstall` 依据安装记录删除
+  （`file_count_record=161 == file_count_actual=161`）。
+- 离线 wheelhouse：真实抓取 **7 个 wheel / 47 620 905 字节**，全部通过 `cp310 + manylinux_2_28_aarch64` 标签校验；
+  已知缺口：传递依赖 10 条仅 1 条覆盖（9 条缺失），当前 wheelhouse 不足以支撑离线安装，需决策后回填矩阵。
+- 宇树线：厂商 `unitree_mujoco` 资产按 commit `1eb6642e…` 锁定（22 件 / 29 091 323 字节，逐件 SHA-256 + git blob SHA-1 交叉校验）；
+  三模型编译实测 `ncam=0` ⇒ **厂商 MJCF 不含相机/雷达，传感器必须由场景构建器按声明注入**。
+- 场景包 `scenes/handoff_lab/` + 构建器生成模型实测 `nq 26 / nv 24 / nu 12 / ncam 1 / nsite 3 / nbody 20 / njnt 14`；
+  传感器验收 15 条判据全过：`camera.fovy_rel_error=0.010427987255182231`、`lidar.points=167`、
+  `lidar.miss_fraction=0.5361111111111111`、`imu.acc.rel_error=2.0889954113422363e-16`，台面命中距离与声明解析求交偏差 **0.0**。
+- Go2 loopback（`simulation: true`）：`height_mean_m=0.2801007638069918`、`height_std_m=7.351396160228674e-05`、
+  `hold_seconds=7.499999999999341`、`max_attitude_error_deg=0.05779130222480239`、`ctrl_saturated_samples=0`；
+  适配器 stand 1.000 s → 基座高度 `+0.010216000 m`，力矩上限独立复算 = 模型 `ctrlrange`（hip/thigh ±23.7、calf ±45.43 N·m）。
+- 技能层：`stand` 墙钟 `0.39167014486156404 s`、`stop` 墙钟 `0.5178679858800024 s` 均 `SUCCEEDED`；
+  7/7 拒绝用例命中预期错误码（未认证、死信超时、能力缺失、越界速度、越出限位、幂等冲突、策略拒绝）。
+  `locomote` **不声明能力**（首期无步态控制器），其拒绝路径即能力门禁证据。
+- S2 脚本化入口 `scripts/scenario.py`：`stand_stop` 场景 `passed=true`，stand 墙钟 `0.3899381598457694 s` /
+  仿真时间推进 `7.999999999999341 s` / 末速 `3.0387117402068175e-05 m/s`；故障注入 `injected=true / fake_success=false / verified=true`。
+- 图与文档：新增 `docs/diagrams/iraf-sdk-delivery.{dot,svg}`（34 911 字节）与 `iraf-unitree-scene-stack.{dot,svg}`
+  （43 683 字节），`.dot` 重新生成与入库 SVG **逐字节一致**；ADR-0006（跨架构交付分级 L1/L2/L3）与 ADR-0007（宇树场景交互）已落地。
+- 回归：全量单测 `263 → 794`（新增 **531** 例），`failures=1 / errors=4 / skipped=4` 与战役基线**逐项一致**；
+  4 项导入 `ERROR` + `test_vision_processing` 1 项 `FAIL` 为战役前既有缺陷，未并入基线、未放宽门禁掩盖。
+- 未实现/未验证（不表述为已支持）：人形运动能力（仅静态模型）、语音/Studio、S1 命令式与 S3 遥操作、
+  目标端真实安装与 `/health`、AgentOS 真机联通、OCI 多架构路线（无 buildx 且镜像源不可达）、板级原生包（无 aarch64 交叉工具链）。
