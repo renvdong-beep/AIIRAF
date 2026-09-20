@@ -1,0 +1,108 @@
+schema_version: iraf.demo3-simulation-baseline/v1
+description: demo3 合成臂受控仿真抓取基线（第三台机型干跑：只用声明接入）
+
+model:
+  source: examples/demo3_arm/demo3.xml
+  arm_joints: [q1, q2, q3, q4]
+  # 双指是**pad geom**（接触面），与 2F-85 同口径；未声明 pad_boxes 时
+  # 夹持区 = 左右代表接触面的中点（对齐门禁与 IK 同一口径）。
+  finger_geoms:
+    left: pad_l
+    right: pad_r
+  bodies:
+    wrist: tool
+    left_finger: finger_l
+    right_finger: finger_r
+    flange_site: flange
+
+workbench:
+  top_z_m: 0.0
+  half_size_m: 0.8
+  half_thickness_m: 0.025
+  friction: "1.0 0.02 0.001"
+
+target:
+  id: box_01
+  half_size_m: 0.025
+  mass_kg: 0.04
+  friction: "2.0 0.05 0.001"
+  rgba: "0.82 0.22 0.12 1"
+
+grasp:
+  # 夹持区中点的目标位置（世界系水平分量）；z 由 workbench.top_z_m + 半边长推出。
+  finger_center_xy_m: [0.40, 0.0]
+  pregrasp_offset_m: 0.12
+  # **侧向抓取**：后退方向沿 -x（朝基座方向撤离），工具指向取其反向 = +x。
+  # 为什么不用"工具朝下 + 目标贴台面"：demo3 是平面臂，工具竖直朝下时
+  # q2+q3(或含 q4) 的和被锁死在 π，末端只剩一维可达曲线，要够到台面高度的
+  # 目标必须把肘部折到接近自撞的位置（实测：姿态门禁通过但夹持区中心差 8mm，
+  # 因为目标不在那条曲线上）。侧向抓取让"位置(2) + 工具水平指向(1)"三个约束
+  # 由 4 个自由度从容承担，臂自然展开。
+  approach_direction: [-1.0, 0.0, 0.0]
+  # 开合轴 = 手指滑动方向（本机型沿 y）；必须与后退方向垂直
+  spread_axis: [0.0, 1.0, 0.0]
+  # 预抓取与抬升方向单独声明为 +z（竖直）：抓取点上方进入、夹住后竖直抬起。
+  # 若沿用后退方向抬升，会把目标朝基座方向拖，不符合搬运语义。
+  pregrasp_direction: [0.0, 0.0, 1.0]
+  # 开合轴 = 手指滑动方向（本机型沿 y）；必须与后退方向垂直
+  spread_axis: [0.0, 1.0, 0.0]
+  home_rise_m: 0.25
+  tip_clearance_m: 0.003
+  clearance_iterations: 8
+  lift_offset_m: 0.08
+  max_orientation_error_deg: 3.0
+  max_tilt_deg: 30.0
+  solver:
+    pose_iterations: 800
+    tolerance_m: 1.0e-05
+
+gripper:
+  joints: [pinch_l, pinch_r]
+  open: {pinch_l: 0.030, pinch_r: -0.030}
+  closed: {pinch_l: 0.023, pinch_r: -0.023}
+  # IK 种子：肩/肘均已下压的"工具朝下"分支
+  # 种子取上面推出的解附近（q2=32.5°、q3=147.5° → 工具竖直朝下）
+  seed:
+    q1: 0.0
+    q2: 1.0
+    q3: -1.0
+    q4: 0.8
+
+acceptance:
+  pose_tolerance_m: 0.005
+  solver_error_factor: 0.1
+  min_lift_delta_m: 0.02
+  min_normal_force_n: 0.2
+  max_force_imbalance_ratio: 4.0
+  # 纯摩擦抬升（不提供焊接约束）：证明夹具真的夹住了
+  require_friction_lift: true
+  duration_ms: 12000
+
+scene:
+  # 不注入臂位置增益：本机型的执行器自带 PD（gainprm/biasprm）
+  inject_arm_position_gains: false
+  camera:
+    pos_m: [0.28, -0.72, 0.62]
+    look_at_m: [0.40, 0.0, 0.05]
+    fovy_deg: 70
+  lights:
+    - name: key
+      directional: true
+      dir: [-0.16, 0.16, -1.0]
+      diffuse: [0.85, 0.84, 0.82]
+      specular: [0.25, 0.25, 0.25]
+      castshadow: false
+    - name: fill
+      directional: true
+      dir: [0.60, -0.25, -0.55]
+      diffuse: [0.30, 0.30, 0.30]
+      specular: [0.05, 0.05, 0.05]
+
+# 统一入口声明（AGENTS.md 6.4 金路径）：本机型直接复用通用构建器，
+# 不需要任何机型专用脚本。
+build:
+  baseline_module: build_robot_baseline
+  scene: build/models/demo3-pick-scene.xml
+  pose_evidence: build/calibration/demo3-baseline-pose.json
+  profile: examples/demo3_arm/demo3_profile.yaml
+  safety_policy: profiles/safety/simulation_lab.yaml

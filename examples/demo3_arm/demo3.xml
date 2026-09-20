@@ -1,0 +1,88 @@
+<!--
+  第三台机型：合成 3 自由度臂 + 平行双指滑轨夹爪（demo3）。
+
+  **刻意采用与 Piper / UR5e 完全不同的命名**（q1..q3 / pad_l / pad_r / pinch_l / pinch_r），
+  用来验证 IRAF 的接入路径是否真的只依赖声明：
+  任何"因为名字恰好相同所以能跑通"的耦合都会在这里暴露。
+
+  构型：q1 绕 z 偏航、q2/q3 绕 y 俯仰；工具轴 = 末端 body 的 +z 方向，
+  与"法兰 site 的 +z = 工具指向"的契约一致（工具指向朝下时腕部在上、夹爪在下）。
+  夹爪：两根沿 y 滑动的指，pad 内表面即接触面。
+-->
+<mujoco model="demo3_arm">
+  <compiler angle="radian" autolimits="true"/>
+  <option timestep="0.002" gravity="0 0 -9.81"/>
+
+  <default>
+    <default class="servo">
+      <general gaintype="fixed" biastype="affine" gainprm="600" biasprm="0 -600 -60"
+               ctrlrange="-3.2 3.2" forcerange="-120 120"/>
+    </default>
+    <default class="pinch">
+      <general gaintype="fixed" biastype="affine" gainprm="400" biasprm="0 -400 -40"
+               ctrlrange="-0.05 0.05" forcerange="-60 60"/>
+    </default>
+    <default class="collision">
+      <geom contype="1" conaffinity="1" solref="0.002 1" solimp="0.95 0.99 0.001"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <body name="base" pos="0 0 0">
+      <inertial pos="0 0 0.03" mass="4.0" diaginertia="0.02 0.02 0.02"/>
+      <geom name="base_geom" type="cylinder" size="0.07 0.03" pos="0 0 0.03" class="collision"/>
+      <joint name="q1" type="hinge" axis="0 0 1" range="-3.1 3.1" damping="2.0"/>
+
+      <body name="upper" pos="0 0 0.06">
+        <inertial pos="0 0 0.175" mass="2.5" diaginertia="0.06 0.06 0.004"/>
+        <geom name="upper_geom" type="capsule" fromto="0 0 0.02 0 0 0.33" size="0.04" class="collision"/>
+        <joint name="q2" type="hinge" axis="0 1 0" range="-2.9 2.9" damping="2.0"/>
+
+        <body name="fore" pos="0 0 0.35">
+          <inertial pos="0 0 0.14" mass="1.4" diaginertia="0.02 0.02 0.002"/>
+          <geom name="fore_geom" type="capsule" fromto="0 0 0.02 0 0 0.26" size="0.035" class="collision"/>
+          <joint name="q3" type="hinge" axis="0 1 0" range="-2.9 2.9" damping="1.5"/>
+
+          <body name="tool" pos="0 0 0.28">
+            <!-- 腕部俯仰：3 自由度平面臂在"工具必须朝下"时末端只剩一维可达曲线，
+                 目标高度会迫使肘部几乎完全折回并自撞；加一个腕部俯仰后
+                 "位置(2) + 工具朝下(1)" 三个约束由 4 个自由度承担，可达且姿态自然。 -->
+            <joint name="q4" type="hinge" axis="0 1 0" range="-2.9 2.9" damping="1.0"/>
+            <inertial pos="0 0 0.02" mass="0.8" diaginertia="0.002 0.002 0.001"/>
+            <!-- 碰撞体放在法兰**上方**（局部 -z），避免抓取时压到台面/目标 -->
+            <geom name="tool_geom" type="box" size="0.045 0.05 0.02" pos="0 0 -0.03" class="collision"/>
+            <site name="flange" pos="0 0 0"/>
+
+            <body name="palm" pos="0 0 0.02">
+              <inertial pos="0 0 0.01" mass="0.3" diaginertia="0.001 0.001 0.0005"/>
+              <geom name="palm_geom" type="box" size="0.028 0.05 0.014" pos="0 0 0.015" class="collision"/>
+              <body name="finger_l" pos="0 0 0.03">
+                <joint name="finger_l_joint" type="slide" axis="0 1 0" range="-0.04 0.04" damping="1.0"/>
+                <inertial pos="0 0.005 0" mass="0.06" diaginertia="2e-05 2e-05 2e-05"/>
+                <geom name="pad_l" type="box" size="0.007 0.005 0.013" pos="0 0.005 0" class="collision"/>
+              </body>
+              <body name="finger_r" pos="0 0 0.03">
+                <joint name="finger_r_joint" type="slide" axis="0 1 0" range="-0.04 0.04" damping="1.0"/>
+                <inertial pos="0 -0.005 0" mass="0.06" diaginertia="2e-05 2e-05 2e-05"/>
+                <geom name="pad_r" type="box" size="0.007 0.005 0.013" pos="0 -0.005 0" class="collision"/>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <general class="servo" name="m1" joint="q1"/>
+    <general class="servo" name="m2" joint="q2"/>
+    <general class="servo" name="m3" joint="q3"/>
+    <general class="servo" name="m4" joint="q4"/>
+    <general class="pinch" name="pinch_l" joint="finger_l_joint"/>
+    <general class="pinch" name="pinch_r" joint="finger_r_joint"/>
+  </actuator>
+
+  <keyframe>
+    <key name="home" qpos="0 1.0 -1.0 0.8 0.030 -0.030"/>
+  </keyframe>
+</mujoco>
