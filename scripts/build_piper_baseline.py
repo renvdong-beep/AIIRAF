@@ -16,7 +16,11 @@ import numpy as np
 import yaml
 
 from build_piper_pick_scene import build_scene
-from iraf_core.kinematics import solve_position_ik
+from iraf_core.kinematics import (
+    balance_tip_clearance,
+    lowest_mesh_point_z,
+    solve_position_ik,
+)
 
 DEFAULT_BASELINE = "config/piper_simulation_baseline.yaml"
 
@@ -140,25 +144,6 @@ def _finger_center(model, data, left_geom, right_geom):
     return (data.geom_xpos[left_geom] + data.geom_xpos[right_geom]) / 2.0
 
 
-def _finger_tip_z(model, data, geom_ids):
-    """返回手指网格在世界坐标下的最低点，用于校验指尖是否扎入工作台。"""
-    lowest = float("inf")
-    for geom_id in geom_ids:
-        mesh_id = int(model.geom_dataid[geom_id])
-        count = int(model.mesh_vertnum[mesh_id]) if mesh_id >= 0 else 0
-        if count > 0:
-            start = int(model.mesh_vertadr[mesh_id])
-            verts = np.asarray(model.mesh_vert[start : start + count], dtype=float)
-            rot = np.asarray(data.geom_xmat[geom_id], dtype=float).reshape(3, 3)
-            world = np.asarray(data.geom_xpos[geom_id], dtype=float) + verts @ rot.T
-            lowest = min(lowest, float(world[:, 2].min()))
-        else:
-            center = np.asarray(data.geom_xpos[geom_id], dtype=float)
-            half = float(np.abs(np.asarray(model.geom_size[geom_id], dtype=float)).max())
-            lowest = min(lowest, float(center[2]) - half)
-    return lowest
-
-
 def _contact_pairs(model, data):
     pairs = []
     for index in range(int(data.ncon)):
@@ -173,25 +158,26 @@ def _contact_pairs(model, data):
     return pairs
 
 
-def solve_finger_center_pose(
-    model, data, target, arm_joints, joint_names, left_geom, right_geom, solver_cfg
+def solve_finger_center_ik(
+    model, data, target, arm_joints, left_geom, right_geom, solver_cfg
 ):
-    """以双指指尖 geom 中点为目标求解臂关节姿态。
+    """以双指指尖 geom 中点为目标求解臂关节姿态，返回契约层 `IkResult`。
 
-    IK 算法已提取到机器人无关的 iraf_core.kinematics 契约层
-    （见 src/iraf_core/kinematics.py）；本函数只负责把 Piper 侧的
-    关节 id / geom id 与 solver 配置翻译成契约参数，返回值结构保持不变，
-    以保证既有调用方（build_reference_poses、_raised_home_pose）零改动。
-
-    等价性由 scripts/verify_ik_equivalence.py 逐位验证
+    IK 算法在机器人无关的 `iraf_core.kinematics.solve_position_ik`；
+    本函数只把 Piper 侧的关节 id / geom id 与 solver 配置翻译成契约参数。
+    等价性由 `scripts/verify_ik_equivalence.py` 逐位验证
     （同初值同目标同参数下 max_joint_abs_diff_rad = 0.0）。
+
+    **内部一律用本函数**：`balance_tip_clearance` 等 core 能力消费的是
+    IkResult（属性访问），dict 形状只在写参考姿态 JSON 时由
+    `_pack_pose()` 一次性构造。
     """
     solver = {
         "iterations": int(solver_cfg.get("iterations", 800)),
         "step": float(solver_cfg.get("step", 0.5)),
         "tolerance_m": float(solver_cfg.get("tolerance_m", 1e-5)),
     }
-    result = solve_position_ik(
+    return solve_position_ik(
         model,
         data,
         target,
@@ -202,6 +188,10 @@ def solve_finger_center_pose(
         ],
         **solver
     )
+
+
+def _pack_pose(result, joint_names):
+    """把 IkResult 装配成参考姿态 JSON 的字段形状（对外契约，保持不变）。"""
     return {
         "joint_positions": {
             name: float(result.joint_positions[name]) for name in joint_names
@@ -211,6 +201,23 @@ def solve_finger_center_pose(
         "position_error_m": float(result.position_error_m),
         "iterations": int(result.iterations),
     }
+
+
+def solve_finger_center_pose(
+    model, data, target, arm_joints, joint_names, left_geom, right_geom, solver_cfg
+):
+    """兼容入口：返回参考姿态 JSON 的 dict 形状。
+
+    保留给仓库外/历史脚本调用（如 `scripts/verify_ik_equivalence.py`）；
+    仓库内新代码请直接用 `solve_finger_center_ik` + `_pack_pose`，
+    避免在算法层与 JSON 契约层之间来回转换。
+    """
+    return _pack_pose(
+        solve_finger_center_ik(
+            model, data, target, arm_joints, left_geom, right_geom, solver_cfg
+        ),
+        joint_names,
+    )
 
 def build_reference_poses(root, baseline, target_id=None):
     """求解 home/approach/grasp 三个参考关节姿态。
@@ -265,24 +272,36 @@ def build_reference_poses(root, baseline, target_id=None):
     mujoco.mj_forward(model, data)
     # 指腹 geom 中心并不是抓取点：指尖比它再低约 50mm。
     # 直接用方块中心作为指尖中心会让指尖扎进工作台，因此按指尖离台间隙自动配平抓取高度。
-    height_correction = 0.0
-    tip_z = None
-    for _ in range(int(grasp_cfg.get("clearance_iterations", 8))):
-        target = base_target + direction * height_correction
-        grasp = solve_finger_center_pose(
-            model, data, target, arm_joints, arm_names, left_geom, right_geom, solver_cfg
+    # 配平算法本体在 core（与机型无关，UR5e 侧同一份实现）。
+    def solve_for_clearance(target):
+        return solve_finger_center_ik(
+            model, data, target, arm_joints, left_geom, right_geom, solver_cfg
         )
-        tip_z = _finger_tip_z(model, data, (left_geom, right_geom))
-        deficit = (top_z + tip_clearance) - tip_z
-        if deficit <= 1e-4:
-            break
-        height_correction += float(deficit)
-    else:
+
+    grasp_ik, height_correction, clearance_trace, cleared = balance_tip_clearance(
+        model,
+        data,
+        solve_for_clearance,
+        base_target,
+        direction,
+        (left_geom, right_geom),
+        top_z,
+        tip_clearance,
+        iterations=int(grasp_cfg.get("clearance_iterations", 8)),
+    )
+    if not cleared:
+        last = clearance_trace[-1] if clearance_trace else {}
         raise ValueError(
-            "指尖离台间隙配平未收敛: "
-            f"tip_z={float(tip_z):.9f} required={top_z + tip_clearance:.9f}"
+            "指尖离台间隙配平未收敛: tip_z=%.9f required=%.9f（轨迹 %d 步）"
+            % (
+                float(last.get("tip_z_m", float("nan"))),
+                top_z + tip_clearance,
+                len(clearance_trace),
+            )
         )
     grasp_target_corrected = base_target + direction * height_correction
+    # 边界处一次性装配成参考姿态 JSON 的字段形状（对外契约）。
+    grasp = _pack_pose(grasp_ik, arm_names)
 
     wrist = data.xpos[wrist_body].copy()
     axis = np.asarray(grasp["finger_center_m"], dtype=float) - np.asarray(wrist, dtype=float)
@@ -336,8 +355,10 @@ def build_reference_poses(root, baseline, target_id=None):
         "pregrasp_offset_m": offset,
 
         "tip_clearance_m": tip_clearance,
-        "finger_tip_z_m": round(float(tip_z), 9),
+        # 指尖最低点取自 core 配平轨迹的最后一步（同一口径、可追溯）。
+        "finger_tip_z_m": round(float(clearance_trace[-1]["tip_z_m"]), 9),
         "finger_height_correction_m": round(float(height_correction), 9),
+        "clearance_trace": clearance_trace,
         "grasp_point_m": [round(float(value), 9) for value in base_target],
         "finger_center_m": grasp["finger_center_m"],
         "target_z_m": top_z + half_size,
@@ -378,7 +399,7 @@ def validate_grasp_pose(scene_path, baseline, reference):
     mujoco.mj_forward(model, data)
 
     geom_ids = tuple(_geom_id(model, name) for name in finger_names)
-    tip_z = _finger_tip_z(model, data, geom_ids)
+    tip_z = lowest_mesh_point_z(model, data, geom_ids)
     pairs = _contact_pairs(model, data)
     touching = [pair for pair in pairs if pair[0] in finger_names or pair[1] in finger_names]
     if tip_z < top_z + tip_clearance - 1e-4:

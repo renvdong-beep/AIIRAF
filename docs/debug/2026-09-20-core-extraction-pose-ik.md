@@ -81,3 +81,51 @@ Piper verify_piper_pick.py  SUCCEEDED  力 0.240676/0.244112N  抬升 0.087184m
 3. `gravity_hold_ctrl` 目前放在 `kinematics.py`：它读模型的 `qfrc_bias` 与
    `gainprm`，属"仿真执行器模型"而非纯运动学。若框架侧倾向独立模块
    （如 `iraf_core/servo.py`），迁移成本很低（纯函数 + 一个测试文件）。
+
+## 6. Piper 侧合流（Step A，2026-09-20 续）
+
+排查发现 Piper 侧**已经在用 core 的位置型 IK**（`solve_finger_center_pose` 只是
+把关节/geom 名翻译成契约参数的薄包装，等价性由 `scripts/verify_ik_equivalence.py`
+逐位验证）。真正重复的是另外两块：
+
+| 重复实现 | 处理 |
+| --- | --- |
+| `build_piper_baseline._finger_tip_z`（与 `lowest_mesh_point_z` 几乎逐行相同，缺 box 分支） | 删除，改用 `iraf_core.kinematics.lowest_mesh_point_z` |
+| 指尖离台配平循环（与 UR5e 侧同一算法、各自一份） | 改为 `iraf_core.kinematics.balance_tip_clearance` |
+
+接口整理（避免在算法层与 JSON 契约层之间来回转换）：
+
+- 新增 `solve_finger_center_ik(...) -> IkResult`：仓库内新代码一律用它
+  （core 的配平要求 IkResult 的属性形状）；
+- `_pack_pose(result, joint_names)`：在写参考姿态 JSON 的**边界处**一次性装配成
+  既有字段形状，对外契约不变；
+- `solve_finger_center_pose(...)` 保留为兼容入口（返回 dict），
+  供 `scripts/verify_ik_equivalence.py` 等既有调用方使用。
+
+### 逐位比对（迁移前后）
+
+```
+Piper 参考姿态差异：1 处 —— 新增 clearance_trace 字段（有意，与 UR5e 侧同口径）
+grasp 关节角：逐位一致
+finger_height_correction_m：0.029835769 → 0.029835769
+```
+
+### 回归
+
+```
+verify_piper_pick.py         SUCCEEDED  力 0.240676/0.244112N  抬升 0.087184m
+                                        抓取点偏差 0.002826042685491991（逐位一致）
+verify_piper_visual_pick.py  SUCCEEDED  同一视觉证据、同一力/抬升数值
+verify_ik_equivalence.py     三条路径全通过（finger_center_midpoint 逐位相等）
+单元测试                     258 项，失败项仍为既有 1 项 + 4 项导入错误
+```
+
+脚本行数：`build_piper_baseline.py` 472 → 493（净增来自注释与兼容入口拆分），
+但**算法实现各只有一份** —— 这是本步的目的。
+
+### 未做（有意）
+
+Piper 仍走"位置型 IK + `pad_offset_m` 标定常数（0.0298m）"，未切到位姿型 IK。
+切过去可以像 UR5e 那样直接以"夹持区中点 + 工具指向"为目标，从而去掉那个标定常数，
+但会改变 Piper 的既有验收数值，必须单独做等价性验证与场景重建，
+不能和本次"纯去重"混在一起（两种改动混提交会让回归失焦）。
