@@ -135,7 +135,7 @@
 | 脚本 | 运行侧 | 职责 | 关键拒绝条件 |
 |---|---|---|---|
 | `deploy/sdk/build_sdk.sh` | x86 开发端 | 读矩阵 → 生成 proto stub → 构建 SDK wheel 与 runtime bundle → 写 manifest/SBOM/校验和 | 生成物含本机绝对路径；IDL 破坏性变更但未声明兼容版本 |
-| `deploy/sdk/fetch_wheelhouse.sh` | x86 开发端 | 按声明的 `python_tag`/`platform_tag`/包清单抓取离线 wheel（`pip download --only-binary=:all: --platform …`） | 抓到的 wheel 平台标签与声明不符；出现 `win_*`/`macosx_*` 等非目标标签（实测 numpy 索引混有 `win_arm64`） |
+| `deploy/sdk/fetch_wheelhouse.sh` | x86 开发端 | 按声明的 `python_tag`/`platform_tag`/包清单抓取离线 wheel；实现层 `check_wheel_tags.py` **用标准库直读 PEP 503 索引页**（`urllib` + `urljoin`）后按标签门禁下载 | 抓到的 wheel 平台标签与声明不符；出现 `win_*`/`macosx_*`/`musllinux_*` 等非目标标签（实测 numpy 索引混有 `win_arm64`）；缺 `reject_platform_tags` 声明；`index_url` 为空 |
 | `deploy/sdk/package_board_bundle.sh` | x86 开发端 | 组装板级 bundle（BoardProfile + 上两者 + 脚本 + systemd） | BoardProfile 关键字段为 `pending`/`unverified` 时**默认拒绝**，需显式 `--allow-unverified` 且写进证据 |
 | `deploy/sdk/deploy.sh` | x86 开发端 | 传输（scp/介质）→ 远端调用 `install.sh` → 取回证据 JSON | 目标端 arch/Python 与 manifest 不符；磁盘空间不足 |
 | `deploy/sdk/install.sh` | aarch64 目标端 | 预检 → 离线安装 → 写 env → `profile-check` → 启动 → 健康检查 | `profile-check` 失败即不启动（fail-closed） |

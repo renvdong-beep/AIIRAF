@@ -1,0 +1,125 @@
+// IRAF 宇树四足场景栈图（场景包 -> 场景构建器 -> adapter -> Skill -> Runtime）
+// 依据：ADR-0004（Go2 EDU）、ADR-0007（场景交互）、docs/iraf-unitree-scenario-interaction-design.md
+// 状态（2026-09-20，x86-first 战役 iraf-24h）：全部结论 simulation=true；
+// 目标端 / 真机验收 DEFERRED（板卡不在场）。
+// 生成：dot -Tsvg docs/diagrams/iraf-unitree-scene-stack.dot -o docs/diagrams/iraf-unitree-scene-stack.svg
+digraph IRAFUnitreeSceneStack {
+  graph [rankdir=TB, bgcolor="white", pad="0.3", nodesep="0.40", ranksep="0.55",
+         compound=true, fontname="Noto Sans CJK SC", fontsize=20, fontcolor="#111827",
+         label="IRAF 宇树场景栈：场景包 -> 生成模型 -> 适配器 -> 技能层 -> 运行时\n（厂商 MJCF 只读；人形仅静态模型；simulation=true）", labelloc=t];
+  node [shape=box, style="rounded,filled", fontname="Noto Sans CJK SC", fontsize=11,
+        margin="0.16,0.10", color="#1F2937", penwidth=1.4, fillcolor="#F3F4F6", fontcolor="#111827"];
+  edge [color="#374151", penwidth=1.5, arrowsize=0.7, fontname="Noto Sans CJK SC", fontsize=10, fontcolor="#374151"];
+
+  // ---- 声明层 ----
+  subgraph cluster_decl {
+    label="① 声明层（机器人差异只允许住在声明里）";
+    fontsize=13; color="#1D4ED8"; style="rounded,dashed"; fontcolor="#1D4ED8";
+
+    scene [label="场景包 scenes/handoff_lab/\nscene.yaml（相机/雷达/道具/地形/光照）\nbaseline.yaml（求解/验收/传感器门禁）\nscenario.yaml（S2 步骤与判据）",
+           fillcolor="#DBEAFE", color="#1D4ED8"];
+    schema [label="config/scene.schema.json\n三份子契约同文件交付\n只用相对 $ref，可单独校验", fillcolor="#DBEAFE", color="#1D4ED8"];
+    profile [label="profiles/unitree_go2_mujoco.yaml\n12 关节与限位（取自编译模型实测）\nspec.model（躯干 body / 挂载参考系 tray_frame z=0.057 m）\nspec.home（站立位形唯一事实来源）\ncapabilities: [stand, stop]", fillcolor="#DBEAFE", color="#1D4ED8"];
+    cfg [label="config/go2_loopback.yaml\nrobot.backend 绑定 + 增益/容差/stop 语义\n（工具链入口不带额外 flag）", fillcolor="#DBEAFE", color="#1D4ED8"];
+    safety [label="profiles/safety/quadruped_lab.yaml\n放行清单 + spec.quadruped_limits\n（PolicyGateway 不懂的机型边界只声明一次）", fillcolor="#DBEAFE", color="#1D4ED8"];
+  }
+
+  // ---- 厂商 ----
+  subgraph cluster_vendor {
+    label="② 厂商资产（只读，不修改、不入库资产本体）";
+    fontsize=13; color="#B45309"; style="rounded,dashed"; fontcolor="#B45309";
+
+    lock [label="vendor/unitree_go2/source-lock.json\ncommit 1eb6642e… / 22 件 / 29 091 323 字节\n逐件 blob SHA-1 + SHA-256 + 许可证 BOM", fillcolor="#FEF3C7", color="#B45309"];
+    go2xml [label="unitree_robo/go2/go2.xml\n12 个 <motor>（力矩型，非位置型）\nnsensor=41 / ncam=0（**不含相机与雷达**）",
+            fillcolor="#FEF3C7", color="#B45309", penwidth=2];
+    humanoid [label="人形（G1/H1/H1-2/H2/R1）MJCF\n首期仅 static_model_only\nmodel_only=true / evidence_level=仅模型\n**不得声明任何运动能力**",
+              fillcolor="#FEF3C7", color="#B45309", penwidth=2];
+  }
+
+  // ---- 构建与验收 ----
+  subgraph cluster_build {
+    label="③ 场景构建与验收入口（入口层只解析参数与映射退出码）";
+    fontsize=13; color="#15803D"; style="rounded,dashed"; fontcolor="#15803D";
+
+    c_check [label="scripts/scene_check.py\n契约/引用完整性/模型名字表（递归整棵树）\n--require-resolved-refs 把待交付变硬失败", fillcolor="#DCFCE7", color="#15803D"];
+    c_build [label="scripts/build_scene.py --scene --robot\n退出码 0/1/2/3/4/5", fillcolor="#DCFCE7", color="#15803D"];
+    c_sens [label="scripts/verify_scene_sensors.py\n相机内参 + 离屏渲染\n雷达 4 圈仰角 x 90 方位 + IMU/力矩", fillcolor="#DCFCE7", color="#15803D"];
+    c_loop [label="scripts/verify_go2_loopback.py --config\n站立 / 停止 / 状态", fillcolor="#DCFCE7", color="#15803D"];
+    c_scen [label="scripts/scenario.py list|run\nS2 脚本化场景 + 故障注入", fillcolor="#DCFCE7", color="#15803D"];
+
+    gen [label="生成模型 build/scenes/handoff_lab/handoff_lab.xml\n厂商 MJCF 只读注入：\noverhead_camera（world 固定相机）+ payload_lidar_site\ntray_01（挂 tray_frame）+ box_01（freejoint，位姿写回声明）\n实测 nq 26 / nv 24 / nu 12 / ncam 1 / nbody 20",
+         fillcolor="#BBF7D0", color="#166534", penwidth=2];
+  }
+
+  // ---- 适配器 ----
+  subgraph cluster_adapter {
+    label="④ 适配器（核心不得依赖厂商 SDK / ROS topic / 设备路径）";
+    fontsize=13; color="#7C3AED"; style="rounded,dashed"; fontcolor="#7C3AED";
+
+    a_impl [label="src/iraf_adapters/unitree/\nscene_builder.py（实现层，可逐项断言）\nscene_sensor_evidence.py\nloopback.py",
+            fillcolor="#EDE9FE", color="#7C3AED"];
+    a_base [label="quadruped.py（通用契约）\n能力词表 / 标准反馈键 / 执行台账与安全闭锁\n租约 + fencing token 守卫 / 可移植性门禁\nlocomote 未实现 => 只拒绝、不声明",
+            fillcolor="#EDE9FE", color="#7C3AED"];
+    a_go2 [label="unitree_go2.py（机型实现）\n关节 <-> 执行器映射一处解析\n力矩上限只从模型 ctrlrange 读（hip/thigh ±23.7、calf ±45.43 N·m）\nstand / stop / read_state / emergency_stop",
+           fillcolor="#EDE9FE", color="#7C3AED"];
+    a_fact [label="src/iraf_adapters/factory.py\n登记四足后端 + KNOWN_BACKENDS\n两层能力契约：\ndeclared ⊆ IMPLEMENTED_CAPABILITIES", fillcolor="#EDE9FE", color="#7C3AED"];
+    a_mj [label="MuJoCo（仿真后端）\nmujoco 3.3.3 / timestep 0.002 s\nsimulation=true", fillcolor="#F3F4F6", color="#6B7280"];
+  }
+
+  // ---- 技能层 ----
+  subgraph cluster_skill {
+    label="⑤ 技能层（能力 -> SkillRuntime；拒绝路径同样要有证据）";
+    fontsize=13; color="#0F766E"; style="rounded,dashed"; fontcolor="#0F766E";
+
+    s_stand [label="skills/stand（清单 + 输入/输出 schema）\nsrc/iraf_skills/quadruped.py::StandProvider", fillcolor="#CCFBF1", color="#0F766E"];
+    s_loco [label="skills/locomote\nLocomoteProvider\n越界速度 5 m/s > 0.5 => IRAF-QUADRUPED-COMMAND-REJECTED", fillcolor="#CCFBF1", color="#0F766E"];
+    s_stop [label="skills/stop（复用既有，机型无关）\n只调 backend.stop(lease)\n墙钟 0.5178679858800024 s < 租约 2 s", fillcolor="#CCFBF1", color="#0F766E"];
+  }
+
+  // ---- 运行时 ----
+  subgraph cluster_rt {
+    label="⑥ IRAF 运行时（唯一入口，禁止旁路）";
+    fontsize=13; color="#B91C1C"; style="rounded,dashed"; fontcolor="#B91C1C";
+
+    rt [label="TaskFlow -> SkillRuntime -> PolicyGateway -> Capability Provider\n身份/RBAC -> IDL schema -> 前置条件 -> 参数范围\n-> Robot Profile -> Safety Policy -> 能力可用性 -> 执行授权\n（调度前门禁消费 quadruped_limits；工作空间对实测状态判定）",
+        fillcolor="#FEE2E2", color="#B91C1C", penwidth=2];
+    ev [label="验收证据（simulation=true）\nbuild/acceptance/handoff-lab-scene-sensors/report.json\nbuild/acceptance/go2-loopback/report.json\nbuild/acceptance/go2-skills/report.json\nbuild/acceptance/handoff_lab/stand_stop/report.json",
+        fillcolor="#DCFCE7", color="#166534"];
+  }
+
+  // ---- 主链 ----
+  schema -> scene [label="校验", dir=back, style=dashed];
+  scene -> c_check;
+  c_check -> c_build [label="引用已解析"];
+  profile -> c_build [label="声明身份解析\nprofile_source 不静默"];
+  cfg -> c_loop;
+  lock -> c_build [label="SHA-256 对账（先锁后解析）", color="#B45309", fontcolor="#B45309"];
+  go2xml -> c_build [style=dashed, label="只读引用", color="#B45309", fontcolor="#B45309"];
+  humanoid -> c_check [label="仅模型门禁", style=dashed, color="#B45309", fontcolor="#B45309"];
+  build_scene_impl [label="src/iraf_adapters/unitree/scene_builder.py", shape=box, style="rounded,filled,dashed", fillcolor="#F3F4F6", color="#6B7280"];
+  c_build -> build_scene_impl [style=dotted, arrowhead=none];
+  build_scene_impl -> gen [style=dotted, arrowhead=none];
+  gen -> c_sens;
+  gen -> c_loop;
+  gen -> a_mj [label="mj_load"];
+  a_impl -> build_scene_impl [style=dotted, arrowhead=none];
+
+  c_sens -> a_impl [style=dotted, arrowhead=none];
+  c_loop -> a_impl [style=dotted, arrowhead=none];
+  a_base -> a_go2 [label="继承"];
+  a_go2 -> a_fact [label="登记"];
+  safety -> rt [label="限制只可收紧"];
+  s_stand -> rt;
+  s_loco -> rt;
+  s_stop -> rt;
+  rt -> a_fact [label="能力路由"];
+  a_fact -> a_go2 [label="provider 解析"];
+  c_scen -> rt [label="下发步骤（声明驱动）"];
+  rt -> ev;
+  c_sens -> ev [style=dashed, color="#166534", fontcolor="#166534"];
+  c_loop -> ev [style=dashed, color="#166534", fontcolor="#166534"];
+
+  // ---- 边界 ----
+  bound [shape=note, label="诚实边界（不得越级宣称）\n① 全部结论 simulation=true；无平衡控制器，\n   站得住 ≠ 步态/导航/停靠能力\n② 雷达只有可挂载 site + 扫描契约与射线统计，\n   无点云消息/时序/噪声模型\n③ 人形仅静态模型实体，不得出现在任何 Skill 步骤\n④ 目标端 / 真机验收 DEFERRED：板卡不在场", fillcolor="#F9FAFB", color="#6B7280"];
+  bound -> ev [style=dashed, arrowhead=none, color="#6B7280"];
+}

@@ -8,6 +8,8 @@
 
 - [总体架构图](../agentos机器人应用框架-更新版.svg)
 - [IRAF 详细技术架构图](../IRAF详细技术架构图.svg)
+- [SDK 跨架构交付图](diagrams/iraf-sdk-delivery.svg)（源文件 `diagrams/iraf-sdk-delivery.dot`）
+- [宇树场景栈图](diagrams/iraf-unitree-scene-stack.svg)（源文件 `diagrams/iraf-unitree-scene-stack.dot`）
 - [IDL、Registry 与 Runtime](iraf-idl-runtime-detailed-design.md)
 - [TaskFlow 与 Policy Gateway](iraf-taskflow-policy-detailed-design.md)
 - [边缘适配、数据闭环与 AgentOS 接入](iraf-edge-data-detailed-design.md)
@@ -58,14 +60,27 @@ AgentOS / Application
 api/proto/                 # 可版本化的 canonical IDL
 core/{taskflow,runtime,policy,registry,world}/
 sdk/{cpp,python}/
+config/sdk/                 # SDK 产物矩阵与板级交付的集中声明（唯一事实来源）
 adapters/{ros2,sim,hil,master,model}/
 skills/{navigate,pick_object,place_object,stop,recover}/
 profiles/{robots,boards,safety}/
 deploy/{compose,helm,systemd}/
+deploy/sdk/                 # 跨架构 SDK 构建、wheelhouse 抓取、板级 bundle 组装与部署脚本
 tests/{unit,contract,simulation,hil,hardware}/
 tools/{profile-check,release-evidence}/
 docs/
 ```
+
+`config/sdk/`、`deploy/sdk/` 与 `profiles/boards/` 是 M1.7 之后新增的交付边界：前者是唯一声明来源，中者是入口层脚本 + 仅用标准库的实现层，后者是 `BoardProfile`（部署能力，不含业务语义）。三者与 ADR-0006 的分级交付对应，当前只承诺 L1（纯 Python SDK + 离线 wheelhouse + shell 脚本）。
+
+| 已交付路径 | 已实现入口 | 当前状态（2026-09-20） |
+|---|---|---|
+| `config/sdk/package_matrix.yaml` + `package_matrix.schema.json` | 被 `build_sdk.sh`/`fetch_wheelhouse.sh`/`package_board_bundle.sh` 读取 | 已落地；`index_url` 指向可达镜像，可声明替换 |
+| `profiles/boards/{e300,firefly_rk3588}.yaml` | `scripts/profile_check.py --board <id>` | 已落地；未实测字段一律 `unverified`，`--board` 默认 exit=2 |
+| `deploy/sdk/build_sdk.sh` | `--dry-run` / `--verify` / `--allow-unverified` | 已落地；产物可复算（连续两次构建 SHA-256 逐位相同） |
+| `deploy/sdk/fetch_wheelhouse.sh` | 标准库直读 PEP 503 索引 | 已落地；`pip download` 在无人值守会话被审批门拦截，故实现偏差已记入调试记录 |
+| `deploy/sdk/package_board_bundle.sh` / `install.sh` / `verify.sh` / `uninstall.sh` | 组装 → 安装 → 自检 → 受控卸载 | 已落地；目标端真实安装 **DEFERRED**（板卡不在场） |
+| `deploy/sdk/deploy.sh` | `--transport media` / `--transport ssh` | 已落地；ssh 全链路本机未实测，只验证命令构造与可达性门禁 |
 
 首期 IDL 固定六类对象：`Observation`、`RobotState`、`SkillGoal`、`SkillFeedback`、`SafetyEvent`、`TaskStatus`。每条执行请求必须带 `correlation_id`、调用者身份、截止时间、Robot Profile 和 Safety Policy 的版本/摘要；反馈必须带单调状态序号和终态原因。
 
@@ -145,6 +160,30 @@ iraf package --profile <profile>   # 输出 SBOM、签名摘要与可部署包
 ```
 
 每个 Skill 包包含 `skill.yaml`、输入输出 JSON Schema/IDL 引用、最小示例、Provider 模板、单元测试、契约测试和故障场景。`RobotProfile`、`BoardProfile`、`SafetyPolicy` 均提供 schema、中文字段说明和 `profile check` 静态验证。SDK 把通用错误码映射为可操作中文诊断，例如缺少能力、版本不匹配、前置条件不满足或安全策略拒绝。
+
+#### 8.1.1 当前可复跑的脚本入口（已实现，与上表的 `iraf` CLI 契约分列）
+
+上面的 `iraf …` 是产品契约，**尚未实现**，不得在发布说明中表述为已可用。M1.7 战役已落地的等价入口是脚本（`PYTHONPATH=src`，解释器口径 `/usr/bin/python3`）：
+
+| 能力 | 已实现入口（可复跑） |
+|---|---|
+| 声明校验（机型/板卡/四足） | `scripts/profile_check.py --baseline <cfg>` · `--board <id>` · `--quadruped` |
+| 机型基线与 IK 证据 | `scripts/build_baseline.py --baseline <cfg>` |
+| 抓取验收（唯一权威数字） | `scripts/verify_pick.py --baseline <cfg> [--rebuild] [--skill visual_pick]` |
+| 显示/演示（数字**不是**验收数字） | `scripts/view_mujoco.py --baseline <cfg> [--live]` |
+| 场景包契约 | `scripts/scene_check.py --scene scenes/handoff_lab [--require-resolved-refs] [--require-model]` |
+| 场景包 → 可加载 MJCF | `scripts/build_scene.py --scene <id> --robot <id>` |
+| 传感器验收（相机/雷达/IMU） | `scripts/verify_scene_sensors.py --scene <id>` |
+| 四足 loopback（站立/停止/状态） | `scripts/verify_go2_loopback.py --config config/go2_loopback.yaml` |
+| S2 脚本化场景与故障注入 | `scripts/scenario.py list` · `scripts/scenario.py run --scene <id> --scenario <id>` |
+| 厂商资产按锁重取/校验 | `scripts/fetch_vendor_assets.py --verify-lock` |
+| SDK 打包与产物校验 | `bash deploy/sdk/build_sdk.sh [--dry-run] [--verify]` |
+| 离线 wheelhouse 抓取 | `bash deploy/sdk/fetch_wheelhouse.sh [--dry-run] [--verify]` |
+| 板级 bundle 组装 | `bash deploy/sdk/package_board_bundle.sh --board <id>` |
+| 目标端安装/自检/卸载 | `bash deploy/sdk/install.sh` · `verify.sh [--bundle <tar.gz>] [--root <dir>] [--dry-run]` · `uninstall.sh --root <dir>` |
+| 双通道部署 | `bash deploy/sdk/deploy.sh --transport media|ssh` |
+
+目标端（边缘板卡）相关入口只在本机以演练/`--dry-run` 取证，真实安装与 `/health` 一律 **DEFERRED**，详见 §4 与 ADR-0006。
 
 ### 8.2 泛化约束
 

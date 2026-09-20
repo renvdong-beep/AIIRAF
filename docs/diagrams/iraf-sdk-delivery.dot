@@ -1,0 +1,101 @@
+// IRAF SDK 跨架构交付图（x86_64 开发端 -> aarch64 目标端）
+// 依据：ADR-0006、docs/iraf-multiplatform-sdk-design.md、config/sdk/package_matrix.yaml
+// 状态（2026-09-20，x86-first 战役 iraf-24h）：L1 已在开发端实现并取证；L2/L3 不可执行；
+// 目标端（真实安装 / /health / AgentOS 联通）一律 DEFERRED：板卡不在。
+// 生成：dot -Tsvg docs/diagrams/iraf-sdk-delivery.dot -o docs/diagrams/iraf-sdk-delivery.svg
+digraph IRAFSdkDelivery {
+  graph [rankdir=LR, bgcolor="white", pad="0.3", nodesep="0.40", ranksep="0.85",
+         compound=true, fontname="Noto Sans CJK SC", fontsize=20, fontcolor="#111827",
+         label="IRAF SDK 跨架构交付：开发端 x86_64 -> 产物 -> 目标端 aarch64 -> 证据\n（L1 可达；L2/L3 不可执行；目标端验收 DEFERRED）", labelloc=t];
+  node [shape=box, style="rounded,filled", fontname="Noto Sans CJK SC", fontsize=11,
+        margin="0.16,0.10", color="#1F2937", penwidth=1.4, fillcolor="#F3F4F6", fontcolor="#111827"];
+  edge [color="#374151", penwidth=1.5, arrowsize=0.7, fontname="Noto Sans CJK SC", fontsize=10, fontcolor="#374151"];
+
+  // ---- 开发端 ----
+  subgraph cluster_dev {
+    label="开发端（x86_64 / Ubuntu 22.04 / Python 3.10.12；本战役已实测）";
+    fontsize=13; color="#1D4ED8"; style="rounded,dashed"; fontcolor="#1D4ED8";
+
+    decl [label="集中声明（唯一事实来源）\nconfig/sdk/package_matrix.yaml\n+ package_matrix.schema.json\nindex_url / python_tag / platform_tag / 包清单 / delivery",
+          fillcolor="#DBEAFE", color="#1D4ED8"];
+    board [label="BoardProfile\nprofiles/boards/e300.yaml\nprofiles/boards/firefly_rk3588.yaml\n未实测字段一律 unverified",
+          fillcolor="#DBEAFE", color="#1D4ED8"];
+    b_sdk [label="deploy/sdk/build_sdk.sh\n构建 SDK wheel + runtime bundle\n写 manifest.json / SBOM / 校验和\n（--dry-run / --verify / --allow-unverified）", fillcolor="#DCFCE7", color="#15803D"];
+    b_wheel [label="deploy/sdk/fetch_wheelhouse.sh\n按声明标签抓离线 wheel\n（标准库直读 PEP 503 索引）", fillcolor="#DCFCE7", color="#15803D"];
+    b_bundle [label="deploy/sdk/package_board_bundle.sh\n组装板级 bundle\n默认拒绝 unverified BoardProfile", fillcolor="#DCFCE7", color="#15803D"];
+    b_deploy [label="deploy/sdk/deploy.sh\n--transport media（人工拷贝）\n--transport ssh（BatchMode=yes）", fillcolor="#DCFCE7", color="#15803D"];
+    impl [label="实现层（仅标准库，部署入口不依赖 PyYAML）\nlib_manifest.py / check_wheel_tags.py\nlib_board_bundle.py / lib_deploy.py / lib_target_verify.py",
+          fillcolor="#F3F4F6", color="#6B7280", style="rounded,filled,dashed"];
+  }
+
+  // ---- 产物 ----
+  subgraph cluster_art {
+    label="产物（每个产物一份 manifest.json + SHA-256；可复算：连续两次构建逐位相同）";
+    fontsize=13; color="#B45309"; style="rounded,dashed"; fontcolor="#B45309";
+
+    a_wheel [label="iraf_sdk-0.2.0-py3-none-any.whl\n纯 Python，零第三方依赖\n（负向钉住：空包 UNKNOWN-0.0.0 必须被发现）", fillcolor="#FEF3C7", color="#B45309"];
+    a_runtime [label="runtime bundle（tar.gz，确定性 mtime=0）\nsrc/skills/profiles/config/deploy", fillcolor="#FEF3C7", color="#B45309"];
+    a_wh [label="离线 wheelhouse\nbuild/wheelhouse/aarch64-manylinux_2_28-cp310/\n7 wheel / 47 620 905 字节 + wheelhouse.json", fillcolor="#FEF3C7", color="#B45309"];
+    a_bundle [label="iraf-board-e300-0.2.0-aarch64.tar.gz\n47 441 421 字节 / 26 成员\n+ 伴随 .sha256", fillcolor="#FEF3C7", color="#B45309"];
+    a_manifest [label="manifest.json\niraf.package-manifest/v1\n逐文件 SHA-256（112 条目）", fillcolor="#FEF3C7", color="#B45309"];
+  }
+
+  // ---- 目标端 ----
+  subgraph cluster_tgt {
+    label="目标端（aarch64 边缘板卡）—— 全部 DEFERRED：板卡不在场";
+    fontsize=13; color="#B91C1C"; style="rounded,dashed"; fontcolor="#B91C1C";
+
+    t_install [label="deploy/sdk/install.sh\n预检 -> 离线安装 -> 写 env\n-> profile-check -> 启动 -> 健康检查\n回滚基线在首次写盘之前采集", fillcolor="#FEE2E2", color="#B91C1C"];
+    t_verify [label="deploy/sdk/verify.sh\n校验和 + 逐成员 SHA-256\n+ 板卡门禁 + /health + gRPC 探针\n+ 事件库写入检查 -> 证据 JSON", fillcolor="#FEE2E2", color="#B91C1C"];
+    t_uninstall [label="deploy/sdk/uninstall.sh\n停服务 -> 依据安装记录删本 bundle 文件\n-> 保留日志与事件库", fillcolor="#FEE2E2", color="#B91C1C"];
+    t_deferred [shape=note, label="DEFERRED（非失败）\n目标端真实安装 / /health\nAgentOS 联通 / ssh 真机部署\n板卡 22 与 9119 端口实测均不通\n禁止用 dry-run / mock 冒充", fillcolor="#FEF2F2", color="#B91C1C", fontcolor="#991B1B"];
+  }
+
+  // ---- 证据 ----
+  subgraph cluster_ev {
+    label="证据（build/ 为 gitignore 证据区，不入库）";
+    fontsize=13; color="#166534"; style="rounded,dashed"; fontcolor="#166534";
+
+    e_dev [label="开发端证据\nbuild/iraf-24h/{06,07,08,09,10}/acceptance*.txt\n+ unittest-full.txt（逐位比对基线）", fillcolor="#DCFCE7", color="#166534"];
+    e_reh [label="演练证据（rehearsal_only）\n--dry-run / --root 沙箱\nreport: evidence_scope=rehearsal_only\nreal_install_allowed=false + blockers", fillcolor="#DCFCE7", color="#166534"];
+    e_tgt [shape=note, label="目标端证据：尚无\n（verified=false；探针 stub 级\n不得读成健康检查通过）", fillcolor="#F0FDF4", color="#166534"];
+  }
+
+  // ---- 分级 ----
+  lvl [shape=record, label="{交付级别|{L1 纯 Python SDK + 离线 wheelhouse\\l+ shell 脚本（**当前可达**）|L2 多架构 OCI（不可执行：无 buildx\\l且 registry-1.docker.io 不可达）|L3 厂商 BSP 原生包（不可执行：\\l无 aarch64 交叉工具链、板卡不在场）}}",
+       fillcolor="#E0E7FF", color="#4338CA", fontcolor="#312E81"];
+
+  // ---- 主链 ----
+  decl -> b_sdk [label="读矩阵"];
+  decl -> b_wheel [label="读标签/清单"];
+  decl -> b_bundle [label="读 delivery"];
+  board -> b_bundle [label="板卡门禁"];
+  impl -> b_sdk [style=dotted, arrowhead=none];
+  impl -> b_wheel [style=dotted, arrowhead=none];
+  impl -> b_bundle [style=dotted, arrowhead=none];
+  impl -> b_deploy [style=dotted, arrowhead=none];
+
+  b_sdk -> a_wheel;
+  b_sdk -> a_runtime;
+  b_sdk -> a_manifest;
+  b_wheel -> a_wh;
+  a_wheel -> b_bundle;
+  a_runtime -> b_bundle;
+  a_wh -> b_bundle [label="离线安装依赖"];
+  a_manifest -> b_bundle;
+  b_bundle -> a_bundle;
+  a_bundle -> b_deploy [label="media 交接物\n（4 件 + sha256sum.txt）", color="#4338CA", fontcolor="#4338CA"];
+
+  b_deploy -> t_install [label="ssh（本机未实测）", style=dashed, color="#B91C1C", fontcolor="#B91C1C"];
+  a_bundle -> t_install [label="media 人工拷贝", style=dashed, color="#B91C1C", fontcolor="#B91C1C"];
+  t_install -> t_verify -> t_uninstall;
+  t_verify -> e_tgt [style=dashed, arrowhead=none];
+
+  e_dev -> e_reh [style=dotted, arrowhead=none];
+  b_deploy -> e_reh [label="dry-run 演练留痕", color="#166534", fontcolor="#166534"];
+  lvl -> t_deferred [style=dotted, arrowhead=none, color="#4338CA"];
+
+  // ---- 边界 ----
+  bound [shape=note, label="诚实边界（不得越级宣称）\n① 退出码 0 只代表脚本成功，不代表目标端可用\n② 演练证据 scope=rehearsal_only，不构成安装证据\n③ aarch64 二进制 wheel 只能登记 deferred_target_end\n④ 仅纯 Python SDK wheel 在本机可当真安装证据", fillcolor="#F9FAFB", color="#6B7280"];
+  bound -> e_reh [style=dashed, arrowhead=none, color="#6B7280"];
+}
