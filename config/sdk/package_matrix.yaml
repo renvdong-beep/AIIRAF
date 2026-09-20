@@ -15,6 +15,26 @@ sdk:
   # 版本单一来源：不在本文件复制版本号（铁律 5.3）。
   version_ref: pyproject.toml#project.version
 idlv1_version: 1.0.0
+# 交付形态声明（设计 §4 产物 3 / §5 脚本契约 / §6 预检）。install 下的路径是**目标端**路径，
+# 不是构建机路径；install.sh 从 bundle 内的本文件读取，脚本里禁止再写一遍（铁律 5.3）。
+delivery:
+  board_bundle:
+    name_template: "iraf-board-{board}-{version}-{arch}.tar.gz"
+    manifest_name: iraf-board-bundle.json
+    checksum_suffix: .sha256
+    staging_dir_name: iraf-sdk-staging
+  install:
+    # 版本化安装目录 <prefix>/<version> + 激活入口 <prefix>/current 符号链接（切换与回滚都只动链接）。
+    prefix: /opt/iraf-sdk
+    config_dir: /etc/iraf
+    log_dir: /var/log/iraf
+    systemd_dir: /etc/systemd/system
+    service_unit: iraf-sdk-board.service
+    env_file: iraf-sdk.env
+    current_link: current
+    python_min: "3.9"
+    # 板级服务解释器（声明单一来源）；目标端实测 Python 未回填前不得由脚本猜。
+    python_bin: /usr/bin/python3
 targets:
   - id: aarch64-manylinux_2_28-cp310
     arch: aarch64

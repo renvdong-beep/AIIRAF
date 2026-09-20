@@ -1,0 +1,35 @@
+# 板级 systemd 单元模板（IRAF SDK 交付层）。文件内的 @...@ 占位符由
+# deploy/sdk/install.sh 在安装期按 bundle 内 config/sdk/package_matrix.yaml 的
+# delivery.install 渲染后写入 <systemd_dir>/iraf-sdk-board.service。
+# 占位符集合与 env 模板一致（见 deploy/sdk/lib_board_bundle.py 的 PLACEHOLDERS）。
+#
+# 重要边界（AGENTS.md 铁律 7 与 6.8）：本单元是**就绪占位**，不是"板级运行时已启动"的证据。
+# 首轮交付到 SDK + 运行时源码 + 离线 wheelhouse 为止，板级运行时入口（真机实时控制/主站）
+# 尚未定义；在入口定义前，本单元只做目录与 env 自检并写一条就绪记录。
+# 禁止把仿真适配器（iraf_adapters.http.runtime_http 等开发仿真入口）装到真机上启动——
+# 仿真结论必须带 simulation=true，不得进入真机路径。
+# 定义真实入口后，必须在同一变更内更新本文件、docs/iraf-multiplatform-sdk-design.md 与
+# 板卡验收记录（铁律 6.6 图文一致）。
+
+[Unit]
+Description=IRAF SDK Board Delivery (board=@BOARD@ version=@SDK_VERSION@ target=@TARGET_ID@)
+Documentation=file:@PREFIX@/@CURRENT_LINK@/config/sdk/package_matrix.yaml
+After=network.target
+ConditionPathIsSymbolicLink=@PREFIX@/@CURRENT_LINK@
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=-@CONFIG_DIR@/@ENV_FILE@
+WorkingDirectory=@PREFIX@/@CURRENT_LINK@
+ExecStartPre=/bin/mkdir -p @LOG_DIR@
+ExecStart=/bin/sh -c 'echo "$(date -Is) iraf-sdk-board ready board=@BOARD@ version=@SDK_VERSION@ target=@TARGET_ID@ python=@PYTHON_BIN@ simulation=false" >> @LOG_DIR@/board-ready.log'
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@LOG_DIR@
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

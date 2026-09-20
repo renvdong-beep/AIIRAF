@@ -4,11 +4,15 @@
   "description": "同一文件内交付两份彼此独立的契约：根结构校验 config/sdk/package_matrix.yaml（产物矩阵）；definitions.board_profile 自包含地校验 profiles/boards/*.yaml（BoardProfile）。之所以合并在一个文件，是因为本步骤（plans/iraf-24h/02）声明的交付路径只包含本文件；两份契约都用 draft-07，可被 jsonschema.Draft7Validator 直接校验。引用约定：definitions.board_profile 内部一律使用相对引用（#/definitions/<name>），因此必须整体提取后单独校验（tests/unit/test_board_profile_schema.py 即如此做）；不要从根结构再用 $ref 指向 board_profile，否则其内部相对引用会解析到根 definitions。所有未实测的值必须写 unverified，禁止猜测默认值（AGENTS.md 铁律 3、'未知值必须写 unverified'）。",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "sdk", "idlv1_version", "targets"],
+  "required": ["schema_version", "sdk", "idlv1_version", "targets", "delivery"],
   "properties": {
     "schema_version": {
       "const": "iraf.sdk-matrix/v1",
       "description": "矩阵契约版本；改结构必须同步升版本并在同一变更内更新本 schema。"
+    },
+    "delivery": {
+      "$ref": "#/definitions/delivery",
+      "description": "交付形态声明（板级 bundle 命名与目标端安装布局）。所有路径集中在此，禁止在脚本里散落硬编码（铁律 5.3）。"
     },
     "idlv1_version": {
       "type": "string",
@@ -41,6 +45,90 @@
       "type": "string",
       "pattern": "^[a-z0-9][a-z0-9._-]*$",
       "description": "分发包名必须小写：实测镜像索引名区分大小写，PyYAML 返回 404、pyyaml 才有（见设计 §2）。"
+    },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["board_bundle", "install"],
+      "description": "交付形态：板级 bundle 的命名模板与目标端安装布局。install 下的路径是**目标端**路径（非构建机路径），由 install.sh 从 bundle 内的本声明读取；脚本里禁止再写一遍。",
+      "properties": {
+        "board_bundle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name_template", "manifest_name", "checksum_suffix", "staging_dir_name"],
+          "properties": {
+            "name_template": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]*\\{board\\}[a-z0-9._-]*\\{version\\}[a-z0-9._-]*\\{arch\\}\\.tar\\.gz$",
+              "description": "板级 bundle 文件名模板，必须同时含 {board}/{version}/{arch} 三个占位符（设计 §4 产物 3 的命名）。"
+            },
+            "manifest_name": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]*\\.json$",
+              "description": "bundle 内清单文件名（iraf.board-bundle/v1）。"
+            },
+            "checksum_suffix": {
+              "const": ".sha256",
+              "description": "随 bundle 产出的校验和文件后缀；install.sh 缺它即预检失败（不信任无校验和的 bundle）。"
+            },
+            "staging_dir_name": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]*$",
+              "description": "目标端预检解包暂存目录名（相对安装前缀的父目录）。"
+            }
+          }
+        },
+        "install": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "prefix",
+            "config_dir",
+            "log_dir",
+            "systemd_dir",
+            "service_unit",
+            "env_file",
+            "current_link",
+            "python_min",
+            "python_bin"
+          ],
+          "properties": {
+            "prefix": {
+              "type": "string",
+              "pattern": "^/[A-Za-z0-9._/-]+$",
+              "description": "目标端安装前缀；版本化目录为 <prefix>/<version>，激活入口为 <prefix>/current 符号链接。"
+            },
+            "config_dir": {"type": "string", "pattern": "^/[A-Za-z0-9._/-]+$"},
+            "log_dir": {"type": "string", "pattern": "^/[A-Za-z0-9._/-]+$"},
+            "systemd_dir": {"type": "string", "pattern": "^/[A-Za-z0-9._/-]+$"},
+            "service_unit": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._@-]*\\.service$",
+              "description": "板级 systemd 单元文件名（与 deploy/sdk/iraf-sdk-board.service 一致）。"
+            },
+            "env_file": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]*\\.env$",
+              "description": "env 文件名（写在 config_dir 下）。"
+            },
+            "current_link": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9._-]*$",
+              "description": "激活入口符号链接名（相对 prefix）。"
+            },
+            "python_min": {
+              "type": "string",
+              "pattern": "^3\\.[0-9]+$",
+              "description": "目标端 Python 最低版本（major.minor）。目标端实测标签仍由 BoardProfile 声明，未实测即 unverified -> 预检失败。"
+            },
+            "python_bin": {
+              "type": "string",
+              "pattern": "^/[A-Za-z0-9._/-]+$",
+              "description": "板级服务使用的解释器绝对路径（声明单一来源）。目标端实测 Python 版本未回填前，服务解释器只能来自本声明，不得由脚本猜。"
+            }
+          }
+        }
+      }
     },
     "build_target": {
       "type": "object",
