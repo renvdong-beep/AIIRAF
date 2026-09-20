@@ -3,7 +3,7 @@ description: demo3 合成臂受控仿真抓取基线（第三台机型干跑：�
 
 model:
   source: examples/demo3_arm/demo3.xml
-  arm_joints: [q1, q2, q3, q4]
+  arm_joints: [q1, q2, q3, q4, q5, q6]
   # 双指是**pad geom**（接触面），与 2F-85 同口径；未声明 pad_boxes 时
   # 夹持区 = 左右代表接触面的中点（对齐门禁与 IK 同一口径）。
   finger_geoms:
@@ -30,7 +30,10 @@ target:
 
 grasp:
   # 夹持区中点的目标位置（世界系水平分量）；z 由 workbench.top_z_m + 半边长推出。
-  finger_center_xy_m: [0.40, 0.0]
+  # 由**实测扫描**确定（扫 q2/q3/q4 网格，筛"工具轴指向 +x、夹持区 z≈0.025、无自撞"）：
+  # 满足条件的解共 33 个，grip_x 可达 −0.43~0.68；这里取 x=0.3406 —— 肘部没有折死、
+  # 离最大伸展（≈0.68）留足余量，预抓取/抬升/Home 的竖直偏移都在可达范围内。
+  finger_center_xy_m: [0.3406, 0.0]
   pregrasp_offset_m: 0.12
   # **侧向抓取**：后退方向沿 -x（朝基座方向撤离），工具指向取其反向 = +x。
   # 为什么不用"工具朝下 + 目标贴台面"：demo3 是平面臂，工具竖直朝下时
@@ -62,11 +65,14 @@ gripper:
   closed: {pinch_l: 0.023, pinch_r: -0.023}
   # IK 种子：肩/肘均已下压的"工具朝下"分支
   # 种子取上面推出的解附近（q2=32.5°、q3=147.5° → 工具竖直朝下）
+  # 种子取自上面扫描到的可行解之一（工具轴指向 +x、夹持区在 0.34 处）
   seed:
     q1: 0.0
-    q2: 1.0
-    q3: -1.0
-    q4: 0.8
+    q2: 0.800
+    q3: 2.200
+    q4: -1.429
+    q5: 0.0
+    q6: 0.0
 
 acceptance:
   pose_tolerance_m: 0.005
@@ -79,8 +85,12 @@ acceptance:
   duration_ms: 12000
 
 scene:
-  # 不注入臂位置增益：本机型的执行器自带 PD（gainprm/biasprm）
+  # 物理参数必须显式声明（profile_check 第 6 项门禁：缺声明即失败，
+  # 因为场景会静默回落模型默认值 —— 实测过一次夹持力腰斩的事故）。
   inject_arm_position_gains: false
+  timestep_s: 0.002
+  gravity: "0 0 -9.81"
+  pad_friction: "2.0 0.05 0.001"
   camera:
     pos_m: [0.28, -0.72, 0.62]
     look_at_m: [0.40, 0.0, 0.05]

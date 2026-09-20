@@ -53,6 +53,15 @@
             <geom name="tool_geom" type="box" size="0.045 0.05 0.02" pos="0 0 -0.03" class="collision"/>
             <site name="flange" pos="0 0 0"/>
 
+            <!-- 腕部两级：q5 绕工具轴滚转、q6 附加俯仰。
+                 4 自由度臂无法满足"位置 3 + 姿态 3"六个约束（求解器只能折中，
+                 实测夹持区残差 7.8mm 被一致性门禁拒绝），补成 6R 后才恰好可解。 -->
+            <body name="wrist_roll" pos="0 0 0">
+              <joint name="q5" type="hinge" axis="0 0 1" range="-3.1 3.1" damping="1.0"/>
+              <inertial pos="0 0 0" mass="0.2" diaginertia="0.0005 0.0005 0.0005"/>
+              <body name="wrist_pitch" pos="0 0 0">
+                <joint name="q6" type="hinge" axis="0 1 0" range="-2.9 2.9" damping="1.0"/>
+                <inertial pos="0 0 0" mass="0.2" diaginertia="0.0005 0.0005 0.0005"/>
             <body name="palm" pos="0 0 0.02">
               <inertial pos="0 0 0.01" mass="0.3" diaginertia="0.001 0.001 0.0005"/>
               <geom name="palm_geom" type="box" size="0.028 0.05 0.014" pos="0 0 0.015" class="collision"/>
@@ -67,6 +76,8 @@
                 <geom name="pad_r" type="box" size="0.007 0.005 0.013" pos="0 -0.005 0" class="collision"/>
               </body>
             </body>
+              </body>
+            </body>
           </body>
         </body>
       </body>
@@ -78,11 +89,13 @@
     <general class="servo" name="m2" joint="q2"/>
     <general class="servo" name="m3" joint="q3"/>
     <general class="servo" name="m4" joint="q4"/>
+    <general class="servo" name="m5" joint="q5"/>
+    <general class="servo" name="m6" joint="q6"/>
     <general class="pinch" name="pinch_l" joint="finger_l_joint"/>
     <general class="pinch" name="pinch_r" joint="finger_r_joint"/>
   </actuator>
 
   <keyframe>
-    <key name="home" qpos="0 1.0 -1.0 0.8 0.030 -0.030"/>
+    <key name="home" qpos="0 0.8 2.2 -1.429 0 0 0.030 -0.030"/>
   </keyframe>
 </mujoco>
