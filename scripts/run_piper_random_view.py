@@ -86,8 +86,13 @@ def _manipulation_from_scene_report(scene_report, target_id):
         raise ValueError("场景报告中找不到目标: " + str(target_id))
     gripper = scene_report.get("gripper") or {}
     required = (
+        # 夹爪几何字段必须随场景报告一起传入后端：后端已不再提供机型默认值
+        # （原先缺省指向 piper_left_finger / link6 等 Piper 专有名）。
+        "wrist_body",
         "left_finger_body",
         "right_finger_body",
+        "left_finger_geom",
+        "right_finger_geom",
         "open_positions",
         "closed_positions",
         "approach_positions",
@@ -99,8 +104,11 @@ def _manipulation_from_scene_report(scene_report, target_id):
     gripper_entry = {
         key: gripper[key]
         for key in (
+            "wrist_body",
             "left_finger_body",
             "right_finger_body",
+            "left_finger_geom",
+            "right_finger_geom",
             "open_positions",
             "closed_positions",
             "approach_positions",

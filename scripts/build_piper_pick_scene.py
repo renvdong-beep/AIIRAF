@@ -442,9 +442,27 @@ def build_scene(
     # 抬升姿态由 IK 从抓取姿态沿接近方向解算，避免写死关节角把目标甩向别处。
     if reference is not None and reference.get("lift"):
         lift_arm = dict(reference["lift"]["joint_positions"])
+    # 夹爪几何**全部取自配置声明**：此前这里写死 link7/link8、且不产出 geom 名，
+    # 后端只能靠 Piper 专有的默认值兜底 —— 一旦换构型就会静默用错几何。
+    # 现在缺失即显式失败，后端侧已不再提供任何机型默认值。
+    _model_cfg = config.get("model") or {}
+    _bodies_cfg = _model_cfg.get("bodies") or {}
+    _finger_geoms_cfg = _model_cfg.get("finger_geoms") or {}
+    _declared_geometry = {
+        "wrist_body": _bodies_cfg.get("wrist"),
+        "left_finger_body": _bodies_cfg.get("left_finger"),
+        "right_finger_body": _bodies_cfg.get("right_finger"),
+        "left_finger_geom": _finger_geoms_cfg.get("left"),
+        "right_finger_geom": _finger_geoms_cfg.get("right"),
+    }
+    _missing = sorted(key for key, value in _declared_geometry.items() if not value)
+    if _missing:
+        raise ValueError(
+            "基线配置缺少夹爪几何声明: %s（应在 model.bodies 与 model.finger_geoms 中声明）"
+            % _missing
+        )
     gripper = {
-        "left_finger_body": "link7",
-        "right_finger_body": "link8",
+        **{key: str(value) for key, value in _declared_geometry.items()},
         "open_positions": _merge_arm_and_gripper({}, open_positions),
         "closed_positions": _merge_arm_and_gripper({}, closed_positions),
         "lift_positions": _merge_arm_and_gripper(lift_arm, closed_positions),

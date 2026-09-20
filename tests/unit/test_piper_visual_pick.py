@@ -24,8 +24,11 @@ class PadOffsetConfigTests(unittest.TestCase):
 
     def _gripper(self, **extra):
         config = {
+            "wrist_body": "link6",
             "left_finger_body": "link7",
             "right_finger_body": "link8",
+            "left_finger_geom": "piper_left_finger",
+            "right_finger_geom": "piper_right_finger",
             "open_positions": {"joint7": 0.035, "joint8": -0.035},
             "closed_positions": {"joint7": 0.023, "joint8": -0.023},
         }

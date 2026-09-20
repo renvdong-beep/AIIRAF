@@ -19,6 +19,30 @@ from iraf_skills.common.trajectory import quintic_position
 #: 前馈量级必须远小于关节行程，否则它就不再是"补偿"而是另一条动作指令。
 GRAVITY_FEEDFORWARD_LIMIT_RAD = 0.1
 
+#: 夹爪几何相关的必需字段：涉及"抓取点在哪、指腹在哪"的判定都必须显式声明。
+#: **刻意不提供任何机型默认值**：早期实现把缺省值指向 Piper 的
+#: `link6/link7/link8` 与 `piper_left_finger/piper_right_finger`，
+#: 结果换构型后要么静默用了错误几何、要么在运行时抛"缺少 body: link6"，
+#: 两种都难以定位。缺失即显式失败，并由场景生成器负责把配置里的声明写进 report。
+GRIPPER_GEOMETRY_FIELDS = (
+    "wrist_body",
+    "left_finger_body",
+    "right_finger_body",
+    "left_finger_geom",
+    "right_finger_geom",
+)
+
+
+def _declared_gripper_geometry(gripper):
+    """取出夹爪几何声明的必需字段；缺失即显式失败（不提供机型默认值）。"""
+    missing = [key for key in GRIPPER_GEOMETRY_FIELDS if not gripper.get(key)]
+    if missing:
+        raise ValueError(
+            "夹爪几何声明不完整，缺少字段: %s（必须由 profile/config 声明，"
+            "不允许隐式默认值）" % missing
+        )
+    return {key: str(gripper[key]) for key in GRIPPER_GEOMETRY_FIELDS}
+
 
 class MujocoBackend:
     @classmethod
@@ -112,20 +136,28 @@ class MujocoBackend:
     def calibrate_grasp(self, config=None, lease=None):
         """读取当前模型的腕部和真实指尖 geom，生成可审计标定证据。"""
         self.authority.validate(lease)
-        def body(name):
-            return self._body_id(name)
         gripper_cfg = (self._manipulation.get("gripper") or {})
-        wrist = body(gripper_cfg.get("wrist_body", "link6"))
-        left = body(gripper_cfg.get("left_finger_body", "link7"))
-        right = body(gripper_cfg.get("right_finger_body", "link8"))
-        def geom(name, fallback):
+        names = _declared_gripper_geometry(gripper_cfg)
+        wrist = self._body_id(names["wrist_body"])
+
+        def geom(name, label):
+            """取声明的指腹接触面 geom；不存在即显式失败。
+
+            不再回退到 body 原点：2F-85 的 pad body 原点在铰链附近，与 pad box
+            中心相差约 2cm，回退会让标定结果悄悄偏掉。
+            """
             ident = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, name)
-            return self.data.geom_xpos[ident].copy() if ident >= 0 else self.data.xpos[fallback].copy()
+            if ident < 0:
+                raise ValueError("夹爪 %s 声明的 geom 不存在: %s" % (label, name))
+            return self.data.geom_xpos[ident].copy()
+
         with self._data_lock:
             mujoco.mj_forward(self.model, self.data)
-            w = self.data.xpos[wrist].copy(); l = geom("piper_left_finger", left); r = geom("piper_right_finger", right)
+            w = self.data.xpos[wrist].copy()
+            l = geom(names["left_finger_geom"], "左指")
+            r = geom(names["right_finger_geom"], "右指")
         center = (l + r) / 2.0; offset = center - w; norm = max(float((offset @ offset) ** 0.5), 1e-9)
-        return {"wrist_position_m": w.tolist(), "left_finger_position_m": l.tolist(), "right_finger_position_m": r.tolist(), "grasp_center_m": center.tolist(), "finger_separation_m": float(((l-r) @ (l-r)) ** 0.5), "tcp_offset_from_link6_m": offset.tolist(), "approach_axis_world": (offset / norm).tolist(), "recommended_pregrasp_offset_m": 0.04}
+        return {"wrist_position_m": w.tolist(), "left_finger_position_m": l.tolist(), "right_finger_position_m": r.tolist(), "grasp_center_m": center.tolist(), "finger_separation_m": float(((l-r) @ (l-r)) ** 0.5), "wrist_body": names["wrist_body"], "tcp_offset_from_wrist_m": offset.tolist(), "tcp_offset_from_link6_m": offset.tolist(), "approach_axis_world": (offset / norm).tolist(), "recommended_pregrasp_offset_m": 0.04}
 
     def _calibrate_intrinsics(self, samples, image_size, rotation, translation):
         """标定针孔内参：principal_point_px 与 focal_px（Levenberg-Marquardt）。
@@ -521,7 +553,7 @@ class MujocoBackend:
         if target is None:
             raise ValueError("MuJoCo 场景中没有受控目标: " + str(target_id))
         if gripper is None:
-            raise RuntimeError("MuJoCo Backend 未配置 Piper 夹爪接触信息")
+            raise RuntimeError("MuJoCo Backend 未配置夹爪接触信息（来源：场景 report 的 gripper 段）")
         if grasp_pose.get("frame_id") != "world":
             raise ValueError("MuJoCo 抓取当前只接受 world 坐标系")
 
@@ -699,12 +731,12 @@ class MujocoBackend:
             return
         with self._data_lock:
             mujoco.mj_forward(self.model, self.data)
-            # 腕部 body 名由配置声明（缺省仍是 Piper 的 link6），
-            # 避免换构型后诊断日志直接抛"缺少 body: link6"。
+            # 腕部 body 名必须由配置声明：不再回退到机型专有名（原先缺省是
+            # Piper 的 link6），避免换构型后诊断日志抛"缺少 body: link6"。
             wrist = self._body_id(
-                (self._manipulation.get("gripper") or {}).get(
-                    "wrist_body", "link6"
-                )
+                _declared_gripper_geometry(
+                    self._manipulation.get("gripper") or {}
+                )["wrist_body"]
             )
             print(
                 "PICK_PHASE " + json.dumps({
@@ -763,27 +795,39 @@ class MujocoBackend:
             return np.array([0.0, 0.0, 1.0], dtype=float)
         return np.array([float(value) / norm for value in values], dtype=float)
 
+    def _require_geom_position(self, geom_id, geom_name):
+        """取声明的 geom 世界位置；不存在即显式失败（不回退到 body 原点）。
+
+        回退会让"配置里写错 geom 名"变成"门禁用了别的点"，表现为固定偏差的
+        精度问题而非配置错误，正是本项目反复踩过的坑。
+        """
+        if int(geom_id) < 0:
+            raise ValueError("夹爪声明的 geom 不存在: " + str(geom_name))
+        return self.data.geom_xpos[int(geom_id)].copy()
+
     def _grasp_alignment_evidence(
         self, target_body, left_body, right_body, approach_axis=None
     ):
         with self._data_lock:
             mujoco.mj_forward(self.model, self.data)
             target = self.data.xpos[target_body].copy()
-            # 接触面 geom 名必须由配置声明，不能写死 Piper 的名字：
+            # 接触面 geom 名必须由配置声明，**不提供机型默认值**：
             # 2F-85 的 pad body 原点在铰链处，与 pad box 中心相差约 2cm，
-            # 回退到 body 位置会让对齐门禁把正确抓取误报成 94mm 偏差。
-            # 缺省值仍指向 Piper 的指腹网格，保证 Piper 行为逐位不变。
+            # 回退到 body 位置会让对齐门禁把正确抓取误报成 94mm 偏差；
+            # 而回退到某个机型的专有 geom 名又会在换构型后静默用错几何。
+            # 缺失即由 `_declared_gripper_geometry` 显式失败。
             gripper_cfg = self._manipulation.get("gripper") or {}
-            left_geom_name = gripper_cfg.get("left_finger_geom", "piper_left_finger")
-            right_geom_name = gripper_cfg.get("right_finger_geom", "piper_right_finger")
+            names = _declared_gripper_geometry(gripper_cfg)
+            left_geom_name = names["left_finger_geom"]
+            right_geom_name = names["right_finger_geom"]
             left_geom = mujoco.mj_name2id(
                 self.model, mujoco.mjtObj.mjOBJ_GEOM, str(left_geom_name)
             )
             right_geom = mujoco.mj_name2id(
                 self.model, mujoco.mjtObj.mjOBJ_GEOM, str(right_geom_name)
             )
-            left = self.data.geom_xpos[left_geom].copy() if left_geom >= 0 else self.data.xpos[left_body].copy()
-            right = self.data.geom_xpos[right_geom].copy() if right_geom >= 0 else self.data.xpos[right_body].copy()
+            left = self._require_geom_position(left_geom, left_geom_name)
+            right = self._require_geom_position(right_geom, right_geom_name)
             # **夹持区中点必须与 IK / 参考姿态证据同一口径**：
             # 求解器把"配置声明的全部 pad box 中点"对齐到目标点，门禁若改用
             # 左右单个 pad 的中点，两者会差一个固定几何量（UR5e + 2F-85 实测
@@ -1373,9 +1417,11 @@ class MujocoBackend:
                 "open_positions",
                 "closed_positions",
             }
+            # 必需字段：夹具几何相关的名字一律显式声明，禁止机型默认值。
+            required = required | set(GRIPPER_GEOMETRY_FIELDS)
             missing = sorted(required - set(raw_gripper))
             if missing:
-                raise ValueError("Piper 夹爪配置缺少字段: " + str(missing))
+                raise ValueError("夹爪配置缺少字段: " + str(missing))
             open_positions = dict(raw_gripper["open_positions"])
             closed_positions = dict(raw_gripper["closed_positions"])
             if set(open_positions) != set(closed_positions) or not open_positions:

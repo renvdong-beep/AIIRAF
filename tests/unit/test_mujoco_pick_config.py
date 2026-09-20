@@ -6,8 +6,12 @@ from iraf_adapters.mujoco.mujoco_backend import MujocoBackend
 def _gripper(**overrides):
     """最小可解析的夹爪配置（Piper 口径），其余字段用 overrides 覆盖。"""
     config = {
+        # 夹爪几何字段：后端已无机型默认值，必须显式声明（缺一项即失败）。
+        "wrist_body": "link6",
         "left_finger_body": "link7",
         "right_finger_body": "link8",
+        "left_finger_geom": "piper_left_finger",
+        "right_finger_geom": "piper_right_finger",
         "open_positions": {"joint7": 0.035, "joint8": -0.035},
         "closed_positions": {"joint7": 0.0, "joint8": 0.0},
         "home_positions": {"joint7": 0.035, "joint8": -0.035},
@@ -27,8 +31,11 @@ class MujocoPickConfigTests(unittest.TestCase):
                     "box_01": {"body": "box_01", "pose_tolerance_m": 0.02}
                 },
                 "gripper": {
+                    "wrist_body": "link6",
                     "left_finger_body": "link7",
                     "right_finger_body": "link8",
+                    "left_finger_geom": "piper_left_finger",
+                    "right_finger_geom": "piper_right_finger",
                     "open_positions": {"joint7": 0.035, "joint8": -0.035},
                     "closed_positions": {"joint7": 0.0, "joint8": 0.0},
                 },
@@ -54,6 +61,52 @@ class MujocoPickConfigTests(unittest.TestCase):
             MujocoBackend._parse_manipulation_config(
                 {"targets": {"box_01": {"body": "box_01", "pose_tolerance_m": 0}}}
             )
+
+    # --- 夹爪几何必须显式声明：不允许任何机型默认值 ---
+
+    def test_rejects_missing_gripper_geometry_declaration(self):
+        """缺任一几何字段都必须显式失败。
+
+        历史缺陷：后端把缺省值指向 Piper 的 link6/link7/link8 与
+        piper_left_finger/piper_right_finger，换构型后要么静默用错几何、
+        要么在运行时抛"缺少 body: link6"，两种都极难定位。
+        """
+        for key in (
+            "wrist_body",
+            "left_finger_body",
+            "right_finger_body",
+            "left_finger_geom",
+            "right_finger_geom",
+        ):
+            with self.subTest(missing=key):
+                gripper = _gripper()
+                gripper.pop(key)
+                with self.assertRaisesRegex(ValueError, "缺少字段"):
+                    MujocoBackend._parse_manipulation_config({"gripper": gripper})
+
+    def test_declared_gripper_geometry_helper_reports_all_missing(self):
+        from iraf_adapters.mujoco.mujoco_backend import _declared_gripper_geometry
+
+        with self.assertRaisesRegex(ValueError, "不允许隐式默认值"):
+            _declared_gripper_geometry({})
+        self.assertEqual(
+            {
+                "wrist_body": "w",
+                "left_finger_body": "lf",
+                "right_finger_body": "rf",
+                "left_finger_geom": "lg",
+                "right_finger_geom": "rg",
+            },
+            _declared_gripper_geometry(
+                {
+                    "wrist_body": "w",
+                    "left_finger_body": "lf",
+                    "right_finger_body": "rf",
+                    "left_finger_geom": "lg",
+                    "right_finger_geom": "rg",
+                }
+            ),
+        )
 
     # --- 夹持区（grip region）：让运行时门禁与 IK 用同一个"抓取点"定义 ---
 
