@@ -152,7 +152,9 @@ class PositiveControlTests(ScenePackageFixture):
         self.assertIn("robots.unitree_go2.profile", refs)
         self.assertIn("robots.humanoid_static.profile", refs)
         self.assertIn("baseline.robots.unitree_go2", refs)
-        self.assertIn("baseline.initial_state.unitree_go2", refs)
+        # 步骤 15 已交付站立参考位形（Profile 的 spec.home + loopback 验收），
+        # 该引用因此从待交付清单里消失 —— 方向仍是"收紧"：已交付的引用不得再出现在清单里。
+        self.assertNotIn("baseline.initial_state.unitree_go2", refs)
         # 步骤 13 已交付场景构建器：它不得再出现在待交付清单里。
         self.assertNotIn("model.builder", refs)
         for item in report["pending_refs"]:

@@ -34,6 +34,27 @@ spec:
     RR_thigh_joint: [-0.5236, 4.5379]
     RR_calf_joint: [-2.7227, -0.83776]
 
+  # 站立参考位形（单一事实来源）：loopback 验收（步骤 15）用的目标位形从这里读，
+  # 四腿 (hip, thigh, calf) = (0.0, 0.9, -1.8)。
+  # 数值来自厂商 MJCF 自带关键帧（实测 `nkey=1`、`name=home`、
+  # `qpos = [0,0,0.27, 1,0,0,0, 0,0.9,-1.8 ×4]`，证据 build/iraf-24h/15/probe-api.txt）——
+  # 四腿数值完全相同，因此 qpos 里的关节顺序不影响映射。
+  # 注意：home 是"参考位形"而不是能力声明（本 Profile 的 capabilities 仍为空，
+  # stand/stop 属 U4，需在步骤 16/17 逐项验收后回填）。
+  home:
+    FL_hip_joint: 0.0
+    FL_thigh_joint: 0.9
+    FL_calf_joint: -1.8
+    FR_hip_joint: 0.0
+    FR_thigh_joint: 0.9
+    FR_calf_joint: -1.8
+    RL_hip_joint: 0.0
+    RL_thigh_joint: 0.9
+    RL_calf_joint: -1.8
+    RR_hip_joint: 0.0
+    RR_thigh_joint: 0.9
+    RR_calf_joint: -1.8
+
   # 四足步态的首期不重写（design §2 边界 1）：本 Profile **不声明** joint_roles ——
   # iraf_core.profile 的角色词表只有 arm/gripper_drive*，四足角色需要新词表 +
   # 新的安全边界，属未出 ADR 的扩展，不得在本步骤偷带进来（铁律 6.8）。

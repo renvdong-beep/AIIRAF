@@ -1,0 +1,96 @@
+schema_version: iraf.quadruped-loopback/v1
+# Go2 MuJoCo loopback 验收（步骤 15）的**唯一数字来源**。
+# 纪律（AGENTS.md 5.3 / 铁律 1.3）：实现层不得含任何数字默认值；
+# 缺段或缺键即显式失败（退出码 2），不得"用模型/机型默认值兜底"。
+simulation: true
+
+robot:
+  id: unitree_go2
+  # 关节身份来自 Profile（单一事实来源），不是脚本里的关节名单。
+  profile: profiles/unitree_go2_mujoco.yaml
+
+model:
+  # 被测模型 = 场景构建产物（步骤 13）：保证"演示与验收走同一条链路"。
+  # 未生成即显式失败（退出码 3），**不**静默回退到厂商原始模型。
+  file: build/scenes/handoff_lab/handoff_lab.xml
+  builder: scripts/build_scene.py
+
+initial:
+  # 初始状态取厂商模型自带关键帧（实测 build/iraf-24h/15/probe-api.txt：
+  # nkey=1、name=home、qpos 基座 z=0.27 m、四腿 (hip, thigh, calf)=(0, 0.9, -1.8)）。
+  keyframe: home
+
+control:
+  # 控制频率必须与模型 timestep 整除（实测 timestep=0.002 s ⇒ 100 Hz = 5 个物理步）；
+  # 不整除即声明非法，不四舍五入。
+  frequency_hz: 100
+  # PD 增益（力矩型电机：τ = kp·Δq + kd·Δq̇ + τ_ff，再按模型 ctrlrange 截断）。
+  # 取值依据 = 增益扫描（同一段实现层代码，证据 build/iraf-24h/15/pd-scan.json）：
+  #   kp=30 /kd=1  → 高度 0.223974 m（下垂 46 mm）、姿态 4.98°、跟踪 0.354 rad，**不达标**；
+  #   kp=80 /kd=2  → 0.272229 m / 0.31° / 0.092 rad，达标；
+  #   kp=150/kd=4  → 0.280101 m / 0.058° / 0.045 rad，达标（本值，留 2.7 倍到失稳的余量）；
+  #   kp=250/kd=6  → 0.283245 m / 0.035° / 0.027 rad，达标但更接近失稳；
+  #   kp=400/kd=8 与 kp=250/kd=12 → 发散（控制量饱和 8431 / 8846 次，高度 −34.6 / −26.1 m）。
+  # 因此本声明选 150/4：下垂未饱和、姿态与跟踪余量足够，且距失稳阈值有余量。
+  kp_nm_per_rad: 150.0
+  kd_nm_s_per_rad: 4.0
+  # 重力前馈：取当前位形下 qvel=0 的 qfrc_bias 作为 τ_ff。
+  # 实测该站立位形的 12 条腿关节前馈仅 ~1 N·m 量级（probe-api.txt：受地面约束的支撑力矩
+  # 不在自由浮动基的偏置里），因此它只用来消除稳态下垂，站立载荷由 PD 承担。
+  gravity_feedforward: true
+  # 力矩上限只从模型 ctrlrange 读（实测 hip/thigh ±23.7、calf ±45.43 N·m），
+  # 本键只允许取值 model：任何"在配置里另写一套限幅"的写法都是第二份安全边界，必须显式失败。
+  torque_limit_source: model
+
+stand:
+  # 站立参考位形来自 Profile 的 spec.home（避免数字出现两份）。
+  pose_source: profile_home
+  # 目标位形从初始位形线性过渡的时长（初始关键帧位形与目标一致时为 0 过渡）。
+  ramp_s: 0.5
+  duration_s: 8.0
+  # 必须达到的"连续达标保持时长"；duration_s ≥ ramp_s + hold_s 由声明门禁强制（自相矛盾即失败）。
+  hold_s: 6.0
+  # 躯干高度目标 = 厂商关键帧基座 z（0.27 m，台面 z=0 由场景 workbench.top_z_m 声明）。
+  height_target_m: 0.27
+  # 高度容差：目标取厂商关键帧基座 z（0.27 m），实测在选定增益（kp=150/kd=4）下稳定高度
+  # 0.280101 m（接触地面后腿略伸），偏差 10.1 mm 落在本容差内；下调 kp 则下垂变大
+  # （kp=30 时 0.223974 m，偏差 46 mm，**不达标**）。容差不是为了"凑通过"：
+  # 首跑（kp=30）就是失败，修的是增益声明而不是判据（证据 build/iraf-24h/15/pd-scan.json）。
+  height_tolerance_m: 0.02
+  # 稳定段高度标准差上限：用于把"上下振荡"和"稳稳站住"分开。
+  height_std_max_m: 0.01
+  # 躯干姿态偏差上限（相对竖直，四元数夹角）。
+  attitude_tolerance_deg: 5.0
+  # 躯干线速度容差（站立窗口内任意采样不得超过）。
+  speed_tolerance_mps: 0.05
+  # 关节跟踪误差上限：站立窗口内 max|q − q_des|。选定增益下实测 0.044725 rad，
+  # 本值留 ~1.6 倍余量（kp=30 时实测 0.354 rad，会被这条门禁拦下）。
+  max_tracking_error_rad: 0.07
+
+stop:
+  # 力矩型执行器松力即失能：stop = 控制量归零（这是本阶段唯一实现的停机语义，别的取值必须显式失败）。
+  mode: torque_zero_release
+  duration_s: 3.0
+  # 速度衰减判定：松力后必须出现"连续 static_hold_s 秒速度低于 speed_tolerance_mps"的静止段。
+  speed_tolerance_mps: 0.05
+  static_hold_s: 0.5
+  # 末段速度的统计窗口（末段速度 = 最后 final_window_s 秒的均值）。
+  final_window_s: 0.2
+
+sample:
+  frequency_hz: 100
+
+state:
+  # 传感器按名字解析（关节名 ≠ 执行器名：go2.xml 关节 FL_hip_joint / 执行器 FL_hip）。
+  sensors:
+    quat: imu_quat
+    gyro: imu_gyro
+    acc: imu_acc
+    torque_pattern: "{actuator}_torque"
+  # 判据全部与独立计算的模型量比对（不是与硬编码常数比），见实现层 assess()。
+  quat_norm_tolerance: 1.0e-9
+  gyro_max_abs_error_rad_s: 1.0e-9
+  torque_max_abs_error_nm: 1.0e-9
+
+report:
+  path: build/acceptance/go2-loopback/report.json

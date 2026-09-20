@@ -20,9 +20,10 @@ initial_state:
     pose_source: profile
     note: 参考姿态来自 profiles/piper_mujoco.yaml 的 home 段。
   unitree_go2:
-    pose_source: unverified
-    closed_by: "步骤 15"
-    reason: 四足站立参考位形由 loopback 验收（步骤 15）确定后回填；在此之前执行器不得启动该本体。
+    # 步骤 15 已交付并验收：站立参考位形来自 profiles/unitree_go2_mujoco.yaml 的 spec.home
+    # （不复制数字，避免两份事实），由 loopback 验收入口 scripts/verify_go2_loopback.py 取证。
+    pose_source: profile
+    note: 数值来源与验收证据见 build/acceptance/go2-loopback/report.json（步骤 15，simulation=true）。
   humanoid_static:
     pose_source: unverified
     closed_by: "步骤 12"
