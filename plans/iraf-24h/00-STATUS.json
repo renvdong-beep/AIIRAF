@@ -196,11 +196,11 @@
     {
       "id": "20",
       "title": "24 小时收尾汇总与缺口清单",
-      "status": "TODO",
-      "evidence": null,
-      "commit": null,
-      "updated_at": null,
-      "note": null
+      "status": "DONE",
+      "evidence": "build/iraf-24h/20/{acceptance.txt,acceptance-run1-fail.txt,check_ledger.py,check_ledger.txt,check_ledger-negative.txt,make_broken_ledger.py,ledger-todo.json,ledger-bad-commit.json,check_unittest.py,check_unittest.txt,check_docs_gates.txt,ip-gate.txt,git-status.txt,unittest-full.txt,summary.txt,run_acceptance.sh,commit-plan.txt,commit-msg.txt,commit-msg-fix.txt,commit-msg-plans.txt,tick-report.md,commands.log}",
+      "commit": "6b28a82",
+      "updated_at": "2026-09-20T21:05:00+0800",
+      "note": "新增 docs/progress/2026-09-20-sdk-unitree-24h.md（24 小时汇总：分步结果表 20 行、产物清单 11 类、回归汇总 263→794、缺口清单 4 组、下一阶段建议 5 条 + 建议第一步、流程复盘 5 条）并在 docs/project-progress.md 追加 §13「2026-09-20 iraf-24h 24 小时战役：SDK 跨架构交付与宇树场景/技能」（只写事实与数字）。验收（/usr/bin/python3 3.10.12，`bash build/iraf-24h/20/run_acceptance.sh` -> **通过 9 项，失败 0 项，exit=0**）：A1 check_ledger.py -> exit=0「步骤数=20 / 状态集合=['DONE'] / 含 TODO 的步骤=[] / 提交 SHA 不可解析的步骤=[] / 缺证据路径的步骤=[]」；A2 **负向对照两例实测**（步骤 20 改回 TODO -> exit=2；commit 改成 40 个 0 -> exit=3；证据 build/iraf-24h/20/check_ledger-negative.txt + ledger-todo.json/ledger-bad-commit.json，证明 A1 不是恒通过门禁）；ls docs/progress/2026-09-20-sdk-unitree-24h.md exit=0；全量单测 Ran 794 / failures=1 / errors=4 / skipped=4（与步骤 19 逐项一致，本步纯文档无新增用例 ⇒ Ran 数不变即预期，无回归）；新增文本内网 IP：新文档 0 命中、project-progress.md 新增行 0 命中（历史遗留仍在同文件既有段落，按「不属本窗口」登记为缺口，不擅自扩大提交范围）；项目进度文档一致性：§13 存在、7 个章节、DEFERRED 出现 10 次。**收尾结论**：20/20 步 DONE，无 BLOCKED；目标端/真机验收按范围调整统一 DEFERRED（板卡不在场），未用 dry-run/mock/历史数据冒充。遗留缺口（下一阶段输入，均在汇总文档 §5 与原阻塞表）：wheelhouse 传递依赖 10 条仅 1 条覆盖（9 条缺失，需决策 A/B/C）、版本漂移 4 项未 pin、gRPC 通道未联调（protobuf 4.25.7 < 5.29）、人形运动与语音/S1/S3 未实现、厂商资产入库策略（A/B 待人工决策）、根级两张总图无 .dot 源（M1.7）、既有文档内网 IP 历史遗留（不属本窗口）。两次提交：产物 6b28a82（docs 2 路径）+ 台账三件套（本行回写，chore(plans)）。本轮额度未触发紧张，无未提交残留（`build/iraf-24h/20/` 为 gitignore 证据区）。"
     }
   ],
   "scope": {
