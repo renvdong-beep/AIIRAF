@@ -17,7 +17,7 @@
     "failures": 1,
     "errors": 4,
     "runs": 263,
-    "note": "PYTHONPATH=src python3 -m unittest discover -s tests/unit -t tests/unit；与战役前基线（4 导入错误 + 1 既有失败 test_vision_processing）一致",
+    "note": "PYTHONPATH=src python3 -m unittest discover -s tests/unit -t tests/unit；与战役前基线（4 导入错误 + 1 既有失败 test_vision_processing）一致。补充（步骤 02 实测）：cron 环境默认 python3 解析到 /home/coretek/.hermes/hermes-agent/venv/bin/python3（3.11.15，无 mujoco/numpy/grpc/Pillow），用它跑全量单测会出现 29 个 ModuleNotFoundError（环境噪声，非回归）；与设计 §2 一致、且可与本基线逐项比对的是 /usr/bin/python3（3.10.12，mujoco 3.3.3）。后续 tick 以 /usr/bin/python3 为准并注明所用解释器。",
     "evidence": "build/iraf-24h/01/unittest-baseline.txt"
   },
   "blocked": [],
@@ -34,11 +34,11 @@
     {
       "id": "02",
       "title": "SDK 产物矩阵与 BoardProfile 声明",
-      "status": "TODO",
-      "evidence": null,
-      "commit": null,
-      "updated_at": null,
-      "note": null
+      "status": "DONE",
+      "evidence": "build/iraf-24h/02/{unittest.txt,unittest-usr.txt,acceptance.txt,commands.log,commit-plan.txt,commit-msg.txt,unittest-full-usr.txt}",
+      "commit": "7d4d683",
+      "updated_at": "2026-09-20T15:37:56+0800",
+      "note": "新增 config/sdk/package_matrix.yaml + package_matrix.schema.json（矩阵与 BoardProfile 两份自包含契约同文件交付，因本步「涉及文件」只声明了一个 schema 文件）+ profiles/boards/{e300,firefly_rk3588}.yaml + tests/unit/test_board_profile_schema.py。验收：PYTHONPATH=src python3 -m unittest tests.unit.test_board_profile_schema -v → Ran 20 / OK / EXIT=0（6 条负向 + 1 条正向对照）；grep -c unverified profiles/boards/e300.yaml=20（>=6）；矩阵内 pypi.org 出现 0 次；index_url=https://mirrors.aliyun.com/pypi/simple/（决策 2 更新为 A）。全量单测（/usr/bin/python3）Ran 283 / failures=1 / errors=4，与基线 263/1/4 失败集合一致，无回归。首跑暴露并修复一个真实 schema 缺陷：pending_or_value 的 oneOf 两分支重叠（'pending' 同时匹配 const 与 string），已改为互斥分支，未放宽任何门禁。与设计 §6 的取值差异已记录：runtime.oci/ros2、adapters.master 由 unavailable 收紧为 unverified（unavailable 需实测证据，板卡不在场）。缺口：设计文档与 00-执行规则.md 中已入库的内网 IP 未脱敏（本步新文件不含任何内网 IP，并由单测强制拦截），脱敏需另开变更，未擅自扩大范围。"
     },
     {
       "id": "03",
