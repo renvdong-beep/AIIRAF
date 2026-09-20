@@ -1126,10 +1126,13 @@ class MujocoBackend:
         self._cancel_event.clear()
         with self._data_lock:
             for joint, value in positions.items():
-                if joint not in self._actuators:
-                    raise ValueError("actuator not found: " + joint)
-                self.data.ctrl[self._actuators[joint]] = float(value)
-                self.last_positions[joint] = float(value)
+                # 传入的键可能是**关节名**（profile.joints 口径）或**执行器名**
+                # （场景 report 口径）。Piper 两者同名掩盖了这个差异，
+                # UR5e 上 Home 动作因此报 "actuator not found: shoulder_pan_joint"。
+                channel = self._actuator_channel(joint)
+                self.data.ctrl[self._actuators[channel]] = float(value)
+                # 状态按**关节名**回写，与 profile.joints / 返回值口径一致。
+                self.last_positions[self._joint_name_of(joint)] = float(value)
             self.stopped = False
         if self._continuous_mode:
             deadline = time.monotonic() + max(1, int(duration_ms)) / 1000.0
@@ -1363,12 +1366,20 @@ class MujocoBackend:
             positions = {}
             for name in self.last_positions:
                 qpos = self._joint_qpos(name)
-                if qpos is not None:
-                    positions[name] = qpos
+                if qpos is None:
+                    continue
+                # `last_positions` 按**关节名**存放，而 ctrl 按**执行器名**索引
+                # （UR5e 两者不同名）。腱驱动关节（如 2F-85 的 driver）没有
+                # 可直接下发的通道，跳过而不是硬写关节角：
+                # 它的位形由夹爪自己的开合指令决定，硬写会破坏欠驱动一致性。
+                channel = self._direct_actuator_channel(name)
+                if channel is None:
+                    continue
+                positions[channel] = qpos
             if not positions:
-                raise RuntimeError("无法锁存当前位姿：没有可用的关节执行器")
-            for name, value in positions.items():
-                self.data.ctrl[self._actuators[name]] = float(value)
+                raise RuntimeError("无法锁存当前位姿：没有可直接控制的关节通道")
+            for channel, value in positions.items():
+                self.data.ctrl[self._actuators[channel]] = float(value)
                 self.last_positions[name] = float(value)
             self.stopped = False
         return positions
@@ -1422,12 +1433,71 @@ class MujocoBackend:
             self.data.ctrl[:] = 0.0
             self.stopped = True
 
+    def _direct_actuator_channel(self, name):
+        """返回**直接**驱动该关节的执行器通道名；没有直接执行器时返回 None。
+
+        与 `_actuator_channel` 的区别是语义而非实现：
+        - 后者用于"必须能下发指令"的路径（找不到即显式失败）；
+        - 本方法用于"能控制的才控制"的路径（如锁存当前位姿）。
+          2F-85 的 driver 关节由 tendon 执行器经 equality + 耦合杆驱动，
+          MuJoCo 里 tendon 执行器的 `trnid` 指向 **tendon 而非关节**，
+          因此这些关节没有可直接写的 ctrl 通道 —— 按关节角硬写会破坏欠驱动一致性。
+
+        关节名不存在时仍然显式失败（那是配置错误，不是"不可直接控制"）。
+        """
+        name = str(name)
+        if name in self._actuators:
+            return name
+        joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name)
+        if joint_id < 0:
+            raise ValueError("找不到关节或执行器: " + name)
+        for index in range(int(self.model.nu)):
+            if int(self.model.actuator_trnid[index, 0]) != int(joint_id):
+                continue
+            channel = mujoco.mj_id2name(
+                self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, index
+            )
+            if channel:
+                return str(channel)
+        return None
+
+    def _actuator_channel(self, name):
+        """把**关节名**解析为驱动它的执行器通道名；已是执行器名则原样返回。
+
+        为什么必须做：对外契约（`profile.joints`、move_joint 参数）用的是**关节名**，
+        而 ctrl 数组按**执行器名**索引。两者在 Piper 上恰好同名
+        （joint1..joint8），在 UR5e 上不同名（关节 shoulder_pan_joint /
+        执行器 shoulder_pan）—— 早期只在场景生成器里做了翻译，
+        `move_joint` 这条路径漏了，表现为 Piper 正常、
+        UR5e 报 `actuator not found: shoulder_pan_joint`（实测 Home 动作失败）。
+
+        解析失败即显式失败：静默忽略会让"动了但没动对关节"更难定位。
+        """
+        channel = self._direct_actuator_channel(name)
+        if channel is None:
+            raise ValueError(
+                "关节没有可直接下发的执行器通道（可能是腱驱动）: %s" % name
+            )
+        return channel
+
+    def _joint_name_of(self, name):
+        """把执行器名解析为被驱动关节名；已是关节名则原样返回。
+
+        对外契约统一到**关节名**口径（`profile.joints`、`move_joint` 返回值），
+        因此内部按执行器通道写 ctrl 时，要把状态回写到关节名键上。
+        """
+        name = str(name)
+        if name in self._actuators:
+            joint_id = int(self.model.actuator_trnid[self._actuators[name], 0])
+            joint = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_JOINT, joint_id)
+            return str(joint) if joint else name
+        return name
+
     def _set_controls(self, positions):
         with self._data_lock:
             for actuator, value in positions.items():
-                if actuator not in self._actuators:
-                    raise ValueError("actuator not found: " + actuator)
-                self.data.ctrl[self._actuators[actuator]] = float(value)
+                channel = self._actuator_channel(actuator)
+                self.data.ctrl[self._actuators[channel]] = float(value)
 
     def _set_gripper_controls(self, positions):
         """只更新夹爪通道，避免开合动作覆盖机械臂关节。
@@ -1467,14 +1537,23 @@ class MujocoBackend:
         `τ_g / gain` 加回去，才能让**稳态落点**等于目标关节角。
         含未在目标位形里声明的通道时显式失败（静默忽略会让前馈失效而难以察觉）。
         """
-        names = list(target_positions)
-        offsets = {str(name): float(value) for name, value in (ctrl_offsets or {}).items()}
+        # 目标位形与前馈键统一解析到**执行器通道名**空间：
+        # 调用方可能给关节名（profile.joints 口径）或执行器名（场景 report 口径），
+        # 两者必须能混用 —— 否则多机型下会出现"某条路径能动、另一条报找不到执行器"。
+        resolved_targets = {
+            self._actuator_channel(name): float(value)
+            for name, value in target_positions.items()
+        }
+        names = list(resolved_targets)
+        offsets = {
+            self._actuator_channel(name): float(value)
+            for name, value in (ctrl_offsets or {}).items()
+        }
         unknown = sorted(set(offsets) - set(names))
         if unknown:
             raise ValueError("轨迹前馈含未声明的控制通道: " + str(unknown))
         commands = {
-            name: float(target_positions[name]) + offsets.get(name, 0.0)
-            for name in names
+            name: resolved_targets[name] + offsets.get(name, 0.0) for name in names
         }
         with self._data_lock:
             starts = []
