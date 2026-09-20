@@ -1,0 +1,52 @@
+# BoardProfile: E300（Intewell Hyper 边缘构型）—— 未签字验收前 status 只能是 unverified。
+#
+# 契约：config/sdk/package_matrix.schema.json 的 definitions.board_profile。
+# 依据：docs/iraf-multiplatform-sdk-design.md §6、AGENTS.md 铁律 3.2（BoardProfile 必须声明
+# OS、架构、能力、适配器、镜像摘要和测试证据；未知值必须写 unverified，不能猜测）。
+#
+# 与设计 §6 示例的两处取值差异（结构不变，取值按铁律收紧，已记入 build/iraf-24h/02/）：
+#   - 设计示例写 runtime.oci/ros2 = unavailable；本文件写 unverified。
+#     原因：unavailable 是“已确认不存在”的断言，需要实测证据；边缘板卡当前不在场（见 plans/iraf-24h/00-执行规则.md §0），
+#     未实测的未知只能写 unverified，否则等于用猜测值放行降级路径。
+#     回填条件：板卡到位后实测 VM 镜像是否自带容器运行时/ROS 2，再改为 available 或 unavailable 并附证据。
+#   - 设计示例写 adapters.master = unavailable；理由与处理同上。
+#
+# 本战役范围：目标端验收全部 DEFERRED（板卡不在），不得用 dry-run/mock 冒充真机证据。
+apiVersion: iraf.intewell.io/v1
+kind: BoardProfile
+metadata:
+  name: e300
+  version: 0.1.0
+  # 本 profile 覆盖的正式 Hyper 构型名（铁律 6.10）。VM 数量、编号、IP、OS 与角色映射
+  # 只能从签名 HyperProfile/Release manifest 读取，禁止在本文件硬编码。
+  hyper_models:
+    - MQ50-E300-3VM-LPR
+    - MQ50-E300-3VM-LPP
+spec:
+  status: unverified
+  target:
+    os: unverified
+    arch: aarch64
+    kernel: unverified
+    python_tag: unverified
+    platform_tag: unverified
+    glibc_min: unverified
+  runtime:
+    oci: unverified
+    ros2: unverified
+    systemd: unverified
+  adapters:
+    agentos_bridge: unverified
+    npu: unverified
+    master: unverified
+  # 空数组 = 尚未声明任何能力；预检（install.sh 第 2 步）必须视为失败，不得默认放行。
+  capabilities: []
+  limits:
+    ram_mb: unverified
+    disk_mb: unverified
+  image:
+    ref: unverified
+    digest: unverified
+  evidence:
+    owner: pending
+    acceptance_report: pending

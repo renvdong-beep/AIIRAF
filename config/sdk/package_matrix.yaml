@@ -1,0 +1,51 @@
+# IRAF SDK 产物矩阵（iraf.sdk-matrix/v1）—— 版本、Python 标签、平台标签、包清单、镜像源、板卡映射的
+# 唯一事实来源。脚本只读不写；禁止在其他脚本/文档里散落硬编码这些值（AGENTS.md 铁律 5.3）。
+#
+# 契约：config/sdk/package_matrix.schema.json（根结构）；BoardProfile 契约在同一文件的
+# definitions.board_profile 内，校验 profiles/boards/*.yaml。
+# 依据：docs/iraf-multiplatform-sdk-design.md §7（集中声明）、§11（决策 2 更新为 A）、plans/iraf-24h/00-执行规则.md §0。
+#
+# 说明：本文件只声明“构建目标”（为哪个架构/标签抓包）,目标端真实的 OS/Python/平台标签由
+# profiles/boards/*.yaml 声明（未实测即 unverified），两者在 install.sh 预检阶段比对，不一致即退出码 2。
+# 因此这里不重复声明目标端 OS，避免同一事实出现两个来源。
+schema_version: iraf.sdk-matrix/v1
+sdk:
+  name: iraf-sdk
+  module: iraf_sdk
+  # 版本单一来源：不在本文件复制版本号（铁律 5.3）。
+  version_ref: pyproject.toml#project.version
+idlv1_version: 1.0.0
+targets:
+  - id: aarch64-manylinux_2_28-cp310
+    arch: aarch64
+    platform_tag: manylinux_2_28_aarch64
+    python_tag: cp310
+    # 纯 Python 依赖：无 ABI 要求，可直接取 py3-none-any wheel。
+    pure_python:
+      - jsonschema
+      - pyyaml
+    # 二进制依赖：必须按 platform_tag 过滤（实测索引混杂 win_arm64/macosx 干扰项）。
+    wheels:
+      - mujoco
+      - numpy
+      - grpcio
+      - protobuf
+      - pyyaml
+      - pillow
+    # 决策 2（2026-09-20 更新为 A）：先用 aliyun 镜像（实测可达，且实测含 aarch64 wheel：
+    # mujoco 492 / grpcio 953 / numpy 1088 / protobuf 212 / pyyaml 210 / pillow 1224）。
+    # 拿到内网私有源后只改本字段一行；脚本禁止写死源地址（设计 §11.2）。
+    index_url: https://mirrors.aliyun.com/pypi/simple/
+    index_url_declared_at: "2026-09-20"
+    index_url_note: >-
+      决策 2 更新为 A：先用 aliyun 镜像；官方 PyPI 实测不可达，因此不得写死官方源。
+      换内网私有源时只替换 index_url 一行，并同步更新 index_url_declared_at。
+    boards:
+      - e300
+      - firefly_rk3588
+    # 抓取时必须拒绝的平台标签子串（实测 numpy 索引含 win_arm64、还有 macosx 条目）。
+    reject_platform_tags:
+      - win_arm64
+      - win32
+      - win_amd64
+      - macosx

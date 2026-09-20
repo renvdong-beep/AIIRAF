@@ -1,0 +1,296 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "IRAF SDK 产物矩阵（iraf.sdk-matrix/v1）与 BoardProfile 契约",
+  "description": "同一文件内交付两份彼此独立的契约：根结构校验 config/sdk/package_matrix.yaml（产物矩阵）；definitions.board_profile 自包含地校验 profiles/boards/*.yaml（BoardProfile）。之所以合并在一个文件，是因为本步骤（plans/iraf-24h/02）声明的交付路径只包含本文件；两份契约都用 draft-07，可被 jsonschema.Draft7Validator 直接校验。引用约定：definitions.board_profile 内部一律使用相对引用（#/definitions/<name>），因此必须整体提取后单独校验（tests/unit/test_board_profile_schema.py 即如此做）；不要从根结构再用 $ref 指向 board_profile，否则其内部相对引用会解析到根 definitions。所有未实测的值必须写 unverified，禁止猜测默认值（AGENTS.md 铁律 3、'未知值必须写 unverified'）。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "sdk", "idlv1_version", "targets"],
+  "properties": {
+    "schema_version": {
+      "const": "iraf.sdk-matrix/v1",
+      "description": "矩阵契约版本；改结构必须同步升版本并在同一变更内更新本 schema。"
+    },
+    "idlv1_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "本矩阵对应的公共 IDL 兼容版本（破坏性变更必须在此声明并触发打包拒绝）。"
+    },
+    "sdk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "module", "version_ref"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "module": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+        "version_ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "版本单一来源（形如 pyproject.toml#project.version）。禁止在本文件复制版本号，避免两份事实（铁律 5.3）。"
+        }
+      }
+    },
+    "targets": {
+      "type": "array",
+      "minItems": 1,
+      "description": "构建目标清单。每个目标声明架构、Python 标签、平台标签、依赖清单与镜像源；脚本只读不写。",
+      "items": {"$ref": "#/definitions/build_target"}
+    }
+  },
+  "definitions": {
+    "dist_name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$",
+      "description": "分发包名必须小写：实测镜像索引名区分大小写，PyYAML 返回 404、pyyaml 才有（见设计 §2）。"
+    },
+    "build_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "arch",
+        "platform_tag",
+        "python_tag",
+        "pure_python",
+        "wheels",
+        "index_url",
+        "index_url_declared_at",
+        "index_url_note",
+        "boards",
+        "reject_platform_tags"
+      ],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]*$"},
+        "arch": {"enum": ["aarch64", "x86_64"]},
+        "platform_tag": {
+          "type": "string",
+          "pattern": "^manylinux(_[0-9]+)+_(aarch64|x86_64)$",
+          "description": "声明式构建目标（本文件决定抓什么 wheel）；目标端真实标签来自 profiles/boards/*.yaml，两者在 install.sh 预检阶段比对。"
+        },
+        "python_tag": {
+          "type": "string",
+          "pattern": "^cp3[0-9]+$",
+          "description": "构建目标 Python ABI 标签；不等同于目标板卡实测 Python（后者未实测时为 unverified，预检失败）。"
+        },
+        "pure_python": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/definitions/dist_name"},
+          "description": "纯 Python 依赖（无 ABI，可直接取 py3-none-any wheel）。"
+        },
+        "wheels": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/definitions/dist_name"},
+          "description": "需要按平台标签抓取的二进制依赖。"
+        },
+        "index_url": {
+          "type": "string",
+          "pattern": "^https://[^\\s]+$",
+          "not": {"pattern": "pypi\\.org"},
+          "description": "包索引地址，必须显式声明（决策 2 更新为 A：先用 aliyun 镜像）。禁止写死官方 PyPI（实测不可达），也禁止脚本内硬编码源地址。"
+        },
+        "index_url_declared_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "本次镜像源声明日期，供审计回溯（设计 §11.2 要求记录镜像与抓取时间）。"
+        },
+        "index_url_note": {
+          "type": "string",
+          "minLength": 1,
+          "description": "镜像源决策与替换方式说明，便于换源时只改一行。"
+        },
+        "boards": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_]*$"},
+          "description": "本目标覆盖的板卡名，必须能在 profiles/boards/<name>.yaml 找到对应 BoardProfile（单测强制）。"
+        },
+        "reject_platform_tags": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1},
+          "description": "抓取时必须拒绝的平台标签子串（实测索引混杂 win_arm64/macosx 干扰项）。集中声明，脚本禁止散落硬编码。"
+        }
+      }
+    },
+    "board_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["apiVersion", "kind", "metadata", "spec"],
+      "description": "BoardProfile 契约：未实测字段一律 unverified；未签字验收不得声明 status=verified（铁律 3.2 与设计 §6）。",
+      "properties": {
+        "apiVersion": {"const": "iraf.intewell.io/v1"},
+        "kind": {"const": "BoardProfile"},
+        "metadata": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "version", "hyper_models"],
+          "properties": {
+            "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_]*$"},
+            "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+            "hyper_models": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {"type": "string", "minLength": 1},
+              "description": "本 profile 覆盖的正式 Hyper 构型名（铁律 6.10）。VM 数量、编号、IP、OS 与角色映射只能从签名 HyperProfile/Release manifest 读取，禁止在本文件硬编码。"
+            }
+          }
+        },
+        "spec": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "target",
+            "runtime",
+            "adapters",
+            "capabilities",
+            "limits",
+            "image",
+            "evidence"
+          ],
+          "properties": {
+            "status": {
+              "enum": ["unverified", "verified"],
+              "description": "未取得目标端验收证据前只能是 unverified；verified 会触发本节 allOf 的完整性要求。"
+            },
+            "target": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["os", "arch", "kernel", "python_tag", "platform_tag", "glibc_min"],
+              "properties": {
+                "os": {"$ref": "#/definitions/unverified_or_value"},
+                "arch": {"enum": ["aarch64", "x86_64"]},
+                "kernel": {"$ref": "#/definitions/unverified_or_value"},
+                "python_tag": {"$ref": "#/definitions/unverified_or_value"},
+                "platform_tag": {"$ref": "#/definitions/unverified_or_value"},
+                "glibc_min": {"$ref": "#/definitions/unverified_or_value"}
+              }
+            },
+            "runtime": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["oci", "ros2", "systemd"],
+              "properties": {
+                "oci": {"$ref": "#/definitions/availability"},
+                "ros2": {"$ref": "#/definitions/availability"},
+                "systemd": {"$ref": "#/definitions/availability"}
+              }
+            },
+            "adapters": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["agentos_bridge", "npu", "master"],
+              "properties": {
+                "agentos_bridge": {"$ref": "#/definitions/availability"},
+                "npu": {"$ref": "#/definitions/availability"},
+                "master": {"$ref": "#/definitions/availability"}
+              }
+            },
+            "capabilities": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {"type": "string", "pattern": "^[a-z][a-z0-9._]*$"},
+              "description": "板卡可提供的能力清单（铁律 3.2 要求声明能力）。空数组 = 尚未声明任何能力，预检必须失败。"
+            },
+            "limits": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["ram_mb", "disk_mb"],
+              "properties": {
+                "ram_mb": {"$ref": "#/definitions/unverified_or_positive_int"},
+                "disk_mb": {"$ref": "#/definitions/unverified_or_positive_int"}
+              }
+            },
+            "image": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["ref", "digest"],
+              "properties": {
+                "ref": {"$ref": "#/definitions/unverified_or_value"},
+                "digest": {"$ref": "#/definitions/unverified_or_value"}
+              },
+              "description": "板级镜像引用与摘要（铁律 3.2 要求镜像摘要）；未实测即 unverified。"
+            },
+            "evidence": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["owner", "acceptance_report"],
+              "properties": {
+                "owner": {"$ref": "#/definitions/pending_or_value"},
+                "acceptance_report": {"$ref": "#/definitions/pending_or_value"}
+              },
+              "description": "测试证据（铁律 3.2）：责任人未定即 pending，验收报告未有即 pending。"
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {"status": {"const": "verified"}},
+                "required": ["status"]
+              },
+              "then": {
+                "properties": {
+                  "target": {
+                    "properties": {
+                      "os": {"not": {"const": "unverified"}},
+                      "kernel": {"not": {"const": "unverified"}},
+                      "python_tag": {"not": {"const": "unverified"}},
+                      "platform_tag": {"not": {"const": "unverified"}},
+                      "glibc_min": {"not": {"const": "unverified"}}
+                    }
+                  },
+                  "limits": {
+                    "properties": {
+                      "ram_mb": {"not": {"const": "unverified"}},
+                      "disk_mb": {"not": {"const": "unverified"}}
+                    }
+                  },
+                  "image": {"properties": {"digest": {"not": {"const": "unverified"}}}},
+                  "capabilities": {"minItems": 1},
+                  "evidence": {
+                    "properties": {
+                      "owner": {"not": {"const": "pending"}},
+                      "acceptance_report": {"not": {"const": "pending"}}
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "definitions": {
+        "unverified_or_value": {
+          "type": "string",
+          "minLength": 1,
+          "not": {"enum": ["pending", "tbd", "unknown", "?", "n/a"]},
+          "description": "要么是实测值，要么是字面量 unverified。禁止 pending/tbd/unknown 等模糊占位（未知只能写 unverified，铁律 3）。"
+        },
+        "unverified_or_positive_int": {
+          "oneOf": [
+            {"const": "unverified"},
+            {"type": "integer", "minimum": 1}
+          ],
+          "description": "容量上限：整数兆字节，或 unverified。"
+        },
+        "availability": {
+          "enum": ["available", "unavailable", "unverified"],
+          "description": "能力可用性三态：available 已实测可用；unavailable 已确认不存在（可走降级路径）；unverified 未实测，预检视为失败。"
+        },
+        "pending_or_value": {
+          "oneOf": [
+            {"const": "pending"},
+            {"type": "string", "minLength": 1, "not": {"const": "pending"}}
+          ],
+          "description": "pending = 尚未确定/尚未产出；两个分支互斥，避免 oneOf 重叠加倍报错。"
+        }
+      }
+    }
+  }
+}

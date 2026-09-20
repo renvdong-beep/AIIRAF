@@ -1,0 +1,50 @@
+# BoardProfile: FIREFLY-RK3588（Intewell Hyper 边缘构型）—— 未签字验收前 status 只能是 unverified。
+#
+# 契约：config/sdk/package_matrix.schema.json 的 definitions.board_profile。
+# 依据：docs/iraf-multiplatform-sdk-design.md §6、AGENTS.md 铁律 3.2（未知值必须写 unverified）
+# 与铁律 6.11（2VM 构型合并部署角色时不得合并安全边界：Motion 与 Master 仍须独立进程、权限、
+# 资源限额与设备所有权；本 profile 不声明任何角色合并，角色映射只从签名 HyperProfile 读取）。
+#
+# 与设计 §6 示例的两处取值差异（结构不变，取值按铁律收紧，已记入 build/iraf-24h/02/）：
+#   - runtime.oci / ros2：设计示例为 unavailable，本文件为 unverified（unavailable 需实测证据，
+#     板卡不在场，未实测只能写 unverified；回填条件同 e300）。
+#   - adapters.master：同上。
+#
+# 本战役范围：目标端验收全部 DEFERRED（板卡不在），不得用 dry-run/mock 冒充真机证据。
+apiVersion: iraf.intewell.io/v1
+kind: BoardProfile
+metadata:
+  name: firefly_rk3588
+  version: 0.1.0
+  # 本 profile 覆盖的正式 Hyper 构型名（铁律 6.10）。VM 数量、编号、IP、OS 与角色映射
+  # 只能从签名 HyperProfile/Release manifest 读取，禁止在本文件硬编码。
+  hyper_models:
+    - FIREFLY-RK3588-2VM-LR
+spec:
+  status: unverified
+  target:
+    os: unverified
+    arch: aarch64
+    kernel: unverified
+    python_tag: unverified
+    platform_tag: unverified
+    glibc_min: unverified
+  runtime:
+    oci: unverified
+    ros2: unverified
+    systemd: unverified
+  adapters:
+    agentos_bridge: unverified
+    npu: unverified
+    master: unverified
+  # 空数组 = 尚未声明任何能力（含 NPU 推理能力）；预检必须视为失败，不得默认放行。
+  capabilities: []
+  limits:
+    ram_mb: unverified
+    disk_mb: unverified
+  image:
+    ref: unverified
+    digest: unverified
+  evidence:
+    owner: pending
+    acceptance_report: pending
