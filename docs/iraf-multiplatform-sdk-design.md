@@ -241,9 +241,50 @@ S DK 层如需暴露"提交任务/查询执行"，必须复用既有 `runtime.pr
 
 ---
 
-## 11. 决策点（待确认）
+## 11. 决策记录（2026-09-20 已确认）
 
-1. **SDK 形态**：(A) 仅 Python SDK（本轮）；(B) Python SDK + C++ SDK 头文件（`sdk/cpp/`，本轮只出契约与头文件，不出二进制）；(C) Python SDK + gRPC 客户端只读封装。→ 建议 A（本轮），B 进路线图。
-2. **wheelhouse 来源**：aliyun 镜像（实测可达）/(B) 内网私有源（需提供地址）/(C) 板厂提供依赖清单。→ 建议 A + 记录镜像 digest 与抓取时间，便于审计。
-3. **目标板卡 Python 版本**：由谁确认并写入 BoardProfile（当前 `10.203.247.72`/`.86` 均不通，无法实测）。→ 建议先把字段写成 `unverified`，等板卡可达后由实测填写。
-4. **签名方案**：本轮 (A) 只做 SHA-256 + manifest 记录签名占位；(B) 引入 cosign/minisign。→ 建议 A。
+> 原选项文本保留在下方以便回溯。**已确认项**按决策取值改写；未纳入本轮 7 项决策的子问题明确标注「未确认 / 不在本战役范围」，不得当作已确认实施（`AGENTS.md` 2.6、5.5）。
+
+1. **SDK 形态** —— **已确认：A 仅 Python SDK（2026-09-20）**。
+   - 原选项：(A) 仅 Python SDK（本轮）；(B) Python SDK + C++ SDK 头文件（`sdk/cpp/`，本轮只出契约与头文件，不出二进制）；(C) Python SDK + gRPC 客户端只读封装。
+   - 落点：`sdk/cpp/` 只保留契约占位，**不产出任何 C++ 二进制**；B 进路线图。
+2. **wheelhouse 来源** —— **已确认：A（2026-09-20 更新）先用 aliyun 镜像 `https://mirrors.aliyun.com/pypi/simple/`**。
+   - 原选项：(A) aliyun 镜像（实测可达，且实测含 aarch64 wheel）；(B) 内网私有源（需提供地址）；(C) 板厂提供依赖清单。
+   - 落点：决策由原 B 改为 A；原选项 B 保留为可切换路径——拿到内网私有源后**只改 `config/sdk/package_matrix.yaml` 的 `index_url` 一行**，脚本禁止写死源地址；同时记录镜像与抓取时间便于审计。
+3. **目标板卡 Python 版本 / 平台标签** —— **已确认：A 先写 `unverified`（2026-09-20）**。
+   - 原选项：(A) 先写 `unverified`，板卡实测后回填；(B) 由提供方给出板卡实测信息；(C) 等板卡可达再定。
+   - 落点：`profiles/boards/*.yaml` 中未回填的字段即预检失败（退出码 2）；**禁止猜测默认值**，也不得用 x86_64 wheel 顶替 aarch64（`AGENTS.md` 1.5 / 5.10）。
+4. **签名方案** —— **未确认 / 不在本战役范围**：本战役只做 SHA-256 + `manifest.json` 校验和；cosign/minisign 排期到板卡可用之后（见 §12 表）。
+   - 原选项：(A) 本轮只做 SHA-256 + manifest 记录签名占位；(B) 引入 cosign/minisign。
+
+---
+
+## 12. 本战役范围（x86-first，2026-09-20；板卡不在场）
+
+本战役（`plans/iraf-24h`）只交付 **L1 路线**，且完成判据限定为**开发端 x86_64 本机可复现并取证**的部分：
+
+| 项 | 本战役 | 依据 / 说明 |
+|---|---|---|
+| L1 纯 Python SDK + aarch64 离线 wheelhouse | **做** | wheel 抓取是网络行为，不需要板卡；平台标签必须按声明过滤，错标签即失败（退出码 2） |
+| 打包、`manifest.json`、校验和 | **做** | `deploy/sdk/build_sdk.sh`，SHA-256 全部复算一致 |
+| 安装 / 验证 / 部署脚本 + `--dry-run` + 负向用例 | **做（x86 侧）** | 只证明解析、预检与拒绝逻辑；**不证明目标端可用** |
+| 目标端真实安装 / `/health` / AgentOS 联通 / ssh 真机部署 | **排除（DEFERRED）** | 边缘板卡不在场（`10.203.247.72`/`.86` 的 22 与 9119 实测不通）；不得用 dry-run、mock、本地 stub 或历史数据冒充 |
+| 多架构 OCI 镜像 | **排除** | 无 `docker buildx` 且 `registry-1.docker.io` 不可达（§2 实测） |
+| 目标端编译（Rust/C++/现场总线 SDK） | **排除** | §1 非目标 2 |
+| 签名服务（cosign/minisign） | **排除（只留占位）** | 决策 4 未确认，见 §11 |
+
+以上排除项在板卡到位后**复用同一脚本语义**执行，不新增旁路脚本（`AGENTS.md` 6.4：命令实现前不得表述为已可用）。
+
+---
+
+## 13. 文件边界（本战役 vs 另一窗口，2026-09-20 锁定）
+
+本仓库当前有**两个编辑窗口**并行；为避免互相覆盖，路径归属按下表锁定。越界即视为违反 `AGENTS.md` 5.7（变更必须小而可审查）。
+
+| 归属 | 路径 |
+|---|---|
+| **本战役（SDK / 宇树线）** | `deploy/sdk/`、`config/sdk/`、`profiles/boards/`、`scenes/`、`vendor/unitree_*`、`src/iraf_sdk/`、`src/iraf_adapters/unitree/`、`skills/{stand,stop,locomote}/`、`scripts/build_scene.py`、`scripts/scenario.py`、`scripts/verify_go2_loopback.py`、`plans/iraf-24h/`、`docs/iraf-multiplatform-sdk-design.md`、`docs/iraf-unitree-scenario-interaction-design.md`、`docs/iraf-voice-studio-design.md`、`docs/adr/0006-*`、`docs/adr/0007-*` |
+| **另一窗口（不触碰）** | `examples/demo3_arm/`、`scripts/view_mujoco.py`、`scripts/verify_pick.py`、`scripts/build_baseline.py`、`config/piper_simulation_baseline.yaml`、`config/ur5_simulation_baseline.yaml`、`src/iraf_core/`、`src/iraf_adapters/factory.py` |
+| **共享但需先声明** | `src/iraf_core/`、`src/iraf_adapters/factory.py`（若确需改动，先在 `plans/iraf-24h/00-日志.md` 登记文件边界并说明原因） |
+
+执行纪律：每个 tick 提交前 `git status --short` 必须只包含本步声明路径；禁止 `git stash` / `git checkout` / `git reset` / `git add -A` / `git add -f`。
