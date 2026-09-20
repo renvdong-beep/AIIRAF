@@ -58,7 +58,7 @@
 | id | 标题 | 提交 | 关键实测数字 |
 |---|---|---|---|
 | 19 | 架构图与文档同步 | `4a36601` | 验收「通过 **9** 项，失败 **0** 项」（首跑 8/1 系**断言写错**：期望 unittest exit=0，而基线本身就是 exit=1）；两张 SVG **34 911 / 43 683 字节**，XML 可解析、根元素 `svg` 带 `viewBox`、`text` 元素 89 / 111 个、无内网 IP；`grep -c "deploy/sdk" docs/iraf-engineering-design.md` = **11**；`.dot` 重新生成与入库 SVG **逐字节一致**（`MISMATCH=0`）；文档一致性门禁 §8.1.1 段内 **17** 条仓库路径全部存在；负向对照 9 条全部证明门禁会失败 |
-| 20 | 24 小时收尾汇总与缺口清单 | （本文所在提交） | 台账状态集合不含 `TODO/IN_PROGRESS`；全量单测 `Ran 794 / failures=1 / errors=4 / skipped=4`（失败集合与基线逐项一致） |
+| 20 | 24 小时收尾汇总与缺口清单 | `6b28a82` | 台账状态集合不含 `TODO/IN_PROGRESS`；全量单测 `Ran 794 / failures=1 / errors=4 / skipped=4`（失败集合与基线逐项一致） |
 
 ## 3. 交付产物清单（本轮新增，均入库）
 
@@ -66,15 +66,15 @@
 |---|---|---|
 | SDK 层 | `src/iraf_sdk/{__init__,errors,client}.py` | 纯 Python、零第三方依赖、不 import `iraf_core/iraf_adapters`（子进程导入纯净性已证明） |
 | 声明（集中式） | `config/sdk/package_matrix.yaml` + `.schema.json`、`profiles/boards/{e300,firefly_rk3588}.yaml` | 版本/标签/包清单/镜像源/路径集中声明；板卡字段实测前一律 `unverified` |
-| 打包与安装（10 个文件） | `deploy/sdk/{build_sdk.sh,lib_manifest.py,fetch_wheelhouse.sh,check_wheel_tags.py,package_board_bundle.sh,lib_board_bundle.py,install.sh,verify.sh,uninstall.sh,lib_target_verify.py,deploy.sh,lib_deploy.py,iraf-sdk-board.service}` | 入口层 shell + 实现层 Python；全部带 `--dry-run` / 负向退出码 |
+| 打包与安装（13 个文件） | `deploy/sdk/{build_sdk.sh,lib_manifest.py,fetch_wheelhouse.sh,check_wheel_tags.py,package_board_bundle.sh,lib_board_bundle.py,install.sh,verify.sh,uninstall.sh,lib_target_verify.py,deploy.sh,lib_deploy.py,iraf-sdk-board.service}` | 入口层 shell + 实现层 Python；全部带 `--dry-run` / 负向退出码 |
 | 场景包 | `config/scene.schema.json`、`scenes/handoff_lab/{scene,baseline,scenario}.yaml` + `README.md` | 场景声明载体（决策 5.A 的 `scenes/`） |
 | 场景与传感器 | `scripts/{scene_check,build_scene,verify_scene_sensors}.py`、`src/iraf_adapters/unitree/{scene_builder,scene_sensor_evidence}.py` | 厂商 MJCF 只读 + 按声明注入相机/雷达/道具/光照 |
 | 本体与适配器 | `profiles/unitree_go2_mujoco.yaml`、`config/go2_loopback.yaml`、`src/iraf_adapters/unitree/{quadruped,unitree_go2,loopback}.py`、`scripts/{verify_go2_loopback,fetch_vendor_assets}.py` | 通用契约 + 机型实现两层；厂商资产按 `source-lock.json` 对账 |
-| 技能层 | `skills/stand/`、`skills/locomote/`、`src/iraf_skills/quadruped.py`、`profiles/safety/quadruped_lab.yaml` | `stand`/`stop` 已验收；`locomote` 只拒绝、不声明（首期无步态控制器） |
+| 技能层 | `skills/{stand,locomote}/`、`src/iraf_skills/quadruped.py`、`profiles/safety/quadruped_lab.yaml`、`scripts/verify_quadruped_skills.py` | `stand`/`stop` 已验收；`locomote` 只拒绝、不声明（首期无步态控制器） |
 | S2 执行器 | `scripts/scenario.py` | `list` / `run`，退出码 0/1/2/3/4/5；执行链不绕层 |
 | 契约与 ADR | `docs/adr/0006-sdk-cross-arch-delivery.md`、`docs/adr/0007-unitree-scenario-interaction.md` | 跨架构交付分级 L1/L2/L3；宇树场景交互门禁 U1~U6 |
 | 图 | `docs/diagrams/iraf-sdk-delivery.{dot,svg}`、`docs/diagrams/iraf-unitree-scene-stack.{dot,svg}` | 源 + SVG 同时入库，可由 `dot -Tsvg` 逐字节复现 |
-| 回归用例 | `tests/unit/test_{sdk_errors,sdk_manifest,wheel_tags,board_profile_schema,profile_check_board,install_prechecks,target_verify_evidence,uninstall_scope,scene_schema,scene_builder_injection,scene_sensor_evidence,go2_loopback_contract,quadruped_adapter,scenario_runner}.py` | 14 个文件、6 929 行、新增 531 例 |
+| 回归用例 | `tests/unit/test_{sdk_errors,sdk_manifest,wheel_tags,board_profile_schema,profile_check_board,install_prechecks,target_verify_evidence,uninstall_scope,scene_schema,scene_builder_injection,scene_sensor_evidence,go2_loopback_contract,quadruped_adapter,quadruped_skill_contracts,scenario_runner}.py` | 15 个文件、7 288 行、新增 531 例（与全量单测增量 794 − 263 一致） |
 | 调试记录 | `docs/debug/2026-09-20-{sdk-cross-arch,sdk-error-code-contract-divergence,sdk-wheel-build-offline,wheelhouse-fetch-index-api,vendor-asset-lock-unitree,scene-builder-injection,quadruped-adapter-contract,quadruped-skills-and-rejection-paths,verify-uninstall-scope-gates}.md` | 9 份，中文，含症状→证据链→根因→修法→复跑命令 |
 
 ## 4. 回归汇总（全量单测）
