@@ -202,3 +202,13 @@ vision:
       - "{evidence}"
     # 检测器参数真源（其 depth 段覆盖后端内置默认值）。
     config_file: config/piper_multi_target.yaml
+
+# --- 统一入口声明（AGENTS.md 6.4 金路径）---
+# 多目标场景同样走统一入口：scripts/verify_pick.py --all-targets 会按
+# targets[] 逐个重建场景（搬运约束/参考姿态是按目标生成的）并各自执行。
+build:
+  baseline_module: build_piper_baseline
+  scene: build/models/piper-multi-scene.xml
+  pose_evidence: build/calibration/piper-multi-baseline-pose.json
+  profile: profiles/piper_mujoco.yaml
+  safety_policy: profiles/safety/simulation_lab.yaml

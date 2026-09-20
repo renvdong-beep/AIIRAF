@@ -709,13 +709,17 @@ def validate_grasp_pose(scene_path, baseline, reference):
     }
 
 
-def build(root, baseline_path, scene_path, calibration_path=None):
-    """校验模型来源、求解参考姿态、生成受控场景并校验。"""
+def build(root, baseline_path, scene_path, calibration_path=None, target_id=None):
+    """校验模型来源、求解参考姿态、生成受控场景并校验。
+
+    `target_id` 用于多目标基线：只影响"哪个目标承载搬运约束/参考姿态"，
+    缺省取基线声明的 target.id（单目标场景行为不变）。
+    """
     root = Path(root).resolve()
     baseline = load_baseline(_resolve(root, baseline_path))
     output = _resolve(root, scene_path)
 
-    reference = build_reference_poses(root, baseline)
+    reference = build_reference_poses(root, baseline, target_id=target_id)
     acceptance = baseline.get("acceptance") or {}
     tolerance = float(acceptance.get("pose_tolerance_m", 0.005))
     factor = float(acceptance.get("solver_error_factor", 0.1))
@@ -730,7 +734,7 @@ def build(root, baseline_path, scene_path, calibration_path=None):
     scene = build_scene(
         _resolve(root, baseline["model"]["source"]),
         output,
-        target_id=target_cfg.get("id", "box_01"),
+        target_id=target_id or target_cfg.get("id", "box_01"),
         half_size=float(target_cfg.get("half_size_m", 0.025)),
         config=baseline,
         reference=reference,

@@ -1,4 +1,4 @@
-"""统一抓取验收入口：经完整 Skill Runtime 执行 pick_object。
+"""统一抓取验收入口：经完整 Skill Runtime 执行 pick_object / visual_pick。
 
 判据与机型无关（AGENTS.md 6.4 金路径），且**判据全部取自 Backend 回传的证据**：
 命中目标 + 双侧接触（法向力越阈）+ 抬升位移 + 位置误差。
@@ -7,10 +7,13 @@
 链路：TaskFlow → SkillRuntime → Policy/Authority → Provider → MuJoCo Backend，
 不绕过任何一层；profile / safety / 场景 / 时长 / 目标 id 全部来自声明（CLI 可覆盖）。
 
-用法：
-  PYTHONPATH=src python3 scripts/verify_pick.py \
-      --baseline config/ur5_simulation_baseline.yaml \
-      --rebuild                      # 可选：先按配置声明的构建器重建场景
+三种用法：
+  # 单目标
+  python3 scripts/verify_pick.py --baseline config/ur5_simulation_baseline.yaml
+  # 视觉链路（位姿来自配置声明的视觉证据，判据相同）
+  python3 scripts/verify_pick.py --baseline config/ur5_simulation_baseline.yaml --skill visual_pick
+  # 多目标：逐个目标重建场景并各自执行，报告里每个目标一份执行证据
+  python3 scripts/verify_pick.py --baseline config/piper_multi_target.yaml --all-targets --skill visual_pick
 """
 
 import argparse
@@ -46,6 +49,115 @@ def _resolve(root, value):
     return path if path.is_absolute() else Path(root) / path
 
 
+def _rebuild_scene(root, baseline_arg, config, scene_path, target_id=None):
+    """按配置声明的构建器重建场景；多目标时按 target_id 重建。"""
+    module_name = _declared(config, "baseline_module", "构建器模块名")
+    from build_baseline import load_builder  # 同目录脚本
+
+    builder = load_builder(root, module_name)
+    builder.build(
+        root,
+        baseline_arg,
+        scene_path,
+        calibration_path=_declared(config, "pose_evidence", "姿态证据路径"),
+        target_id=target_id,
+    )
+
+
+def _load_scene(scene_path):
+    if not scene_path.is_file():
+        raise SystemExit(
+            "场景不存在: %s（加 --rebuild 或先跑 scripts/build_baseline.py）" % scene_path
+        )
+    report_path = scene_path.with_suffix(".json")
+    if not report_path.is_file():
+        raise SystemExit("场景旁挂报告不存在: " + str(report_path))
+    return json.loads(report_path.read_text(encoding="utf-8"))
+
+
+def _run_target(
+    root, skill, scene_path, scene, profile_path, safety_path, duration_ms, target_id
+):
+    """在给定场景上执行一次技能，返回 (execution_result, 报告片段)。"""
+    tolerance = float(scene.get("pose_tolerance_m", 0.005))
+    profile = load_robot_profile(profile_path)
+    safety = load_safety_policy(safety_path)
+    authority = ControlAuthorityManager()
+
+    # 后端经 factory.load_backend 装配：装配期即校验 profile 声明的能力与后端方法，
+    # 并消费场景报告声明的 vision 段（未声明则要求请求显式给出证据）。
+    backend = load_backend(
+        "iraf_adapters.mujoco.mujoco_backend:MujocoBackend",
+        {
+            "model_path": str(scene_path.resolve()),
+            "realtime": False,
+            "manipulation": {
+                "targets": {
+                    target_id: {"body": target_id, "pose_tolerance_m": tolerance}
+                },
+                "gripper": scene["gripper"],
+            },
+            "vision": scene.get("vision"),
+        },
+        profile,
+        authority,
+    )
+    runtime = SkillRuntime(
+        profile,
+        safety,
+        backend,
+        SkillRegistry().load_directory(root / "skills"),
+        authority,
+        SqliteExecutionStore(":memory:"),
+    )
+
+    now = int(time.time() * 1000)
+    correlation = skill.replace("_", "-") + "-acceptance"
+    parameters = {"target_id": target_id, "duration_ms": duration_ms}
+    if skill == "pick_object":
+        # 无视觉链路：位姿来自场景真值（仅用于仿真验收，不作为感知输入）。
+        parameters["grasp_pose"] = {
+            "frame_id": "world",
+            "position": scene["target_position"],
+            "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+        }
+    # visual_pick 不传位姿：位姿由配置声明的视觉证据提供（见 vision 段）。
+    request = {
+        "request_id": correlation,
+        "idempotency_key": correlation + "-" + str(now),
+        "correlation_id": correlation,
+        "skill": skill,
+        "skill_version_constraint": "1.0.0",
+        "parameters": parameters,
+        "deadline_unix_ms": now + 60000,
+        "profile_name": profile.name,
+        "profile_version": profile.version,
+        "profile_digest": profile.digest,
+        "safety_policy_name": safety.name,
+        "safety_policy_version": safety.version,
+        "safety_policy_digest": safety.digest,
+        "resource_id": profile.name + "-mujoco",
+        "controller": correlation,
+    }
+    result = runtime.execute(
+        request,
+        AuthenticatedContext(
+            correlation, frozenset({"task.submit", "task.read"}), "local"
+        ),
+    )
+    return result
+
+
+def _scene_target_ids(config, scene):
+    """多目标 id 列表：优先取基线声明的 targets，其次取场景报告。"""
+    for source in (config.get("targets"), scene.get("targets")):
+        if isinstance(source, list) and source:
+            ids = [str(item.get("id")) for item in source if item.get("id")]
+            if ids:
+                return ids
+    return []
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", type=Path, required=True)
@@ -62,7 +174,13 @@ def main(argv=None):
         help="pick_object：用场景真值位姿；visual_pick：用声明的视觉证据（同一套判据）",
     )
     parser.add_argument(
-        "--rebuild", action="store_true",
+        "--all-targets",
+        action="store_true",
+        help="多目标基线：逐个目标重建场景并执行（报告里每个目标一份执行证据）",
+    )
+    parser.add_argument(
+        "--rebuild",
+        action="store_true",
         help="先按配置声明的构建器重建参考姿态与场景（离线验收的常规做法）",
     )
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
@@ -96,98 +214,57 @@ def main(argv=None):
     if duration_ms < 1 or duration_ms > 30000:
         parser.error("duration-ms 必须在 1..30000 之间")
 
-    if args.rebuild:
-        module_name = _declared(config, "baseline_module", "构建器模块名")
-        from build_baseline import load_builder  # 同目录脚本
-
-        builder = load_builder(root, module_name)
-        builder.build(
-            root,
-            args.baseline,
-            scene_path,
-            calibration_path=_declared(config, "pose_evidence", "姿态证据路径"),
-        )
-
-    if not scene_path.is_file():
-        raise SystemExit(
-            "场景不存在: %s（加 --rebuild 或先跑 scripts/build_baseline.py）" % scene_path
-        )
-    report_path = scene_path.with_suffix(".json")
-    if not report_path.is_file():
-        raise SystemExit("场景旁挂报告不存在: " + str(report_path))
-    scene = json.loads(report_path.read_text(encoding="utf-8"))
-
-    target_id = args.target_id or scene["target_id"]
-    tolerance = float(scene.get("pose_tolerance_m", 0.005))
-    profile = load_robot_profile(profile_path)
-    safety = load_safety_policy(safety_path)
-    authority = ControlAuthorityManager()
-
-    # 后端经 factory.load_backend 装配：装配期即校验 profile 声明的能力与后端方法，
-    # 并消费场景报告声明的 vision 段（未声明则不刷新视觉）。
-    backend = load_backend(
-        "iraf_adapters.mujoco.mujoco_backend:MujocoBackend",
-        {
-            "model_path": str(scene_path.resolve()),
-            "realtime": False,
-            "manipulation": {
-                "targets": {
-                    target_id: {
-                        "body": target_id,
-                        "pose_tolerance_m": tolerance,
-                    }
-                },
-                "gripper": scene["gripper"],
-            },
-            "vision": scene.get("vision"),
-        },
-        profile,
-        authority,
-    )
-    runtime = SkillRuntime(
-        profile,
-        safety,
-        backend,
-        SkillRegistry().load_directory(root / "skills"),
-        authority,
-        SqliteExecutionStore(":memory:"),
-    )
-
-    now = int(time.time() * 1000)
-    correlation = args.skill.replace("_", "-") + "-acceptance"
-    parameters = {"target_id": target_id, "duration_ms": duration_ms}
-    if args.skill == "pick_object":
-        # 无视觉链路：位姿来自场景真值（仅用于仿真验收，不作为感知输入）。
-        parameters["grasp_pose"] = {
-            "frame_id": "world",
-            "position": scene["target_position"],
-            "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+    if args.all_targets:
+        # 多目标：先按任一目标取一次场景报告以获得目标列表（列表来自配置或场景）
+        if args.rebuild:
+            _rebuild_scene(root, args.baseline, config, scene_path)
+        scene = _load_scene(scene_path)
+        target_ids = _scene_target_ids(config, scene)
+        if not target_ids:
+            raise SystemExit("--all-targets 需要基线或场景声明 targets 列表")
+        entries = []
+        for target_id in target_ids:
+            # 每个目标单独重建场景：搬运约束/参考姿态是按目标生成的
+            _rebuild_scene(root, args.baseline, config, scene_path, target_id=target_id)
+            target_scene = _load_scene(scene_path)
+            result = _run_target(
+                root,
+                args.skill,
+                scene_path,
+                target_scene,
+                profile_path,
+                safety_path,
+                duration_ms,
+                target_id,
+            )
+            entries.append(
+                {"target_id": target_id, "scene": target_scene, "execution": result}
+            )
+        report = {
+            "schema_version": "iraf.pick-acceptance/v1",
+            "simulation_only": True,
+            "baseline": str(args.baseline),
+            "skill": args.skill,
+            "all_targets": True,
+            "targets": entries,
+            "passed": all(
+                entry["execution"].get("status") == "SUCCEEDED" for entry in entries
+            ),
         }
-    # visual_pick 不传位姿：位姿由配置声明的视觉证据提供（见 vision 段）。
-    request = {
-        "request_id": correlation,
-        "idempotency_key": correlation + "-" + str(now),
-        "correlation_id": correlation,
-        "skill": args.skill,
-        "skill_version_constraint": "1.0.0",
-        "parameters": parameters,
-        "deadline_unix_ms": now + 60000,
-        "profile_name": profile.name,
-        "profile_version": profile.version,
-        "profile_digest": profile.digest,
-        "safety_policy_name": safety.name,
-        "safety_policy_version": safety.version,
-        "safety_policy_digest": safety.digest,
-        "resource_id": profile.name + "-mujoco",
-        "controller": correlation,
-    }
-    result = runtime.execute(
-        request,
-        AuthenticatedContext(
-            correlation, frozenset({"task.submit", "task.read"}), "local"
-        ),
-    )
+        args.output.mkdir(parents=True, exist_ok=True)
+        (args.output / "report.json").write_text(
+            json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if report["passed"] else 1
 
+    if args.rebuild:
+        _rebuild_scene(root, args.baseline, config, scene_path, target_id=args.target_id)
+    scene = _load_scene(scene_path)
+    target_id = args.target_id or scene["target_id"]
+    result = _run_target(
+        root, args.skill, scene_path, scene, profile_path, safety_path, duration_ms, target_id
+    )
     report = {
         "schema_version": "iraf.pick-acceptance/v1",
         "simulation_only": True,
