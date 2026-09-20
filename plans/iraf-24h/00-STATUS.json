@@ -106,11 +106,11 @@
     {
       "id": "10",
       "title": "deploy.sh 双通道传输",
-      "status": "TODO",
-      "evidence": null,
-      "commit": null,
-      "updated_at": null,
-      "note": "media 通道完整验收；ssh 通道脚本与不可达负向验收完成，真机部署 DEFERRED。"
+      "status": "DONE",
+      "evidence": "build/iraf-24h/10/{acceptance.txt,acceptance-rerun.txt,acceptance-run1-fail.txt,deploy.txt,run_acceptance.sh,check_report.py,make_fake_bundles.py,cases/,tmp/,unittest-full.txt,commit-plan.txt,commit-msg.txt,tick-report.md,ssh-unreachable.json,ssh-unreachable.stdout.json,sha256sum.txt,README-安装.md,deploy-report.json,media-*.json}",
+      "commit": "eb24b67",
+      "updated_at": "2026-09-20T18:40:00+0800",
+      "note": "统一部署入口 deploy/sdk/deploy.sh（入口层）+ deploy/sdk/lib_deploy.py（实现层）+ docs/debug/2026-09-20-sdk-cross-arch.md（本战役跨架构调试记录首版，步骤「涉及文件」明文要求）。多出步骤声明的第 3 个路径 lib_deploy.py，理由见 build/iraf-24h/10/commit-plan.txt：① 与 08/09 的两层结构一致（sh 入口只做参数解析与退出码透传）；② 实现层**只用标准库**（tarfile/json/hashlib/socket/subprocess/shutil），因此部署入口不依赖 PyYAML/jsonschema——目标端缺依赖时仍能完成传输与安装触发；③ 步骤未声明 tests/ 路径，故未擅自新增入库单测，成功/拒绝路径覆盖落在证据区验收脚本（harness 44 项，含 11 条负向 + 2 条正例对照）；全量单测 Ran 528 与步骤 09 相同属预期。验收 harness：bash build/iraf-24h/10/run_acceptance.sh → EXIT=0，「通过 44 项，失败 0 项」（首跑 39/1 系**本人断言写错**非代码缺陷：artifacts.length 期望写成 4，实为 3——deploy-report.json 不登记自己以避免自指哈希；首跑原始输出另存 acceptance-run1-fail.txt 未被覆盖，修断言后重跑 44/0，并补 4 条「交接物文件真实存在」断言）。全量单测（/usr/bin/python3 3.10.12）：Ran 528 / failures=1 / errors=4 / skipped=4，失败集合（4 项 stub 导入 ERROR + test_vision_processing）与基线逐项一致，无回归。关键验收数字（原样引用）：media --output build/iraf-24h/10 → exit=0，交接物 4 件，sha256sum -c sha256sum.txt → 「iraf-board-e300-0.2.0-aarch64.tar.gz: 成功」exit=0；media --dry-run → exit=0 且输出目录未被创建；ssh 不可达（本机已关闭端口，确定性复现）→ exit=2 + 中文原因（含 DEFERRED 说明），同一命令在可达端口上 → exit=0（可达性门禁有正例对照，非恒失败）；ssh apply 到可达但非 ssh 端口 → exit=3；--transport ssh 缺 --target / --target 不含 user@host / --port 非整数（abc）/ --port 超范围（99999）→ exit=1；bundle 目录不存在/为空/多候选（2 个）/显式路径不存在/缺伴随 .sha256 → exit=2；伴随校验和被篡改 → exit=4；伴随文件登记别名 → exit=4；清单缺 platform_tag → exit=2 且中文原因含「bundle 清单缺少声明字段」；地址门禁 grep -cE \"[0-9]{1,3}\\.[0-9]{1,3}\\.\" deploy.sh=0 / lib_deploy.py=0；3 个提交路径内网 IP 0 命中。fail-closed：bundle 清单缺字段即退出 2（不猜默认值）；--allow-unverified 默认不转发远端 install.sh；ssh/scp 一律 BatchMode=yes（无人值守不做密码交互）。诚实边界（不伪造）：ssh apply 全链路在本机**未实测**（无板卡），只在 --dry-run 下验证命令构造与可达性门禁；除「目标不可达」外失败路径的半成品报告未落 json-out（已登记缺口）；media 报告 deployed=false / evidence_scope=media_handoff_artifact / board_evidence.available=false；目标端真实安装、/health、gRPC 与事件库检查一律 DEFERRED。未放宽任何门禁；未触碰另一窗口路径（examples/demo3_arm/、scripts/view_mujoco.py、viewer_runner.py、config/*_baseline.yaml）。"
     },
     {
       "id": "11",
