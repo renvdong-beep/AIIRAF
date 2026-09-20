@@ -1,0 +1,40 @@
+schema_version: iraf.scene-baseline/v1
+# 场景基线：复用 config/*_simulation_baseline.yaml 的模式（参考姿态 + 求解参数 + 验收阈值），
+# 但**不复制**机型数字：机型基线仍由各本体自己的 config 文件持有（单一事实来源，铁律 5.3）。
+scene: scene.yaml
+
+robots:
+  piper: config/piper_simulation_baseline.yaml
+  go2:
+    state: unverified
+    closed_by: "步骤 13"
+    reason: Go2 机型基线随场景构建器一并交付；在此之前不得引用不存在的基线文件。
+  humanoid_static:
+    state: unverified
+    closed_by: "步骤 12"
+    reason: 人形只作静态实体，不进入 Skill 闭环，因此不需要机型基线；资产登记在 vendor/ 与许可证 BOM。
+
+initial_state:
+  # 参考姿态来源写 profile 而不是复制关节角：profile 改了这里自动跟随，避免两份事实。
+  piper:
+    pose_source: profile
+    note: 参考姿态来自 profiles/piper_mujoco.yaml 的 home 段。
+  go2:
+    pose_source: unverified
+    closed_by: "步骤 15"
+    reason: 四足站立参考位形由 loopback 验收（步骤 15）确定后回填；在此之前执行器不得启动该本体。
+  humanoid_static:
+    pose_source: unverified
+    closed_by: "步骤 12"
+    reason: 静态实体位姿随 scene.yaml 的实体声明；资产登记后回填，本战役不进入 Skill 闭环。
+
+acceptance:
+  # 抓取判据（与 config/piper_simulation_baseline.yaml 的 acceptance 段同量级）
+  pose_tolerance_m: 0.005
+  min_lift_delta_m: 0.02
+  # 停靠与交接判据（设计 §4：平移 ≤30mm、偏航 ≤2deg、速度为零）
+  dock_translation_error_max_m: 0.03
+  dock_yaw_error_max_deg: 2.0
+  min_stable_hold_s: 3.0
+  max_speed_m_s: 0.0
+  timeout_s: 180.0

@@ -1,0 +1,92 @@
+schema_version: iraf.scenario-catalog/v1
+# S2 脚本化场景（决策 6.A：先 S2 再 S1，S3 遥操作本轮不做）。
+# 本文件只声明步骤、判据与故障注入项；**执行器尚未实现**（由步骤 18 的 scripts/scenario.py 交付），
+# 在它落地前不得在文档或命令里声称 `scenario.py run` 可用（AGENTS.md 6.4）。
+# 步骤状态机沿用 docs/iraf-piper-quadruped-simulation.md §5 的 delivery_handoff：
+# VERIFY_READY -> DOG_DOCKING -> ARM_PERCEIVE -> ARM_GRASP -> PLACE_IN_TRAY -> DOG_CONFIRM -> DOG_DELIVER，异常进 SAFE_HOLD。
+scene: scene.yaml
+simulation: true
+
+scenarios:
+  nominal:
+    description: delivery_handoff 标称序列：四足站立并停靠 -> 机械臂抓取 -> 放入托盘 -> 载荷确认。判据全部是"结果"判据，不是"命令已发出"。
+    steps:
+      - id: s01_verify_ready
+        action: stand
+        robot: go2
+        params: {}
+        criteria:
+          min_stable_hold_s: 3.0
+          max_speed_m_s: 0.0
+      - id: s02_dock
+        action: dock_for_handoff
+        robot: go2
+        params: {}
+        criteria:
+          translation_error_max_m: 0.03
+          yaw_error_max_deg: 2.0
+          max_speed_m_s: 0.0
+      - id: s03_pick
+        action: pick_object
+        robot: piper
+        params:
+          target: box_01
+        criteria:
+          pose_tolerance_m: 0.005
+          min_lift_delta_m: 0.02
+          require_bilateral_contact: true
+      - id: s04_place_in_tray
+        action: place_object
+        robot: piper
+        params:
+          target: box_01
+          destination: tray_01
+        # place_object 属 U6 交接集成，不在本战役实现范围内：显式登记待交付，
+        # 不得因为"piper 是既有本体"就默认该能力已具备（scene_check 会拒绝无登记的步骤）。
+        pending_closed_by: "步骤 18"
+        pending_reason: 交接集成的放置技能（PLACE_IN_TRAY）属 U6，本轮只声明目标序列，执行器未实现。
+        criteria:
+          pose_tolerance_m: 0.01
+      - id: s05_confirm_payload
+        action: accept_payload
+        robot: go2
+        params: {}
+        criteria:
+          require_payload_confirmation: true
+          max_speed_m_s: 0.0
+    faults: []
+
+  fault_sensor_loss:
+    description: 停靠阶段雷达不可用：不得继续自主停靠，必须进 SAFE_HOLD 且禁止伪造成功（AGENTS.md 1.5/1.6）。
+    steps:
+      - id: f01_stand
+        action: stand
+        robot: go2
+        params: {}
+        criteria:
+          min_stable_hold_s: 3.0
+          max_speed_m_s: 0.0
+      - id: f02_dock
+        action: dock_for_handoff
+        robot: go2
+        params: {}
+        criteria:
+          translation_error_max_m: 0.03
+          yaw_error_max_deg: 2.0
+          max_speed_m_s: 0.0
+      - id: f03_safe_hold
+        action: stop
+        robot: go2
+        params:
+          reason: sensor_unavailable
+        criteria:
+          min_stable_hold_s: 3.0
+          max_speed_m_s: 0.0
+    faults:
+      - id: lidar_loss
+        at_step: f02_dock
+        kind: sensor_unavailable
+        target: payload_lidar
+        expect:
+          terminal_state: SAFE_HOLD
+          fake_success_forbidden: true
