@@ -1,0 +1,24 @@
+apiVersion: iraf.intewell.io/v1
+kind: Skill
+metadata: {name: stand, version: 1.0.0}
+spec:
+  # 契约先于实现（AGENTS.md 铁律 1）：输入/输出 schema、能力依赖、前置/成功条件、
+  # 错误码（由 Runtime 与适配层给出并登记于 src/iraf_sdk/errors.py）、超时、取消、
+  # 恢复、安全等级与版本都在本文件声明，实现层不得再写一遍。
+  verification: development
+  inputSchema: stand.input.json
+  outputSchema: stand.output.json
+  # 能力依赖：Profile 必须声明 stand（未声明即由 PolicyGateway 拒绝 IRAF-SKILL-PROVIDER-UNAVAILABLE）。
+  requires: [stand]
+  # 前置条件表达式由 Policy 按 runtime_inventory 求值；本战役不声明运行期前置条件
+  # （四足后端未提供 runtime_inventory，凭空写表达式会恒失败——那是伪造门禁，不是门禁）。
+  preconditions: []
+  intentExamples: ["让机器狗站起来", "四足站立保持", "stand"]
+  # 站立在仿真里要推进 stand.duration_s 的仿真时长（声明在机型基线 config/go2_loopback.yaml）；
+  # 租约 TTL 取本值，必须覆盖一次完整站立执行。
+  timeoutSeconds: 30
+  cancellation: cooperative_stop
+  recovery: [stop, request_handover]
+  safetyClass: controlled_motion
+  providers:
+    - {name: quadruped_stand_sim, type: python_adapter, entrypoint: "iraf_skills.quadruped:StandProvider", selector: {mode: simulation}, priority: 100}

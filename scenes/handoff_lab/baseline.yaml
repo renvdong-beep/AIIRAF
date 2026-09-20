@@ -5,10 +5,10 @@ scene: scene.yaml
 
 robots:
   piper: config/piper_simulation_baseline.yaml
-  unitree_go2:
-    state: unverified
-    closed_by: "步骤 16"
-    reason: 四足不需要抓取/求解参数（那些属机型抓取基线）；Go2 的机型基线在 stand/stop/状态读取验收（步骤 16）时交付，在此之前不得引用不存在的基线文件。
+  # 步骤 17 闭合：Go2 的机型基线就是 loopback/技能层共用的声明文件
+  # （config/go2_loopback.yaml：模型、控制增益、站立位形来源、传感器、技能验收）。
+  # 两处（scene.robots[].profile 与 baseline.robots）必须同时是路径，不允许一处占位一处路径。
+  unitree_go2: config/go2_loopback.yaml
   humanoid_static:
     state: unverified
     closed_by: "步骤 12"

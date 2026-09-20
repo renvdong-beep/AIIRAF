@@ -22,6 +22,11 @@ scenarios:
         action: dock_for_handoff
         robot: unitree_go2
         params: {}
+        # 停靠（DOG_DOCKING）属 U5/U6 集成：需要 navigate/dock 能力，本战役不交付
+        # （四足首期只有 stand/stop，locomote 都只交付拒绝路径），必须显式登记待交付，
+        # 不得因为"本体 profile 已交付"就默认该能力已具备。
+        pending_closed_by: "步骤 18"
+        pending_reason: 停靠/导航能力未验收（决策 4.B 首期只交付 stand/stop）；本步骤只声明目标序列与判据。
         criteria:
           translation_error_max_m: 0.03
           yaw_error_max_deg: 2.0
@@ -51,6 +56,9 @@ scenarios:
         action: accept_payload
         robot: unitree_go2
         params: {}
+        # 载荷确认（DOG_CONFIRM）依赖托盘载荷传感与交接集成（U6），本战役未交付：显式登记。
+        pending_closed_by: "步骤 18"
+        pending_reason: 载荷确认能力未验收（需要载荷传感与 U6 交接集成），本轮只声明判据。
         criteria:
           require_payload_confirmation: true
           max_speed_m_s: 0.0
@@ -70,6 +78,9 @@ scenarios:
         action: dock_for_handoff
         robot: unitree_go2
         params: {}
+        # 与 nominal.s02_dock 同因：停靠能力未验收，显式登记待交付。
+        pending_closed_by: "步骤 18"
+        pending_reason: 停靠/导航能力未验收（决策 4.B 首期只交付 stand/stop）。
         criteria:
           translation_error_max_m: 0.03
           yaw_error_max_deg: 2.0

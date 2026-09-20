@@ -1,0 +1,20 @@
+apiVersion: iraf.intewell.io/v1
+kind: Skill
+metadata: {name: locomote, version: 1.0.0}
+spec:
+  # 首期（决策 4.B）Go2 没有步态控制器：本 Skill 是**契约与拒绝路径**的载体。
+  # `requires: [locomote]` 而 Profile 不声明该能力 ⇒ PolicyGateway 在调度前拒绝
+  # （IRAF-SKILL-PROVIDER-UNAVAILABLE）；即使被绕过，Provider 也会显式拒绝
+  # （IRAF-QUADRUPED-CAPABILITY-NOT-IMPLEMENTED）。两条路径都不返回伪造成功。
+  verification: development
+  inputSchema: locomote.input.json
+  outputSchema: locomote.output.json
+  requires: [locomote]
+  preconditions: []
+  intentExamples: ["向前走 0.2 米每秒", "四足按速度移动", "locomote"]
+  timeoutSeconds: 30
+  cancellation: cooperative_stop
+  recovery: [stop, request_handover]
+  safetyClass: controlled_motion
+  providers:
+    - {name: quadruped_locomote_sim, type: python_adapter, entrypoint: "iraf_skills.quadruped:LocomoteProvider", selector: {mode: simulation}, priority: 100}

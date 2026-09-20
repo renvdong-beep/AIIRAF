@@ -149,11 +149,12 @@ class PositiveControlTests(ScenePackageFixture):
         """未交付的引用必须出现在报告里：孔洞是显式登记的，不是被跳过。"""
         report, _ = self.run_check()
         refs = {item["ref"] for item in report["pending_refs"]}
-        self.assertIn("robots.unitree_go2.profile", refs)
         self.assertIn("robots.humanoid_static.profile", refs)
-        self.assertIn("baseline.robots.unitree_go2", refs)
-        # 步骤 15 已交付站立参考位形（Profile 的 spec.home + loopback 验收），
+        # 步骤 17 已交付 Go2 的 profile 与 stand/stop 能力（技能层全链路验收），
         # 该引用因此从待交付清单里消失 —— 方向仍是"收紧"：已交付的引用不得再出现在清单里。
+        self.assertNotIn("robots.unitree_go2.profile", refs)
+        self.assertNotIn("baseline.robots.unitree_go2", refs)
+        # 步骤 15 已交付站立参考位形（Profile 的 spec.home + loopback 验收），
         self.assertNotIn("baseline.initial_state.unitree_go2", refs)
         # 步骤 13 已交付场景构建器：它不得再出现在待交付清单里。
         self.assertNotIn("model.builder", refs)
@@ -161,8 +162,12 @@ class PositiveControlTests(ScenePackageFixture):
             self.assertTrue(item["closed_by"], msg=item)
             self.assertTrue(item["reason"], msg=item)
         steps = {(item["scenario"], item["step"]) for item in report["pending_steps"]}
-        self.assertIn(("nominal", "s01_verify_ready"), steps)
+        # 步骤 17 之后：stand/stop 是已声明能力，因此不再是待交付步骤；
+        # 停靠/载荷确认/放置仍未交付，必须继续显式登记（否则 scene_check 会当引用失败拦下）。
+        self.assertNotIn(("nominal", "s01_verify_ready"), steps)
+        self.assertIn(("nominal", "s02_dock"), steps)
         self.assertIn(("nominal", "s04_place_in_tray"), steps)
+        self.assertIn(("nominal", "s05_confirm_payload"), steps)
 
     def test_model_layer_is_pending_not_checked_when_model_absent(self):
         report, _ = self.run_check()
@@ -257,12 +262,22 @@ class NegativeReferenceTests(ScenePackageFixture):
         )
 
     def test_placeholder_state_must_agree_across_files(self):
-        """一处待交付、一处已交付：两处声明不一致，必须失败。"""
+        """一处待交付、一处已交付：两处声明不一致，必须失败。
+
+        步骤 17 已把 Go2 的两处引用闭合为路径，因此本用例改为把 **scene 侧**改回占位
+        （baseline 侧仍是已交付路径）——方向相反，守的是同一条规则。
+        """
 
         def mutate(doc):
-            doc["robots"]["unitree_go2"] = "config/piper_simulation_baseline.yaml"
+            doc["robots"][1]["profile"] = {
+                "state": "unverified",
+                # closed_by 必须匹配 ^步骤 [0-9]{2}$（schema 的占位契约）：写自由文本会被 schema 拦下，
+                # 那样测的就不是"两处不一致"这条规则了。步骤 99 = 永不存在的步骤，仅作夹具。
+                "closed_by": "步骤 99",
+                "reason": "制造 scene 侧占位 / baseline 侧路径 的不一致",
+            }
 
-        self.mutate(self.baseline_path, mutate)
+        self.mutate(self.scene_path, mutate)
         report, exit_code = self.run_check()
         self.assertEqual(exit_code, scene_check.EXIT_REFERENCE)
         self.assertTrue(any("两处声明不一致" in item for item in report["reference_failures"]))

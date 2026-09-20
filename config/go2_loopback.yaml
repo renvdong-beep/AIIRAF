@@ -92,5 +92,20 @@ state:
   gyro_max_abs_error_rad_s: 1.0e-9
   torque_max_abs_error_nm: 1.0e-9
 
+skills:
+  # 技能层验收（步骤 17）的声明：本段是"同一机型、第二条消费面"的**唯一**数字/路径来源，
+  # 入口 scripts/verify_quadruped_skills.py 里不得出现路径或阈值默认值（铁律 5.3）。
+  # 安全策略（放行清单 + 四足速度/工作空间上限）：由 iraf_skills.quadruped 的门禁消费。
+  safety_policy: profiles/safety/quadruped_lab.yaml
+  report: build/acceptance/go2-skills/report.json
+  # 拒绝用例数下限：成功路径与拒绝路径都要有证据（AGENTS.md 2.8）。
+  minimum_rejection_cases: 5
+  # 标称序列（S2 场景步骤 s01/f01/f03 的子集）：站立 → 停止。
+  # **行走不在序列内**：决策 4.B 首期无步态控制器，locomote 必须被显式拒绝，
+  # 绝不允许用 mock 步态把"行走"补进成功路径（铁律 1.5）。
+  nominal_sequence: [stand, stop]
+  # 期望被拒绝的能力（能力未声明 → Policy 拒绝；Provider 层再兜一层显式拒绝）。
+  refused_capability: locomote
+
 report:
   path: build/acceptance/go2-loopback/report.json

@@ -1,0 +1,31 @@
+apiVersion: iraf.intewell.io/v1
+kind: SafetyPolicy
+metadata:
+  name: quadruped_lab
+  version: 1.0.0
+spec:
+  verification: development
+  # 仿真专用：本策略不得用于真机（铁律 1.3 / AGENTS.md 1.7）。
+  simulation_only: true
+  default: deny
+  # 四足技能放行清单。locomote 在清单里但 Profile 不声明该能力：
+  # 请求会在**能力门禁**处被拒绝（IRAF-SKILL-PROVIDER-UNAVAILABLE），
+  # 这不是"漏写"——放行清单管"允不允许用"，能力声明管"能不能做"，两者语义不同。
+  allowed_skills: [stand, stop, locomote]
+  max_duration_ms: 30000
+  # 四足边界上限（本文件的**唯一**速度/工作空间事实来源）：
+  # 消费点在 src/iraf_skills/quadruped.py 的 enforce_velocity_limits（调度前拒绝）
+  # 与 check_workspace（按实测状态比对），缺段或缺键即显式失败；
+  # 禁止在脚本、Skill JSON Schema 或适配器里再写一份边界。
+  quadruped_limits:
+    # 线速度上限（vx/vy 的合成速度）：0.5 m/s，与宇树官方 SDK 示例的"慢速"档同量级；
+    # 首期 Go2 没有步态控制器，任何非零速度指令都会被显式拒绝，
+    # 本值是为"步态 Provider 落地后"预先声明的边界，当前只被拒绝路径消费。
+    max_speed_mps: 0.5
+    # 偏航角速度上限：1.0 rad/s（≈57°/s）。
+    max_yaw_rate_rad_s: 1.0
+    # 工作空间限制：站立执行期间躯干水平位移上限 50 mm、倾斜角上限 10°。
+    # 依据：四足站立属"保持"动作，位移与倾角只应来自 PD 收敛的瞬态；
+    # 实测（步骤 17 验收报告）用于比对，不是拍出来的阈值——超限即判据失败。
+    max_base_translation_m: 0.05
+    max_tilt_deg: 10.0

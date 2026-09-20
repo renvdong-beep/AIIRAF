@@ -171,8 +171,13 @@ class InjectionTests(SceneBuilderFixture):
         identity = report["profile_identity"]
         self.assertEqual(identity["name"], "unitree_go2")
         self.assertEqual(len(identity["joints"]), 12)
-        self.assertEqual(identity["capabilities"], [])  # 能力未验收：空是事实
-        self.assertEqual(report["robot"]["profile_source"], "declared_identity_lookup")
+        # 步骤 17 后：stand/stop 已经过技能层全链路验收并回填进 Profile
+        # （证据 build/acceptance/go2-skills/report.json）；locomote 仍未声明
+        # （首期无步态控制器）。这里的断言跟着**事实**走，不是放宽门禁。
+        self.assertEqual(identity["capabilities"], ["stand", "stop"])
+        # 步骤 17 后 scene.robots[].profile 已闭合为路径 ⇒ 构建器走"声明路径"这条来源，
+        # 而不是按声明身份回退查找（两条都合法，报告必须写明走了哪条，绝不静默）。
+        self.assertEqual(report["robot"]["profile_source"], "scene.robots[].profile")
         self.assertTrue(report["simulation"])
 
     def test_vendor_model_is_read_only(self):

@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"stand 输入","type":"object","additionalProperties":false,"properties":{"duration_ms":{"type":"integer","minimum":1,"description":"可选：覆盖机型声明的站立时长（只能由声明派生，不得在实现里写默认值）"},"joint_targets":{"type":"object","additionalProperties":{"type":"number"},"description":"可选：显式关节目标位形。未给出的关节回落到 Profile 的 spec.home（声明来源），不得回落到当前位置"}}}
