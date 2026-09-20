@@ -160,11 +160,11 @@
     {
       "id": "16",
       "title": "QuadrupedAdapter 与 UnitreeGo2Adapter",
-      "status": "TODO",
-      "evidence": null,
-      "commit": null,
-      "updated_at": null,
-      "note": null
+      "status": "DONE",
+      "evidence": "build/iraf-24h/16/{acceptance.txt,adapter.txt,adapter.stderr.txt,unittest-step16.run1.txt,unittest-step16.run2.txt,unittest-step16.run3.txt,unittest-full.txt,unittest-sdk-errors.txt,quadruped-check.run1.json,quadruped-check.run1.stderr.txt,profile-check-ur5.json,profile-check-piper.json,profile-check-noargs.err,error-code-scan.txt,cases/,run_acceptance.sh,probe_adapter_real.py,scan_error_codes.py,patch_factory.py,commit-plan.txt,commit-msg.txt,tick-report.md,commands.log}",
+      "commit": "b28fde9",
+      "updated_at": "2026-09-20T20:58:00+0800",
+      "note": "新增 src/iraf_adapters/unitree/quadruped.py（通用契约：能力词表/标准反馈键/执行台账+安全闭锁/租约与 fencing token 守卫/可移植性门禁）与 unitree_go2.py（机型实现：关节↔执行器映射一处解析、力矩上限只从模型 ctrlrange 读、stand/stop/read_state/emergency_stop；locomote 首期无步态控制器，显式拒绝），并新增 tests/unit/test_quadruped_adapter.py（50 例）、factory 登记四足能力与 KNOWN_BACKENDS、profile_check 新增 --quadruped 模式（声明↔Profile↔模型↔适配器能力契约四向一致）。验收（/usr/bin/python3 3.10.12 + mujoco 3.3.3，bash build/iraf-24h/16/run_acceptance.sh）：通过 12 项、失败 0 项。关键实测数字（原样引用）：stand 1.000 s → 100 控制周期 × 5 子步、ctrl_saturated_samples=0、target_source=profile_home、基座高度 +0.010216000 m（与步骤 15 的 0.280101−0.27≈0.0101 同一现象）；stop 3 s → base_height_drop_m=0.192798228（力矩型电机松力躺倒，预期）；急停无需租约（torque_released=true、stepped=false、evidence_scope=adapter_state_only）→ 闭锁期间 stand 被拒（IRAF-QUADRUPED-SAFETY-LATCHED）→ 授权复位后 stand 通过；终态执行续跑被拒（IRAF-QUADRUPED-TERMINAL-EXECUTION）；力矩上限独立复算 = 模型 ctrlrange（hip/thigh ±23.7、calf ±45.43 N·m）；profile_check --quadruped → exit=0 且 stdout 纯 JSON（nq 26/nv 24/nu 12/timestep 0.002/keyframe home）；步骤单测 Ran 50 / OK；全量单测 Ran 740 / failures=1 / errors=4 / skipped=4（基线 690/1/4/4，失败集合 4 项导入 ERROR + test_vision_processing 逐项一致，+50 为本步新增，无回归）。首跑暴露并修复自身缺陷 4 处（未放宽任何门禁）：夹具关节 range 默认单位是度导致 26 例假失败（加 compiler angle=radian）；stand 部分目标在 _run_control 里 KeyError（改为未指定关节回落 Profile spec.home 并回报 explicit_partial，禁止用当前位置兜底）；require_active_execution 判定顺序使报错不够精确（能力匹配提前到终态检查之前，三条检查仍都在下发控制量之前）；vendor 正则 \bdds\b 匹配不到 dds_domain（恒通过假门禁，改为 dds 并由正向对照用例钉住）。多出步骤「涉及文件」2 条路径与逐条理由见 build/iraf-24h/16/commit-plan.txt：src/iraf_sdk/errors.py（9 个 IRAF-QUADRUPED-* 码必须登记，否则既有 src 扫描门禁失败——不得放宽门禁，登记为 provenance=code-only 并写明关闭条件；登记后源码出现码 28 == 已登记 28，test_sdk_errors Ran 55 / OK）与 docs/debug/2026-09-20-quadruped-adapter-contract.md（AGENTS.md 5.4 留档 6 个实测坑）。诚实边界（不伪造）：全部结论 simulation=true；只证明声明位形下站得住/能进入静止/状态可读/控制权与闭锁生效，不代表步态/导航/停靠能力；停机与站立数字均为实测差值，不写需要额外阈值的布尔结论；目标端/真机验收 DEFERRED（板卡不在场），未用 dry-run/mock 冒充。本轮额度未触发紧张；无未提交残留（提交后 git status 仅台账三件套）。**未闭合项**：scene.robots[unitree_go2].profile 与 baseline.robots[unitree_go2].baseline 两处 closed_by=步骤 16 的占位本轮未闭合——其闭合条件文本要求 stand/stop 先经技能层验收（步骤 17），适配器层验收不足以声明框架能力；已在 docs/debug 与本行显式登记，交步骤 17 一并闭合。未触碰另一窗口路径；提交前 git status 仅本步 8 个路径。"
     },
     {
       "id": "17",
