@@ -242,3 +242,12 @@ vision:
     # 与 Piper 完全不同；复用 Piper 的标定不会报错，只会让坐标悄悄偏掉。
     # 生成方式：scripts/verify_camera_calibration.py --scene ... --baseline 本文件
     calibration_file: build/calibration/ur5-camera-to-base.json
+
+# --- 显示链路声明（scripts/view_mujoco.py --live 使用）---
+# 只影响"看得见"的演示路径：skill / 安全策略 / 时序全部来自这里的声明，
+# 代码里不写死任何机型或路径（AGENTS.md 5.3）。验收口径不受影响，
+# 仍走 build.safety_policy（simulation_lab，max_duration_ms=30000）。
+viewer:
+  live_skill: display_pick
+  live_safety_policy: profiles/safety/display_showcase.yaml
+  live_realtime: true

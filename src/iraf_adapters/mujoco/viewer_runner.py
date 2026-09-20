@@ -596,6 +596,7 @@ def run_interactive_live(
 
     frame_period = 1.0 / max(1.0, float(render_hz))
     viewer_seconds = float(seconds) if seconds else 0.0
+    held = False
 
     with mujoco.viewer.launch_passive(
         session.backend.model, snapshot.refresh(session.backend)
@@ -622,14 +623,26 @@ def run_interactive_live(
             if thread.is_alive():
                 time.sleep(frame_period)
                 continue
+            if not held:
+                # 抓取线程结束后立刻保持末态。
+                # 否则执行器控制量停在最后一条指令上，机械臂会在持续步进中
+                # 塌回零位（静态路径同样是先 hold 再开窗）。
+                session.hold()
+                held = True
+                started = time.monotonic()
+                continue
             if viewer_seconds and time.monotonic() - started >= viewer_seconds:
                 break
-            if not viewer_seconds:
-                break
+            # seconds=0 的语义与静态路径一致：保持窗口与末态，直到用户关闭窗口。
+            # 原先此处直接 break，实测后果是"抓取一结束窗口就消失"，
+            # 用户来不及看清末态与夹持结果。
+            with session.backend.display_lock():
+                session.backend.step()
             time.sleep(frame_period)
 
     thread.join(timeout=max(180.0, duration_ms / 1000.0 * 14))
     if thread.is_alive():
         raise ViewerError("抓取线程未在预期时间内结束")
-    session.hold()
+    if not held:
+        session.hold()
     return holder, True

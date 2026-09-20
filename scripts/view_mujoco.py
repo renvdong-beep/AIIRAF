@@ -99,6 +99,14 @@ def main(argv=None):
     )
     parser.add_argument("--target-id", default=None, help="抓取目标 ID")
     parser.add_argument("--correlation-id", default="viewer-pick")
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help=(
+            "实时播放完整抓取过程（窗口先开、抓取后启）。"
+            "skill/安全策略/时序取自基线 viewer 段声明，缺声明即显式失败"
+        ),
+    )
     args = parser.parse_args(argv)
 
     root = Path(__file__).resolve().parents[1]
@@ -106,6 +114,21 @@ def main(argv=None):
     if not baseline_path.is_file():
         parser.error("基线配置不存在: " + str(baseline_path))
     baseline = yaml.safe_load(baseline_path.read_text(encoding="utf-8")) or {}
+
+    # --live：窗口先开、抓取后启，HOME->APPROACH->DESCEND->GRIP->LIFT 全程可见。
+    # 与默认静态路径的区别只在本函数：默认路径受并发约束限制为"先抓完再开窗"，
+    # 结果是一帧末态（实测用户只能看到抓取完成后的画面）。
+    viewer_cfg = baseline.get("viewer") or {}
+    live_skill = ""
+    live_policy = ""
+    if args.live:
+        live_skill = str(viewer_cfg.get("live_skill") or "")
+        live_policy = str(viewer_cfg.get("live_safety_policy") or "")
+        if not live_skill or not live_policy:
+            parser.error(
+                "--live 需要基线声明 viewer.live_skill 与 viewer.live_safety_policy: "
+                + str(baseline_path)
+            )
     model = (args.model or (root / _declared(baseline, "scene", "场景 MJCF"))).resolve()
     if not model.is_file():
         parser.error("模型文件不存在: " + str(model))
@@ -124,6 +147,7 @@ def main(argv=None):
     # 显示通道先探测后使用：不可用即显式失败，不静默假装成功。
     display_mode, detail, fallback_reason = viewer_runner.resolve_display_mode()
     print("DISPLAY_MODE", display_mode, flush=True)
+    print("VIEWER_MODE", "live" if args.live else "static", flush=True)
     print("DISPLAY_DETAIL", detail, flush=True)
     if fallback_reason:
         print("FALLBACK_REASON", fallback_reason, flush=True)
@@ -144,13 +168,20 @@ def main(argv=None):
             # 视觉 Provider 声明随场景报告下传：后端已无任何机型默认路径，
             # 未声明时 visual_pick 会要求请求显式给出 vision_file。
             "vision": scene_report.get("vision"),
-            "realtime": False,
+            # realtime 由基线 viewer 段声明决定：静态路径必须 False
+            # （pick_object 在 realtime 下约 92 秒，会超出 30s 租约）；
+            # live 路径需要 True，物理时间与真实时间对齐才能看见运动。
+            "realtime": bool(args.live and viewer_cfg.get("live_realtime", True)),
         }
     )
     os.environ.setdefault(
         "IRAF_PROFILE",
         str(root / _declared(baseline, "profile", "RobotProfile 路径")),
     )
+    if args.live:
+        # 显示策略由基线声明（时长上限放宽），验收口径不受影响：
+        # 验收链仍使用 build.safety_policy（simulation_lab，30000ms）。
+        os.environ["IRAF_SAFETY_POLICY"] = str(root / live_policy)
     os.environ.setdefault(
         "IRAF_SAFETY_POLICY", str(root / "profiles/safety/simulation_lab.yaml")
     )
@@ -213,15 +244,30 @@ def main(argv=None):
     camera = viewer_runner.camera_settings(profile)
 
     if display_mode == viewer_runner.DISPLAY_INTERACTIVE:
-        holder, held = viewer_runner.run_interactive(
-            session,
-            target_id,
-            position,
-            args.pick_duration_ms,
-            args.correlation_id,
-            camera,
-            seconds=args.seconds,
-        )
+        if args.live:
+            # 全程可见路径：渲染基于 SnapshotMirror 副本，抓取线程并发执行。
+            print("VIEWER_LIVE_SKILL", live_skill, flush=True)
+            print("VIEWER_LIVE_POLICY", live_policy, flush=True)
+            holder, held = viewer_runner.run_interactive_live(
+                session,
+                target_id,
+                position,
+                args.pick_duration_ms,
+                args.correlation_id,
+                camera,
+                seconds=args.seconds,
+                skill=live_skill,
+            )
+        else:
+            holder, held = viewer_runner.run_interactive(
+                session,
+                target_id,
+                position,
+                args.pick_duration_ms,
+                args.correlation_id,
+                camera,
+                seconds=args.seconds,
+            )
     else:
         holder, held, _ = viewer_runner.run_offscreen(
             session,
@@ -246,7 +292,13 @@ def main(argv=None):
         "pick_result": holder["result"],
         "pick_error": holder["error"],
     }
-    report_path = root / "build/acceptance/mujoco-view/viewer-report.json"
+    # 报告按基线命名：两台机型同时在窗口里跑时共用一个文件名会互相覆盖
+    # （实测后完成的那个把先完成的证据冲掉）。
+    report_path = (
+        root
+        / "build/acceptance/mujoco-view"
+        / (baseline_path.stem + "-viewer-report.json")
+    )
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(
         json.dumps(report, ensure_ascii=False, indent=2, default=str) + "\n",
