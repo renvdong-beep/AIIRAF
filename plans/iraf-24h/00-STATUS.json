@@ -43,11 +43,11 @@
     {
       "id": "03",
       "title": "profile_check 校验 BoardProfile",
-      "status": "TODO",
-      "evidence": null,
-      "commit": null,
-      "updated_at": null,
-      "note": null
+      "status": "DONE",
+      "evidence": "build/iraf-24h/03/{acceptance.txt,commands.log,commit-plan.txt,commit-msg.txt,unittest-full.txt,line-width.txt,env_probe.txt,check_stdout_json.py,run_acceptance.sh}",
+      "commit": "1922fb9",
+      "updated_at": "2026-09-20T15:53:37+0800",
+      "note": "scripts/profile_check.py 新增 --board/--allow-unverified（退出码 0/1/2：2=声明仍含 unverified/pending），新增 tests/unit/test_profile_check_board.py。验收（/usr/bin/python3）：--board e300 -> exit=2，19 条中文原因（17 unverified + 2 pending：status/target.os,kernel,python_tag,platform_tag,glibc_min/runtime.*3/adapters.*3/limits.*2/image.*2/capabilities 空 + evidence.*2 pending）；--allow-unverified -> exit=0 且 verified=false；firefly -> exit=2；板卡文件不存在 -> exit=1；--allow-unverified 未配合 --board -> exit=1；单测 Ran 22 / OK；--baseline 回归 piper(1114B)/ur5(1155B) 的 stdout 与 stderr 逐字节 IDENTICAL；stdout 纯 JSON 契约 FAILED_CASES=0；行宽>100 列=0；全量单测 Ran 305 / failures=1 / errors=4（基线 283/1/4，失败集合逐项一致，+22 为本步新增）。唯一行为变化在用法错误路径：--baseline 由 required=True 改为可选，未给 --baseline/--board 时显式报错退出 1（原 argparse 退出 2），合法调用输出不变（已逐字节比对）；import mujoco 改为惰性导入使 --board 不依赖仿真器。未放宽任何门禁：--allow-unverified 不能放行契约层失败（有专门用例钉住）。板卡不在场，未做目标端验收，无 mock/dry-run 冒充。"
     },
     {
       "id": "04",
