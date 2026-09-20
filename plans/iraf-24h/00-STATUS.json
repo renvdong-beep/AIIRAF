@@ -52,11 +52,11 @@
     {
       "id": "04",
       "title": "ADR-0006 / ADR-0007 落地",
-      "status": "TODO",
-      "evidence": null,
-      "commit": null,
-      "updated_at": null,
-      "note": null
+      "status": "DONE",
+      "evidence": "build/iraf-24h/04/{adr-check.txt,run_acceptance.sh,commit-plan.txt,commit-msg.txt,commands.log,tick-report.md}",
+      "commit": "661a003",
+      "updated_at": "2026-09-20T15:58:00+0800",
+      "note": "新增 docs/adr/0006-sdk-cross-arch-delivery.md（L1 纯 Python + 离线 wheelhouse + shell 脚本交付；备选 OCI 多架构/板级原生包；理由=实测无 buildx、docker hub 与 pypi.org 不可达、无 aarch64 交叉编译器、板卡 22/9119 不通、aliyun 镜像 aarch64 wheel 齐备；后果=L2/L3 后续 + 签名 pending 占位 + 目标端验收 DEFERRED）与 docs/adr/0007-unitree-scenario-interaction.md（首期只 Go2 EDU 声明运动能力、人形仅 static_model_only + evidence_level「仅模型」；scenes/<id>/ 场景载体；先 S2 后 S1、S3 不做；演示与验收同链路禁旁路；U1~U6 分级门禁）。验收：ls 两份 ADR EXIT=0；8 段结构与 ADR-0004 一致（验证门禁 count=1/份，满足 >=1）；内网 IP grep=0（AGENTS.md 2.7）；关键决策点抽查 ADR-0006 L1=4/wheelhouse=5/buildx=2/unverified=3/DEFERRED=2；ADR-0007 Go2 EDU=5/static_model_only=2/仅模型=5/simulation: true=3；行宽与既有 ADR 同量级（表格行，非门禁）。未放宽任何门禁；未改代码与 IDL；未触碰另一窗口路径。"
     },
     {
       "id": "05",
