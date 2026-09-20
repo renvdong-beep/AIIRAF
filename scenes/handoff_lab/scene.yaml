@@ -27,15 +27,15 @@ robots:
     profile: profiles/piper_mujoco.yaml
     capabilities: [move_joint, pick_object, visual_pick, stop]
     note: 既有能力（MuJoCo 仿真已验收）；本场景复用配置 config/piper_simulation_baseline.yaml，不改其语义。
-  - id: go2
+  - id: unitree_go2
     kind: quadruped
     role: carrier
     profile:
       state: unverified
-      closed_by: "步骤 13"
-      reason: Go2 MuJoCo profile 与场景资产尚未交付；stand/stop/locomote 等能力必须逐项验收后才可写入 capabilities。
+      closed_by: "步骤 16"
+      reason: Go2 的模型/几何声明（profiles/unitree_go2_mujoco.yaml）已由步骤 13 交付并用于场景构建；但本场景的能力声明必须等 QuadrupedAdapter 与 stand/stop 逐项验收（步骤 16/17），在此之前 capabilities 必须为空 —— 写任何运动能力都是未验收能力。
     capabilities: []
-    note: 厂家 MJCF 已探测（12 个力矩型 motor、imu site、无相机/无雷达），仅证明低层模型存在，不代表导航/停靠能力（AGENTS.md 6.8）。
+    note: 厂家 MJCF 已探测（12 个力矩型 motor、imu site、无相机/无雷达），仅证明低层模型存在，不代表导航/停靠能力（AGENTS.md 6.8）；场景构建器按本场景声明注入相机/雷达/托盘/道具/光照，厂商文件只读。
   - id: humanoid_static
     kind: humanoid
     role: scene_entity
@@ -74,7 +74,7 @@ props:
     pose:
       # 托盘固定在四足背上：位置由被挂载实体与参考系决定，不在这里重复写绝对坐标。
       mount:
-        entity: go2
+        entity: unitree_go2
         frame: tray_frame
     note: 停靠判据（平移 ≤30mm、偏航 ≤2deg）针对 tray_frame，见 baseline.yaml 的 acceptance 段。
 
@@ -98,7 +98,7 @@ sensors:
     anchor:
       object_kind: site
       name: payload_lidar_site
-      entity: go2
+      entity: unitree_go2
     num_rays: 360
     range_m: 8.0
     mount_height_m: 0.12
@@ -109,7 +109,7 @@ sensors:
     anchor:
       object_kind: site
       name: imu
-      entity: go2
+      entity: unitree_go2
     rate_hz: 100
     note: 厂商 go2.xml 自带 <site name="imu">；场景构建器只读该 site，不修改厂商文件。
 
@@ -137,7 +137,4 @@ lights:
 model:
   # 生成产物写入 build/（AGENTS.md 5.5）；生成器由步骤 13 交付。
   output: build/scenes/handoff_lab/handoff_lab.xml
-  builder:
-    state: unverified
-    closed_by: "步骤 13"
-    reason: 场景构建器（注入相机/雷达/托盘/地形道具）尚未实现；本步骤只交付声明与校验。
+  builder: scripts/build_scene.py

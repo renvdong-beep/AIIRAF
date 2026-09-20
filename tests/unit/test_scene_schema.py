@@ -116,6 +116,17 @@ class ScenePackageFixture(unittest.TestCase):
         self.scene_path = self.package / "scene.yaml"
         self.baseline_path = self.package / "baseline.yaml"
         self.scenario_path = self.package / "scenario.yaml"
+        # 把副本的 model.output 指到一个**必然不存在**的 build/ 相对路径：
+        # scene_check 的默认模型路径按仓库根解析，若沿用真实声明，
+        # "模型尚未生成"类断言会随"本机是否跑过构建"而翻转（build/ 是 gitignore 的证据区）。
+        # 步骤 13 实测到该翻转（生成产物落盘后 status 由 pending_generation 变 checked）。
+        suffix = Path(self._tmp.name).name
+        self.mutate(
+            self.scene_path,
+            lambda doc: doc["model"].__setitem__(
+                "output", "build/scenes/handoff_lab/absent-%s/model.xml" % suffix
+            ),
+        )
 
     def run_check(self, **kwargs):
         return scene_check.check(self.package, **kwargs)
@@ -138,10 +149,12 @@ class PositiveControlTests(ScenePackageFixture):
         """未交付的引用必须出现在报告里：孔洞是显式登记的，不是被跳过。"""
         report, _ = self.run_check()
         refs = {item["ref"] for item in report["pending_refs"]}
-        self.assertIn("robots.go2.profile", refs)
+        self.assertIn("robots.unitree_go2.profile", refs)
         self.assertIn("robots.humanoid_static.profile", refs)
-        self.assertIn("baseline.robots.go2", refs)
-        self.assertIn("baseline.initial_state.go2", refs)
+        self.assertIn("baseline.robots.unitree_go2", refs)
+        self.assertIn("baseline.initial_state.unitree_go2", refs)
+        # 步骤 13 已交付场景构建器：它不得再出现在待交付清单里。
+        self.assertNotIn("model.builder", refs)
         for item in report["pending_refs"]:
             self.assertTrue(item["closed_by"], msg=item)
             self.assertTrue(item["reason"], msg=item)
@@ -245,7 +258,7 @@ class NegativeReferenceTests(ScenePackageFixture):
         """一处待交付、一处已交付：两处声明不一致，必须失败。"""
 
         def mutate(doc):
-            doc["robots"]["go2"] = "config/piper_simulation_baseline.yaml"
+            doc["robots"]["unitree_go2"] = "config/piper_simulation_baseline.yaml"
 
         self.mutate(self.baseline_path, mutate)
         report, exit_code = self.run_check()
@@ -441,7 +454,21 @@ class ModelLayerTests(ScenePackageFixture):
         self.assertTrue(any("model.builder" in item for item in report["reference_failures"]))
 
     def test_builder_placeholder_is_reported(self):
-        """占位必须出现在 pending_refs 里，不能只在 YAML 里躺着。"""
+        """占位必须出现在 pending_refs 里，不能只在 YAML 里躺着。
+
+        真实场景包自步骤 13 起已指向 `scripts/build_scene.py`（不再是占位），
+        因此这里在**副本**上把它改回占位来验证门禁本身仍有效
+        （只保留"已交付路径"这一种状态会让该门禁失去触发路径）。
+        """
+
+        def mutate(doc):
+            doc["model"]["builder"] = {
+                "state": "unverified",
+                "closed_by": "步骤 99",
+                "reason": "负向用例：验证占位仍会被上报。",
+            }
+
+        self.mutate(self.scene_path, mutate)
         report, _ = self.run_check()
         self.assertIn("model.builder", {item["ref"] for item in report["pending_refs"]})
 

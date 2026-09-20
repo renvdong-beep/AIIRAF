@@ -5,10 +5,10 @@ scene: scene.yaml
 
 robots:
   piper: config/piper_simulation_baseline.yaml
-  go2:
+  unitree_go2:
     state: unverified
-    closed_by: "步骤 13"
-    reason: Go2 机型基线随场景构建器一并交付；在此之前不得引用不存在的基线文件。
+    closed_by: "步骤 16"
+    reason: 四足不需要抓取/求解参数（那些属机型抓取基线）；Go2 的机型基线在 stand/stop/状态读取验收（步骤 16）时交付，在此之前不得引用不存在的基线文件。
   humanoid_static:
     state: unverified
     closed_by: "步骤 12"
@@ -19,7 +19,7 @@ initial_state:
   piper:
     pose_source: profile
     note: 参考姿态来自 profiles/piper_mujoco.yaml 的 home 段。
-  go2:
+  unitree_go2:
     pose_source: unverified
     closed_by: "步骤 15"
     reason: 四足站立参考位形由 loopback 验收（步骤 15）确定后回填；在此之前执行器不得启动该本体。

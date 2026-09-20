@@ -161,10 +161,17 @@ def _resolve_inside(root, value, label, failures):
 
 
 def _expand_mjcf(path, seen=None):
-    """展开 MJCF 的 `<include file="...">`，返回按文档顺序平铺的元素列表。
+    """展开 MJCF 的 `<include file="...">`，返回按文档顺序平铺的**全部**元素。
 
     只用标准库：这是"名字是否存在"的检查，不是物理校验（物理证据来自构建/验收步骤）。
     `--model` 指向生成后的场景时，场景会 include 厂商模型，因此必须展开。
+
+    实测缺陷（步骤 13 发现并修复）：原实现只平铺**根的直接子元素**，
+    而合法 MJCF 的 body/geom/site/camera 全都嵌在 `<worldbody>` 里（camera/site
+    只能作为 body/worldbody 的子元素），因此名字表对任何真实生成模型恒为
+    `{body: 0, camera: 0, geom: 0, site: 0}`，锚点一律被判"不存在"
+    （证据 build/iraf-24h/13/scene-check-after.json）。修复后递归整棵树，
+    门禁更严：原来恒失败的检查现在能真正区分"注入了"与"没注入"。
     """
     seen = seen or set()
     resolved = path.resolve()
@@ -180,7 +187,7 @@ def _expand_mjcf(path, seen=None):
                 raise SceneCheckError("MJCF include 缺少 file 属性: %s" % _rel(resolved))
             elements.extend(_expand_mjcf(resolved.parent / include_file, seen))
         else:
-            elements.append(element)
+            elements.extend(list(element.iter()))
     return elements
 
 

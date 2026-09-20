@@ -1,0 +1,58 @@
+apiVersion: iraf.intewell.io/v1
+kind: RobotProfile
+metadata:
+  name: unitree_go2
+  version: 0.1.0
+spec:
+  # 场景/模型层 Profile（步骤 13 交付）：只声明"这台本体是什么"，
+  # 不声明任何运动能力 —— capabilities 为空是**事实**（stand/stop/locomote 属 U4，
+  # 由步骤 16/17 逐项验收后回填），不是漏写。
+  simulation: true
+  verification: unverified
+  control_frequency_hz: 100
+
+  # 关节与限位来自厂商 MJCF 的编译结果（实测，不是抄文档）：
+  # `mujoco.MjModel.from_xml_path(vendor/unitree_go2/unitree_robots/go2/go2.xml)` 的
+  # `jnt_range`，证据 build/iraf-24h/13/trunk-geom.txt 与 go2-model-facts.json。
+  # hip=±1.0472；thigh 前腿 [-1.5708, 3.4907] / 后腿 [-0.5236, 4.5379]；calf [-2.7227, -0.83776]。
+  joints:
+    [FL_hip_joint, FL_thigh_joint, FL_calf_joint,
+     FR_hip_joint, FR_thigh_joint, FR_calf_joint,
+     RL_hip_joint, RL_thigh_joint, RL_calf_joint,
+     RR_hip_joint, RR_thigh_joint, RR_calf_joint]
+  joint_limits:
+    FL_hip_joint: [-1.0472, 1.0472]
+    FL_thigh_joint: [-1.5708, 3.4907]
+    FL_calf_joint: [-2.7227, -0.83776]
+    FR_hip_joint: [-1.0472, 1.0472]
+    FR_thigh_joint: [-1.5708, 3.4907]
+    FR_calf_joint: [-2.7227, -0.83776]
+    RL_hip_joint: [-1.0472, 1.0472]
+    RL_thigh_joint: [-0.5236, 4.5379]
+    RL_calf_joint: [-2.7227, -0.83776]
+    RR_hip_joint: [-1.0472, 1.0472]
+    RR_thigh_joint: [-0.5236, 4.5379]
+    RR_calf_joint: [-2.7227, -0.83776]
+
+  # 四足步态的首期不重写（design §2 边界 1）：本 Profile **不声明** joint_roles ——
+  # iraf_core.profile 的角色词表只有 arm/gripper_drive*，四足角色需要新词表 +
+  # 新的安全边界，属未出 ADR 的扩展，不得在本步骤偷带进来（铁律 6.8）。
+  capabilities: []
+
+  # ---- 构建期声明（场景构建器消费；iraf_core.profile 只读它已知的键，忽略本节）----
+  # 厂商模型路径与挂载点集中在 Profile，禁止散落到脚本里（铁律 5.3）。
+  model:
+    vendor: unitree_go2
+    file: vendor/unitree_go2/unitree_robots/go2/go2.xml
+    # 躯干 body 名（实测 bodies 列表中的承力体）：挂载点与传感器都挂在这里。
+    trunk_body: base_link
+    # 厂商自带 IMU site（实测 site 列表只有 imu 一个），场景构建器只读引用，不复制、不改写。
+    imu_site: imu
+    mount_frames:
+      # 四足背上的托盘参考系（scene.yaml 的 props[].pose.mount.frame 引用它）。
+      # z 值来自实测躯干碰撞盒顶面（base_link 下唯一 box geom：pos.z=0, size.z=0.057），
+      # 证据 build/iraf-24h/13/trunk-geom.txt。
+      tray_frame:
+        body: base_link
+        pos_m: [0.0, 0.0, 0.057]
+        quat_wxyz: [1.0, 0.0, 0.0, 0.0]

@@ -13,14 +13,14 @@ scenarios:
     steps:
       - id: s01_verify_ready
         action: stand
-        robot: go2
+        robot: unitree_go2
         params: {}
         criteria:
           min_stable_hold_s: 3.0
           max_speed_m_s: 0.0
       - id: s02_dock
         action: dock_for_handoff
-        robot: go2
+        robot: unitree_go2
         params: {}
         criteria:
           translation_error_max_m: 0.03
@@ -49,7 +49,7 @@ scenarios:
           pose_tolerance_m: 0.01
       - id: s05_confirm_payload
         action: accept_payload
-        robot: go2
+        robot: unitree_go2
         params: {}
         criteria:
           require_payload_confirmation: true
@@ -61,14 +61,14 @@ scenarios:
     steps:
       - id: f01_stand
         action: stand
-        robot: go2
+        robot: unitree_go2
         params: {}
         criteria:
           min_stable_hold_s: 3.0
           max_speed_m_s: 0.0
       - id: f02_dock
         action: dock_for_handoff
-        robot: go2
+        robot: unitree_go2
         params: {}
         criteria:
           translation_error_max_m: 0.03
@@ -76,7 +76,7 @@ scenarios:
           max_speed_m_s: 0.0
       - id: f03_safe_hold
         action: stop
-        robot: go2
+        robot: unitree_go2
         params:
           reason: sensor_unavailable
         criteria:
