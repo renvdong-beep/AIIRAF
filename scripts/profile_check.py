@@ -23,6 +23,12 @@
   PYTHONPATH=src python3 scripts/profile_check.py --board profiles/boards/e300.yaml
   PYTHONPATH=src python3 scripts/profile_check.py \
       --board profiles/boards/e300.yaml --allow-unverified
+  # 四足机型声明（步骤 16）：声明 ↔ Profile ↔ 模型 ↔ 适配器能力契约 四向一致
+  PYTHONPATH=src python3 scripts/profile_check.py --quadruped config/go2_loopback.yaml
+
+`--quadruped` 的输出契约与 `--board` 相同：stdout 只有一份纯 JSON 摘要，
+状态标记走 stderr；退出码 0 通过 / 1 契约层失败（缺声明、身份不一致、
+模型不可编译、关节无直接执行器、限位放宽、能力声明未实现等）。
 
 `--board` 的退出码约定（与 `--baseline` 的 0/1 相容，多出 2 表示\"声明未实测\"）：
   0  校验通过：`verified: true`，或经 `--allow-unverified` 显式放行且摘要写 `verified: false`
@@ -434,6 +440,206 @@ def check_board(board_path, allow_unverified=False):
     return report
 
 
+# --- 四足机型声明校验（--quadruped，步骤 16）----------------------------------
+# 与 `--baseline`（臂+夹爪）并列的第二种机型入口：四足没有夹爪/抓取基线，
+# 但同样必须"声明 ↔ Profile ↔ 模型 ↔ 适配器能力契约"四向一致。
+QUADRUPED_ENTRYPOINT = "iraf_adapters.unitree.unitree_go2:UnitreeGo2Adapter"
+QUADRUPED_SCHEMA_VERSION = "iraf.quadruped-profile-check/v1"
+
+
+def check_quadruped(declaration_path, root=ROOT):
+    """校验四足机型声明，返回 report（`passed` 非真即整体失败，退出码 1）。
+
+    门禁（全部与实测/模型比对，不与硬编码常数比）：
+    1. 声明必需键齐备，且 `simulation: true`（仿真结论不得冒充真机）；
+    2. 声明 `robot.id` == Profile `metadata.name`（身份解析唯一），声明里的
+       `robot.profile` 真实存在且能被核心校验器加载；
+    3. 适配器能按声明装配（模型可编译、关键帧存在、关节↔执行器**一对一**绑定）；
+    4. Profile 关节限位只**收紧**模型 `jnt_range`（调用参数只能收紧，铁律 1.3）；
+    5. `spec.home` 覆盖全部关节且落在声明限位内；
+    6. `declared ⊆ implemented` 能力契约（factory 的方法层 + 四足契约的"真的已实现"层）；
+    7. 力矩上限逐项等于模型 `actuator_ctrlrange`（独立复算，防止将来改读配置数字）。
+    """
+    from iraf_adapters.unitree import quadruped as quadruped_contract
+    from iraf_adapters.unitree import unitree_go2
+    from iraf_core.authority import ControlAuthorityManager
+    from iraf_core.profile import ProfileError, load_robot_profile
+
+    failures = []
+    notes = []
+    report = {
+        "schema_version": QUADRUPED_SCHEMA_VERSION,
+        "declaration": str(declaration_path),
+        "robot": None,
+        "profile": None,
+        "model": None,
+        "joints": [],
+        "joint_actuator_binding": {},
+        "torque_limits_nm": {},
+        "capabilities": None,
+        "capability_contract": None,
+        "backend_contract": None,
+        "simulation": None,
+        "failures": failures,
+        "notes": notes,
+        "passed": False,
+    }
+
+    path = _resolve(root, declaration_path)
+    if not path.is_file():
+        failures.append("四足声明不存在: " + str(path))
+        return report
+
+    try:
+        declaration, _decl_root = unitree_go2.load_declaration(path)
+    except quadruped_contract.QuadrupedError as exc:
+        failures.append("声明层失败 [%s]: %s" % (exc.code, exc))
+        return report
+
+    report["simulation"] = bool(declaration.get("simulation", False))
+    if not report["simulation"]:
+        failures.append("声明缺少 simulation: true（仿真结论必须显式声明）")
+
+    robot = declaration.get("robot") or {}
+    robot_id = str(robot.get("id") or "")
+    report["robot"] = robot_id or None
+    profile_rel = robot.get("profile")
+    if not robot_id or not isinstance(profile_rel, str):
+        failures.append("声明缺少 robot.id / robot.profile（身份只能来自声明）")
+        return report
+    profile_path = _resolve(root, profile_rel)
+    if not profile_path.is_file():
+        failures.append("Profile 不存在: " + str(profile_path))
+        return report
+    try:
+        profile = load_robot_profile(profile_path)
+    except ProfileError as exc:
+        failures.append("Profile 未能通过核心校验器: %s" % exc)
+        return report
+    report["profile"] = {
+        "path": str(profile_rel),
+        "name": profile.name,
+        "version": profile.version,
+        "digest": profile.digest,
+        "simulation": bool(profile.simulation),
+        "capabilities": sorted(str(item) for item in profile.capabilities),
+    }
+    if profile.name != robot_id:
+        failures.append(
+            "声明 robot.id=%s 与 Profile metadata.name=%s 不一致（身份解析必须唯一）"
+            % (robot_id, profile.name)
+        )
+    if not bool(profile.simulation):
+        failures.append("Profile 缺少 simulation: true（仿真结论必须显式声明）")
+
+    # 能力契约：两层。首先复用的是既有装配期校验（声明的能力在类上有方法）。
+    try:
+        backend_class = _resolve_class(QUADRUPED_ENTRYPOINT)
+        report["backend_contract"] = verify_backend_contract(backend_class, profile)
+    except (BackendContractError, ValueError) as exc:
+        failures.append("能力契约校验失败（方法层）: " + str(exc))
+        backend_class = None
+
+    # 装配适配器：模型/关键帧/绑定/限位任一项不成立都在这里显式失败。
+    try:
+        adapter = unitree_go2.UnitreeGo2Adapter.from_config(
+            path, profile, ControlAuthorityManager()
+        )
+    except quadruped_contract.QuadrupedError as exc:
+        failures.append("适配器装配失败 [%s]: %s" % (exc.code, exc))
+        adapter = None
+    if adapter is not None:
+        report["model"] = adapter.describe()["model"]
+        report["model"]["path"] = str(_relative_to_root(adapter.model_path, root))
+        report["joints"] = list(adapter.joint_order)
+        report["joint_actuator_binding"] = adapter.describe()["joint_actuator_binding"]
+        report["torque_limits_nm"] = adapter.describe()["torque_limits_nm"]
+        missing_joints = [
+            name for name in profile.joints if name not in adapter.bindings
+        ]
+        if missing_joints:
+            failures.append("装配后的绑定缺少关节: " + str(missing_joints))
+
+        # 力矩上限独立复算：必须逐项等于模型 ctrlrange（防止将来改读配置里的数字）。
+        model = adapter.model
+        for index, joint in enumerate(adapter.joint_order):
+            actuator_id = adapter.actuator_ids[index]
+            expected = [
+                float(model.actuator_ctrlrange[actuator_id][0]),
+                float(model.actuator_ctrlrange[actuator_id][1]),
+            ]
+            actual = [float(v) for v in report["torque_limits_nm"][joint]]
+            if any(abs(a - b) > 1e-12 for a, b in zip(actual, expected)):
+                failures.append(
+                    "关节 %s 的力矩上限 %s 与模型 ctrlrange %s 不一致（上限只能来自模型）"
+                    % (joint, actual, expected)
+                )
+
+        # spec.home 必须覆盖全部关节且落在声明限位内。
+        home = dict(getattr(profile, "home", None) or {})
+        if not home:
+            failures.append("Profile 缺少 spec.home（站立参考位形必须有唯一来源）")
+        else:
+            missing_home = [name for name in profile.joints if name not in home]
+            if missing_home:
+                failures.append("Profile 的 spec.home 未覆盖关节: " + str(missing_home))
+            limits = dict(profile.joint_limits or {})
+            for name, value in home.items():
+                if name not in limits:
+                    continue
+                lower, upper = limits[name]
+                if float(value) < float(lower) or float(value) > float(upper):
+                    failures.append(
+                        "Profile 的 spec.home 中 %s=%r 越出声明限位 [%r, %r]"
+                        % (name, float(value), float(lower), float(upper))
+                    )
+
+    # 能力契约第二层："真的已实现"（方法存在但只会抛 UnsupportedCapabilityError 的能力不得声明）。
+    if backend_class is not None:
+        try:
+            report["capability_contract"] = quadruped_contract.verify_capabilities(
+                profile.capabilities, backend_class
+            )
+        except quadruped_contract.CapabilityContractError as exc:
+            failures.append("能力契约校验失败（实现层）[%s]: %s" % (exc.code, exc))
+    report["capabilities"] = {
+        "declared": sorted(str(item) for item in profile.capabilities),
+        "implemented": sorted(
+            str(item) for item in getattr(backend_class, "IMPLEMENTED_CAPABILITIES", ())
+        )
+        if backend_class is not None
+        else [],
+    }
+    if not report["capabilities"]["declared"]:
+        notes.append(
+            "Profile 未声明任何运动能力（capabilities 为空）：这是**事实**（技能层未验收），"
+            "不是漏写；技能验收后回填即可，本步骤不代其声明。"
+        )
+
+    report["passed"] = not failures
+    return report
+
+
+def _relative_to_root(path, root):
+    try:
+        return Path(path).resolve().relative_to(Path(root).resolve())
+    except ValueError:
+        return Path(path)
+
+
+def _main_quadruped(args):
+    report = check_quadruped(args.quadruped)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    if report["passed"]:
+        # 与 --board 一致：stdout 保持纯 JSON，状态标记走 stderr，便于机器解析。
+        print("QUADRUPED_PROFILE_CHECK_PASSED", file=sys.stderr)
+        return 0
+    for message in report["failures"]:
+        print("· " + message, file=sys.stderr)
+    print("\nQUADRUPED_PROFILE_CHECK_FAILED", file=sys.stderr)
+    return 1
+
+
 def _main_board(args):
     try:
         report = check_board(_resolve(ROOT, args.board), allow_unverified=args.allow_unverified)
@@ -470,6 +676,12 @@ def _main_board(args):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", type=Path, default=None)
+    parser.add_argument(
+        "--quadruped",
+        type=Path,
+        default=None,
+        help="四足机型声明自检（声明 ↔ Profile ↔ 模型 ↔ 适配器能力契约 四向一致）",
+    )
     parser.add_argument("--profile", type=Path, default=None)
     parser.add_argument(
         "--board",
@@ -487,11 +699,19 @@ def main(argv=None):
     if args.allow_unverified and args.board is None:
         print("--allow-unverified 只对 --board 生效；--baseline 的门禁不可放宽", file=sys.stderr)
         return 1
-    if args.board is None and args.baseline is None:
-        print("请给出 --baseline（机型基线）或 --board（板卡声明）", file=sys.stderr)
+    if args.board is not None and args.quadruped is not None:
+        print("--board 与 --quadruped 是两种不同对象，请分别校验", file=sys.stderr)
+        return 1
+    if args.board is None and args.baseline is None and args.quadruped is None:
+        print(
+            "请给出 --baseline（机型基线）或 --board（板卡声明）或 --quadruped（四足声明）",
+            file=sys.stderr,
+        )
         return 1
     if args.board is not None:
         return _main_board(args)
+    if args.quadruped is not None:
+        return _main_quadruped(args)
 
     baseline_path = _resolve(ROOT, args.baseline)
     if not baseline_path.is_file():

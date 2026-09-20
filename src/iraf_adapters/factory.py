@@ -24,6 +24,13 @@ authority) -> backend。
 """
 import importlib
 
+#: 已登记的 Backend 入口（部署配置从这里取值，禁止散落硬编码）。
+#: 新增后端时同步登记；未登记的组合由调用方显式给出入口，不做猜测。
+KNOWN_BACKENDS = {
+    "mujoco_arm": "iraf_adapters.mujoco.mujoco_backend:MujocoBackend",
+    "unitree_go2_mujoco": "iraf_adapters.unitree.unitree_go2:UnitreeGo2Adapter",
+}
+
 #: capability 名 -> Backend 上必须存在的方法名。
 #: 只声明"能力名到方法的映射"，不假设任何具体机型的实现细节，
 #: 因此新机器人只需实现同名方法即可复用本校验。
@@ -37,11 +44,26 @@ CAPABILITY_METHODS = {
     "calibrate_camera_to_base": "calibrate_camera_to_base",
     "stop": "stop",
     "step": "step",
+    # 四足能力（步骤 16）：与四足通用契约的规范词表一致；
+    # 未登记的能力仍会被显式拦下（避免"策略通过但无人实现"的悬空能力）。
+    "stand": "stand",
+    "locomote": "locomote",
+    "read_state": "read_state",
+    "emergency_stop": "emergency_stop",
 }
 
 #: 运动能力清单：用于反向检查"实现了但未声明"的高风险不一致。
 #: 只包含会驱动机械臂的能力；标定类能力不产生物理动作，故不在此列。
-MOTION_CAPABILITIES = ("move_joint", "pick_object", "visual_pick", "stop")
+#: 四足能力同样"会驱动执行器"，一并纳入反向核对（未声明则只记录、不拦装配）。
+MOTION_CAPABILITIES = (
+    "move_joint",
+    "pick_object",
+    "visual_pick",
+    "stand",
+    "stop",
+    "locomote",
+    "emergency_stop",
+)
 
 
 class BackendContractError(ValueError):

@@ -140,8 +140,9 @@ class Diagnosis:
 
 
 # ---------------------------------------------------------------------------
-# 错误码表：19 个码 = IDL §5 表中的 9 个（其中 7 个实现已落地）+ API 目录 1 个
-# + 实现已抛出但表格未收录的 9 个。顺序与 IDL §5 表一致，便于人工比对。
+# 错误码表：28 个码 = IDL §5 表中的 9 个（其中 7 个实现已落地）+ API 目录 1 个
+# + 实现已抛出但表格未收录的 18 个（含步骤 16 四足适配器新增的 9 个）。
+# 顺序与 IDL §5 表一致，便于人工比对。
 # ---------------------------------------------------------------------------
 ERROR_SPECS: Tuple[ErrorSpec, ...] = (
     # --- IDL §5 错误码表（9 项）------------------------------------------------
@@ -399,6 +400,117 @@ ERROR_SPECS: Tuple[ErrorSpec, ...] = (
         retry_policy_zh="是（需人工判断：先确认请求是否已送达，再用新 execution 重试）",
         provenance=PROVENANCE_CODE_ONLY,
         emitter=("scripts/verify_minimal_chain.py:52",),
+    ),
+    # --- 四足适配器层（步骤 16，9 项；同样属"实现已抛出、IDL §5 表未收录"）----
+    # 关闭条件：把四足能力/控制权错误码并入 IDL §5 错误码表（或声明适配器层码的分层规则），
+    # 之后把 provenance 改为 idl+code；两条门禁（源码扫描 + 表逐行比对）都必须仍然通过。
+    ErrorSpec(
+        code="IRAF-QUADRUPED-ERROR",
+        summary_zh="四足适配层的未分类错误（基类默认码）",
+        suggestion_zh=(
+            "读具体子类码定位环节（声明/模型/指令/控制权/安全闭锁）；带 correlation_id 与适配器日志报障，"
+            "不要据此自动重试（可能重复物理动作）。"
+        ),
+        retryable=False,
+        retry_policy_zh="否；须先定位具体子类错误",
+        provenance=PROVENANCE_CODE_ONLY,
+        emitter=("src/iraf_adapters/unitree/quadruped.py:78",),
+    ),
+    ErrorSpec(
+        code="IRAF-QUADRUPED-DECLARATION-INVALID",
+        summary_zh="四足声明缺失或自相矛盾（含 Profile/模型/执行器绑定的契约问题）",
+        suggestion_zh=(
+            "按原因补齐声明键（config/<robot>_loopback.yaml、profiles/<robot>_mujoco.yaml）；"
+            "禁止用模型默认值或机型默认值兜底（铁律 1.5 / 5.3）。"
+        ),
+        retryable=False,
+        retry_policy_zh="否；属声明缺陷，须先修声明",
+        provenance=PROVENANCE_CODE_ONLY,
+        emitter=("src/iraf_adapters/unitree/quadruped.py:88",),
+    ),
+    ErrorSpec(
+        code="IRAF-QUADRUPED-CAPABILITY-UNAVAILABLE",
+        summary_zh="能力契约破裂：Profile 声明了词表外或本后端未实现的能力",
+        suggestion_zh=(
+            "把能力声明收敛到规范词表并与后端 IMPLEMENTED_CAPABILITIES 对齐；"
+            "未验收的能力不得声明（方法存在 ≠ 能力已实现）。"
+        ),
+        retryable=False,
+        retry_policy_zh="否；须先修能力声明或补齐实现",
+        provenance=PROVENANCE_CODE_ONLY,
+        emitter=("src/iraf_adapters/unitree/quadruped.py:94",),
+    ),
+    ErrorSpec(
+        code="IRAF-QUADRUPED-CAPABILITY-NOT-IMPLEMENTED",
+        summary_zh="调用了本后端未实现的能力（显式拒绝，不是伪造成功）",
+        suggestion_zh=(
+            "先用 describe()/能力摘要确认后端支持的能力面；例如 Go2 首期无步态控制器，"
+            "locomote 必须由步态 Provider 提供，不得当作已生效。"
+        ),
+        retryable=False,
+        retry_policy_zh="否；重试同一能力无效，须先实现或改换调用",
+        provenance=PROVENANCE_CODE_ONLY,
+        emitter=("src/iraf_adapters/unitree/quadruped.py:100",),
+    ),
+    ErrorSpec(
+        code="IRAF-QUADRUPED-MODEL-UNAVAILABLE",
+        summary_zh="四足模型/关键帧/执行器引用不可用",
+        suggestion_zh=(
+            "先按声明生成场景（model.builder）并确认 initial.keyframe 存在；"
+            "关节没有直接执行器（腱驱动/耦合）必须显式处理，不得静默跳过。"
+        ),
+        retryable=False,
+        retry_policy_zh="否；须先修模型或场景产物",
+        provenance=PROVENANCE_CODE_ONLY,
+        emitter=("src/iraf_adapters/unitree/quadruped.py:106",),
+    ),
+    ErrorSpec(
+        code="IRAF-QUADRUPED-COMMAND-REJECTED",
+        summary_zh="指令被拒绝：未知关节名、越界目标、非有限数值或非法时长",
+        suggestion_zh=(
+            "核对关节身份与 Profile 声明限位（调用参数只能收紧、不能放宽）；"
+            "速度指令只接受规范字段，厂家字段一律拒绝。"
+        ),
+        retryable=False,
+        retry_policy_zh="否；须先修正指令",
+        provenance=PROVENANCE_CODE_ONLY,
+        emitter=("src/iraf_adapters/unitree/quadruped.py:112",),
+    ),
+    ErrorSpec(
+        code="IRAF-QUADRUPED-NO-CONTROL-AUTHORITY",
+        summary_zh="控制权不成立：无租约、旧 fencing token、租约过期或被他人接管",
+        suggestion_zh=(
+            "运动调用必须持有 ControlAuthorityManager 的有效租约；旧 token 或终态执行的控制请求"
+            "一律不得驱动执行器（铁律 1.12 / 1.13）。"
+        ),
+        retryable=False,
+        retry_policy_zh="否；须先重新取得控制权并新建 execution",
+        provenance=PROVENANCE_CODE_ONLY,
+        emitter=("src/iraf_adapters/unitree/quadruped.py:118",),
+    ),
+    ErrorSpec(
+        code="IRAF-QUADRUPED-TERMINAL-EXECUTION",
+        summary_zh="终态执行的控制请求被拒绝（终态不可回写、不可复活）",
+        suggestion_zh=(
+            "用执行台账确认该 execution 已 SUCCEEDED/STOPPED/FAILED/SAFETY_STOP；"
+            "需要重做时由 TaskFlow 新建 execution 并关联原 execution_id。"
+        ),
+        retryable=False,
+        retry_policy_zh="否；终态不可复活",
+        provenance=PROVENANCE_CODE_ONLY,
+        emitter=("src/iraf_adapters/unitree/quadruped.py:124",),
+    ),
+    ErrorSpec(
+        code="IRAF-QUADRUPED-SAFETY-LATCHED",
+        summary_zh="仍处于急停闭锁：授权复位前不得重新调度运动",
+        suggestion_zh=(
+            "按铁律 1.9 处理：控制器确认 safe state 且给出授权依据后调用 clear_emergency_stop；"
+            "闭锁期间只允许停机方向的动作。"
+        ),
+        retryable=False,
+        retry_policy_zh="否；须受控复位",
+        provenance=PROVENANCE_CODE_ONLY,
+        emitter=("src/iraf_adapters/unitree/quadruped.py:130",),
     ),
 )
 
