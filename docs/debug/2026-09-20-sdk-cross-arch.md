@@ -63,7 +63,10 @@
 
 ### 3.4 实测（本轮，开发端）
 
-见 `build/iraf-24h/10/acceptance.txt`（含逐用例退出码）。要点：
+验收 harness：`bash build/iraf-24h/10/run_acceptance.sh` → **EXIT=0，「通过 44 项，失败 0 项」**
+（证据 `build/iraf-24h/10/acceptance-rerun.txt`；逐用例原始输出在 `build/iraf-24h/10/cases/`）。
+小体积假 bundle 夹具（`make_fake_bundles.py`）只用于验证门禁逻辑，**不是产物证据**；
+真实 bundle 的正向验收由 `media-real-apply` 用例单独完成。要点：
 
 - `--transport media --output build/iraf-24h/10` → **exit=0**，产物 4 件（bundle 副本 / `sha256sum.txt` /
   `README-安装.md` / `deploy-report.json`），`sha256sum -c sha256sum.txt` 输出 `OK`（真校验，不是自查）。
@@ -74,6 +77,13 @@
   同命令在**可达端口**上（本机既有 TCP 监听）→ **exit=0**，说明可达性门禁不是"恒失败"门禁。
 - 地址门禁：`grep -cE "[0-9]{1,3}\.[0-9]{1,3}\." deploy/sdk/deploy.sh` = 0；同式对实现层
   `lib_deploy.py` 亦为 0（主机地址只来自参数/环境变量）。
+- **首跑暴露的是断言写错，不是代码缺陷（如实记录）**：`artifacts.length` 期望写成 4，实际 3 ——
+  `deploy-report.json` 不登记自己（避免自指哈希），交接物 4 件 ≠ `artifacts` 3 条。
+  首跑原始输出另存 `build/iraf-24h/10/acceptance-run1-fail.txt`（未覆盖），修断言后重跑
+  → 44/0；同时补了 4 条"交接物文件真实存在"的断言（只断 `artifacts` 长度会漏掉报告自身）。
+- 全量单测（`/usr/bin/python3`）：`Ran 528 / failures=1 / errors=4 / skipped=4`，与步骤 09 基线
+  逐项一致（4 项 stub 导入 ERROR + `test_vision_processing` FAIL）；本步未新增 `tests/` 路径，
+  故 `Ran` 数与上一步相同属预期，不是"少跑了用例"。
 
 ### 3.5 未实现 / 未实测（显式登记，不隐藏）
 
