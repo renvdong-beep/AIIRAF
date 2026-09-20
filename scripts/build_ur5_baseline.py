@@ -39,7 +39,13 @@ import numpy as np
 import yaml
 
 from build_robot_pick_scene import build_scene
-from iraf_core.kinematics import solve_position_ik
+from iraf_core.kinematics import (
+    balance_tip_clearance,
+    gravity_hold_ctrl,
+    lowest_mesh_point_z,
+    solve_pose_ik,
+    tool_pose_from_axes,
+)
 
 DEFAULT_BASELINE = "config/ur5_simulation_baseline.yaml"
 
@@ -94,33 +100,7 @@ def _joint_adr(model, name):
     return int(model.jnt_qposadr[joint_id]), int(model.jnt_dofadr[joint_id])
 
 
-def _finger_tip_z(model, data, geom_ids):
-    """指腹 geom 在世界系下的最低点（box 与 mesh 都要支持）。"""
-    lowest = float("inf")
-    for geom_id in geom_ids:
-        geom_type = int(model.geom_type[geom_id])
-        rotation = np.asarray(data.geom_xmat[geom_id], dtype=float).reshape(3, 3)
-        if geom_type == int(mujoco.mjtGeom.mjGEOM_BOX):
-            half = np.asarray(model.geom_size[geom_id], dtype=float)
-            extent_z = float(np.abs(rotation[2, :]) @ half)
-            lowest = min(lowest, float(data.geom_xpos[geom_id][2]) - extent_z)
-            continue
-        mesh_id = int(model.geom_dataid[geom_id])
-        if mesh_id >= 0 and int(model.mesh_vertnum[mesh_id]) > 0:
-            count = int(model.mesh_vertnum[mesh_id])
-            start = int(model.mesh_vertadr[mesh_id])
-            verts = np.asarray(model.mesh_vert[start:start + count], dtype=float)
-            world = (
-                np.asarray(data.geom_xpos[geom_id], dtype=float) + verts @ rotation.T
-            )
-            lowest = min(lowest, float(world[:, 2].min()))
-        else:
-            centre = np.asarray(data.geom_xpos[geom_id], dtype=float)
-            half = float(
-                np.abs(np.asarray(model.geom_size[geom_id], dtype=float)).max()
-            )
-            lowest = min(lowest, float(centre[2]) - half)
-    return lowest
+
 
 
 def _contact_pairs(model, data):
@@ -137,204 +117,58 @@ def _contact_pairs(model, data):
     return pairs
 
 
-class OrientedGraspSolver:
-    """带姿态约束的抓取逆解：直接对 6 维位姿误差做阻尼最小二乘。
+class GraspPoseSolver:
+    """以"夹持区中点 + 工具指向 + 开合轴"为目标的位姿型 IK 适配层。
 
-    **抓取点 = 四个 pad box 的中点**（由 `finger_geoms.pad_boxes` 声明），
-    不是任一 pad1 geom 的中心。原因：2F-85 每侧 pad 是上下两个 box
-    （pad1 在局部 +z、pad2 在 -z），pad1 的中点并不是夹持中心。
-    用 pad1 中心当目标时整套 pad 相对方块下沉约 34mm，pad2 扎进台面，
-    DESCEND 段下侧 pad 先撞方块侧面（probe_pad_vs_block.py 实测）。
+    算法本体在 `iraf_core.kinematics.solve_pose_ik`（与位置型 IK 同源、与机型无关）；
+    这里只做三件**UR5e 相关的接线**：
+      1. 注入声明：臂关节 id、夹持区 geom 列表、法兰 site；
+      2. 构造法兰目标旋转：z 轴 = 工具指向（**后退方向的反向**）、x 轴 = 开合轴；
+      3. 求解后按与 IK 同一口径量出夹持区中点与两轴，供门禁与证据使用。
 
-    **为什么不用"位置 IK + 零空间姿态修正"（实测走不通）：**
-    - 夹爪指向不能用"pad 中点 - 法兰"的位置差雅可比修正：
-      两者同挂腕部末端树，位置差的偏导数几乎完全抵消
-      （实测 jac 范数 ~1e-16），该维完全推不动，
-      表现为指向偏差恒为 90.000° 不收敛；
-    - 换成旋转雅可比后指向可收敛，但开合轴仍卡在 41~45°：
-      左右 pad 的旋转雅可比几乎相同，任何"两指相减"的构造都退化，
-      开合轴那一维条件数极差。
-
-    **改用的方法**：把姿态期望写成法兰的**目标旋转矩阵**（z 轴取夹爪
-    指向的反方向、x 轴取开合轴），然后对
-        e = [夹持区中点位置误差(3)；法兰旋转误差(3)]
-    做阻尼最小二乘。位置雅可比取四个 pad box 的**平均**，
-    姿态雅可比取法兰的旋转雅可比，6 行 × N 列，条件数正常。
-    实测 11 次迭代即收敛到位置 4.5e-07 m、指向 0.000°、开合轴 0.000°，
-    两 pad 高度差 0.000000 m（probe_wrist_solution.py）。
-
-    期望旋转由基线的两条**构型无关物理量**声明：
-    - `grasp.approach_direction`：预抓取/抬升的**后退方向**（抓取点 → 预抓取点）；
-    - `grasp.spread_axis`：开合轴（左 pad → 右 pad），须与之垂直。
-
-    本类接收的参数是**工具指向**（法兰 → 夹持区中点），即后退方向的**反向**。
-    两者语义相反、不可互相替代：把后退方向当工具指向会让夹爪"背对"目标，
-    法兰 z 轴朝上、夹持区落在法兰上方 134mm，抓取点变成台面以下的不可达位姿
-    （实测见 `docs/debug/2026-09-20-ur5-tool-axis-flip.md`）。
+    历史坑：把 `approach_direction`（后退方向，竖直向上）直接当作法兰 z 轴，
+    会解出"夹爪朝上"的另一支解 —— 夹持区被抬到法兰上方 134mm，抓取点落到
+    台面以下的不可达位姿。详见 docs/debug/2026-09-20-ur5-tool-axis-flip.md。
     """
 
-    def __init__(self, model, data, arm_names, pad_geoms,
-                 flange_site, pointing_direction_world, spread_axis_world):
+    def __init__(self, model, data, arm_joint_ids, pad_geoms, flange_site,
+                 pointing_direction_world, spread_axis_world):
         self.model = model
         self.data = data
-        self.arm = list(arm_names)
-        self.joint_ids = [
-            int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name))
-            for name in self.arm
-        ]
-        self.qpos_adr = [int(model.jnt_qposadr[j]) for j in self.joint_ids]
-        self.dof_adr = [int(model.jnt_dofadr[j]) for j in self.joint_ids]
-        #: 四个 pad box 的 geom id，顺序为 [左 pad1, 左 pad2, 右 pad1, 右 pad2]。
-        self.pad_geoms = [int(geom) for geom in pad_geoms]
-        if len(self.pad_geoms) != 4:
+        self.arm = [int(joint) for joint in arm_joint_ids]
+        if not self.arm:
+            raise ValueError("IK 至少需要一个臂关节")
+        self.points = [{"kind": "geom", "id": int(geom)} for geom in pad_geoms]
+        if len(self.points) < 2:
             raise ValueError(
-                "夹持区定义必须是 4 个 pad box，实际 %d 个" % len(self.pad_geoms)
+                "夹持区至少需要 2 个 geom（每侧一个代表面），实际 %d 个" % len(self.points)
             )
         self.flange_site = int(flange_site)
-        self.pointing = self._unit(pointing_direction_world)
-        self.spread_axis = self._unit(spread_axis_world)
-        if abs(float(np.dot(self.pointing, self.spread_axis))) > 1e-6:
-            raise ValueError("spread_axis 必须与工具指向垂直")
-        self.target_rot = self._target_rotation()
-
-    @staticmethod
-    def _unit(vector):
-        arr = np.asarray(vector, dtype=float)
-        norm = float(np.linalg.norm(arr))
-        if norm < 1e-12:
-            raise ValueError("期望方向不能为零向量")
-        return arr / norm
-
-    def _target_rotation(self):
-        """法兰的目标旋转矩阵。
-
-        实测约定（probe_seed_orientation.py + probe_tool_axis.py）：
-            - 夹爪指向（法兰 → 夹持区中点）= 法兰 **+z** 轴；
-            - 开合轴（左 pad → 右 pad）= 法兰 +x 轴；
-            - 官方 home 位形下法兰 z 轴 = [0,0,-1]，夹持区确实在法兰下方 0.134m。
-
-        因此目标旋转取 z 轴 = **工具指向**（= 后退方向的反向）、x 轴 = 开合轴。
-
-        历史坑（本次修复）：早期把 `approach_direction`（后退方向，竖直向上）
-        直接当作法兰 z 轴，得到"夹爪朝上"的解 —— 夹持区被抬到法兰上方 134mm，
-        要让 pad 落到方块中心就必须把法兰压到 z=-0.109m（台面以下），
-        实际执行时 wrist_2_link 的碰撞体先压在方块顶面上，
-        表现为 shoulder_lift 跟踪误差 0.484 rad、末端距目标 0.314m。
-        """
-        z_axis = self.pointing
-        x_axis = self.spread_axis
-        y_axis = np.cross(z_axis, x_axis)
-        y_axis = y_axis / float(np.linalg.norm(y_axis))
-        x_axis = np.cross(y_axis, z_axis)
-        return np.column_stack([x_axis, y_axis, z_axis])
-
-    def measure(self):
-        """量出夹持区中点、夹爪指向、开合轴。
-
-        夹持区中点 = 4 个 pad box 中心的中点。
-        开合轴取"左两点均值 → 右两点均值"的方向，即与
-        `build_ur5_baseline` 里构造雅可比时用的同一条轴，
-        保证"量的轴"与"优化的轴"是同一个物理量。
-        """
-        mujoco.mj_forward(self.model, self.data)
-        positions = [
-            np.asarray(self.data.geom_xpos[geom], dtype=float)
-            for geom in self.pad_geoms
-        ]
-        mid = sum(positions) / float(len(positions))
-        left = (positions[0] + positions[1]) / 2.0
-        right = (positions[2] + positions[3]) / 2.0
-        flange = np.asarray(self.data.site_xpos[self.flange_site], dtype=float)
-        direction = mid - flange
-        dn = float(np.linalg.norm(direction))
-        direction = direction / dn if dn > 1e-12 else self.pointing.copy()
-        axis = right - left
-        an = float(np.linalg.norm(axis))
-        axis = axis / an if an > 1e-12 else self.spread_axis.copy()
-        return mid, direction, axis
-
-
-    @staticmethod
-    def _rotation_vector(current, target):
-        """两个旋转矩阵之间的旋转向量（轴×角）。"""
-        relative = target @ current.T
-        quat = np.zeros(4)
-        mujoco.mju_mat2Quat(quat, np.asarray(relative, dtype=float).reshape(-1))
-        vector = np.zeros(3)
-        # 注意 muJoCo 的 quat2Vel 返回"轴×半角"，乘 2 得到完整旋转角
-        mujoco.mju_quat2Vel(vector, quat, 2.0)
-        return vector
+        self.pointing = _unit(pointing_direction_world, "工具指向")
+        self.spread_axis = _unit(spread_axis_world, "开合轴")
+        # 两轴正交性由 core 校验：不正交＝姿态期望自相矛盾，必须显式失败。
+        self.target_rot = tool_pose_from_axes(self.pointing, self.spread_axis)
 
     def solve(self, target, solver_cfg, orientation_iterations=None):
-        """解出满足"4 点夹持区中点 = target"且姿态达标的关节角。
-
-        返回 (IkResult 兼容对象, 姿态误差字典)。为保持与既有调用方
-        （`pack`）的兼容，返回对象只暴露契约层的 4 个字段。
-        """
-        target = np.asarray(target, dtype=float)
+        """求解并返回 (IkResult, 姿态残差字典)。"""
         iterations = int(
             orientation_iterations
             if orientation_iterations is not None
             else solver_cfg.get("pose_iterations", 600)
         )
-        position_tolerance = float(solver_cfg.get("tolerance_m", 1e-5))
-        best = None
-        for iteration in range(iterations):
-            mid, _, _ = self.measure()
-            current_rot = np.asarray(
-                self.data.site_xmat[self.flange_site], dtype=float
-            ).reshape(3, 3)
-            e_pos = target - mid
-            e_rot = self._rotation_vector(current_rot, self.target_rot)
-            pos_norm = float(np.linalg.norm(e_pos))
-            rot_norm = float(np.linalg.norm(e_rot))
-            if best is None or pos_norm < best[0]:
-                best = (
-                    pos_norm,
-                    {name: float(self.data.qpos[adr])
-                     for name, adr in zip(self.arm, self.qpos_adr)},
-                    iteration + 1,
-                )
-            if pos_norm < position_tolerance and rot_norm < 1e-4:
-                break
-
-            jac_flange_r = np.zeros((3, self.model.nv))
-            mujoco.mj_jacSite(
-                self.model, self.data, None, jac_flange_r, self.flange_site
-            )
-            # 位置雅可比 = 4 个 pad box 的算术平均（对应"4 点中点"的导数）。
-            # 必须与 measure() 取中点的方式完全一致：只对 pad1 求平均
-            # 会让"优化的位置"与"量的位置"不是同一个点，残差门禁失去意义。
-            jac_mid = np.zeros((3, self.model.nv))
-            for geom in self.pad_geoms:
-                jac_pad = np.zeros((3, self.model.nv))
-                mujoco.mj_jacGeom(self.model, self.data, jac_pad, None, geom)
-                jac_mid += jac_pad
-            jac_mid = (jac_mid / float(len(self.pad_geoms)))[:, self.dof_adr]
-            jac = np.vstack([jac_mid, jac_flange_r[:, self.dof_adr]])
-            err = np.concatenate([e_pos, e_rot])
-            lam = 1e-4
-            delta = jac.T @ np.linalg.solve(
-                jac @ jac.T + lam * np.eye(6), err
-            )
-            delta = np.clip(delta, -0.2, 0.2)
-            for index, joint_id in enumerate(self.joint_ids):
-                low, high = self.model.jnt_range[joint_id]
-                value = float(self.data.qpos[self.qpos_adr[index]]) + float(delta[index])
-                self.data.qpos[self.qpos_adr[index]] = min(max(value, low), high)
-
-        mid, direction, axis = self.measure()
-        solved = SimpleIkResult(
-            joint_positions={
-                name: float(self.data.qpos[adr])
-                for name, adr in zip(self.arm, self.qpos_adr)
-            },
-            solved_position_m=mid,
-            target_position_m=target,
-            position_error_m=float(np.linalg.norm(target - mid)),
-            iterations=int(best[2]) if best else 0,
+        result = solve_pose_ik(
+            self.model,
+            self.data,
+            target,
+            self.target_rot,
+            self.arm,
+            self.points,
+            self.flange_site,
+            iterations=iterations,
+            tolerance_m=float(solver_cfg.get("tolerance_m", 1e-5)),
         )
-        errors = {
+        _, direction, axis = self.measure()
+        return result, {
             "gripper_direction_deg": float(np.degrees(np.arccos(
                 np.clip(float(np.dot(direction, self.pointing)), -1.0, 1.0)
             ))),
@@ -342,19 +176,41 @@ class OrientedGraspSolver:
                 np.clip(abs(float(np.dot(axis, self.spread_axis))), 0.0, 1.0)
             ))),
         }
-        return solved, errors
+
+    def measure(self):
+        """量出夹持区中点、工具指向、开合轴（与求解口径一致）。
+
+        开合轴取"前一半 geom 均值 → 后一半 geom 均值"的方向：
+        4 个 pad box 时即"左两点均值 → 右两点均值"，与雅可比构造同源。
+        """
+        mujoco.mj_forward(self.model, self.data)
+        positions = [
+            np.asarray(self.data.geom_xpos[point["id"]], dtype=float)
+            for point in self.points
+        ]
+        mid = sum(positions) / float(len(positions))
+        half = len(positions) // 2
+        left = sum(positions[:half]) / float(half)
+        right = sum(positions[half:]) / float(len(positions) - half)
+        flange = np.asarray(self.data.site_xpos[self.flange_site], dtype=float)
+        direction = mid - flange
+        norm = float(np.linalg.norm(direction))
+        direction = direction / norm if norm > 1e-12 else self.pointing.copy()
+        axis = right - left
+        norm = float(np.linalg.norm(axis))
+        axis = axis / norm if norm > 1e-12 else self.spread_axis.copy()
+        return mid, direction, axis
 
 
-class SimpleIkResult:
-    """契约层 `IkResult` 的最小兼容视图（只含调用方用到的字段）。"""
-
-    def __init__(self, joint_positions, solved_position_m, target_position_m,
-                 position_error_m, iterations):
-        self.joint_positions = joint_positions
-        self.solved_position_m = solved_position_m
-        self.target_position_m = target_position_m
-        self.position_error_m = position_error_m
-        self.iterations = iterations
+def _unit(vector, label):
+    """归一化并拒绝零向量（配置写错即显式失败，不静默兜底）。"""
+    array = np.asarray(vector, dtype=float).reshape(-1)
+    if array.shape != (3,):
+        raise ValueError(label + " 必须是 3 个数值")
+    norm = float(np.linalg.norm(array))
+    if norm < 1e-12:
+        raise ValueError(label + " 不能为零向量")
+    return array / norm
 
 
 def _seed_positions(model, baseline, arm_names):
@@ -379,136 +235,6 @@ def _seed_positions(model, baseline, arm_names):
     return {name: 0.0 for name in arm_names}
 
 
-def _gravity_hold_ctrl(model, arm_names, hold_positions, hold_ms=4000,
-                       tolerance_rad=1e-3):
-    """求每个臂关节"抵消重力所需的 ctrl 增量"（重力前馈）。
-
-    **为什么需要**：UR5e 官方执行器是
-    `<general gainprm=2000 biasprm=[0,-2000,-400]>`，即
-        force = 2000*(ctrl - qpos) - 400*qvel
-    这是一个**纯 PD**，没有真实 UR 控制器里的重力/惯量前馈。于是重力矩不为零的
-    位形下必须靠稳态位置误差平衡，且该误差是标定不掉的：
-        Δq = τ_gravity / gain
-    实测 shoulder_lift 的 Δq ≈ 0.014~0.017 rad，折算到末端约 15mm，
-    而抓取验收容差是 5mm，因此 DESCEND 后对齐门禁必然失败
-    （实测 `末端未到达目标抓取位姿: distance=0.016639m tolerance=0.005m`）。
-    注意这是**仿真建模简化**而非真机特性：真机 UR5e 的位置伺服内部已做重力补偿。
-
-    **重力矩取 `qfrc_bias`（qvel=0），不要用 `mj_inverse`**：
-    MuJoCo 的逆动力学按执行器力限**截断**结果 —— 本模型实测稳定返回
-    shoulder_lift/elbow = -150.000 N·m、wrist_1 = +28.000 N·m，
-    恰好等于 UR5e 官方力矩限值，而手算与仿真实测都表明该位形只需约 30 N·m。
-    截断值连符号都是错的（作为前馈会把臂推向反方向）。
-    `qfrc_bias` 在 qvel=0 时就是"保持静止所需的广义力"，无截断、无接触污染。
-
-    **做法**：τ = qfrc_bias[臂关节自由度]，Δctrl = τ / gainprm[0]，
-    其中 gainprm[0] 由模型读出（UR5e 肩/肘 2000、腕 500），不写死。
-
-    **验证方式**：把 Δctrl 加到目标 ctrl 上做一次静态保持仿真，
-    要求稳态关节误差 ≤ tolerance_rad。判据与最终验收同源（都在物理上验证），
-    不依赖对增益取值的假设。
-
-    返回 ({关节名: ctrl 增量}, 证据字典)。
-    """
-    actuator_gain = {}
-    for name in arm_names:
-        # **执行器名可能与关节名不同**：UR5e 的 actuator 是 shoulder_pan /
-        # shoulder_lift / ... （不带 _joint 后缀），关节名是
-        # shoulder_pan_joint / ...。直接按关节名查 actuator 会报
-        # "缺少臂执行器: shoulder_pan_joint"（实测）。
-        # 因此这里统一走"关节名 → 驱动它的执行器"反查，Piper 那种同名
-        # 构型同样适用。
-        joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
-        if joint_id < 0:
-            raise ValueError("缺少臂关节: " + name)
-        actuator_id = -1
-        for index in range(int(model.nu)):
-            if int(model.actuator_trnid[index, 0]) == int(joint_id):
-                actuator_id = index
-                break
-        if actuator_id < 0:
-            raise ValueError("臂关节没有对应的执行器: " + name)
-        # 一阶增益取 gainprm[0]（位置反馈系数）。在 ctrl 与关节角同量纲时
-        # 它就是"ctrl 增量 → 力增量"的斜率；UR5e 官方为 2000。
-        gain = float(model.actuator_gainprm[actuator_id][0])
-        if gain <= 0:
-            raise ValueError(
-                "执行器 %s 的 gainprm[0]=%.6f 非正，无法推算前馈量"
-                % (name, gain)
-            )
-        actuator_gain[name] = gain
-
-    joint_ids = [
-        int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name))
-        for name in arm_names
-    ]
-    dof_adrs = [int(model.jnt_dofadr[j]) for j in joint_ids]
-    qpos_adrs = [int(model.jnt_qposadr[j]) for j in joint_ids]
-
-    # 用自己的 MjData：不污染调用方状态，也避免"留证数组是内部缓冲区视图"
-    # 这类隐蔽错误（调用方的 data 可能停在求解器的中间位形上）。
-    data = mujoco.MjData(model)
-    # 场景状态（方块位置、夹爪开度）必须与运行一致：直接用 keyframe 初始化。
-    if int(model.nkey) > 0:
-        mujoco.mj_resetDataKeyframe(model, data, 0)
-    # 固定夹爪关节到位形里的开度（若有），避免把夹爪自由度算进补偿
-    for name, value in (hold_positions or {}).items():
-        joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, str(name))
-        if joint_id >= 0:
-            data.qpos[int(model.jnt_qposadr[joint_id])] = float(value)
-    for index, name in enumerate(arm_names):
-        data.qpos[qpos_adrs[index]] = float(hold_positions[name])
-    data.qvel[:] = 0.0
-    data.qacc[:] = 0.0
-    data.qfrc_applied[:] = 0.0
-    mujoco.mj_forward(model, data)
-    # qvel=0 时 qfrc_bias 即"保持该位形静止所需的广义力"（含重力、科氏=0）。
-    # 不包含接触力，也不受 actuator forcerange 截断影响。
-    bias = np.asarray(data.qfrc_bias, dtype=float).copy()
-    compensation = {
-        name: float(bias[dof_adrs[index]] / actuator_gain[name])
-        for index, name in enumerate(arm_names)
-    }
-    gravity_torque = {
-        name: round(float(bias[dof_adrs[index]]), 6)
-        for index, name in enumerate(arm_names)
-    }
-
-    # --- 验证：施加前馈后做静态保持仿真，量稳态关节误差 ---
-    for index, name in enumerate(arm_names):
-        joint_id = joint_ids[index]
-        actuator_id = -1
-        for candidate in range(int(model.nu)):
-            if int(model.actuator_trnid[candidate, 0]) == int(joint_id):
-                actuator_id = candidate
-                break
-        data.ctrl[actuator_id] = float(hold_positions[name]) + compensation[name]
-    steps = max(1, int(round(hold_ms / 1000.0 / float(model.opt.timestep))))
-    for _ in range(steps):
-        mujoco.mj_step(model, data)
-    mujoco.mj_forward(model, data)
-    residual_rad = {
-        name: round(float(data.qpos[qpos_adrs[index]]) - float(hold_positions[name]), 9)
-        for index, name in enumerate(arm_names)
-    }
-    worst = max(abs(value) for value in residual_rad.values())
-    if worst > tolerance_rad:
-        raise ValueError(
-            "重力前馈验证未通过: 静态保持 %dms 后最大关节误差 %.9f rad（限 %.9f rad）。"
-            "残余误差=%s" % (hold_ms, worst, tolerance_rad, residual_rad)
-        )
-    return (
-        {name: round(float(value), 9) for name, value in compensation.items()},
-        {
-            "method": "qfrc_bias_plus_static_hold",
-            "gravity_torque_nm": gravity_torque,
-            "actuator_gain": {k: round(v, 3) for k, v in actuator_gain.items()},
-            "hold_ms": hold_ms,
-            "residual_joint_rad": residual_rad,
-            "worst_residual_rad": round(worst, 9),
-            "tolerance_rad": tolerance_rad,
-        },
-    )
 
 
 def build_reference_poses(root, baseline, target_id=None):
@@ -578,8 +304,14 @@ def build_reference_poses(root, baseline, target_id=None):
             % float(np.dot(retreat_direction, spread_axis))
         )
 
-    solver = OrientedGraspSolver(
-        model, data, arm_names, pad_geoms, flange_site,
+    arm_joint_ids = [
+        int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name))
+        for name in arm_names
+    ]
+    if any(joint < 0 for joint in arm_joint_ids):
+        raise ValueError("臂关节名在模型中不存在: " + str(arm_names))
+    solver = GraspPoseSolver(
+        model, data, arm_joint_ids, pad_geoms, flange_site,
         pointing_direction, spread_axis,
     )
 
@@ -606,47 +338,52 @@ def build_reference_poses(root, baseline, target_id=None):
     # **必须扫全部 4 个 pad box**：pad2 在每个 pad 的局部 -z 侧，是整个
     # 夹爪最低的碰撞体。只扫 pad1 会漏掉它，结果是 pad2 扎进台面
     # （历史实测 pad2 底面 z=-0.00313，比台面低 3.1mm）。
-    height_correction = 0.0
-    tip_z = None
-    orientation_residual = None
-    clearance_trace = []
-    cleared = False
-    for iteration in range(int(grasp_cfg.get("clearance_iterations", 8))):
-        target = base_target + retreat_direction * height_correction
-        grasp_result, orientation_residual = solver.solve(target, solver_cfg)
-        tip_z = _finger_tip_z(model, data, pad_geoms)
-        deficit = (top_z + tip_clearance) - tip_z
-        # 留证：配平过程的每一步都记录下来。之前只断言"未收敛"而不留轨迹，
-        # 导致无法区分"配平没跑够"与"配平跑够了但被后续步骤破坏"。
-        clearance_trace.append({
-            "iteration": iteration,
-            "correction_m": round(float(height_correction), 9),
-            "tip_z_m": round(float(tip_z), 9),
-            "deficit_m": round(float(deficit), 9),
-            "position_error_m": round(float(grasp_result.position_error_m), 9),
-            # 姿态残差：若姿态在配平过程中漂移，说明位置与姿态在互相拉扯，
-            # 此时"抬高度"这种单变量修正必然不收敛。
-            # 注意 `orientation_residual` 是字典（键为 gripper_direction_deg /
-            # spread_axis_deg），不是二元组。
-            "orientation_deg": {
-                str(key): round(float(value), 6)
-                for key, value in (orientation_residual or {}).items()
-            },
-        })
-        if deficit <= 1e-4:
-            cleared = True
-            break
-        height_correction += float(deficit)
+    # 配平算法本体在 core（与机型无关）：沿后退方向抬高目标，直到指尖最低点
+    # 离开台面达到要求间隙。这里只负责注入"实测指尖最低点"的几何来源。
+    # **必须扫全部 pad box**：pad2 在每个 pad 的局部 -z 侧，是整个夹爪最低的
+    # 碰撞体；只扫 pad1 会漏掉它（历史实测 pad2 底面比台面低 3.1mm）。
+    per_iteration_orientation = []
+
+    def solve_for_clearance(target):
+        result, residual = solver.solve(target, solver_cfg)
+        per_iteration_orientation.append(residual)
+        return result
+
+    grasp_result, height_correction, clearance_trace, cleared = balance_tip_clearance(
+        model,
+        data,
+        solve_for_clearance,
+        base_target,
+        retreat_direction,
+        pad_geoms,
+        top_z,
+        tip_clearance,
+        iterations=int(grasp_cfg.get("clearance_iterations", 8)),
+    )
     if not cleared:
+        last = clearance_trace[-1] if clearance_trace else {}
         raise ValueError(
             "指尖离台间隙配平未收敛（%d 次迭代后仍差 %.6f m）: tip_z=%.9f "
             "required=%.9f；配平轨迹=%s"
             % (
-                len(clearance_trace), float(deficit), float(tip_z),
-                top_z + tip_clearance, clearance_trace,
+                len(clearance_trace),
+                float(last.get("deficit_m", float("nan"))),
+                float(last.get("tip_z_m", float("nan"))),
+                top_z + tip_clearance,
+                clearance_trace,
             )
         )
+    # 姿态残差逐轮附回轨迹：若姿态在配平过程中漂移，说明位置与姿态在互相拉扯，
+    # 此时"抬高度"这种单变量修正必然不收敛 —— 必须留证才能区分。
+    for entry, residual in zip(clearance_trace, per_iteration_orientation):
+        entry["orientation_deg"] = {
+            str(key): round(float(value), 6)
+            for key, value in (residual or {}).items()
+        }
+    tip_z = float(clearance_trace[-1]["tip_z_m"])
+    orientation_residual = per_iteration_orientation[-1] if per_iteration_orientation else {}
     grasp_target_corrected = base_target + retreat_direction * height_correction
+
 
     def pack(result):
         return {
@@ -778,7 +515,7 @@ def build_reference_poses(root, baseline, target_id=None):
         ("grasp", grasp),
         ("lift", lift),
     ):
-        offsets, evidence = _gravity_hold_ctrl(
+        offsets, evidence = gravity_hold_ctrl(
             model, arm_names, dict(pose["joint_positions"])
         )
         feedforward[name] = offsets
@@ -892,7 +629,7 @@ def validate_grasp_pose(scene_path, baseline, reference):
     # 只看每侧代表接触面（pad1）会漏判 pad2 扎台（历史实测低 3.1mm）。
     pad_names = list(model_cfg["finger_geoms"].get("pad_boxes") or finger_names)
     pad_geom_ids = tuple(_geom_id(model, name) for name in pad_names)
-    tip_z = _finger_tip_z(model, data, pad_geom_ids)
+    tip_z = lowest_mesh_point_z(model, data, pad_geom_ids)
     pairs = _contact_pairs(model, data)
     pad_name_set = set(pad_names)
     touching = [

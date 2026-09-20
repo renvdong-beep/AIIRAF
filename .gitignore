@@ -22,3 +22,6 @@ MUJOCO_LOG.TXT
 screenshot*.png
 # 泛化/重构过程中的后端快照：原实现由 git 历史取回，不留在包目录。
 *.pre-generalization
+
+# Hermes Agent 工作区状态（计划、会话缓存等），不入库。
+.hermes/
