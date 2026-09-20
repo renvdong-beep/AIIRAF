@@ -370,7 +370,7 @@
       "additionalProperties": false,
       "title": "场景基线（iraf.scene-baseline/v1）",
       "description": "校验 scenes/<id>/baseline.yaml：参考姿态来源、各本体的机型基线引用与场景级验收阈值。阈值只来自声明与实测，禁止散落硬编码。",
-      "required": ["schema_version", "scene", "robots", "initial_state", "acceptance"],
+      "required": ["schema_version", "scene", "robots", "initial_state", "acceptance", "sensor_acceptance"],
       "properties": {
         "schema_version": {"const": "iraf.scene-baseline/v1"},
         "scene": {
@@ -438,6 +438,92 @@
             "dock_yaw_error_max_deg": {"type": "number", "exclusiveMinimum": 0},
             "max_speed_m_s": {"type": "number", "minimum": 0},
             "timeout_s": {"type": "number", "exclusiveMinimum": 0}
+          }
+        },
+        "sensor_acceptance": {
+          "type": "object",
+          "additionalProperties": false,
+          "title": "传感器验收阈值（步骤 14）",
+          "description": "`scripts/verify_scene_sensors.py` 消费的全部阈值。**必需段**：缺段或缺键即声明非法，禁止脚本内写死默认值（AGENTS.md 1.3 / 铁律 5.3）。数值的实测依据写在 scenes/<id>/baseline.yaml 的注释里。",
+          "required": ["settle", "camera", "lidar", "imu"],
+          "properties": {
+            "settle": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "采样前的仿真推进窗口；用于证明状态可复现且准静态，不代表步态/平衡能力。",
+              "required": ["steps", "max_base_drift_m"],
+              "properties": {
+                "steps": {"type": "integer", "minimum": 0},
+                "max_base_drift_m": {"type": "number", "exclusiveMinimum": 0}
+              }
+            },
+            "camera": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "model_vs_declaration_rel_error_max",
+                "calibration_fovy_rel_error_max",
+                "calibration_focal_rel_error_max",
+                "resolution_tolerance_px",
+                "min_nonblack_fraction"
+              ],
+              "properties": {
+                "model_vs_declaration_rel_error_max": {"type": "number", "minimum": 0},
+                "calibration_fovy_rel_error_max": {"type": "number", "exclusiveMinimum": 0},
+                "calibration_focal_rel_error_max": {"type": "number", "exclusiveMinimum": 0},
+                "resolution_tolerance_px": {"type": "integer", "minimum": 0},
+                "min_nonblack_fraction": {"type": "number", "exclusiveMinimum": 0, "maximum": 1}
+              }
+            },
+            "lidar": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "elevation_rings_deg",
+                "range_histogram_edges_m",
+                "ground_geoms",
+                "min_points",
+                "max_miss_fraction",
+                "min_ground_fraction",
+                "workbench_geometry_tolerance_m",
+                "ray_box_tolerance_m"
+              ],
+              "properties": {
+                "elevation_rings_deg": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {"type": "number", "minimum": -90, "maximum": 90}
+                },
+                "range_histogram_edges_m": {
+                  "type": "array",
+                  "minItems": 2,
+                  "description": "量程直方图的边界（米）；首个边界可以是 0（从 0 m 起分箱），实现层强制严格递增。",
+                  "items": {"type": "number", "minimum": 0}
+                },
+                "ground_geoms": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+                "min_points": {"type": "integer", "minimum": 1},
+                "max_miss_fraction": {"type": "number", "minimum": 0, "maximum": 1},
+                "min_ground_fraction": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+                "workbench_geometry_tolerance_m": {"type": "number", "minimum": 0},
+                "ray_box_tolerance_m": {"type": "number", "exclusiveMinimum": 0}
+              }
+            },
+            "imu": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "quat_norm_tolerance",
+                "gyro_max_abs_error_rad_s",
+                "acc_rel_error_max",
+                "torque_max_abs_error_nm"
+              ],
+              "properties": {
+                "quat_norm_tolerance": {"type": "number", "minimum": 0},
+                "gyro_max_abs_error_rad_s": {"type": "number", "minimum": 0},
+                "acc_rel_error_max": {"type": "number", "exclusiveMinimum": 0},
+                "torque_max_abs_error_nm": {"type": "number", "exclusiveMinimum": 0}
+              }
+            }
           }
         }
       },

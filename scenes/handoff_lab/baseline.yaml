@@ -38,3 +38,59 @@ acceptance:
   min_stable_hold_s: 3.0
   max_speed_m_s: 0.0
   timeout_s: 180.0
+
+# 传感器验收阈值（步骤 14 交付 `scripts/verify_scene_sensors.py` 消费）。
+# 纪律（AGENTS.md 1.3 / 铁律 5.3）：阈值只来自声明与实测，脚本里**不得**出现任何数字默认值；
+# 缺段或缺键即显式失败（场景契约 schema 已把本段列为必需，见 config/scene.schema.json）。
+sensor_acceptance:
+  settle:
+    # 取样前的步进帧数：只为证明"仿真推进链路可用且状态可复现"，不代表步态/平衡能力。
+    # 实测依据（build/iraf-24h/14/probe-accel.txt）：本场景无平衡控制器，用关键帧 ctrl 推进
+    # 100 帧躯干即下落 0.188 m、500 帧 0.193 m，因此取样窗口必须短且声明化。
+    steps: 10
+    # 10 帧内躯干位移上限：用于证明取样状态是准静态的（不是在下落中的机器人上做统计）。
+    max_base_drift_m: 0.01
+  camera:
+    # 声明 → 模型 的回环门禁（fovy_deg 必须逐位体现在生成的 camera 上）。
+    model_vs_declaration_rel_error_max: 1.0e-9
+    # 模型内参与**本机型标定文件**内参的相对误差上限：跨机型复用标定会给出"看似合理但错误"
+    # 的坐标，因此这条门禁用来抓"标定文件不是这台相机"。实测 1.06e-2（标定 LM 拟合含主点
+    # 自由度，与理想针孔模型存在可见差异），上限取 5.0e-2。
+    calibration_fovy_rel_error_max: 0.05
+    calibration_focal_rel_error_max: 0.05
+    # 渲染分辨率必须与标定声明的 image_size_px 逐像素一致（0 像素容差）。
+    resolution_tolerance_px: 0
+    # 离屏帧非全黑像素占比下限：证明"确实产出了图像"而不是黑帧/未初始化缓冲。
+    min_nonblack_fraction: 0.02
+  lidar:
+    # 扫描契约：仰角圈 × 每圈方位数 = scene.yaml 声明的 num_rays（不能整除即失败）。
+    # 下三圈必然打在躯干/托盘/台面上，0 度圈在本场景（无无限地面）理论上全落空。
+    elevation_rings_deg: [-45.0, -25.0, -10.0, 0.0]
+    range_histogram_edges_m: [0.0, 0.25, 0.5, 0.75, 1.0, 2.0, 8.0]
+    # 地平面（台面）由哪个 geom 代表；该 geom 的位姿/尺寸必须与 scene.yaml 的 workbench 声明一致。
+    ground_geoms: [workbench]
+    # 有效点数下限：-45 度圈（90 线）实测 90/90 全中，-25 度圈实测 74/90（台面半边长 0.8 m 之外
+    # 的射线落空是几何事实）。下限取 120（= 360 线的 1/3），既是"点数=0 必然失败"的严格化，
+    # 也留有实测余量（实测 167）。
+    min_points: 120
+    # 落空占比上限：0 度与 -10 度两圈共 180 线（占 50%）朝天/水平，本场景无无限地面，
+    # 落空是物理事实（实测 0.536）；上限 0.75 用于捕获"雷达坐标系挂错/挂到世界原点"这类退化。
+    max_miss_fraction: 0.75
+    # 台面点占比下限：实测 28/360 = 0.078，下限 0.02 用于捕获"射线起点或朝向错位"。
+    min_ground_fraction: 0.02
+    # 注入的工作台 geom 与 scene.yaml 声明的位姿/半边长相对误差上限（声明 → 模型 回环）。
+    workbench_geometry_tolerance_m: 1.0e-9
+    # mj_ray 命中台面的距离与"按 scene.yaml 声明解析求交"的距离之差上限：
+    # 把注入误差与扫描坐标系错位都变成可断言的数字。
+    ray_box_tolerance_m: 1.0e-6
+  imu:
+    # 四元数模长偏差上限（规范四元数）。
+    quat_norm_tolerance: 1.0e-9
+    # 陀螺仪读数 vs 独立计算的传感器系角速度（mj_objectVelocity）之差上限。
+    gyro_max_abs_error_rad_s: 1.0e-9
+    # 加速度计读数 vs 独立计算的传感器系线加速度（mj_objectAcceleration）的相对误差上限。
+    acc_rel_error_max: 0.01
+    # 力矩传感器读数 vs 对应执行器 ctrl×gear 的绝对误差上限。
+    # 容差取厂商传感器噪声声明（go2.xml 的 jointactuatorfrc noise="0.01"）的 5 倍：
+    # 目的是抓"力矩传感器挂到错误执行器"的绑定错误，不是掩盖噪声。
+    torque_max_abs_error_nm: 0.05

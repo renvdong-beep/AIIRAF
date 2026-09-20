@@ -573,6 +573,34 @@ class ClosedPackagePositiveControlTests(unittest.TestCase):
                 "dock_yaw_error_max_deg": 2.0,
                 "max_speed_m_s": 0.0,
             },
+            # 传感器验收阈值段（步骤 14 起为**必需**）：正向对照必须跟着契约一起补齐，
+            # 否则"已闭合场景包"会因缺段被判非法（门禁是收紧的，不因夹具而放宽）。
+            "sensor_acceptance": {
+                "settle": {"steps": 10, "max_base_drift_m": 0.01},
+                "camera": {
+                    "model_vs_declaration_rel_error_max": 1e-9,
+                    "calibration_fovy_rel_error_max": 0.05,
+                    "calibration_focal_rel_error_max": 0.05,
+                    "resolution_tolerance_px": 0,
+                    "min_nonblack_fraction": 0.02,
+                },
+                "lidar": {
+                    "elevation_rings_deg": [-45.0, -25.0, -10.0, 0.0],
+                    "range_histogram_edges_m": [0.0, 0.25, 0.5, 0.75, 1.0, 2.0, 8.0],
+                    "ground_geoms": ["workbench"],
+                    "min_points": 120,
+                    "max_miss_fraction": 0.75,
+                    "min_ground_fraction": 0.02,
+                    "workbench_geometry_tolerance_m": 1e-9,
+                    "ray_box_tolerance_m": 1e-6,
+                },
+                "imu": {
+                    "quat_norm_tolerance": 1e-9,
+                    "gyro_max_abs_error_rad_s": 1e-9,
+                    "acc_rel_error_max": 0.01,
+                    "torque_max_abs_error_nm": 0.05,
+                },
+            },
         }
         scenario = {
             "schema_version": "iraf.scenario-catalog/v1",
