@@ -96,6 +96,31 @@ class VisionConfigParseTests(unittest.TestCase):
         )
         self.assertEqual(6, len(parsed["detector"]["command"]))
 
+    def test_calibration_placeholder_requires_declared_calibration_file(self):
+        """标定必须按机型声明：用别机型的标定会得到看似合理的错误坐标。"""
+        with self.assertRaisesRegex(ValueError, "calibration_file"):
+            _parse_vision_config(
+                {"detector": {"command": ["d.py", "--extrinsics", "{calibration}"]}}
+            )
+        parsed = _parse_vision_config(
+            {
+                "detector": {
+                    "command": ["d.py", "--extrinsics", "{calibration}"],
+                    "calibration_file": "build/calibration/ur5-camera-to-base.json",
+                }
+            }
+        )
+        self.assertEqual(
+            "build/calibration/ur5-camera-to-base.json",
+            parsed["detector"]["calibration_file"],
+        )
+
+    def test_rejects_empty_calibration_file(self):
+        with self.assertRaisesRegex(ValueError, "calibration_file"):
+            _parse_vision_config(
+                {"detector": {"command": ["d.py"], "calibration_file": ""}}
+            )
+
     def test_refresh_modes_are_closed_set(self):
         self.assertEqual(("always", "on_missing", "never"), VISION_REFRESH_MODES)
 

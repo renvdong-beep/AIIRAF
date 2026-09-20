@@ -101,15 +101,20 @@ vision:
   detector:
     command:
       - "{python}"
-      - scripts/detect_piper_targets.py
+      - scripts/detect_targets.py
       - --model
       - "{model}"
       - --config
       - "{config}"
       - --output
       - "{evidence}"
+      - --extrinsics
+      - "{calibration}"
     # 检测器参数真源（其 depth 段覆盖后端内置默认值）。
     config_file: config/piper_multi_target.yaml
+    # 相机标定**按机型独立**：里面是"这台相机相对这个基座"的外参，
+    # 复用别机型的标定会得到看似合理但实际错误的坐标。
+    calibration_file: build/calibration/camera_to_base.json
 
 # --- 统一入口声明（AGENTS.md 6.4 金路径）---
 build:

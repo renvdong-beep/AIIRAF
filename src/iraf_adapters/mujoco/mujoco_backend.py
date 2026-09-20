@@ -42,7 +42,7 @@ VISION_REFRESH_MODES = ("always", "on_missing", "never")
 
 #: 视觉检测器命令允许的占位符。写错占位符＝配置错误，必须在执行前显式失败，
 #: 否则会出现"命令跑了但参数没传进去"这类难查的静默故障。
-VISION_COMMAND_PLACEHOLDERS = ("python", "model", "evidence", "config", "target_id")
+VISION_COMMAND_PLACEHOLDERS = ("python", "model", "evidence", "config", "target_id", "calibration")
 
 #: 生成的检测器输入配置落盘位置（属构建产物，按仓库约定写在 build/ 下）。
 DEFAULT_DETECTION_CONFIG_OUTPUT = "build/calibration/detection-config.json"
@@ -127,7 +127,8 @@ def _parse_vision_config(config):
         if not isinstance(detector_raw, dict):
             raise ValueError("vision.detector 必须是对象")
         unknown = sorted(
-            set(detector_raw) - {"command", "config_file", "config_output"}
+            set(detector_raw)
+            - {"command", "config_file", "config_output", "calibration_file"}
         )
         if unknown:
             raise ValueError("vision.detector 含未知字段: " + str(unknown))
@@ -155,10 +156,24 @@ def _parse_vision_config(config):
             not isinstance(config_output, str) or not config_output
         ):
             raise ValueError("vision.detector.config_output 必须是非空字符串")
+        calibration_file = detector_raw.get("calibration_file")
+        if calibration_file is not None and (
+            not isinstance(calibration_file, str) or not calibration_file
+        ):
+            raise ValueError("vision.detector.calibration_file 必须是非空字符串")
+        # 相机标定**必须按机型声明**：标定文件里是"这台相机相对这个基座"的外参，
+        # 复用另一台机器人的标定会得到"看起来合理但实际错误"的坐标
+        # （实测风险：默认路径 build/calibration/camera_to_base.json 曾是 Piper 的）。
+        if any("{calibration}" in arg for arg in command) and not calibration_file:
+            raise ValueError(
+                "vision.detector.command 使用 {calibration} 时必须声明 "
+                "vision.detector.calibration_file（相机标定按机型独立）"
+            )
         detector = {
             "command": command,
             "config_file": config_file,
             "config_output": config_output or DEFAULT_DETECTION_CONFIG_OUTPUT,
+            "calibration_file": calibration_file,
         }
     return {"evidence_file": evidence_file, "refresh": refresh, "detector": detector}
 
@@ -481,10 +496,11 @@ class MujocoBackend:
         后端不含任何机型专有路径：未声明 `vision` 时只能读请求里的 `vision_file`。
 
         证据文件格式兼容两种：
-        - 单目标旧格式（iraf.piper-vision-target/v1）：
-          顶层 vision_world_position_m + target_id，姿态默认单位四元数；
-        - 多目标新格式（iraf.piper-vision-targets/v1）：
+        - 单目标格式：顶层 vision_world_position_m + target_id，姿态默认单位四元数；
+        - 多目标格式（检测器输出，schema `iraf.vision-targets/v1`）：
           targets 数组，按 target_id 选取，携带 6DoF 姿态与顶面法向。
+        两种格式按**结构**区分（是否有 targets 数组），不看 schema 字符串，
+        因此历史证据文件（Piper 命名时期）与新证据文件都能读。
         """
         target_id = inputs["target_id"]
         path = self._resolve_vision_evidence(inputs)
@@ -592,6 +608,10 @@ class MujocoBackend:
             "evidence": str(evidence_path),
             "config": str(config_path),
             "target_id": str(target_id),
+            # 标定文件按机型声明；未声明时为空串（命令里用到它会在装配期就失败）
+            "calibration": str(_resolve_project_path(detector["calibration_file"]))
+            if detector.get("calibration_file")
+            else "",
         }
         command = _render_detector_command(detector["command"], values)
         try:
