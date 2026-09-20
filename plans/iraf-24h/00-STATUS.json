@@ -1,0 +1,218 @@
+{
+  "schema_version": "iraf.plan-ledger/v1",
+  "campaign": "iraf-24h",
+  "created_at": "2026-09-20",
+  "source_plan": ".hermes/plans/2026-09-20_multiplatform-sdk-unitree-studio.md",
+  "decisions": {
+    "sdk_form": "A",
+    "wheelhouse_source": "B",
+    "board_python": "A",
+    "unitree_scope": "B",
+    "scene_package_dir": "A",
+    "interaction_order": "A",
+    "voice_role": "A"
+  },
+  "test_baseline": {
+    "recorded_at": null,
+    "failures": null,
+    "errors": null,
+    "runs": null
+  },
+  "blocked": [],
+  "steps": [
+    {
+      "id": "01",
+      "title": "决策记录与文件边界",
+      "status": "TODO",
+      "evidence": null,
+      "commit": null,
+      "updated_at": null,
+      "note": null
+    },
+    {
+      "id": "02",
+      "title": "SDK 产物矩阵与 BoardProfile 声明",
+      "status": "TODO",
+      "evidence": null,
+      "commit": null,
+      "updated_at": null,
+      "note": null
+    },
+    {
+      "id": "03",
+      "title": "profile_check 校验 BoardProfile",
+      "status": "TODO",
+      "evidence": null,
+      "commit": null,
+      "updated_at": null,
+      "note": null
+    },
+    {
+      "id": "04",
+      "title": "ADR-0006 / ADR-0007 落地",
+      "status": "TODO",
+      "evidence": null,
+      "commit": null,
+      "updated_at": null,
+      "note": null
+    },
+    {
+      "id": "05",
+      "title": "iraf_sdk 最小层与中文诊断",
+      "status": "TODO",
+      "evidence": null,
+      "commit": null,
+      "updated_at": null,
+      "note": null
+    },
+    {
+      "id": "06",
+      "title": "build_sdk.sh 打包与 manifest",
+      "status": "TODO",
+      "evidence": null,
+      "commit": null,
+      "updated_at": null,
+      "note": null
+    },
+    {
+      "id": "07",
+      "title": "离线 wheelhouse 抓取",
+      "status": "TODO",
+      "evidence": null,
+      "commit": null,
+      "updated_at": null,
+      "note": "x86 侧可完整执行（下载不需要板卡）；源用 aliyun 镜像。目标端安装属于 DEFERRED。"
+    },
+    {
+      "id": "08",
+      "title": "板级 bundle 与 install.sh",
+      "status": "TODO",
+      "evidence": null,
+      "commit": null,
+      "updated_at": null,
+      "note": "bundle 组装与 install.sh --dry-run 在 x86 侧完成；目标端真实安装 DEFERRED（板卡不在）。"
+    },
+    {
+      "id": "09",
+      "title": "verify.sh 与 uninstall.sh",
+      "status": "TODO",
+      "evidence": null,
+      "commit": null,
+      "updated_at": null,
+      "note": "verify/uninstall 在 x86 侧用 dry-run + 本地 stub 验证解析逻辑；目标端 /health DEFERRED。"
+    },
+    {
+      "id": "10",
+      "title": "deploy.sh 双通道传输",
+      "status": "TODO",
+      "evidence": null,
+      "commit": null,
+      "updated_at": null,
+      "note": "media 通道完整验收；ssh 通道脚本与不可达负向验收完成，真机部署 DEFERRED。"
+    },
+    {
+      "id": "11",
+      "title": "场景包契约与 handoff_lab 骨架",
+      "status": "TODO",
+      "evidence": null,
+      "commit": null,
+      "updated_at": null,
+      "note": null
+    },
+    {
+      "id": "12",
+      "title": "vendor 锁定 unitree_mujoco",
+      "status": "TODO",
+      "evidence": null,
+      "commit": null,
+      "updated_at": null,
+      "note": null
+    },
+    {
+      "id": "13",
+      "title": "场景构建器注入传感器与道具",
+      "status": "TODO",
+      "evidence": null,
+      "commit": null,
+      "updated_at": null,
+      "note": null
+    },
+    {
+      "id": "14",
+      "title": "场景生成验收与传感器统计",
+      "status": "TODO",
+      "evidence": null,
+      "commit": null,
+      "updated_at": null,
+      "note": null
+    },
+    {
+      "id": "15",
+      "title": "Go2 loopback 站立/停止/状态",
+      "status": "TODO",
+      "evidence": null,
+      "commit": null,
+      "updated_at": null,
+      "note": null
+    },
+    {
+      "id": "16",
+      "title": "QuadrupedAdapter 与 UnitreeGo2Adapter",
+      "status": "TODO",
+      "evidence": null,
+      "commit": null,
+      "updated_at": null,
+      "note": null
+    },
+    {
+      "id": "17",
+      "title": "stand/stop/locomote 技能与拒绝路径",
+      "status": "TODO",
+      "evidence": null,
+      "commit": null,
+      "updated_at": null,
+      "note": null
+    },
+    {
+      "id": "18",
+      "title": "S2 脚本化场景入口 scenario.py",
+      "status": "TODO",
+      "evidence": null,
+      "commit": null,
+      "updated_at": null,
+      "note": null
+    },
+    {
+      "id": "19",
+      "title": "架构图与文档同步",
+      "status": "TODO",
+      "evidence": null,
+      "commit": null,
+      "updated_at": null,
+      "note": null
+    },
+    {
+      "id": "20",
+      "title": "24 小时收尾汇总与缺口清单",
+      "status": "TODO",
+      "evidence": null,
+      "commit": null,
+      "updated_at": null,
+      "note": null
+    }
+  ],
+  "scope": {
+    "mode": "x86-first",
+    "reason": "边缘板卡不在场：10.203.247.72 / 10.203.247.86 的 22 与 9119 端口实测均不通",
+    "deferred": [
+      "07 的真实抓取（可做，无需板卡）以外的一切目标端验收",
+      "08 目标端真实安装",
+      "09 目标端 /health 与事件写入检查",
+      "10 ssh 传输真机部署"
+    ],
+    "not_acceptable": "用 dry-run、mock 或历史数据冒充目标端证据",
+    "decision_update": {
+      "2": "原 B 内网私有源 → 先用 A aliyun 镜像（实测可达且含 aarch64 wheel），字段保持可声明替换"
+    }
+  }
+}
