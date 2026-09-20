@@ -30,6 +30,8 @@ import mujoco
 import numpy as np
 import yaml
 
+from iraf_adapters.mujoco.scene_lighting import inject_lights
+
 WORKBENCH_TOP_Z = 0.0
 
 LIFT_CONSTRAINT_TEMPLATE = "%s_lift_constraint"
@@ -214,6 +216,11 @@ def build_scene(source, output, target_id=None, half_size=0.030, config=None,
     selected_id = target_id or targets[0]["id"]
     if selected_id not in {item["id"] for item in targets}:
         raise ValueError("未找到目标 id: " + str(selected_id))
+
+    # --- 0) 光源（纯视觉；缺省不注入，保持既有行为）---
+    # 未声明光源时 MuJoCo 只有默认头灯，离屏相机图接近全黑（实测均值 16~24/255）；
+    # 声明后由配置决定亮度，跨机型可移植（方向光与工作空间位置无关）。
+    _injected_lights = inject_lights(world, scene_cfg.get("lights"))
 
     # --- 1) 工作台 ---
     ET.SubElement(

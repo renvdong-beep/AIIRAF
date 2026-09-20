@@ -20,6 +20,8 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
+from iraf_adapters.mujoco.scene_lighting import inject_lights
+
 WORKBENCH_TOP_Z = 0.0
 DEFAULT_ARM_JOINTS = [f"joint{i}" for i in range(1, 7)]
 DEFAULT_OPEN = {"joint7": 0.035, "joint8": -0.035}
@@ -306,7 +308,10 @@ def build_scene(
     _validate_support_height(target_position[2], half_size, top_z)
 
     world = root.find("worldbody")
-    ET.SubElement(
+    # --- 光源（纯视觉；缺省不注入，保持既有行为）---
+    _injected_lights = inject_lights(world, scene_cfg.get("lights"))
+
+    bench = ET.SubElement(
         world,
         "geom",
         name="workbench",

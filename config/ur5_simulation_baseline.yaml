@@ -160,23 +160,32 @@ gripper:
   # 后端执行到 LIFT 时会以极大力矩扭转腕部。
 
 scene:
-  # UR5e 的 <general> 执行器自带 gainprm=2000 / biasprm=[0,-2000,-400]
-  # （腕部为 500/-500/-100），本身就是带阻尼的位置伺服，
-  # 因此**不需要** Piper 那样额外注入 arm_position_kp：那会把官方增益覆盖掉，
-  # 反而破坏官方标定过的伺服特性。
-  # 实测臂关节在官方增益下 mj_step 稳定（无 QACC 告警）。
-  inject_arm_position_gains: false
-  timestep_s: 0.002
-  gravity: "0 0 -9.81"
-  # pad geom 的官方摩擦是 0.7/0.6，滑块接触需要更高摩擦才能纯摩擦抬升。
-  pad_friction: "2.0 0.05 0.001"
-  camera:
-    name: overhead_camera
-    # 相机固定并对准抓取点：可标定是视觉精度可审计的前提。
-    # 位置在基座 -x 斜上方，俯视工作台。
-    pos_m: [-1.30, -0.75, 0.85]
-    fovy_deg: 60
-    look_at_m: [-0.55, -0.134, 0.025]
+  # 光源声明（纯视觉，不参与物理）。缺省不注入时 MuJoCo 只有默认头灯，
+  # 离屏相机图接近全黑（实测均值 16~24/255、98% 像素≈近黑），人看/截图都不可读。
+  # 用**方向光**：与机型工作空间位置无关，两台机型可复用同一组；key 带阴影。
+  lights:
+    - name: key
+      directional: true
+      # 主光**近垂直**：顶面受光充足、侧面掠射很暗。
+      # 为什么关键：侧脸被照亮后也会落进颜色阈值，最大支撑平面从"顶面"变成"侧面"，
+      # 位姿拟合随即被尺寸门禁拦下（实测 fitted=[0.0776, 0.0393] vs 期望 0.050）。
+      # 顶视相机 + 近垂直光 = 顶面主导，既看得清又不破坏颜色分割。
+      dir: [-0.16, 0.16, -1.0]
+      diffuse: [0.85, 0.84, 0.82]
+      specular: [0.25, 0.25, 0.25]
+      # castshadow 默认关闭：主光阴影会把台面染成与目标相近的色调，掩码被放大。
+      # 需要阴影时设为 true，但必须重跑视觉验收（检测器依赖渲染颜色）。
+      castshadow: false
+    - name: fill
+      directional: true
+      dir: [0.60, -0.25, -0.55]
+      diffuse: [0.30, 0.30, 0.30]
+      specular: [0.05, 0.05, 0.05]
+    - name: rim
+      directional: true
+      dir: [0.25, 0.70, -0.40]
+      diffuse: [0.22, 0.22, 0.24]
+      specular: [0.0, 0.0, 0.0]
 
 acceptance:
   pose_tolerance_m: 0.005
