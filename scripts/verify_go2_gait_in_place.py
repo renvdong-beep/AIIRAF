@@ -23,7 +23,13 @@
 - `2` 声明非法（步态段缺键/越界/相位不自洽、安全策略缺移动边界）
 - `3` 引用完整性失败（Profile / 安全策略 / 被测模型 / 关节 / 接触几何不存在）
 - `4` 后端装配失败（能力契约、模型编译）
-- `5` 判据未通过（报告 `failed_checks` 逐条列出）
+- `5` 判据未通过（报告 `failed_checks` 逐条列出）；**或**执行记录缺少必要的 `balance` 证据段
+  （证据不完整 ⇒ fail-closed，绝不给默认值、绝不静默省略）
+
+力矩级平衡器的证据：报告 `balance` 段是执行记录里 `_balance_summary` 的**生产统计**
+（分类口径 / 力控兑现 / fallback 率 / 看门狗），直接透传、不由本入口重算 —— 这样
+「B1 到底有没有生效」不再需要序列重建脚本（调试记录 §18.5 的缺口）。该段**只增证据，
+不参与判据**：`checks` 条数与全部阈值不受影响。
 
 诚实边界：全部结论属于**仿真**（报告 `simulation: true`）；本入口证明的是「声明的步态参数下
 原地踏步稳定且接触序列正确」，**不**证明行走/转向/到点能力（那是步骤 03/04），
@@ -87,6 +93,87 @@ def _sha256(path):
     digest = hashlib.sha256()
     digest.update(Path(path).read_bytes())
     return digest.hexdigest()
+
+
+#: `balance` 段里本入口**消费**的键路径（点号路径）：缺任一条即"证据不完整"，显式失败。
+#: 这些路径全部来自适配器 `_balance_summary` 的产出形状（生产侧先有、报告侧才有），
+#: 因此这里不是"期望值"而是"契约"：适配器改形状而报告未同步 ⇒ 立刻红。
+BALANCE_REQUIRED_PATHS = (
+    "enabled",
+    "stance_classification",
+    "weight_position",
+    "stance_weight_position",
+    "include_gravity_support",
+    "stats.cycles",
+    "stats.no_stance_cycles",
+    "stats.watchdog_triggered",
+    "stats.declared_swing_in_contact_cycles",
+    "stats.declared_swing_in_contact_samples",
+    "stats.max_abs_torque_nm",
+    "stats.position_weight.force_control_cycles",
+    "stats.position_weight.fallback_cycles",
+)
+
+
+def _balance_segment(execution):
+    """取执行记录里的 `balance` 段（力矩级平衡器的**生产统计**）：只透传，不重算、不给默认值。
+
+    背景（`docs/debug/2026-09-21-quadruped-gait-trot-to-wave.md` §18.5）：步态报告此前不含
+    `balance` 段 ⇒「B1 有没有生效 / fallback 率多少」只能靠序列重建，而重建数字不是验收数字。
+    这里把适配器 `_balance_summary` 的统计原样带进正式验收报告，并校验本入口要消费的键路径
+    齐全；缺段/缺键/形状非法一律抛 `DeclarationError`（调用方映射为退出码 5），
+    绝不静默省略、也绝不补 0 冒充实测。
+    """
+    if not isinstance(execution, dict) or "balance" not in execution:
+        raise quadruped_contract.DeclarationError(
+            "执行记录缺少 `balance` 段（适配器必须回传 _balance_summary 的生产统计）"
+        )
+    segment = execution["balance"]
+    if not isinstance(segment, dict):
+        raise quadruped_contract.DeclarationError(
+            "`balance` 段不是映射（实际类型 %s）" % type(segment).__name__
+        )
+    for dotted in BALANCE_REQUIRED_PATHS:
+        node = segment
+        for part in dotted.split("."):
+            if not isinstance(node, dict) or part not in node:
+                raise quadruped_contract.DeclarationError(
+                    "`balance` 段缺少本入口消费的键: %s" % dotted
+                )
+            node = node[part]
+    return segment
+
+
+def _balance_report_summary(segment):
+    """报告/终端摘要里的 `balance` 段：给人看的关键数字（要求 vs 兑现）。
+
+    `fallback_fraction` 的分母是**力控周期数**（`stats.cycles`）：`cycles == 0`（未启用或未走
+    力控路径，例如生产声明 `balance.enabled: false`）时比值**不可定义** ⇒ 写 `null` 并给出
+    显式标志位，而不是拿 0 冒充"没有 fallback"。
+    """
+    stats = segment["stats"]
+    cycles = int(stats["cycles"])
+    fallback_cycles = int(stats["position_weight"]["fallback_cycles"])
+    return {
+        "enabled": bool(segment["enabled"]),
+        "stance_classification": str(segment["stance_classification"]),
+        "weight_position": float(segment["weight_position"]),
+        "stance_weight_position": float(segment["stance_weight_position"]),
+        "include_gravity_support": bool(segment["include_gravity_support"]),
+        "stats": {
+            "cycles": cycles,
+            "no_stance_cycles": int(stats["no_stance_cycles"]),
+            "watchdog_triggered": bool(stats["watchdog_triggered"]),
+            "force_control_cycles": int(stats["position_weight"]["force_control_cycles"]),
+            "fallback_cycles": fallback_cycles,
+            "fallback_fraction": None if cycles == 0 else float(fallback_cycles) / float(cycles),
+            "fallback_fraction_defined": cycles > 0,
+            "declared_swing_in_contact_cycles": int(stats["declared_swing_in_contact_cycles"]),
+            "declared_swing_in_contact_samples": int(stats["declared_swing_in_contact_samples"]),
+            "max_abs_torque_nm": float(stats["max_abs_torque_nm"]),
+            "stance_legs_histogram": dict(stats["stance_legs_histogram"]),
+        },
+    }
 
 
 def main(argv=None):
@@ -207,6 +294,14 @@ def main(argv=None):
         print("声明非法（步态目标/几何）：%s" % exc, file=sys.stderr)
         return EXIT_DECLARATION
 
+    # 力矩级平衡器的证据段（§18.5 缺口）：证据不完整即 fail-closed，不写半份报告。
+    try:
+        balance_segment = _balance_segment(execution)
+        balance_summary = _balance_report_summary(balance_segment)
+    except quadruped_contract.DeclarationError as exc:
+        print("证据不完整（fail-closed）：%s" % exc, file=sys.stderr)
+        return EXIT_CRITERIA
+
     try:
         assessment = gait.assess_gait(
             execution["samples"], params, movement_limits["max_tilt_moving_deg"]
@@ -301,6 +396,10 @@ def main(argv=None):
             "geometry": execution["geometry"],
             "torque_limits_source": "model",
         },
+        # 力矩级平衡器的**生产统计**（调试记录 §18.5 的缺口修复）：分类口径 / 力控兑现 /
+        # fallback 率 / 看门狗 / 支撑腿数直方图。**只增证据，不参与判据**：
+        # `checks` 条数与全部阈值不变（`assessment` 与 `cross_checks` 一字未改）。
+        "balance": balance_summary,
         "assessment": assessment["metrics"],
         "series_path": str(samples_path),
         "checks": assessment["checks"] + cross_checks,
@@ -314,6 +413,9 @@ def main(argv=None):
             "台面摩擦、地形、真机时延均不代表真机表现，目标端/真机验收 DEFERRED（板卡不在场）。",
             "本入口不经 TaskFlow/SkillRuntime/PolicyGateway：它是**控制器验收路径**（Provider 直调 + "
             "控制权租约）；能力面（skills/locomote 与 Profile capabilities 回填）属步骤 03。",
+            "`balance` 段是执行记录的**生产统计**（分类口径 / 力控兑现周期数 / fallback 率 / 看门狗），"
+            "用于回答「B1 有没有生效」；它**不参与**任何判据，也不代表步态稳定性已达标 —— "
+            "稳定性判据仍在 `checks`（本段与前一轮的序列重建口径数字并列时须注明来源）。",
         ],
     }
     report["passed"] = not failed
@@ -346,6 +448,8 @@ def main(argv=None):
         },
         "checks": len(report["checks"]),
         "failed_checks": report["failed_checks"],
+        # 「B1 到底有没有生效」的一行答案：力控兑现周期数与 fallback 率（生产计数，非重建）。
+        "balance": report["balance"],
     }
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return int(report["exit_code"])

@@ -14,6 +14,10 @@
    支撑腿数不足 ⇒ 拒绝；足形退化（共线）⇒ 拒绝；超出逐腿上限 ⇒ `clamped_legs` 如实记录；
 4. `leg_joint_torques`：符号约定 `τ = −Jᵀf`（**实测踩过**：漏负号会把高度纠正与水平阻尼变成正反馈）；
    雅可比形状非法 ⇒ 拒绝。
+5. 步态验收报告的 `balance` 证据段（`scripts/verify_go2_gait_in_place.py`，调试记录 §18.5 缺口修复）：
+   **正向对照**直接用适配器自己的 `_balance_summary` 产出真实形状（生产代码路径，不是手抄夹具），
+   断言本入口声明的每一条必需键路径都真的被强制（逐条删键 ⇒ 逐条被拒）；缺段/形状非法/未跑力控周期
+   时 `fallback_fraction` 写 `null` 而不是 0。
 
 夹具纪律：复制真实声明到临时目录后按需改坏（真实声明就是正向对照）；不读 `build/` 产物。
 
@@ -22,6 +26,7 @@
 
 import copy
 import sys
+import types
 import unittest
 from pathlib import Path
 
@@ -30,8 +35,11 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "scripts"))
 
+import verify_go2_gait_in_place  # noqa: E402
 from iraf_adapters.unitree import balance  # noqa: E402
+from iraf_adapters.unitree import unitree_go2  # noqa: E402
 from iraf_adapters.unitree.quadruped import DeclarationError  # noqa: E402
 
 DECLARATION = ROOT / "config" / "go2_loopback.yaml"
@@ -493,6 +501,99 @@ class LegJointTorqueTests(unittest.TestCase):
     def test_bad_jacobian_shape_rejected(self):
         with self.assertRaises(DeclarationError):
             balance.leg_joint_torques([0.0, 0.0, 1.0], np.zeros((3, 4)), ["a", "b", "c"])
+
+
+class GaitReportBalanceEvidenceTests(unittest.TestCase):
+    """步态验收报告里的 `balance` 证据段（§18.5 缺口修复）。
+
+    契约来自**生产侧**：正向对照直接调用适配器自己的 `_balance_summary`（不是手抄形状），
+    负向侧逐条删除本入口声明的必需键路径 —— 若某条路径写了却没人检查，这条用例会立刻暴露
+    （「门禁绿、计数 0」的同族缺陷）。
+    """
+
+    @staticmethod
+    def _produced_segment():
+        """**正向对照**：用真实声明 + 适配器 `_balance_summary` 产出 `balance` 段的真实形状。"""
+        params = _params()
+        # 只借 `_balance_summary` 的产出形状：`_new_balance_stats` 直接取**生产实现**（静态方法），
+        # 不走真实装配（本用例不需要模型/仿真）。
+        fake = types.SimpleNamespace(
+            _balance_stats=None,  # 未跑控制循环 ⇒ 用 `_new_balance_stats()` 的零值统计
+            _new_balance_stats=unitree_go2.UnitreeGo2Adapter._new_balance_stats,
+            robot_mass_kg=lambda: 15.596408,
+            gravity_mps2=lambda: 9.80665,
+        )
+        return unitree_go2.UnitreeGo2Adapter._balance_summary(fake, params)
+
+    def test_real_producer_satisfies_required_paths(self):
+        """真实生产形状必须通过必需键路径校验（否则门禁恒失败而不是严格）。"""
+        segment = self._produced_segment()
+        self.assertIs(verify_go2_gait_in_place._balance_segment({"balance": segment}), segment)
+
+    def test_report_summary_aligns_with_declaration(self):
+        """报告摘要的开关/口径必须与声明对齐（不硬编码取值：`enabled` 曾被改过一次）。"""
+        section = _declaration()["balance"]
+        summary = verify_go2_gait_in_place._balance_report_summary(self._produced_segment())
+        self.assertEqual(summary["enabled"], bool(section["enabled"]))
+        self.assertEqual(summary["stance_classification"], str(section["stance_classification"]))
+        self.assertEqual(summary["weight_position"], float(section["weight_position"]))
+        self.assertEqual(summary["stance_weight_position"], float(section["stance_weight_position"]))
+        self.assertEqual(
+            sorted(summary["stats"]),
+            [
+                "cycles",
+                "declared_swing_in_contact_cycles",
+                "declared_swing_in_contact_samples",
+                "fallback_cycles",
+                "fallback_fraction",
+                "fallback_fraction_defined",
+                "force_control_cycles",
+                "max_abs_torque_nm",
+                "no_stance_cycles",
+                "stance_legs_histogram",
+                "watchdog_triggered",
+            ],
+        )
+
+    def test_missing_segment_rejected(self):
+        """执行记录没有 `balance` 段 ⇒ 显式失败（不得静默省略、不得补默认值）。"""
+        with self.assertRaises(DeclarationError):
+            verify_go2_gait_in_place._balance_segment({"samples": []})
+
+    def test_non_mapping_segment_rejected(self):
+        with self.assertRaises(DeclarationError):
+            verify_go2_gait_in_place._balance_segment({"balance": [1, 2, 3]})
+
+    def test_every_required_path_is_really_enforced(self):
+        """逐条删掉 `BALANCE_REQUIRED_PATHS` 里的键路径都必须被拒（防止声明了却没人检查）。"""
+        for dotted in verify_go2_gait_in_place.BALANCE_REQUIRED_PATHS:
+            with self.subTest(path=dotted):
+                segment = copy.deepcopy(self._produced_segment())
+                parts = dotted.split(".")
+                node = segment
+                for part in parts[:-1]:
+                    node = node[part]
+                del node[parts[-1]]
+                with self.assertRaises(DeclarationError):
+                    verify_go2_gait_in_place._balance_segment({"balance": segment})
+
+    def test_fallback_fraction_undefined_without_cycles(self):
+        """未跑力控周期时 fallback 比值**不可定义** ⇒ null + 标志位 false（不是 0%）。"""
+        segment = self._produced_segment()
+        self.assertEqual(int(segment["stats"]["cycles"]), 0)
+        stats = verify_go2_gait_in_place._balance_report_summary(segment)["stats"]
+        self.assertIsNone(stats["fallback_fraction"])
+        self.assertFalse(stats["fallback_fraction_defined"])
+
+    def test_fallback_fraction_is_ratio_of_cycles(self):
+        """分母是力控周期数：981/1000 ⇒ 0.981（本轮用它取代序列重建口径的 98.1%）。"""
+        segment = copy.deepcopy(self._produced_segment())
+        segment["stats"]["cycles"] = 1000
+        segment["stats"]["position_weight"]["force_control_cycles"] = 1000
+        segment["stats"]["position_weight"]["fallback_cycles"] = 981
+        stats = verify_go2_gait_in_place._balance_report_summary(segment)["stats"]
+        self.assertTrue(stats["fallback_fraction_defined"])
+        self.assertAlmostEqual(stats["fallback_fraction"], 0.981, places=12)
 
 
 class DeclarationFixtureIsolation(unittest.TestCase):

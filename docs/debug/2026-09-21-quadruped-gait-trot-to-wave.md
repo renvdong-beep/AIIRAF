@@ -1013,6 +1013,13 @@ exit=2      （证据：build/iraf-24h-2/02b/gait-trot-b1-dc.txt；**未生成�
 建议：在步态报告里并入 `_balance_summary`（适配器侧一行 + 报告 schema 同文），由 03 步或收尾步落地；
 本轮**未改验收脚本**（超出 02b 的「涉及文件」边界）。
 
+> **【已闭合，2026-09-21 第十五轮 tick（提交「把 balance 生产统计并入步态正式验收」）】** 上述缺口已按
+> 本节的建议原样落地（并入 `_balance_summary` + 必需键路径门禁 + 7 条契约用例），**由 02b 自己收口**
+> （该入口是 02b「前置」列出的验收入口，属契约同文交付；已在 `commit-plan.txt` 逐条说明）。
+> 口径更正：本节写的「fallback 率只能靠序列重建」自本条起作废 —— 生产计数见 §19.4
+> （**0.999**，重建口径的 98.1% 是**采样**分母，两者不得混用；详细对照见 §19.4 表）。
+> 上文原始记录保留不改，仅以本条标注其被取代的范围。
+
 ### 18.6 决策包（代理**不选路**；判据与阈值一字未改）
 
 - **D1（推荐）支撑集改为「声明支撑集的计划位置」**：平衡器按相位表给**声明的支撑腿**分力（足端位置取
@@ -1034,5 +1041,111 @@ exit=2      （证据：build/iraf-24h-2/02b/gait-trot-b1-dc.txt；**未生成�
 ③ trot 的 `min_stance_legs: 2` 只出现在**证据区副本**里（生产仍是 3）。
 ④ §18.3 的 fallback 率是**重建**而非生产计数（原因见 §18.5），只用于定位机制，不作为验收数字。
 ⑤ 本轮**未**改任何验收判据/阈值，**未**实现 D1~D4 任何机制。
+
+
+## 19 2026-09-21（第十五轮 tick，证据缺口闭合轮）：把 `balance` 生产统计并入步态正式验收 ——
+并把「B1 有没有生效」从序列重建升级为生产计数（**99.9%**）
+
+### 19.1 本轮交付（入库）
+
+- `scripts/verify_go2_gait_in_place.py`：
+  - 报告新增 `balance` 段 = 执行记录 `_balance_summary` 的**生产统计**（透传，不重算）；
+  - 新增必需键路径契约 `BALANCE_REQUIRED_PATHS` + `_balance_segment()`：缺段 / 缺键 / 形状非法
+    ⇒ 打印「证据不完整（fail-closed）」并 **exit 5**，不写半份报告；
+  - 新增 `_balance_report_summary()`：`fallback_fraction` 分母是**力控周期数**，`cycles == 0` 时写
+    `null` + `fallback_fraction_defined: false`（不拿 0 冒充"没有 fallback"）；
+  - `checks` 条数、全部阈值、`assessment` 与 `cross_checks` **一字未改**（只增证据，不参与判据）。
+- `tests/unit/test_balance_contract.py`：**+7 用例**（Ran 35 → 42 / OK）。正向对照**直接用适配器自己的
+  `_balance_summary`**（生产代码路径，不是手抄夹具）；负向侧逐条删除 `BALANCE_REQUIRED_PATHS` 的键路径
+  都必须被拒（防止"声明了却没人检查"的恒通过门禁）。
+- 提交边界：`verify_go2_gait_in_place.py` 是 02b「前置」列出的验收入口，属**契约同文交付**；
+  逐条说明写在 `build/iraf-24h-2/02b/commit-plan-round8.txt`。
+
+### 19.2 为什么这一步"路线无关"（**不选路、不改判据**）
+
+D1~D4 任一选项的落地效果都要能被**正式验收**读出（D1：平衡器是否真的进入力控；D2：trot 复评时的
+fallback 与残差；D3：迈步后支撑集是否达标；D4：至少能证明"未启用"）。改前这些只能靠重建脚本，
+重建数字不是验收数字（§18.5）。因此本步不触碰任何机制/阈值/声明，也不实现 D1~D4 中的任何一个。
+
+### 19.3 实测 1：生产路径零回归（`config/go2_loopback.yaml`，`balance.enabled: false`）
+
+比对方式：`build/iraf-24h-2/02b/compare-gait-assessment.py`（只读、按字段扁平化比对；退出码
+`0` = 逐位一致 / `2` = 抽不到字段（不得据此判一致）/ `3` = 存在差异），新报告
+`build/acceptance/go2-trot-in-place/report.json` vs 上一轮**独立**产出
+`build/iraf-24h-2/02b/prod-wave/report.json`（18:04 生成）。
+
+| 项 | 结果 |
+| --- | --- |
+| 参考字段 / 新报告字段 | 116 / 131 |
+| 差异字段 | **5 处，全部非物理**：`config.sha256`、`generated_at`、`not_proved`、`report_path`、`series_path` |
+| 物理与判据字段 | **111 处逐位一致**（`assessment.*`、`checks`、`failed_checks`、`execution.*`、`config.gait/control`） |
+| 新增字段 | 仅 15 个 `balance.*`（白名单外 0 个） |
+
+生产数字（原样，与第 4 次独立复现逐字一致）：`exit=5` / `checks 20` / `failed 13`；
+`height_mean_m -52.96097353575173`、`height_std_m 63.78010487892247`、
+`min_base_height_m -215.6303346878428`、`max_tilt_deg 176.44460017100423`、
+`max_tracking_error_rad 0.3111402167153192`、`ctrl_saturated_samples 7486`、
+四腿支撑相 `0.153/0.117/0.129/0.153`、`clear_swing 12/12`。
+
+`balance` 段（生产）：`enabled false`、`stance_classification contact_only`、`cycles 0`、
+`force_control_cycles 0`、`fallback_fraction null` + `fallback_fraction_defined false`
+（"没启用"如实写成"比值不可定义"）。
+
+**顺带得到的第二条结论**：`config.sha256` 变化只来自决策 1e 新增的 `balance.stance_classification` 键
+（615b1c5 @18:33；参考报告 18:04）⇒ 生产轨迹与 1e 落地**之前**逐位相同
+（决策 1e 对生产路径零影响，本轮在**报告层**独立佐证了 §18 的结论）。
+
+### 19.4 实测 2：wave + `declared_and_contact` 的 fallback 率 = **生产计数 0.999**（重建口径 98.1% 被取代）
+
+dc 组复跑（同一份 `build/iraf-24h-2/02b/gait-wave-b1-dc.yaml`；报告**命名空间化**到
+`build/iraf-24h-2/02b/wave-dc-balance-count/`，未覆盖上一轮证据）：与上一轮该组报告
+`build/acceptance/go2-gait-in-place/wave-b1-dc/report.json` 逐位一致（116 字段 / 4 处非物理差异：
+`generated_at`、`not_proved`、`report_path`、`series_path`），判据数字同前：`exit=5` / `checks 20`、
+`height_mean_m -78.8292944475062`、`max_tilt_deg 177.92464537728526`、
+`max_tracking_error_rad 0.3922505382574959`、`ctrl_saturated_samples 0`。
+
+生产计数（本轮**新数字**，`balance.stats`）：
+
+| 量 | 值 | 读法 |
+| --- | --- | --- |
+| `cycles` | 1000 | 控制周期总数（分母） |
+| `force_control_cycles` | **1** | 真正进入力控的周期数 |
+| `fallback_cycles` | **999** | 退化为位置级的周期数 |
+| `fallback_fraction` | **0.999** | 分母 = 力控周期数 |
+| `stance_legs_histogram` | `{"3": 1}` | 只有 1 个周期凑齐 3 条支撑腿 |
+| `no_stance_cycles` | 975 | |
+| `watchdog_triggered` | **true** | 平衡器看门狗触发（触发原因**未定位**，见 §19.5） |
+| `max_abs_torque_nm` | 17.3107343429714 | 来自那唯一一个力控周期 |
+| `declared_swing_in_contact_cycles/samples` | 52 / 52 | `declared_and_contact` 口径的交叉统计 |
+
+**口径更正（可复用）**：§18.3 的 `19/1000 ⇒ 98.1%` 是**采样**分母、且由序列重建得到；生产计数按
+**周期**分母是 **999/1000 = 99.9%**。两者不得混用，并列时必须标注口径 —— 结论方向一致（B1 几乎全程
+退出、实测退化为位置级步态），但量级不同（重建低估了 fallback：99.9% > 98.1%）。
+⇒ D1 的必要性被本步**加强**：平衡器实测只有 **0.1%** 的周期真正参与。
+
+### 19.5 诚实边界
+
+① 全部结论 `simulation=true`；真机/目标端 `DEFERRED`（板卡不在场）。
+② `balance` 段**只增证据、不参与判据**：生产路径仍不达标（wave `failed 13` 项），
+   `balance.enabled` 仍 `false`、`declared_and_contact` 未进生产声明、`locomote` **未回填**、
+   ADR **未由代理改动**、D1~D4 **一个未实现**。
+③ `watchdog_triggered: true` 只如实登记布尔值，**未定位触发原因**（属未证明项）：可能是
+   `no_stance_cycles` 连续计数越限，也可能是别处；要归因须另立步骤读 `balance.watchdog` 声明与
+   `_balance_provider` 的判断顺序，本轮**不编因果**。
+④ 生产报告本轮**改写了**默认路径 `build/acceptance/go2-trot-in-place/report.json`（配置声明的报告路径，
+   即生产证据路径本身），上一轮的生产报告副本保留在 `build/iraf-24h-2/02b/prod-wave/report.json`（18:04），
+   本轮比对即以它为参考；dc 组因另有 `--report` 命名空间化，上一轮证据**未被覆盖**。
+⑤ `git diff --stat` 只涉及两个文件（验收脚本 + 其契约用例），`src/**` / `profiles/**` / `config/**` 零改动。
+
+### 19.6 复跑命令
+
+```
+PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_gait_in_place.py --config config/go2_loopback.yaml
+PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_gait_in_place.py \
+  --config build/iraf-24h-2/02b/gait-wave-b1-dc.yaml \
+  --report build/iraf-24h-2/02b/wave-dc-balance-count/report.json
+/usr/bin/python3 build/iraf-24h-2/02b/compare-gait-assessment.py <新报告> <参考报告>
+PYTHONPATH=src /usr/bin/python3 -m unittest tests.unit.test_balance_contract
+```
 
 
