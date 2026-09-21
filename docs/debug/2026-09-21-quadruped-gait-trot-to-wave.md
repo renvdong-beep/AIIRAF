@@ -677,3 +677,97 @@ PYTHONPATH=src /usr/bin/python3 scripts/profile_check.py --quadruped config/go2_
 「支撑集按实测接触判定、不做相位推断」那条已写进代码与声明的语义），必须回到 ADR/步骤文件后再开工。
 可选的同级方向：① 力分配对「声明摆动腿」置零法向力；② 只在三腿支撑时补足 mg；③ 先交付「四足不离地、
 靠落点规划移动」的最小形态（原 B3）。
+
+## 15 第十轮（2026-09-21，决策包轮）：把「支撑集按实测接触判定 ⇒ 自锁」从判读变成**实测** —— 声明相位 × 实测接触 交叉制表
+
+**本轮交付**（只读探针 + 契约测试；**未选路、未改判据/阈值/声明/实现**）
+
+- 新增 `scripts/probe_go2_support_classification.py`（只读；退出码 `0/1/2/3/4` 语义写在 docstring）
+- 新增 `tests/unit/test_support_classification_probe.py` —— **Ran 9 / OK**（含正例对照与 6 条负向）
+- 三份探测结果：`build/iraf-24h-2/02b/probe-support-classification-{prod-wave,wave-b1,trot-b1}.json`
+
+**口径**（与验收判定**同源**，不写第二份相位推断）
+
+- 声明相位用 `gait.leg_phase` / `gait.is_stance` —— 与验收判定 `_stance_profile` / `_clear_swing_cycles`
+  消费的**同一套原语**；实测接触 = `contact_n[腿] ≥ gait.verification.contact_force_threshold_n`（实测取 2.0 N）。
+- 稳态窗口跳过 `gait.ramp_s = 1.0`（900 / 1000 采样）；「翻倒前」切片阈值只取声明的 `fall_base_height_m = 0.15`。
+- **同源门禁两道**：① 报告登记的声明 `sha256` == 本声明的 `sha256`；② 报告/采样里的步态参数
+  （`kind` / `duty_factor` / `ramp_s` / `frequency_hz` / `period_s` / 逐腿 `phase_offset`）== 声明解析结果。
+  任一不符即退出码 4（**不得据此判读**，不是告警）。
+
+### 15.1 实测表（simulation=true，`/usr/bin/python3` 3.10.12）
+
+| 用例 | 平衡器 | 稳态采样 | 翻倒前采样 | 声明摆动采样 | 其中仍接触 | 自锁比例（翻倒前） | 接触腿数直方图（翻倒前） |
+|---|---|---|---|---|---|---|---|
+| 生产路径（位置级 PD）`config/go2_loopback.yaml` | `false` | 900 | **231** | 231 | 20 | **8.66%** | 0:37 / 1:86 / 2:75 / 3:31 / 4:2 |
+| wave + B1（`gait-wave-b1.yaml`） | `true` | 900 | 900（站住） | 900 | **900** | **100%** | **4:900** |
+| trot + B1（`gait-trot-b1.yaml`） | `true` | 900 | 900（站住） | 1800 | **1800** | **100%** | **4:900** |
+
+逐腿（声明摆动采样 / 其中仍接触 / 真离地采样）：
+
+- wave+B1：FL 220/220/**0**、FR 221/221/**0**、RL 220/220/**0**、RR 239/239/**0**；
+  四腿 `measured_stance_fraction` 全为 **1.0000**（声明 `duty_factor` 0.75）。
+- trot+B1：FL 441/441/**0**、FR 459/459/**0**、RL 459/459/**0**、RR 441/441/**0**。
+- 生产路径（翻倒前 231 采样内的自由离地采样）：FL **59** / FR **51** / RL **46** / RR **55**。
+
+### 15.2 三个可复用结论
+
+1. **自锁是 B1 的机制结果，不是环境本来就站不住 —— 正例对照通过。** 同一探针、同一套声明阈值：
+   生产路径（位置级 PD）在翻倒前的 231 个声明摆动采样里有 **211 个真离地**（自锁 8.66%），
+   而 B1 组是 **0 个**（100%）。⇒ 本口径**能**检测到真摆动，`self_lock_fraction = 1.0` 不是「恒真门禁」。
+2. **「位置级 PD 在声明摆动窗口内被整段关掉」可直接量出**：B1 组四腿 900/900 个声明摆动采样全落在接触侧
+   ⇒ 按代码契约（实测接触 ⇒ 支撑关节权重 `stance_weight_position = 0.0`）推导，摆动腿**本应**保持
+   `weight_position = 1.0` 的位置控制，实际是 **0**。这是**推导值**（JSON 里 `derivation` 字段已显式标注），
+   不是逐周期直接测量。
+3. **B1 组四腿接触力 ≈ mg/4 量级**：wave 35.431864 / 39.424233 / 36.871059 / 40.880619 N，
+   trot 37.494212 / 37.494203 / 38.809187 / 38.809159 N，对照 mg/4 = 38.25 N（整机 15.596408 kg）。
+   只登记量级一致，**不为个别腿的偏离编因果故事**。
+
+### 15.3 决策落地前置（只读量，钉到 file:line；**代理不选路**）
+
+| 位置 | 内容 |
+|---|---|
+| `src/iraf_adapters/unitree/unitree_go2.py:531-532` | 支撑集判定点：`stance = [code … if float(contact[code]) >= threshold]`（只看实测接触，**无相位推断**） |
+| `src/iraf_adapters/unitree/unitree_go2.py:604-620` | 权重分配点：`stance_joints` → `position_weight = stance_weight if joint in stance_joints else swing_weight` |
+| `src/iraf_adapters/unitree/unitree_go2.py:1121-1161` | 混合与截断：`τ = position_weight ⊙ τ_pd + w_bal·τ_bal`（映射形式契约） |
+| `src/iraf_adapters/unitree/balance.py:490 allocate_foot_forces` | mg 分摊：`wrench_matrix` + `lstsq` + 逐腿 `_clamp`（法向上限 120 N / 下界 0 / 水平 10 N） |
+| `config/go2_loopback.yaml:126` | `allocation.min_stance_legs: 3` |
+| 声明面 | 选路 ①②③ 都需**新键**（例：`allocation.support_set` ∈ {`measured_contact`, `declared_phase_and_contact`}）⇒ 属**新机制**，须先落 ADR 决策 |
+
+**推论（未新测，引用既有实测）**：选项 ①（摆动窗口内不参与 mg 分摊）单独采用时仍继承 §7.1 的几何事实 ——
+矩形站姿下支撑三角形的最紧有符号余量实测 **±0.000227483 m**（抬 RL 时为负），而三腿支撑下把 mg 分摊掉
+要求重心投影落在三角形内 ⇒ 余量 ≤ 0.23 mm；故 ① 很可能必须与「逐相位落点变化（重新落点）」或
+「sway 在支撑腿侧复活」配套，否则法向力下界 `normal_force_floor_n = 0` 会把支撑力削掉、力旋量残差非零。
+**这条是推论不是本轮实测**，登记为选路时必须一并考虑的约束。
+
+### 15.4 本轮发现并修掉的两个自伤缺陷（都属探针自身，不是实现缺陷）
+
+1. **`phase_groups` 解析只取 `legs[0]`** ⇒ trot（对角两组、每组两条）的 RL/RR 落成 `None`，
+   同源门禁对 trot **恒失败**。首跑实测：trot 被正确判成「不同源」并拒绝判读 —— **门禁是对的、解析写错了**。
+   修法：逐条腿展开，抽成 `phase_offsets_from_groups` 并加回归用例（含「旧写法在同一输入上必丢两条腿」的断言）。
+2. **合成夹具的相位边界浮点归属**：duty 0.75 / 周期 0.8 s / 采样 0.01 s 时每 0.2 s 有一个采样点正好落在
+   支撑–摆动边界；夹具按 `index * dt` 算 elapsed 而探针按 `time_s − samples[0].time_s` 算 ⇒
+   300 个摆动采样里 7 个被判成接触（自锁比例 0.0233 而非 0）。修法是**夹具与探针同算式**，
+   阈值一字未改（**不是**放宽判据）。
+
+### 15.5 第 4 次独立复现（生产路径，为取得同源正例对照）
+
+用**当前**声明重跑生产路径 wave：`exit=5`、`checks 20 / failed 13`，`height_mean_m -52.96097353575173`、
+`min_base_height_m -215.6303346878428`、`max_displacement_m 6.6266884683075515`、
+`max_tilt_deg 176.44460017100423`、`ctrl_saturated_samples 7486`、
+`max_tracking_error_rad 0.3111402167153192`、四腿稳态支撑相 0.153/0.117/0.129/0.153（声明 0.75）、
+四腿 `clear_swing_cycles` 12/12 —— 与 §10.4 / A′ ⑤ 的数字**逐字一致**。
+旧报告（17:14）的 `config.sha256` 是本声明的**前一版**（A′ ⑤ 只改注释、111 个叶子键 0 变化），
+探针据此正确拒绝判读 ⇒ 已用当前声明重新生成于 `build/iraf-24h-2/02b/prod-wave/`。
+
+### 15.6 诚实边界
+
+① 全部结论 `simulation=true`；真机/目标端 `DEFERRED`（板卡不在场）。
+② 本探针**只做交叉制表**，不判步态是否合格；三个用例的判据/阈值一字未改。
+③ `locomote` **未回填**、`balance.enabled` 仍为 `false`、未动 ADR、**未实现任何候选机制**（①②③ 均未落地）。
+④ 「位置权重 = 0」是**推导值**（由代码契约 + 实测接触推出），非逐周期直接测量；要做成直接测量需在适配器
+加逐周期遥测（属改实现，本步不做）。
+⑤ 生产路径的翻倒前切片来自声明的 `fall_base_height_m = 0.15`，切片内 231 个采样 ≈ 2.3 s，
+与 §7「2.81 s 后走出台面」同量级。
+⑥ 本轮的**结论仍未变**：步态 20 项判据未全绿，首期步态无法选择，**人工决策点未变**（支撑集判定语义
+是否引入「声明相位 ∧ 实测接触」；同级候选 ①②③）；答复前不选路、不跳序。
