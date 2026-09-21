@@ -30,6 +30,7 @@ import threading
 
 import numpy as np
 
+from iraf_adapters.unitree import gait
 from iraf_adapters.unitree.loopback import quat_tilt_deg
 from iraf_adapters.unitree.quadruped import (
     CommandRejectedError,
@@ -183,6 +184,10 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         # 物理步进与显示渲染互斥（显示层通过 display_lock() 取同一把锁做快照，避免撕裂）
         self._lock = threading.Lock()
         self._display_renderer_cache = None
+        # 步态资源惰性解析（步骤 02）：声明与几何都只在首次调用步态时解析/实测，
+        # 未使用步态的路径（stand/stop）不因步态声明问题而失败。
+        self._gait_params = None
+        self._leg_geometry_cache = None
         super().__init__(declaration, profile, authority)
         self.root = Path(root)
         self.mujoco = mujoco
@@ -395,6 +400,177 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         self.ledger.finish(active_id, "STOPPED")
         return report
 
+    # ---- 步态（步骤 02：参数化 trot 原地踏步的控制器验收路径）----
+    def _gait_parameters(self):
+        """惰性解析并缓存步态声明。
+
+        为什么不在 `from_config` 里校验：本方法依赖**机型身份**（Profile 的关节清单）与
+        被测模型的几何，而装配期的声明校验只覆盖通用键。把步态声明的完整校验放在调用点，
+        既保证「缺声明/相位不自洽 → 显式失败」，又不会让**没有步态声明的本体**无法装配
+        （stand/stop 与步态无关）。失败仍是显式失败（`DeclarationError`），不是默认值。
+        """
+        if self._gait_params is None:
+            self._gait_params = gait.load_gait_declaration(self.declaration, self.joint_order)
+        return self._gait_params
+
+    def _leg_geometry(self, params):
+        """惰性实测腿部几何（大腿/小腿长、中立足端位置）；实测值来自被测模型，不写死约定。"""
+        if self._leg_geometry_cache is None:
+            self._leg_geometry_cache = gait.measure_leg_geometry(
+                self.model, self.data, self.mujoco, params
+            )
+        return self._leg_geometry_cache
+
+    def _body_frame_velocity(self, trunk_body):
+        """机身速度（世界 → 躯干系）。阻尼偏移必须在机身系里算，否则「前后左右」会随姿态混叠。"""
+        rotation = np.asarray(self.data.xmat[int(trunk_body)], dtype=float).reshape(3, 3)
+        return rotation.T.dot(np.asarray(self.data.qvel[0:3], dtype=float))
+
+    def _body_frame_omega(self, trunk_body):
+        """机身角速度（世界 → 躯干系）。只做平动阻尼时滚转/俯仰无阻尼（实测会失稳）。"""
+        rotation = np.asarray(self.data.xmat[int(trunk_body)], dtype=float).reshape(3, 3)
+        return rotation.T.dot(np.asarray(self.data.qvel[3:6], dtype=float))
+
+    def _stabilization_offsets(self, params, geometry, trunk_body):
+        """各腿当前的阻尼足端偏移（证据用；实现与 target_provider 调用同一个函数）。"""
+        velocity = self._body_frame_velocity(trunk_body)
+        omega = self._body_frame_omega(trunk_body)
+        return {
+            code: list(gait.stabilization_offset(params, velocity, omega, item["trunk_rel_m"]))
+            for code, item in geometry.items()
+        }
+
+    def _leg_contact_forces(self, params, geometry):
+        """按声明的接触几何量出每条腿的法向接触力（N）。只统计足端与外部（地面等）的接触。"""
+        forces = {code: 0.0 for code in params["legs"]}
+        geom_to_leg = {int(item["contact_geom"]): code for code, item in geometry.items()}
+        result = np.zeros(6, dtype=float)
+        for index in range(int(self.data.ncon)):
+            contact = self.data.contact[index]
+            for geom in (int(contact.geom1), int(contact.geom2)):
+                code = geom_to_leg.get(geom)
+                if code is None:
+                    continue
+                self.mujoco.mj_contactForce(self.model, self.data, index, result)
+                forces[code] += abs(float(result[0]))
+        return forces
+
+    def trot_in_place(self, lease, duration_ms=None, execution_id=None):
+        """参数化 trot 原地踏步：位移目标恒为 0，只做支撑/摆动切换（步骤 02）。
+
+        与能力面的关系：本方法**不声明能力**（Profile 的 capabilities 仍只有 stand/stop；
+        步态能力经技能层验收后回填属步骤 03）。台账按规范能力名 `locomote` 登记，
+        以便审计链上「一条移动执行的来源」唯一。守卫顺序与 `stand` 同：急停闭锁 → 有效租约，
+        再把目标角交给**既有**的 PD + 重力前馈（不新写第二套控制律）。
+        """
+        self.estop.assert_clear()
+        self.require_lease(lease, "locomote")
+        if execution_id is not None:
+            self.require_active_execution(execution_id, lease, capability="locomote")
+            active_id = str(execution_id)
+        else:
+            active_id = self.begin_execution("locomote", lease)
+
+        params = self._gait_parameters()
+        geometry = self._leg_geometry(params)
+        seconds = self.resolve_duration_ms(duration_ms, params["verification"]["duration_s"])
+        home = {joint: float(self.profile.home[joint]) for joint in self.joint_order}
+        limits = {
+            joint: self.profile.joint_limits[joint] for joint in self.joint_order
+        }
+        samples = []
+        onset = float(self.data.time)
+        trunk_body = gait.trunk_body_id(self.model, self.mujoco, params)
+
+        def target_provider(cycle_index, now):
+            elapsed = now - onset
+            amplitude = gait.amplitude_at(params, elapsed)
+            velocity = self._body_frame_velocity(trunk_body)
+            omega = self._body_frame_omega(trunk_body)
+            targets = gait.trot_joint_targets(
+                params, geometry, home, limits, elapsed, amplitude, velocity, omega
+            )
+            return np.array([targets[joint] for joint in self.joint_order], dtype=float)
+
+        def sample_callback(cycle_index, info):
+            q = np.asarray(self.data.qpos[self.qpos_adr], dtype=float)
+            quat = np.asarray(self.data.qpos[3:7], dtype=float)
+            w, x, y, z = (float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3]))
+            # 姿态分解用旋转矩阵的第三行（偏航不计入 tilt；roll/pitch 分开量，便于定位失稳方向）。
+            r20 = 2.0 * (x * z - w * y)
+            r21 = 2.0 * (y * z + w * x)
+            r22 = 1.0 - 2.0 * (x * x + y * y)
+            samples.append(
+                {
+                    "time_s": float(self.data.time),
+                    "base_height_m": float(self.data.qpos[2]),
+                    "base_position_xy_m": [float(self.data.qpos[0]), float(self.data.qpos[1])],
+                    "base_linear_speed_mps": float(np.linalg.norm(self.data.qvel[0:3])),
+                    "tilt_deg": float(quat_tilt_deg(quat)),
+                    "roll_deg": float(np.degrees(np.arctan2(r21, r22))),
+                    "pitch_deg": float(np.degrees(np.arcsin(max(-1.0, min(1.0, -r20))))),
+                    "stab_offset_m": self._stabilization_offsets(params, geometry, trunk_body),
+                    "contact_n": self._leg_contact_forces(params, geometry),
+                    "ctrl_saturated": int(np.count_nonzero(info["saturated"])),
+                    "tracking_error_rad": float(np.max(np.abs(info["desired"] - q))),
+                }
+            )
+
+        cycles, saturated = self._run_control(
+            None,
+            seconds,
+            float(params["ramp_s"]),
+            target_provider=target_provider,
+            sample_callback=sample_callback,
+        )
+        report = {
+            "simulation": True,
+            "capability": "locomote",
+            "path": "trot_in_place",
+            "execution_id": active_id,
+            "fencing_token": int(lease.fencing_token),
+            "control_source_owner": str(getattr(lease, "owner", "")),
+            "declared_duration_s": float(params["verification"]["duration_s"]),
+            "duration_ms": seconds * 1000.0,
+            "control_cycles": cycles,
+            "substeps_per_control": self.substeps,
+            "ctrl_saturated_samples": int(saturated),
+            "gait": {
+                "kind": params["kind"],
+                "frequency_hz": params["frequency_hz"],
+                "period_s": params["period_s"],
+                "step_height_m": params["step_height_m"],
+                "duty_factor": params["duty_factor"],
+                "swing_profile": params["swing_profile"],
+                "ramp_s": params["ramp_s"],
+                "phase_groups": params["phase_groups"],
+                "legs": {
+                    code: {
+                        "hip_joint": item["hip_joint"],
+                        "thigh_joint": item["thigh_joint"],
+                        "calf_joint": item["calf_joint"],
+                        "contact_geom": item["contact_geom"],
+                        "phase_offset": item["phase_offset"],
+                    }
+                    for code, item in params["legs"].items()
+                },
+            },
+            "geometry": {
+                code: {
+                    "l1_m": item["l1_m"],
+                    "l2_m": item["l2_m"],
+                    "neutral_x_m": item["neutral_x_m"],
+                    "neutral_z_m": item["neutral_z_m"],
+                    "foot_body": int(item["foot_body"]),
+                    "contact_geom": int(item["contact_geom"]),
+                }
+                for code, item in geometry.items()
+            },
+            "samples": samples,
+        }
+        self.ledger.finish(active_id, "SUCCEEDED")
+        return report
+
     def locomote(self, velocity, duration_ms, lease, execution_id=None):
         """速度指令：首期无步态控制器，显式拒绝（不伪造「指令已生效」）。
 
@@ -495,8 +671,16 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         return True
 
     # ---- 内部 ----
-    def _run_control(self, target, seconds, ramp_s, zero_torque=False):
-        """按控制频率跑一段控制：PD（或零力矩）+ 按声明子步推进物理。"""
+    def _run_control(self, target, seconds, ramp_s, zero_torque=False, target_provider=None,
+                     sample_callback=None):
+        """按控制频率跑一段控制：PD（或零力矩）+ 按声明子步推进物理。
+
+        默认行为（`target_provider is None`）与步骤 15/16 的实现**逐位一致**：
+        目标位形 = 初始位形到 `target` 的声明斜坡。步态路径（步骤 02）通过
+        `target_provider(cycle_index, now) -> 目标向量` 提供每周期参考轨迹，
+        走的是**同一段** PD + 重力前馈 + ctrlrange 截断 + 子步推进（不新写第二套控制律）；
+        `sample_callback(cycle_index, info)` 只在物理步进之后被调用（量的是步进后的状态）。
+        """
         cycles = int(round(float(seconds) * self.control_hz))
         if cycles < 1:
             raise CommandRejectedError(
@@ -510,16 +694,20 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         )
         start = float(self.data.time)
         saturated_total = 0
-        for _ in range(cycles):
+        for cycle_index in range(cycles):
             q = np.asarray(self.data.qpos[self.qpos_adr], dtype=float)
             dq = np.asarray(self.data.qvel[self.dof_adr], dtype=float)
             if zero_torque:
                 ctrl = np.zeros_like(q)
                 saturated = np.zeros_like(q, dtype=bool)
+                desired = np.array(q_des, dtype=float)
             else:
                 now = float(self.data.time)
-                alpha = 1.0 if float(ramp_s) <= 0.0 else min(1.0, max(now - start, 0.0) / float(ramp_s))
-                desired = q0 + alpha * (q_des - q0)
+                if target_provider is not None:
+                    desired = np.asarray(target_provider(cycle_index, now), dtype=float)
+                else:
+                    alpha = 1.0 if float(ramp_s) <= 0.0 else min(1.0, max(now - start, 0.0) / float(ramp_s))
+                    desired = q0 + alpha * (q_des - q0)
                 tau_ff = (
                     gravity_bias_torque(self.model, self.data, self.mujoco, self.dof_adr)
                     if self.gravity_feedforward
@@ -533,6 +721,11 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             for _ in range(self.substeps):
                 with self._lock:
                     self.mujoco.mj_step(self.model, self.data)
+            if sample_callback is not None:
+                sample_callback(
+                    cycle_index,
+                    {"desired": np.asarray(desired, dtype=float), "ctrl": ctrl, "saturated": saturated},
+                )
         return cycles, saturated_total
 
     def describe(self):

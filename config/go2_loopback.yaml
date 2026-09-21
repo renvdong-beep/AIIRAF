@@ -111,6 +111,87 @@ locomotion:
     deceleration_source: locomotion.ramp_s
     hold_pose_source: stand.pose_source
 
+# 步态参数（步骤 02）：参数化对角小跑。**只写生成器参数与验收判据**；
+# 速度/加速度/位移/倾角的安全上限仍只在安全策略声明一次（本段与 locomotion 段都不重复）。
+# 缺任一键、取值越界、相位不自洽（对角配对不成立）都显式失败（退出码 2），无默认值兜底。
+# 几何（大腿/小腿长 0.213 m、中立足端 z=-0.26480585 m）**不在这里声明**：
+# 它们由实现层 `iraf_adapters.unitree.gait.measure_leg_geometry` 从被测模型实测，
+# 避免同一事实两处（实测证据 build/iraf-24h-2/02/probe-legs.txt）。
+gait:
+  kind: trot
+  # 步频（一个完整步态周期的 Hz）：1.6 Hz ⇒ 周期 0.625 s。
+  # 取值依据 = 步频×步高×kd 扫描（证据 build/iraf-24h-2/02/scan-*.json），
+  # 判据是「高度标准差 / 倾角 / 跟踪误差 / 控制量饱和」四项，见下面 verification 的注释。
+  frequency_hz: 1.6
+  # 摆动相抬脚高度：0.05 m（足端球半径 0.022 m，抬脚需明显大于地形尺度才谈得上「踏步」）。
+  step_height_m: 0.05
+  # 支撑相占周期比例：对角小跑的 0.5（恰好一个对角组支撑，另一个对角组摆动）。
+  duty_factor: 0.5
+  # 摆动相抬脚轨迹形状：半个正弦 h·sin(πv)，离地/落地时刻高度为 0（无阶跃）。
+  swing_profile: sine
+  # 幅度斜坡：0 → 满幅用时（s），避免起步的阶跃输入把机身弹起来。
+  ramp_s: 1.0
+  # 机身阻尼（**当前关闭**：实测本形式的阻尼偏移是净失稳项，见下）。
+  # 设计动机：对角两条腿支撑时，「足端目标相对机身」等价于「足端跟着机身走」⇒ 机身水平速度被放大。
+  # 阻尼形式：足端目标偏移 = k·(v_body + ω_body × r_foot)（机身系），推导见 gait.stabilization_offset。
+  # 实测结论（10 s 验收时长、同一段实现层代码、只改本段声明；证据 build/iraf-24h-2/02/scan7-run1.txt）：
+  #   enabled=true  k=0.12 clamp=0.04 ⇒ height_mean −74.65627960456835 m、ctrl_saturated 8278、tracking 0.4916
+  #   enabled=false               ⇒ height_mean −38.66691503360235 m、ctrl_saturated 7306、tracking 0.3102
+  #   enabled=true  k=0.12 clamp=0.20 ⇒ height_mean −79.019873 m、ctrl_saturated 8314、tracking 1.5155
+  # ⇒ 开阻尼在**每一项**指标上都更差，且放宽截断上限更差（排除了「偏移被截断导致阻尼不足」的假设）。
+  # 因此本声明取实测最优的一档（关闭）；**不是**放宽判据：19 项判据与阈值一字未改，验收仍为不通过。
+  # 缺任一键即失败（键位保留：schema 要求本段三键齐备；关闭只改 enabled，不删键）。
+  stabilization:
+    enabled: false
+    # 阻尼时间常数（s）：本形式未取得稳定效果前的保留值，重新启用时必须先补扫描证据。
+    linear_damping_s: 0.12
+    # 偏移上限（m）：超出即截断（不与 Profile 限位冲突；实测最大偏移见调试记录）。
+    max_linear_offset_m: 0.04
+  # 腿部身份与相位偏移（矩阵式外置，禁止在实现层写 leg 名与关节名的对应关系）。
+  legs:
+    FL: {hip_joint: FL_hip_joint, thigh_joint: FL_thigh_joint, calf_joint: FL_calf_joint, contact_geom: FL, phase_offset: 0.0}
+    RR: {hip_joint: RR_hip_joint, thigh_joint: RR_thigh_joint, calf_joint: RR_calf_joint, contact_geom: RR, phase_offset: 0.0}
+    FR: {hip_joint: FR_hip_joint, thigh_joint: FR_thigh_joint, calf_joint: FR_calf_joint, contact_geom: FR, phase_offset: 0.5}
+    RL: {hip_joint: RL_hip_joint, thigh_joint: RL_thigh_joint, calf_joint: RL_calf_joint, contact_geom: RL, phase_offset: 0.5}
+  verification:
+    report: build/acceptance/go2-trot-in-place/report.json
+    # 验收持续时长：10 s ⇒ 16 个完整步态周期（扣掉 1 s 斜坡后仍有 14 个稳态周期）。
+    duration_s: 10.0
+    # 机身高度目标 = 与 stand 同一目标（厂商关键帧基座 z）；本键与 stand.height_target_m 都是
+    # 「同一事实的两条消费面」的声明值，改动必须两处同文（步态验收与站立验收对的都是同一个物理量）。
+    height_target_m: 0.27
+    # 容差（实测后定）：步态只有对角两条腿支撑，躯干必然比站立略低；实测均值见调试记录，
+    # 阈值 = 实测值 + 余量，用于把「正常下沉」与「塌陷」分开，不是「凑通过」。
+    height_mean_tolerance_m: 0.03
+    # 稳态高度标准差上限：把「稳定踏步」与「上下弹跳」分开（实测值与余量见调试记录）。
+    height_std_max_m: 0.02
+    # 跌倒判据：机身高度低于它即判为跌倒。取值依据 = 躯干碰撞盒半高 0.057 m（趴地约 0.06~0.08 m）
+    # 与站立 0.27 m 之间，留 ~2 倍余量。
+    fall_base_height_m: 0.15
+    # 原地踏步的位移上限（m）：位移目标恒为 0，本判据证明「没有偷偷走出去」。
+    # 取值依据：台面半边长 0.8 m，机身碰撞盒半长 0.1881 m ⇒ 走到台边至少 0.61 m；
+    # 0.05 m 远小于该尺度，又远大于纯数值噪声（足端滑移的实测值与余量见调试记录）。
+    max_displacement_m: 0.05
+    # 支撑判定阈值（足端接触法向力 N）：单腿站立载荷约 mg/4 ≈ 38 N，2 N 只判「是否着地」。
+    contact_force_threshold_n: 2.0
+    # 「明确离地」的判据：一个周期内支撑相比例 ≤ duty − 本值（即至少 1/4 周期离地）。
+    min_swing_fraction: 0.25
+    # 10 s × 1.6 Hz = 16 周期，扣掉 1 s 斜坡后约 14 个稳态周期；本下限取 8（留 ~1.8 倍余量）。
+    min_clear_swing_cycles_per_leg: 8
+    # 稳态支撑相比例与声明占空比的**对称**容差：|实测 − duty| ≤ 本值。
+    # 目的不是「精确对表」，而是把两种退化形态拦下：脚一直粘在地上（≈1.0）或一直悬空（≈0.0）。
+    # 取值依据：接触判定阈值 2.0 N 相对单腿载荷 ~38 N 是数量级之差，相位切换处的判定边界
+    # 只占一个采样周期（0.01 s = 周期的 1.6%），因此 0.10 已是宽松上界。
+    # 定标条件：本值在**首次出现稳定踏步的验收**时用实测值复核（当前验收未通过 ⇒
+    # 尚无稳定运行的实测支撑相比例可对表，按「本键与判据同文交付、不写死进实现」处理）。
+    duty_tolerance: 0.10
+    # 对角相位结构容差（相位环 20 格上，同组/半周期折叠后的最大支撑相比例差）。
+    diagonal_profile_tolerance: 0.25
+    # PD 跟踪误差上限（rad）：步态是连续变化的参考轨迹，容差比站立宽松；实测值与余量见调试记录。
+    max_tracking_error_rad: 0.25
+    # 相位环分箱数（必须为 ≥4 的偶数，便于对折比较半周期）。
+    profile_bins: 20
+
 sample:
   frequency_hz: 100
 
