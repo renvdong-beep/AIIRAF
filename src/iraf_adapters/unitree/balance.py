@@ -68,6 +68,8 @@ REQUIRED_BALANCE_KEYS = (
     # 支撑集判定口径（2026-09-21 决策 1e）：`contact_only`（旧行为）/`declared_and_contact`。
     # 必须显式声明：两种口径的语义差别是「摆动腿能不能抬起来」，不能由实现层猜。
     "stance_classification",
+    # 支撑集完整性兜底（决策 1f）：声明与实测不一致的两类情况必须显式（阈值全在本段）。
+    "stance_integrity",
     "attitude",
     "height",
     "velocity",
@@ -130,6 +132,45 @@ REQUIRED_ISOLATION_KEYS = (
     "fall_base_height_m",
     "max_tilt_deg",
 )
+
+#: `balance.stance_integrity` 必需键（决策 1f 的 fail-closed 兜底，2026-09-21 19:05 授权落地）。
+#: 口径 `declared_and_contact` 只允许「声明相位 ∧ 实测接触」的腿参与 mg 分摊与力控；因此两类
+#: 「声明与实测不一致」的情况**必须显式**出现，不得静默：
+#:   · 摆动窗口内仍接触（自锁的观测对象）⇒ 记录 + 连续超过本段阈值即显式报错；
+#:   · 声明支撑窗内实测不接触（悬空/打滑）⇒ 记录 + 连续超过本段阈值即显式报错（不得当作摆动腿）。
+REQUIRED_STANCE_INTEGRITY_KEYS = (
+    "swing_contact_force_n",
+    "max_swing_abnormal_contact_cycles",
+    "max_declared_stance_gap_cycles",
+)
+
+
+def evaluate_stance_integrity(integrity, *, declared_stance_gap_cycles, swing_abnormal_contact_cycles):
+    """决策 1f 的 fail-closed 兜底：返回 ``None``（正常）或中文错误说明（**显式报错**）。
+
+    纯函数（不依赖模型），因此可被契约用例直接覆盖。阈值全部来自声明
+    `balance.stance_integrity`；本函数不写任何常数。
+
+    - `declared_stance_gap_cycles`：**连续**「声明支撑窗内实测不接触」的周期数。超过声明上限即报错 ——
+      这类腿不得被当作摆动腿（既不是支撑腿也不是摆动腿，是**悬空/打滑**，属故障态）。
+    - `swing_abnormal_contact_cycles`：**连续**「声明摆动窗内仍接触」的周期数。超过声明上限即报错 ——
+      摆动腿被压在地面上是自锁的直接成因，不能只记数不表态。
+    """
+    gap_limit = int(integrity["max_declared_stance_gap_cycles"])
+    swing_limit = int(integrity["max_swing_abnormal_contact_cycles"])
+    if int(declared_stance_gap_cycles) > gap_limit:
+        return (
+            "声明支撑窗内实测不接触已连续 %d 个控制周期 > 声明上限 %d：该腿处于悬空/打滑状态，"
+            "不得当作摆动腿（balance.stance_integrity.max_declared_stance_gap_cycles）"
+            % (int(declared_stance_gap_cycles), gap_limit)
+        )
+    if int(swing_abnormal_contact_cycles) > swing_limit:
+        return (
+            "声明摆动窗内仍接触已连续 %d 个控制周期 > 声明上限 %d：摆动腿被压在地面上（自锁），"
+            "位置级轨迹抬不动它（balance.stance_integrity.max_swing_abnormal_contact_cycles）"
+            % (int(swing_abnormal_contact_cycles), swing_limit)
+        )
+    return None
 
 
 def _require_section(section, label):
@@ -229,6 +270,12 @@ def load_balance_declaration(declaration):
 
     attitude = _require_section(section.get("attitude"), "balance.attitude")
     _require_keys(attitude, REQUIRED_ATTITUDE_KEYS, "balance.attitude")
+    stance_integrity = _require_section(
+        section.get("stance_integrity"), "balance.stance_integrity"
+    )
+    _require_keys(
+        stance_integrity, REQUIRED_STANCE_INTEGRITY_KEYS, "balance.stance_integrity"
+    )
     height = _require_section(section.get("height"), "balance.height")
     _require_keys(height, REQUIRED_HEIGHT_KEYS, "balance.height")
     velocity = _require_section(section.get("velocity"), "balance.velocity")
@@ -288,6 +335,24 @@ def load_balance_declaration(declaration):
             "（否则下界恒不起作用 = 恒真门禁）" % (normal_floor, max_normal_force)
         )
 
+    # 支撑集完整性兜底（决策 1f）：阈值必须 >1 个周期 —— 实测启动瞬态（周期 1~2）四腿接触力
+    # 全 < 2 N、周期 3 才四腿接触，取 1 会让「启动瞬态必然报错」成为恒真门禁（等于没有门禁）。
+    swing_contact_force = _number(
+        stance_integrity, "swing_contact_force_n", "balance.stance_integrity", positive=True
+    )
+    max_swing_abnormal = _integer(
+        stance_integrity,
+        "max_swing_abnormal_contact_cycles",
+        "balance.stance_integrity",
+        minimum=2,
+    )
+    max_stance_gap = _integer(
+        stance_integrity,
+        "max_declared_stance_gap_cycles",
+        "balance.stance_integrity",
+        minimum=2,
+    )
+
     return {
         "enabled": enabled,
         "weight_position": weight_position,
@@ -295,6 +360,13 @@ def load_balance_declaration(declaration):
         "weight_balance": weight_balance,
         "include_gravity_support": include_gravity_support,
         "stance_classification": stance_classification,
+        "stance_integrity": {
+            # 「摆动窗口内异常接触力」的判定阈值（大于它才记为异常接触，与 `contact_force_threshold_n`
+            # 的「算不算接触」是两个口径：接触阈值低、异常阈值高，故两者都在声明里各写一次）。
+            "swing_contact_force_n": swing_contact_force,
+            "max_swing_abnormal_contact_cycles": max_swing_abnormal,
+            "max_declared_stance_gap_cycles": max_stance_gap,
+        },
         "attitude": {
             "kp_nm_per_rad": _number(
                 attitude, "kp_nm_per_rad", "balance.attitude", non_negative=True

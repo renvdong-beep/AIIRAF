@@ -125,6 +125,86 @@ class BalanceDeclarationTests(unittest.TestCase):
             loaded = _params(_mutate("balance.stance_classification", mode))
             self.assertEqual(loaded["stance_classification"], mode)
 
+    def test_stance_integrity_declared_and_validated(self):
+        """决策 1f 兜底（2026-09-21 19:05 授权）：阈值为必需键，且必须可从声明逐字还原。
+
+        缺段/缺键由 `test_every_required_key_rejected_when_missing` 逐键覆盖；本用例补的是
+        「阈值语义」这组正/负对照：① 三个键都能从 YAML 逐字还原（**正向对照**，否则分不清
+        「门禁严格」与「门禁恒失败」）；② 阈值 ≤1 个周期必须被拒（恒真门禁：实测启动瞬态
+        周期 1~2 四腿接触力全 < 2 N，取 1 会让启动瞬态必然报错）；③ 非正接触力阈值必须被拒。
+        """
+        document = _declaration()
+        params = _params(document)
+        section = document["balance"]["stance_integrity"]
+        self.assertEqual(
+            params["stance_integrity"]["swing_contact_force_n"],
+            float(section["swing_contact_force_n"]),
+        )
+        self.assertEqual(
+            params["stance_integrity"]["max_swing_abnormal_contact_cycles"],
+            int(section["max_swing_abnormal_contact_cycles"]),
+        )
+        self.assertEqual(
+            params["stance_integrity"]["max_declared_stance_gap_cycles"],
+            int(section["max_declared_stance_gap_cycles"]),
+        )
+        for path in (
+            "balance.stance_integrity",
+            "balance.stance_integrity.swing_contact_force_n",
+            "balance.stance_integrity.max_swing_abnormal_contact_cycles",
+            "balance.stance_integrity.max_declared_stance_gap_cycles",
+        ):
+            with self.assertRaises(DeclarationError):
+                _params(_mutate(path, None))
+        for path in (
+            "balance.stance_integrity.max_swing_abnormal_contact_cycles",
+            "balance.stance_integrity.max_declared_stance_gap_cycles",
+        ):
+            for bad in (0, 1, -1):
+                with self.assertRaises(DeclarationError):
+                    _params(_mutate(path, bad))
+            loaded = _params(_mutate(path, 2))
+            self.assertEqual(
+                loaded["stance_integrity"][path.split(".")[-1]], 2
+            )
+        for bad in (0.0, -1.0):
+            with self.assertRaises(DeclarationError):
+                _params(_mutate("balance.stance_integrity.swing_contact_force_n", bad))
+
+    def test_evaluate_stance_integrity_explicit_reason(self):
+        """兜底判定的正/负对照（纯函数）：未越限严格 `None`；越限给出**中文**原因。
+
+        「显式报错」如果只写成布尔，调用方无法区分「悬空/打滑」与「自锁」两类故障；
+        本用例把它钉成两句可识别的原因（含关键词），并覆盖边界（== 上限仍算未越限）。
+        """
+        integrity = {
+            "swing_contact_force_n": 5.0,
+            "max_swing_abnormal_contact_cycles": 5,
+            "max_declared_stance_gap_cycles": 5,
+        }
+        # 正例对照：全部在阈值内 ⇒ 严格 None（不是""、不是 False）。
+        self.assertIsNone(
+            balance.evaluate_stance_integrity(
+                integrity, declared_stance_gap_cycles=0, swing_abnormal_contact_cycles=0
+            )
+        )
+        # 边界：恰好等于声明上限仍算未越限（判据是「超过」）。
+        self.assertIsNone(
+            balance.evaluate_stance_integrity(
+                integrity, declared_stance_gap_cycles=5, swing_abnormal_contact_cycles=5
+            )
+        )
+        gap = balance.evaluate_stance_integrity(
+            integrity, declared_stance_gap_cycles=6, swing_abnormal_contact_cycles=0
+        )
+        self.assertIsInstance(gap, str)
+        self.assertIn("不得当作摆动腿", gap)
+        swing = balance.evaluate_stance_integrity(
+            integrity, declared_stance_gap_cycles=0, swing_abnormal_contact_cycles=6
+        )
+        self.assertIsInstance(swing, str)
+        self.assertIn("自锁", swing)
+
     def test_missing_section_rejected(self):
         with self.assertRaises(DeclarationError) as ctx:
             _params(_mutate("balance", None))

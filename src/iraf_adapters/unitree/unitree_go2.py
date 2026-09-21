@@ -524,6 +524,14 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         swing_weight = float(balance_params["weight_position"])
         # 支撑集判定口径（决策 1e）：取值已在 `load_balance_declaration` 白名单校验过。
         stance_classification = str(balance_params["stance_classification"])
+        # 决策 1f 的 fail-closed 兜底阈值（全来自声明）：① 摆动窗口内「异常接触力」阈值；
+        # ②/③ 两类不一致各自允许的**连续**周期上限（超过即 `stance_integrity_error` 显式报错）。
+        integrity = balance_params["stance_integrity"]
+        swing_force_threshold = float(integrity["swing_contact_force_n"])
+        # 「连续不一致」游程计数：不放进 `_balance_stats`（它是过程量，不是证据），
+        # 但在越限时把各自的**最大游程**写进证据。
+        declared_stance_gap_run = 0
+        swing_abnormal_run = 0
         balance_onset = None
 
         def _no_stance_fallback():
@@ -542,7 +550,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             }
 
         def torque_provider(cycle_index, info):
-            nonlocal balance_onset
+            nonlocal balance_onset, declared_stance_gap_run, swing_abnormal_run
             contact = self._leg_contact_forces(params, geometry)
             measured = [code for code in sorted(geometry) if float(contact[code]) >= threshold]
             stats = self._balance_stats
@@ -566,6 +574,56 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                     )
                 stats["declared_swing_in_contact_samples"] = (
                     int(stats["declared_swing_in_contact_samples"]) + len(swing_in_contact)
+                )
+                # ---- 决策 1f 的 fail-closed 兜底（2026-09-21 19:05 授权落地，只增证据）----
+                # ② 声明支撑窗内实测不接触（悬空/打滑）：**不得当作摆动腿** ⇒ 逐周期计数 + 连续游程。
+                gap_legs = [
+                    code
+                    for code in sorted(geometry)
+                    if declared[code] and float(contact[code]) < threshold
+                ]
+                if gap_legs:
+                    stats["declared_stance_without_contact_cycles"] = (
+                        int(stats["declared_stance_without_contact_cycles"]) + 1
+                    )
+                    stats["declared_stance_without_contact_samples"] = (
+                        int(stats["declared_stance_without_contact_samples"]) + len(gap_legs)
+                    )
+                    declared_stance_gap_run += 1
+                    stats["max_declared_stance_gap_run"] = max(
+                        int(stats["max_declared_stance_gap_run"]), declared_stance_gap_run
+                    )
+                    stats["last_declared_stance_without_contact"] = list(gap_legs)
+                else:
+                    declared_stance_gap_run = 0
+                # ① 摆动窗口内**异常**接触力（> 声明阈值）：记录峰值，并在连续越限时显式报错。
+                abnormal = [
+                    code
+                    for code in swing_in_contact
+                    if float(contact[code]) > swing_force_threshold
+                ]
+                if abnormal:
+                    stats["swing_abnormal_contact_cycles"] = (
+                        int(stats["swing_abnormal_contact_cycles"]) + 1
+                    )
+                    stats["swing_abnormal_contact_samples"] = (
+                        int(stats["swing_abnormal_contact_samples"]) + len(abnormal)
+                    )
+                    swing_abnormal_run += 1
+                    stats["max_swing_abnormal_run"] = max(
+                        int(stats["max_swing_abnormal_run"]), swing_abnormal_run
+                    )
+                else:
+                    swing_abnormal_run = 0
+                for code in swing_in_contact:
+                    stats["swing_max_contact_n"] = max(
+                        float(stats["swing_max_contact_n"]), float(contact[code])
+                    )
+                # 显式报错：越限时给出中文原因（不是只记数），非越限时严格 `None`（= 未发生）。
+                stats["stance_integrity_error"] = balance_module.evaluate_stance_integrity(
+                    integrity,
+                    declared_stance_gap_cycles=declared_stance_gap_run,
+                    swing_abnormal_contact_cycles=swing_abnormal_run,
                 )
             else:
                 stance = list(measured)
@@ -752,6 +810,20 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             "stance_classification": None,
             "declared_swing_in_contact_cycles": 0,
             "declared_swing_in_contact_samples": 0,
+            # 决策 1f 的 fail-closed 兜底（2026-09-21 19:05 授权落地，只增证据、不参与既有判据）：
+            # ① 摆动窗口内**异常**接触力（> `stance_integrity.swing_contact_force_n`）；
+            # ② 声明支撑窗内实测不接触（悬空/打滑，**不得当作摆动腿**）。
+            # `stance_integrity_error` 的 `None` 语义 = 「未越限（未发生）」，不是「未测量」；
+            # 非 `None` 时是**中文错误说明**（显式报错，不是只置一个布尔）。
+            "declared_stance_without_contact_cycles": 0,
+            "declared_stance_without_contact_samples": 0,
+            "max_declared_stance_gap_run": 0,
+            "last_declared_stance_without_contact": [],
+            "swing_abnormal_contact_cycles": 0,
+            "swing_abnormal_contact_samples": 0,
+            "max_swing_abnormal_run": 0,
+            "swing_max_contact_n": 0.0,
+            "stance_integrity_error": None,
             # B1 逐关节权重的实测统计（"声明说支撑腿走力控"要有**兑现**证据，而不是只看开关）。
             "position_weight": {
                 "stance": None,
@@ -773,6 +845,8 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             "weight_balance": float(balance_params["weight_balance"]),
             "include_gravity_support": bool(balance_params["include_gravity_support"]),
             "stance_classification": str(balance_params["stance_classification"]),
+            # 决策 1f 的兜底阈值原样透传（判据/证据里的数字必须能在声明里逐字找到）。
+            "stance_integrity": dict(balance_params["stance_integrity"]),
             "attitude": dict(balance_params["attitude"]),
             "height": dict(balance_params["height"]),
             "velocity": dict(balance_params["velocity"]),
@@ -817,6 +891,26 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 ),
                 "declared_swing_in_contact_samples": int(
                     stats["declared_swing_in_contact_samples"]
+                ),
+                # 决策 1f 兜底证据（`stance_integrity_error` 的非 `None` = 显式报错，原样透传中文原因）。
+                "declared_stance_without_contact_cycles": int(
+                    stats["declared_stance_without_contact_cycles"]
+                ),
+                "declared_stance_without_contact_samples": int(
+                    stats["declared_stance_without_contact_samples"]
+                ),
+                "max_declared_stance_gap_run": int(stats["max_declared_stance_gap_run"]),
+                "last_declared_stance_without_contact": list(
+                    stats["last_declared_stance_without_contact"]
+                ),
+                "swing_abnormal_contact_cycles": int(stats["swing_abnormal_contact_cycles"]),
+                "swing_abnormal_contact_samples": int(
+                    stats["swing_abnormal_contact_samples"]
+                ),
+                "max_swing_abnormal_run": int(stats["max_swing_abnormal_run"]),
+                "swing_max_contact_n": float(stats["swing_max_contact_n"]),
+                "stance_integrity_error": (
+                    None if stats["stance_integrity_error"] is None else str(stats["stance_integrity_error"])
                 ),
                 "max_abs_torque_nm": float(stats["max_abs_torque_nm"]),
                 "last_wrench": stats["last_wrench"],

@@ -121,6 +121,16 @@ BALANCE_REQUIRED_PATHS = (
     "stats.fallback_cycles_pre_fall",
     "stats.position_weight.force_control_cycles",
     "stats.position_weight.fallback_cycles",
+    # 决策 1f 兜底（2026-09-21 19:05 授权落地）：阈值（声明值透传）+ 不一致的实测计数 + 显式报错字段。
+    "stance_integrity.swing_contact_force_n",
+    "stance_integrity.max_swing_abnormal_contact_cycles",
+    "stance_integrity.max_declared_stance_gap_cycles",
+    "stats.declared_stance_without_contact_cycles",
+    "stats.declared_stance_without_contact_samples",
+    "stats.max_declared_stance_gap_run",
+    "stats.swing_abnormal_contact_cycles",
+    "stats.max_swing_abnormal_run",
+    "stats.stance_integrity_error",
 )
 
 
@@ -166,6 +176,22 @@ def _balance_segment(execution):
         raise quadruped_contract.DeclarationError(
             "`balance` 段不自洽：force_control_cycles=%d > 0 却没有 first_stance_cycle"
             % force_control
+        )
+    # 决策 1f 兜底的**双向**自洽门禁（2026-09-21 19:05 授权落地；只查一致性、不引入新阈值）：
+    # 越限 ⇒ 必须给出中文错误说明；未越限 ⇒ `stance_integrity_error` 必须严格为 `None`。
+    # 单向检查会被一个「恒为 None 的字段」通过 —— 那正是「显式报错」没接线时的形状（恒真门禁）。
+    limits = segment["stance_integrity"]
+    gap_run = int(stats["max_declared_stance_gap_run"])
+    swing_run = int(stats["max_swing_abnormal_run"])
+    overdue = bool(
+        gap_run > int(limits["max_declared_stance_gap_cycles"])
+        or swing_run > int(limits["max_swing_abnormal_contact_cycles"])
+    )
+    if overdue != (stats["stance_integrity_error"] is not None):
+        raise quadruped_contract.DeclarationError(
+            "`balance` 段不自洽：越限状态=%r（声明支撑窗缺口游程 %d、摆动窗异常游程 %d）与 "
+            "stance_integrity_error=%r 矛盾（越限必须显式报错、未越限必须为 None）"
+            % (overdue, gap_run, swing_run, stats["stance_integrity_error"])
         )
     # 翻倒窗口 / 启动窗口四条自洽门禁（第十七轮；只查一致性，不引入任何新阈值）：
     # ① 全周期支撑集直方图的计数之和必须等于周期总数（防「字段产出但没被维护」的恒真字段）；
@@ -237,6 +263,8 @@ def _balance_report_summary(segment):
         "weight_position": float(segment["weight_position"]),
         "stance_weight_position": float(segment["stance_weight_position"]),
         "include_gravity_support": bool(segment["include_gravity_support"]),
+        # 决策 1f 兜底阈值原样进报告（人读报告时能对着声明核；数字不出现第二份）。
+        "stance_integrity": dict(segment["stance_integrity"]),
         "stats": {
             "cycles": cycles,
             "no_stance_cycles": int(stats["no_stance_cycles"]),
@@ -269,6 +297,28 @@ def _balance_report_summary(segment):
             "pre_fall_force_control_fraction_defined": pre_fall_cycles > 0,
             "declared_swing_in_contact_cycles": int(stats["declared_swing_in_contact_cycles"]),
             "declared_swing_in_contact_samples": int(stats["declared_swing_in_contact_samples"]),
+            # 决策 1f 兜底证据（2026-09-21 19:05 授权落地）：① 摆动窗口内异常接触力；
+            # ② 声明支撑窗内实测不接触（悬空/打滑）。`stance_integrity_error` 非 `None` 时是**中文错误
+            # 说明**（显式报错），`None` = 未越限（不是「未测量」）。
+            "declared_stance_without_contact_cycles": int(
+                stats["declared_stance_without_contact_cycles"]
+            ),
+            "declared_stance_without_contact_samples": int(
+                stats["declared_stance_without_contact_samples"]
+            ),
+            "max_declared_stance_gap_run": int(stats["max_declared_stance_gap_run"]),
+            "last_declared_stance_without_contact": list(
+                stats["last_declared_stance_without_contact"]
+            ),
+            "swing_abnormal_contact_cycles": int(stats["swing_abnormal_contact_cycles"]),
+            "swing_abnormal_contact_samples": int(stats["swing_abnormal_contact_samples"]),
+            "max_swing_abnormal_run": int(stats["max_swing_abnormal_run"]),
+            "swing_max_contact_n": float(stats["swing_max_contact_n"]),
+            "stance_integrity_error": (
+                None
+                if stats["stance_integrity_error"] is None
+                else str(stats["stance_integrity_error"])
+            ),
             "max_abs_torque_nm": float(stats["max_abs_torque_nm"]),
             "stance_legs_histogram": dict(stats["stance_legs_histogram"]),
             "stance_legs_histogram_all_cycles": dict(stats["stance_legs_histogram_all_cycles"]),

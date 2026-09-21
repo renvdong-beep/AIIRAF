@@ -1362,4 +1362,108 @@ PYTHONPATH=src /usr/bin/python3 -m unittest tests.unit.test_balance_contract
 需要人工（主窗口）**一句话**：`D1` / `D2` / `D3` / `D4`（或组合，如 `D1+D3`）。
 
 
+## 22 2026-09-21（第十八轮 tick，授权落地轮）：把**生产声明** `stance_classification` 翻为 `declared_and_contact` + 落地决策 1f 的 fail-closed 兜底
+
+授权来源：主窗口提交 `979288a`（ADR-0008 决策 1f 新增段「**明确授权（2026-09-21 19:05，主窗口，消除歧义）**」）。
+本轮 = **纯落地轮**：只做授权文本逐条点名的四件事（翻转声明 / 语义写进门禁与契约用例 / fail-closed 双向兜底 / 重跑两套判据与既有回归），
+**不选路、不改判据、不改阈值、不启用平衡器、不回填 `locomote`**。
+
+### 22.1 交付（逐条对应授权）
+
+1. **生产声明翻转**：`config/go2_loopback.yaml` 的 `balance.stance_classification` 由 `contact_only` → `declared_and_contact`，
+   注释改为记录授权来源与「`enabled: false` 时生产轨迹逐位不变」的事实（删去上一轮那句「生产声明保持 `contact_only`」）。
+2. **fail-closed 兜底落成必需声明**：新增 `balance.stance_integrity` 段（三个必需键，缺段/缺键 ⇒ `DeclarationError`）：
+   `swing_contact_force_n: 5.0`（摆动窗口内「接触是否已异常」的力阈值，与 `gait.verification.contact_force_threshold_n`
+   的「算不算接触」是两个口径）、`max_swing_abnormal_contact_cycles: 5`、`max_declared_stance_gap_cycles: 5`。
+   实现层强制 `minimum=2`：实测启动瞬态周期 1~2 四腿接触力全 < 2 N（§20.4），取 1 会让「启动瞬态必然报错」成为**恒真门禁**。
+3. **实现层证据 + 显式报错**：`balance.evaluate_stance_integrity`（纯函数，返回 `None` 或**中文**原因）；
+   `_balance_provider` 在 `declared_and_contact` 分支新增六个实测字段 + 两条**连续游程** + `stance_integrity_error`。
+4. **门禁**（`scripts/verify_go2_gait_in_place.py`）：`BALANCE_REQUIRED_PATHS` 扩 9 条（阈值透传 + 计数 + 报错字段），
+   并新增一条**双向**自洽门禁：`越限 ⇔ stance_integrity_error 非 None`。**单向**检查会被「恒为 None 的字段」通过 ——
+   那正是「显式报错」没接线时的形状。**未新增任何 `checks`、未改任何阈值**（判据仍是 20 项）。
+5. 契约用例：`tests/unit/test_balance_contract.py` 47 → **49**（新增：声明阈值正/负对照；兜底判定纯函数边界 + 两句中文原因的关键词）。
+
+### 22.2 实测 1：生产步态/stand/stop 路径**逐位不变**（授权点名要求）
+
+- `verify_go2_loopback.py --config config/go2_loopback.yaml` ⇒ **exit=0**，且输出与第十六轮 `loopback-round10.txt`
+  **逐字节相同**（`diff` 无差异）⇒ `stand`/`stop`/步态未启用路径零变化。核心数字：`height_mean_m 0.279953602548388`、
+  `final_speed_mps 0.0038248382123762478`、`checks 10`、`failed_checks []`。
+- 生产步态验收（wave，`balance.enabled: false`）⇒ `exit=5 / checks 20 / failed 13`，`height_mean_m -52.96097353575173`、
+  `max_tilt_deg 176.44460017100423`、`ctrl_saturated_samples 7486` —— 与第十七轮**逐位一致**（第 5 次独立复现）。
+  机制：`enabled: false` ⇒ 平衡器通路根本不安装（`_balance_provider` 不被装配）⇒ 本键只改「支撑腿怎么算」，不改任何轨迹。
+- 报告层能看到翻转生效：生产报告的 `balance.stance_classification` 现为 `"declared_and_contact"`，
+  `stats.cycles 0`、`stance_integrity_error: null`（未启用 ⇒ 未越限 ⇔ `None`，双向门禁通过）。
+
+### 22.3 实测 2：trot/wave 双复评（授权点名要求）—— 与第十四轮**逐项一致**
+
+复评脚本 `build/iraf-24h-2/02b/run_gait_double_review_round11.py`（第十四轮脚本的命名空间化副本；报告落
+`build/acceptance/go2-gait-in-place/{trot,wave}-b1-dc-r11/`，**不覆盖**第十四轮证据）。本轮把两个变体里
+`balance.stance_classification` 的**覆写删掉**（副本继承生产声明）—— 授权是「翻转生产声明」，脚本若自带第二份取值，
+翻转与不翻转都测不出差别。
+
+| 变体 | exit | checks | failed | 与第十四轮 |
+|---|---|---|---|---|
+| `trot-b1-dc-r11`（duty 0.5、对角相位、`min_stance_legs 2`） | **2** | 无报告 | 无 | 同（力旋量映射秩 5 < 6，2 足支撑的**代数**事实） |
+| `wave-b1-dc-r11`（duty 0.75） | **5** | 20 | **11** | **失败集合逐项相同**（`min_base_height_m`/`max_displacement_m`/`height_mean_m`/`height_std_m`/`max_tilt_deg`/`max_tracking_error_rad` + 四腿 `stance_duty` + `support_legs_profile`） |
+
+wave+B1(dc) 的生产统计（**新字段，授权要求 ② 的实测证据**）：
+`cycles 1000`、`fall_cycle 242`、`force_control_cycles_pre_fall 1`、`fallback_cycles_pre_fall 240`（与第十七轮 dc 组逐位一致）；
+**`declared_stance_without_contact_cycles 975`**、**`max_declared_stance_gap_run 780`**、
+`swing_abnormal_contact_cycles 50`、`max_swing_abnormal_run 4`、`swing_max_contact_n 488.32002604971075`；
+`stance_integrity_error` = **非 `None`**（中文原文）：
+
+> 声明支撑窗内实测不接触已连续 780 个控制周期 > 声明上限 5：该腿处于悬空/打滑状态，不得当作摆动腿
+> （balance.stance_integrity.max_declared_stance_gap_cycles）
+
+⇒ 「声明支撑窗内不接触**不得当作摆动腿**」这条现在是**可以被正式验收读到的显式报错**（此前只有 `no_stance_cycles`
+一个总数，既分不清两类故障、也没有把「悬空/打滑」与「自锁」分开）。**方向性结论不变**：B1 仍不足以让 wave 站住。
+
+### 22.4 实测 3（**授权未预期的回归，必须交人工**）：`verify_go2_balance.py` 由 exit=0 → **exit=5**
+
+| 项 | 本轮（`contact_only` 时代：`balance-round10.txt`） | 本轮（翻转后：`balance-round11.txt`） |
+|---|---|---|
+| 验收入口退出码 | **0**（checks 8 / `failed_checks []`） | **5**（checks 8 / 失败 3 项） |
+| 静态抗扰·实验组（`balance.enabled: true`）`max_tilt_deg` | 1.227279 | **116.0440876799953** |
+| 静态抗扰·实验组 `max_drift_m` | 0.088075 | **1.1044264000056412** |
+| 静态抗扰·对照组（`enabled: false`，未受本键影响） | 1.598912284139251 / 0.019334348643655627 | **不变**（逐位相同） |
+| 失败判据 | — | `static.balance.max_tilt_deg`、`static.balance.max_drift_m`、`static.balance.watchdog_not_triggered` |
+
+**根因（机制清楚，未修）**：`verify_go2_balance.py` 的实验组只把 `balance.enabled` 翻成 `true`、**继承生产声明的分类口径**
+⇒ 静态保持路径（`balance_hold`，没有步态足端轨迹）现在**仍按步态时钟**算 `declared` ⇒ 处于「声明摆动窗口」的那条腿被排除出
+支撑集（不分摊 mg、不承受力控、位置权重回落 `weight_position=1.0`），而它**物理上仍在地面上** ⇒ 三足力控 + 一足位置伺服
+同时作用、法向力分配被自己的位置环顶住 ⇒ 翻倒（116°、漂移 1.10 m、看门狗触发）。
+
+**这是授权机制的适用边界问题，不是阈值问题**：`declared_and_contact` 的语义是「步态摆动窗口」，而静态保持没有摆动窗口。
+两条候选修法都属**新机制/新决策**（代理不得私自选路），见 §22.7 的 E1/E2。
+**未做任何放宽**：判据、阈值、`checks` 条数一字未改；对照组数字证明改动没有污染未启用路径。
+
+### 22.5 顺带发现的一处自伤（**证据区脚本**，无产品影响）
+
+第十四轮那支 `run_gait_double_review_*.py` 从 `assessment.balance` 取平衡器统计，而报告的 `balance` 段在**顶层**
+（`report["balance"]`，第十五轮 `_balance_report_summary` 的产物）⇒ 它一直打印 `classification=None / metrics={}`。
+本轮新建只读脚本 `build/iraf-24h-2/02b/read_reports_r11.py`（`report["balance"]`）把三份报告并列，
+**本轮所有平衡器数字都出自它**（证据 `compare-reports-r11.txt`）。产品侧未改（该脚本不入库）。
+
+### 22.6 单测
+
+`tests.unit.test_balance_contract`：47 → **Ran 49 / OK**（证据 `balance-contract-round11.txt`）。全量单测见台账 `test_latest`。
+
+### 22.7 本轮未改动清单 + 新增决策点（**代理不选路**）
+
+未改动：20 项步态判据与全部阈值、`balance.enabled`（仍 `false`）、`balance.allocation.min_stance_legs`（生产仍 3）、
+看门狗预算（仍 10）、`locomote`（未回填）、`profiles/**`（未动）、`src/iraf_core/**` 与 `examples/demo3_arm/**`（另一窗口）、ADR（授权文本由主窗口自己写入 `979288a`）。
+
+**E（本轮新产生）**：`verify_go2_balance.py` 的静态保持路径怎么处理「步态相位分类」的适用边界？
+
+| 选项 | 落地前置 | 已有实测支撑 | 代价 / 风险 | 解锁 |
+|---|---|---|---|---|
+| **E1** 分类只在**步态驱动**的路径生效（静态保持按「四腿皆为支撑」） | `_balance_provider` 装配点 `src/iraf_adapters/unitree/unitree_go2.py`（`balance_hold` 与步态路径两处 `_run_control` 调用）+ 声明新增「哪些路径使用相位分类」的键 | 本轮：`verify_go2_balance.py` 实验组 116.0440876799955°/1.1044264000056412 m 翻倒，对照组逐位不变 ⇒ 差异只来自分类口径 | 需把「路径 → 是否用相位分类」写成声明（不得在实现层写死）；静态抗扰的通过不得读作「步态可用」 | 恢复 `verify_go2_balance.py` exit=0（静态抗扰 + 隔离实验两条核心判据） |
+| **E2** 静态保持改用「四腿支撑 + 全位置权重」的独立模式（不复用步态口径） | 同上 + `balance.verification.static_disturbance` 增加模式键 | 同上 | 与 E1 同源，但把差异显式做成第三种模式；改动面更大 | 同 E1，且语义更显式 |
+| **E3** 接受该回归，把静态抗扰判据的适用口径改成「步态分类启用时静态抗扰不适用」 | 调试记录 + 验收报告口径说明 | 本轮：两条路径的差异已定量 | **等于缩小既有验收的适用范围**，需人工明确批准（代理不得自行缩小验收范围） | 不阻塞后续（但静态抗扰失去证据） |
+
+注：E 与 §21.7 的 D1~D4 **不重叠**：D1~D4 决定「步态怎么站住」，E 决定「静态保持该按哪套支撑集语义」。
+两个都需要人工一句话；本轮已把两者的数字都落到可复跑的证据里。
+
+
+
 
