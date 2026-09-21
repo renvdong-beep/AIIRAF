@@ -37,8 +37,20 @@
      使重心投影进入当前支撑三角形），或改用反馈平衡器。
      **首期取前者**：声明式 `gait.sway`（幅度、与相位的对应、平滑窗口）+ 支撑腿长度调制；
      `support_legs_profile` 门禁（任意相位平均支撑腿数 ≥ 2.6）保持为硬判据。
-   - 二期优化（不在本战役）：动态 trot **+ 力矩级反馈平衡器**（姿态反馈 → 落足点/髋膝偏移、摆动腿落地时机），
-     需要更细的分解与专项验收；trot 代码与声明键**保留在库**，切换只需改 `gait.kind` 与相位/占空比声明。
+   - **1c 力矩级反馈平衡器纳入首期（2026-09-21 决策 B，A′ 分支条件已实测触发）**：
+     A′（修正足–地接触前提：场景生成把初始位姿抬到最低几何贴支撑面，四腿接触力回到 36.7~41.3 N ≈ mg/4=38.25 N、
+     `sat=0`、四腿支撑）已执行；但**同一隔离实验（步高 0.001 m）下 5 mm 重心转移仍翻倒** ⇒ 位置级执行器
+     无法承担静态重心转移，按既有授权转 B。
+     - 架构事实（实测）：`handoff_lab.xml` 里是 **12 个带 `joint=` 的力矩型 `<motor>`**（ctrlrange
+       abduction ±23.7 / hip,knee ±45.43）⇒ 力矩级注入**不需要改厂商模型**；缺口在适配器
+       `_run_control(target, seconds, ramp_s, zero_torque=False, target_provider=None, sample_callback=None)`
+       只有 target / zero_torque 两条路径 ⇒ 属**架构变更**。
+     - 决策：适配器新增**力矩级控制通路**（与 target 路径并列），由声明 `balance` 段驱动：姿态（roll/pitch）
+       PD + 角速度阻尼 + 高度保持 + 足端力分配，输出为 12 个电机的力矩修正；与步态足端轨迹通过声明的
+       混合权重组合；力矩上限**只从模型 ctrlrange 读**（不得覆盖）；含看门狗（超时 → damped_hold）。
+     - 验收（新步骤 02b，判据不放宽）：① 静态站立受声明冲量后姿态/高度回到阈值内；② 隔离实验 5 mm
+       重心转移不再翻倒；③ 步态 10 s 无跌倒且既有 20 项判据全绿。
+     - 边界：平衡器不得绕过 TaskFlow/Skill/Policy 链路；仿真 only（真机需 HIL）；不得用于未声明能力。
 2. **能力拆分**：`locomote`（速度指令 vx/vy/wz + duration_ms）与 `navigate_to`（目标位姿 x/y/yaw + 容差）
    都经 `TaskFlow → SkillRuntime → PolicyGateway → ControlAuthority → Provider → 适配器`；
    `navigate_to` 的**外环**（位姿闭环）与 `locomote` 的**内环**（速度跟踪）共用同一控制源，
