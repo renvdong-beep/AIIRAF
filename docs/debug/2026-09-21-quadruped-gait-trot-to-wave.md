@@ -2037,6 +2037,12 @@ PYTHONPATH=src /usr/bin/python3 -m unittest discover -s tests/unit -t tests/unit
 而保持 `IN_PROGRESS` 时它按 `MAX_ATTEMPTS=4` 停推进、不跳序（`build/iraf-24h-2/push-driver.log` 实测 19:52:36 已进入第 4/4 次）。
 若人工答复选 1（A），状态翻转与 03/04/05 重排是**一次台账改动**，下一 tick 即可完成。
 
+**后记（同日 19:58，本 tick 运行期间）**：主窗口已直接执行 A —— 提交 `37f64f3` 把 02b 收口为 `DEFERRED`、
+03/04/05 一并 `DEFERRED`，并产出 `docs/progress/2026-09-21-quadruped-walk-special-design.md`
+（+ ADR-0008 新增 1i 收口记录）。故上文「保持 `IN_PROGRESS`」的偏差说明**已失效**（它只描述本 tick 的处置），
+读者应以台账 `steps[02b].status = DEFERRED` 为准；本节的 P1~P13 / N1~N7 / §27.5 的落地前置与「消掉/不消掉」清单
+对**下一阶段重开专项**仍然有效（该设计包与本对象互补：本对象是「判定 + 落地前置 + 决策点」，主窗口对象是「收口 + 专题入口」）。
+
 ### 27.8 本轮交付、门禁与零改动清单
 
 | 项 | 内容 |
