@@ -57,7 +57,22 @@ targets:
     pure_python:
       - jsonschema
       - pyyaml
+      - absl-py
+      - attrs
+      - etils
+      - fsspec
+      - jsonschema-specifications
+      - pyopengl
+      - referencing
+      - typing-extensions
+      - zipp
     # 二进制依赖：必须按 platform_tag 过滤（实测索引混杂 win_arm64/macosx 干扰项）。
+    # 清单必须覆盖**传递闭包**，否则目标端离线安装会缺依赖：
+    #   2026-09-21 由 deploy/sdk/resolve_wheelhouse_deps.sh 解析（候选清单人工确认后回填），
+    #   证据 build/iraf-24h/21-dep-closure{,-epath}/{candidates.json,summary.md}。
+    #   依赖来源：mujoco→absl-py/etils[epath]/glfw/numpy/pyopengl；jsonschema→attrs/
+    #   jsonschema-specifications/referencing/rpds-py；referencing→attrs/rpds-py/typing-extensions；
+    #   grpcio→typing-extensions；etils[epath]→fsspec/zipp（决策：纳入 epath extra，否则 import mujoco 会失败）。
     wheels:
       - mujoco
       - numpy
@@ -65,6 +80,17 @@ targets:
       - protobuf
       - pyyaml
       - pillow
+      - absl-py
+      - attrs
+      - etils
+      - fsspec
+      - glfw
+      - jsonschema-specifications
+      - pyopengl
+      - referencing
+      - rpds-py
+      - typing-extensions
+      - zipp
     # 决策 2（2026-09-20 更新为 A）：先用 aliyun 镜像（实测可达，且实测含 aarch64 wheel：
     # mujoco 492 / grpcio 953 / numpy 1088 / protobuf 212 / pyyaml 210 / pillow 1224）。
     # 拿到内网私有源后只改本字段一行；脚本禁止写死源地址（设计 §11.2）。

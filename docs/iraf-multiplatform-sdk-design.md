@@ -185,13 +185,24 @@ targets:
     arch: aarch64
     platform_tag: manylinux_2_28_aarch64
     python_tag: cp310
-    pure_python: [jsonschema, pyyaml]
-    wheels: [mujoco, numpy, grpcio, protobuf, pyyaml, pillow]
+    pure_python: [jsonschema, pyyaml, absl-py, attrs, etils, fsspec, …]   # 无 ABI 要求
+    wheels: [mujoco, numpy, grpcio, protobuf, pyyaml, pillow, absl-py, …]  # 必须覆盖传递闭包
     index_url: https://mirrors.aliyun.com/pypi/simple/   # 官方 pypi 不可达，见 §2
     boards: [e300, firefly_rk3588]
 ```
 
 版本、Python 标签、平台标签、包清单、镜像源、板卡映射全部在此；脚本只读不写。这与现有 `config/*.yaml` + `profiles/*.yaml` 的分工一致（`AGENTS.md` 5.3）。
+
+**包清单必须是传递闭包**（2026-09-21 补充，实测教训）：`wheels` 只列直接依赖时，目标端离线安装会缺依赖而失败。闭包由工具解析后**交人工确认再回填**，不由脚本自动改写声明：
+
+```text
+bash deploy/sdk/resolve_wheelhouse_deps.sh --target aarch64-manylinux_2_28-cp310 [--include-extra epath]
+  → build/iraf-24h/21-dep-closure/{candidates.json,summary.md}（候选清单；matrix_modified=false）
+  → 人工确认 → 回填 config/sdk/package_matrix.yaml → 重跑 fetch_wheelhouse.sh → 目录级标签校验
+  → bash deploy/sdk/prune_wheelhouse.py --dir build/wheelhouse/<target-id>  # 清陈旧残留（见下）
+```
+
+两条与之配套的强制检查：① 抓取后目录必须与 `wheelhouse.json` 登记清单一致（`prune_wheelhouse.py --verify`，不一致即退出 4）——抓取脚本本身不清理上一轮残留，实测出现过同一包两个版本同时进 bundle；② `mujoco` 这类带 extra 的依赖（如 `etils[epath]`）默认不被纳入，需要时用 `--include-extra` 显式列出，否则 `import mujoco` 会在缺 fsspec/zipp 时失败。
 
 ---
 
