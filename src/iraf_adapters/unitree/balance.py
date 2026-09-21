@@ -25,7 +25,14 @@
 - **支撑/摆动两套位置权重**（B1，ADR-0008 决策 1d）：`weight_position` 作用于**非支撑（摆动）**
   关节；`stance_weight_position`（B1 取 **0**）作用于**支撑**关节 ⇒ 支撑腿只受 `τ_bal` 驱动，
   `τ_pd`（含 PD + 重力前馈）被整体乘 0；摆动腿仍走位置级 PD + 重力前馈。哪些关节属于支撑，
-  由声明的 `stance_classification` 决定（2026-09-21 决策 1e）：
+  由声明的 `stance_classification` 决定（2026-09-21 决策 1e ⇒ 1g）：该段是「控制模式 → 判定口径」的
+  **映射**（键：`gait_clock_active` / `gait_clock_inactive`），实现层只判定「本次运行是否存在声明相位」
+  这一事实，不写死任何路径名：
+  · 有声明相位（步态时钟激活）⇒ 按 `gait_clock_active` 声明的口径；
+  · 无声明相位（静态保持/纯位置路径）⇒ 按 `gait_clock_inactive` 声明的口径。此时没有摆动窗口，
+    声明支撑集 = **全部腿**（静态保持没有摆动腿），1f 的兜底仍然生效：任何腿离地/异常接触持续
+    超过声明上限即显式报错，不得静默。
+  口径取值（决策 1e 定义）：
   · `contact_only`（默认，旧行为）：只用**实测接触力**判定，不做相位推断 —— 实测「命令抬的腿 ≠
     物理离地的腿」（静态复现：命令抬 FL 0.08 m 时机身翻 17.765°，最终 RR 离地 0 N、FL 仍承载
     44.46 N）⇒ 按相位写成的支撑集与实测对不上。
@@ -34,7 +41,8 @@
     `contact_only` 会把「该抬但还没抬」的腿继续当成支撑腿并给它 ~mg/4 法向力压在台面上，而支撑腿
     位置权重为 0 ⇒ 轨迹也抬不动它 ⇒ **自锁**（wave+B1 与 trot+B1 实测四腿稳态支撑相恒为 1.0、
     clear_swing_cycles 0、声明摆动窗口内 900/900 与 1800/1800 采样全部仍接触）。
-    取该模式即「摆动腿走轨迹」的字面兑现；阈值一字未改，只换支撑集口径。
+  决策 1g 同时新增**组合游程**门禁（`stance_integrity.max_inconsistent_run_cycles`）：逐周期
+  「至少一条腿声明与实测不符」的连续周期数上限。单类游程会被两类交替重置，组合游程不会。
 - **含重力支撑前馈**（`include_gravity_support: true`，B1）：支撑腿关掉位置级分量后不再有
   PD 平衡点，mg 支撑**必须**由力矩级提供（`desired_wrench` 的 `F_z = include_gravity_support·mg
   + 高度纠正`，再经足端力分配摊到各支撑腿）；`false` 只适用于"位置级承重 + 力矩级纠正"的旧结构
@@ -78,7 +86,15 @@ REQUIRED_BALANCE_KEYS = (
     "verification",
 )
 
-#: `balance.stance_classification` 的允许取值（2026-09-21 决策 1e）。
+#: `balance.stance_classification` 的**控制模式键**（2026-09-21 决策 1g）。
+#: 决策 1e 把「支撑集判定口径」做成单个字符串，1f 让它全局生效 ⇒ 静态保持路径（没有步态足端
+#: 轨迹、没有摆动窗口）也被按步态时钟做相位分类，实测让 `verify_go2_balance.py` 由 exit=0 变 exit=5
+#: （`max_tilt_deg 1.227279 → 116.0440876799953`、`max_drift_m 0.088075 → 1.1044264000056412`）。
+#: 决策 1g（主窗口授权）：口径**按控制模式**给出 —— 实现层只判定「本次运行是否存在声明相位」这一
+#: **事实**，不写死任何路径名；「哪种事实对应哪种口径」只住在声明里。
+STANCE_CLASSIFICATION_KEYS = ("gait_clock_active", "gait_clock_inactive")
+
+#: `balance.stance_classification` 的允许取值（决策 1e）。
 #: - `contact_only`：只用实测接触力判定支撑腿（旧行为，逐位不变）；
 #: - `declared_and_contact`：声明相位 ∧ 实测接触（摆动窗口内的腿不参与 mg 分摊、不承受力控）。
 STANCE_CLASSIFICATION_MODES = ("contact_only", "declared_and_contact")
@@ -142,11 +158,21 @@ REQUIRED_STANCE_INTEGRITY_KEYS = (
     "swing_contact_force_n",
     "max_swing_abnormal_contact_cycles",
     "max_declared_stance_gap_cycles",
+    # 决策 1g 新增门禁（2026-09-21 授权）：**组合**游程 —— 逐周期「本周期至少有一条腿声明与实测不符」
+    # （两类中任意一类）的**连续**周期数上限。单类游程会被两类交替重置（gap → swing → gap …），
+    # 组合游程不会 ⇒ 它拦的是单类门禁看不见的「持续处于不一致状态」。
+    "max_inconsistent_run_cycles",
 )
 
 
-def evaluate_stance_integrity(integrity, *, declared_stance_gap_cycles, swing_abnormal_contact_cycles):
-    """决策 1f 的 fail-closed 兜底：返回 ``None``（正常）或中文错误说明（**显式报错**）。
+def evaluate_stance_integrity(
+    integrity,
+    *,
+    declared_stance_gap_cycles,
+    swing_abnormal_contact_cycles,
+    inconsistent_run_cycles,
+):
+    """决策 1f 的 fail-closed 兜底 + 决策 1g 的组合游程门禁：返回 ``None``（正常）或中文错误说明。
 
     纯函数（不依赖模型），因此可被契约用例直接覆盖。阈值全部来自声明
     `balance.stance_integrity`；本函数不写任何常数。
@@ -155,9 +181,13 @@ def evaluate_stance_integrity(integrity, *, declared_stance_gap_cycles, swing_ab
       这类腿不得被当作摆动腿（既不是支撑腿也不是摆动腿，是**悬空/打滑**，属故障态）。
     - `swing_abnormal_contact_cycles`：**连续**「声明摆动窗内仍接触」的周期数。超过声明上限即报错 ——
       摆动腿被压在地面上是自锁的直接成因，不能只记数不表态。
+    - `inconsistent_run_cycles`（决策 1g）：**连续**「本周期至少有一条腿的声明与实测不符」的周期数，
+      两类都算。它**必须**不小于两个单类上限（由 `load_balance_declaration` 强制）：否则它会先于
+      单类门禁触发，把「是悬空/打滑还是自锁」的诊断信息挤掉（零余量声明）。
     """
     gap_limit = int(integrity["max_declared_stance_gap_cycles"])
     swing_limit = int(integrity["max_swing_abnormal_contact_cycles"])
+    inconsistent_limit = int(integrity["max_inconsistent_run_cycles"])
     if int(declared_stance_gap_cycles) > gap_limit:
         return (
             "声明支撑窗内实测不接触已连续 %d 个控制周期 > 声明上限 %d：该腿处于悬空/打滑状态，"
@@ -169,6 +199,13 @@ def evaluate_stance_integrity(integrity, *, declared_stance_gap_cycles, swing_ab
             "声明摆动窗内仍接触已连续 %d 个控制周期 > 声明上限 %d：摆动腿被压在地面上（自锁），"
             "位置级轨迹抬不动它（balance.stance_integrity.max_swing_abnormal_contact_cycles）"
             % (int(swing_abnormal_contact_cycles), swing_limit)
+        )
+    if int(inconsistent_run_cycles) > inconsistent_limit:
+        return (
+            "「声明与实测不一致」已连续 %d 个控制周期 > 声明上限 %d：单类游程会被两类交替重置，"
+            "本计数不会 —— 说明该次运行持续处于声明与实测不符的状态（既非纯自锁也非纯悬空）"
+            "（balance.stance_integrity.max_inconsistent_run_cycles）"
+            % (int(inconsistent_run_cycles), inconsistent_limit)
         )
     return None
 
@@ -259,14 +296,34 @@ def load_balance_declaration(declaration):
             "整机将直接塌陷）"
         )
     include_gravity_support = _boolean(section, "include_gravity_support", "balance")
-    # 支撑集判定口径（决策 1e）：**不是**自由文本 —— 只允许两个已定义模式，别的取值一律显式失败
-    # （否则拼错一个词就会静默落到某个未声明的语义上）。
-    stance_classification = section["stance_classification"]
-    if stance_classification not in STANCE_CLASSIFICATION_MODES:
+    # 支撑集判定口径（决策 1e ⇒ 1g）：**按控制模式**给出 —— 键 = 控制模式，值 = 判定口径。
+    # 不是自由文本：键集合与取值都在白名单里，多一个键/少一个键/拼错一个词一律显式失败
+    # （否则会静默落到某个未声明的语义上）。
+    # 「哪种事实 ⇒ 哪种口径」只在本段声明；实现层只负责判定事实（是否存在声明相位），
+    # 不写死任何路径名。
+    classification = _require_section(
+        section.get("stance_classification"), "balance.stance_classification"
+    )
+    _require_keys(
+        classification, STANCE_CLASSIFICATION_KEYS, "balance.stance_classification"
+    )
+    unknown_modes = [
+        key for key in classification if key not in STANCE_CLASSIFICATION_KEYS
+    ]
+    if unknown_modes:
         raise DeclarationError(
-            "balance.stance_classification=%r 不是允许的支撑集判定口径（可选 %s）"
-            % (stance_classification, "/".join(STANCE_CLASSIFICATION_MODES))
+            "balance.stance_classification 含未定义的控制模式键 %s（可选 %s）"
+            % (sorted(unknown_modes), "/".join(STANCE_CLASSIFICATION_KEYS))
         )
+    stance_classification = {}
+    for key in STANCE_CLASSIFICATION_KEYS:
+        value = classification[key]
+        if value not in STANCE_CLASSIFICATION_MODES:
+            raise DeclarationError(
+                "balance.stance_classification.%s=%r 不是允许的支撑集判定口径（可选 %s）"
+                % (key, value, "/".join(STANCE_CLASSIFICATION_MODES))
+            )
+        stance_classification[key] = str(value)
 
     attitude = _require_section(section.get("attitude"), "balance.attitude")
     _require_keys(attitude, REQUIRED_ATTITUDE_KEYS, "balance.attitude")
@@ -352,6 +409,20 @@ def load_balance_declaration(declaration):
         "balance.stance_integrity",
         minimum=2,
     )
+    # 决策 1g 的组合游程门禁：必须 ≥ 两个单类上限 —— 若比单类上限还小，它会先于单类门禁触发，
+    # 把「是悬空/打滑还是自锁」的诊断挤掉（零余量声明）。门禁必须可满足且不互相遮蔽。
+    max_inconsistent = _integer(
+        stance_integrity,
+        "max_inconsistent_run_cycles",
+        "balance.stance_integrity",
+        minimum=2,
+    )
+    if max_inconsistent < max(max_swing_abnormal, max_stance_gap):
+        raise DeclarationError(
+            "balance.stance_integrity.max_inconsistent_run_cycles=%d 小于单类上限（%d / %d）："
+            "组合门禁会先于单类门禁触发、遮蔽故障类型诊断"
+            % (max_inconsistent, max_stance_gap, max_swing_abnormal)
+        )
 
     return {
         "enabled": enabled,
@@ -366,6 +437,7 @@ def load_balance_declaration(declaration):
             "swing_contact_force_n": swing_contact_force,
             "max_swing_abnormal_contact_cycles": max_swing_abnormal,
             "max_declared_stance_gap_cycles": max_stance_gap,
+            "max_inconsistent_run_cycles": max_inconsistent,
         },
         "attitude": {
             "kp_nm_per_rad": _number(

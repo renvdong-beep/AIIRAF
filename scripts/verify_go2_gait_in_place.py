@@ -100,7 +100,12 @@ def _sha256(path):
 #: 因此这里不是"期望值"而是"契约"：适配器改形状而报告未同步 ⇒ 立刻红。
 BALANCE_REQUIRED_PATHS = (
     "enabled",
+    # 决策 1g：`stance_classification` = **本次运行实际生效**的口径（`None` = 未产生统计，
+    # 与 `fall_cycle` 同一约定：未发生 ≠ 未测量）；声明原文在 `stance_classification_modes`。
     "stance_classification",
+    "stance_classification_modes.gait_clock_active",
+    "stance_classification_modes.gait_clock_inactive",
+    "declared_phase_source",
     "weight_position",
     "stance_weight_position",
     "include_gravity_support",
@@ -125,12 +130,17 @@ BALANCE_REQUIRED_PATHS = (
     "stance_integrity.swing_contact_force_n",
     "stance_integrity.max_swing_abnormal_contact_cycles",
     "stance_integrity.max_declared_stance_gap_cycles",
+    # 决策 1g：组合游程门禁的阈值 + 实测（逐周期计数 / 最长连续游程 / 首次越限周期）。
+    "stance_integrity.max_inconsistent_run_cycles",
     "stats.declared_stance_without_contact_cycles",
     "stats.declared_stance_without_contact_samples",
     "stats.max_declared_stance_gap_run",
     "stats.swing_abnormal_contact_cycles",
     "stats.max_swing_abnormal_run",
+    "stats.inconsistent_cycles",
+    "stats.max_inconsistent_run",
     "stats.stance_integrity_error",
+    "stats.stance_integrity_error_cycle",
 )
 
 
@@ -180,18 +190,29 @@ def _balance_segment(execution):
     # 决策 1f 兜底的**双向**自洽门禁（2026-09-21 19:05 授权落地；只查一致性、不引入新阈值）：
     # 越限 ⇒ 必须给出中文错误说明；未越限 ⇒ `stance_integrity_error` 必须严格为 `None`。
     # 单向检查会被一个「恒为 None 的字段」通过 —— 那正是「显式报错」没接线时的形状（恒真门禁）。
+    # 决策 1g 把**组合**游程也纳入同一判定（口径与 `balance.evaluate_stance_integrity` 逐条对齐）：
+    # 适配器侧是**粘性**写入（一旦越限就不再回到 `None`），故按 max 游程复算才与它等价。
     limits = segment["stance_integrity"]
     gap_run = int(stats["max_declared_stance_gap_run"])
     swing_run = int(stats["max_swing_abnormal_run"])
+    inconsistent_run = int(stats["max_inconsistent_run"])
     overdue = bool(
         gap_run > int(limits["max_declared_stance_gap_cycles"])
         or swing_run > int(limits["max_swing_abnormal_contact_cycles"])
+        or inconsistent_run > int(limits["max_inconsistent_run_cycles"])
     )
     if overdue != (stats["stance_integrity_error"] is not None):
         raise quadruped_contract.DeclarationError(
-            "`balance` 段不自洽：越限状态=%r（声明支撑窗缺口游程 %d、摆动窗异常游程 %d）与 "
-            "stance_integrity_error=%r 矛盾（越限必须显式报错、未越限必须为 None）"
-            % (overdue, gap_run, swing_run, stats["stance_integrity_error"])
+            "`balance` 段不自洽：越限状态=%r（声明支撑窗缺口游程 %d、摆动窗异常游程 %d、"
+            "组合不一致游程 %d）与 stance_integrity_error=%r 矛盾（越限必须显式报错、未越限必须为 None）"
+            % (overdue, gap_run, swing_run, inconsistent_run, stats["stance_integrity_error"])
+        )
+    # 首次越限周期的自洽门禁（决策 1g，与 `watchdog_trigger_cycle` 同一先例）：越限 ⇔ 周期非 `None`。
+    if overdue != (stats["stance_integrity_error_cycle"] is not None):
+        raise quadruped_contract.DeclarationError(
+            "`balance` 段不自洽：越限状态=%r 与 stance_integrity_error_cycle=%r 矛盾"
+            "（越限必须给出首次越限周期、未越限必须为 None）"
+            % (overdue, stats["stance_integrity_error_cycle"])
         )
     # 翻倒窗口 / 启动窗口四条自洽门禁（第十七轮；只查一致性，不引入任何新阈值）：
     # ① 全周期支撑集直方图的计数之和必须等于周期总数（防「字段产出但没被维护」的恒真字段）；
@@ -259,7 +280,18 @@ def _balance_report_summary(segment):
     force_control_pre_fall = int(stats["force_control_cycles_pre_fall"])
     return {
         "enabled": bool(segment["enabled"]),
-        "stance_classification": str(segment["stance_classification"]),
+        # 决策 1g：生效口径（`None` = 本次运行未产生统计）/ 声明原文 / 选出它的事实依据。
+        "stance_classification": (
+            None
+            if segment["stance_classification"] is None
+            else str(segment["stance_classification"])
+        ),
+        "stance_classification_modes": dict(segment["stance_classification_modes"]),
+        "declared_phase_source": (
+            None
+            if segment["declared_phase_source"] is None
+            else str(segment["declared_phase_source"])
+        ),
         "weight_position": float(segment["weight_position"]),
         "stance_weight_position": float(segment["stance_weight_position"]),
         "include_gravity_support": bool(segment["include_gravity_support"]),
@@ -314,10 +346,18 @@ def _balance_report_summary(segment):
             "swing_abnormal_contact_samples": int(stats["swing_abnormal_contact_samples"]),
             "max_swing_abnormal_run": int(stats["max_swing_abnormal_run"]),
             "swing_max_contact_n": float(stats["swing_max_contact_n"]),
+            # 决策 1g 的组合游程 + 首次越限周期（`None` = 未越限，与 `stance_integrity_error` 自洽）。
+            "inconsistent_cycles": int(stats["inconsistent_cycles"]),
+            "max_inconsistent_run": int(stats["max_inconsistent_run"]),
             "stance_integrity_error": (
                 None
                 if stats["stance_integrity_error"] is None
                 else str(stats["stance_integrity_error"])
+            ),
+            "stance_integrity_error_cycle": (
+                None
+                if stats["stance_integrity_error_cycle"] is None
+                else int(stats["stance_integrity_error_cycle"])
             ),
             "max_abs_torque_nm": float(stats["max_abs_torque_nm"]),
             "stance_legs_histogram": dict(stats["stance_legs_histogram"]),

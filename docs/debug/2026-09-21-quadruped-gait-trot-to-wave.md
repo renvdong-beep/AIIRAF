@@ -1583,6 +1583,107 @@ PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_balance.py \
 ⑤ 23.3 的 81.25% / 7.883° 是**诊断档**的数字（不是生产数字，也不是验收数字），引用时必须带档位标注 ——
    与 §21 的「分母窗口」同一纪律。
 
+## 24 2026-09-21（第二十轮 tick，决策 1g 落地轮）：支撑集口径**按控制模式**从声明取 —— 静态保持回 `contact_only`，E 的回归被修掉
+
+授权背景：主窗口 19:25（提交 `be906bd`）授权 **1g**：分类语义按控制模式区分（仅步态时钟激活时用
+`declared_and_contact`；静态保持/无步态相位回 `contact_only`），两态都保留 1f 的 fail-closed 兜底，
+并新增「任何模式下『声明与实测不一致』的连续游程超过声明上限即显式报错」的门禁。
+
+### 24.1 交付（逐条对应授权）
+
+| 授权要求 | 落地形态 |
+|---|---|
+| ① 声明按控制模式给出分类口径 | `config/go2_loopback.yaml` 的 `balance.stance_classification` 由**字符串**改为**映射**：`{gait_clock_active: declared_and_contact, gait_clock_inactive: contact_only}`；键集合/取值/多余键全部白名单校验（缺键、拼错、多一个未定义模式键 ⇒ 装配期显式失败），旧形状（字符串）直接拒绝 |
+| ② 按调用路径取对应口径 | 实现层只判定**事实**「本次运行是否存在声明相位」（`_balance_provider(..., declared_phase_provider=None)`），口径由声明里对应键选出：`gait_in_place` 传入基于步态时钟的 `declared_phase`；`balance_hold` 不传 ⇒ 无声明相位。**代码里没有任何路径名与口径的对应关系** |
+| ③ 保留 1f 兜底 | 兜底记账从「只在 dc 分支」提到**两种口径都跑**；无声明相位时声明支撑集 = **全部腿**（静态保持没有摆动腿） |
+| ③ 新增组合游程门禁 | `balance.stance_integrity.max_inconsistent_run_cycles: 12`（必需键）：逐周期「至少一条腿声明与实测不符」的**连续**周期数上限。下界由实现层强制 `>= max(两个单类上限)=5`（低于它会先于单类门禁触发、遮蔽「悬空/打滑 vs 自锁」的诊断），上界 20 = 一个摆动窗口的周期数（(1−0.25)×0.8 s ÷ 0.01 s）⇒ 12 可满足且仍有区分力 |
+| ④ 重跑既有验收 | 见 24.2~24.4 |
+
+同时修掉一处**潜在恒假字段**：`stance_integrity_error` 原为「末周期求值」，而报告侧
+（`verify_go2_gait_in_place._balance_segment`）按 **max 游程**复算 `overdue` ⇒ 两者只在「末周期仍越限」
+时偶然一致。现改为**粘性**写入 + 新增 `stance_integrity_error_cycle`（首次越限周期，`None` = 从未越限），
+并给报告侧补上「越限 ⇔ 周期非 None」的双向自洽门禁。
+
+### 24.2 实测 1（授权点名）：E 的回归修复，且数字**逐位回到翻键前**
+
+`PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_balance.py --config config/go2_loopback.yaml` ⇒ **exit=0**（checks **10** / `failed_checks []`；证据 `build/iraf-24h-2/02b/r20-balance.txt`）。
+
+| 项 | 翻键前（`contact_only` 全局） | 1f 翻键后（§22.4） | **本轮（1g）** |
+|---|---|---|---|
+| 退出码 | 0 | 5（3 项失败） | **0** |
+| 静态抗扰·实验组 `max_tilt_deg` | 1.227279 | 116.0440876799953 | **1.2272792092073515**（与翻键前逐位相同） |
+| 静态抗扰·实验组 `max_drift_m` | 0.088075 | 1.1044264000056412 | **0.08807475963302777** |
+| 静态抗扰·实验组饱和/看门狗 | 0 / false | 0 / **true** | 0 / **false** |
+| 对照组（`enabled=false`） | 1.598912284139251 / 0.019334348643655627 | 不变 | **不变**（逐位） |
+
+机制证据（同一报告，`build/iraf-24h-2/02b/r20-balance-evidence.txt`，只读脚本 `r20_read_balance.py`）：
+静态用例 `生效口径='contact_only'`、`事实依据='no_declared_phase'`；隔离（步态）用例
+`生效口径='declared_and_contact'`、`事实依据='gait_clock'` ⇒ **口径确实按控制模式在运行期分开取**，
+不是只在声明里写了两份。两条新增门禁 `*.stance_classification_follows_control_mode` 均 PASS
+（这正是「声明 → 事实 → 生效口径」的兑现证据）。
+
+### 24.3 实测 2（授权点名）：生产路径零回归（逐位）
+
+| 入口 | 结果 | 逐位比对 |
+|---|---|---|
+| `verify_go2_loopback.py`（stand/stop） | exit=0，`height_mean_m 0.279953602548388`、`final_speed_mps 0.0038248382123762478` | 与 r19 普查输出**逐字节相同**（仅 `report_path` 一行不同） |
+| `verify_go2_gait_in_place.py`（生产波态，`enabled: false`） | exit=5（已知：D 决策点），checks 20 / failed 11 | 与 r19 普查输出逐行相同，**唯一差异**是新增/变更的报告字段（见 24.5） |
+
+### 24.4 实测 3（授权点名）：trot/wave 双复评 = 与第十四轮**同一失败集合**
+
+`build/iraf-24h-2/02b/run_gait_double_review_round11.py`（不变）⇒ 汇总 JSON 与上一轮**逐字节相同**（`diff` 退出 0）：
+
+- `trot-b1-dc-r11`：**exit=2**（力旋量映射矩阵秩 5 < 6，2 足支撑与分配器秩不相容 ⇒ 未生成报告）；
+- `wave-b1-dc-r11`：**exit=5 / checks 20 / failed 11**，失败集合与第十四轮同一批
+  （`min_base_height_m`、`max_displacement_m`、`height_mean_m`、`height_std_m`、`max_tilt_deg`、
+  `max_tracking_error_rad`、四腿 `leg_*_stance_duty`、`support_legs_profile`）。
+
+⇒ **1g 只换「无声明相位」那条控制模式的口径**，对两条步态路径（都有声明相位）无任何影响。
+
+### 24.5 报告语义的两处显式变更（必须知道，否则会误读）
+
+1. `balance.stance_classification` 由「声明原文」改为「**本次运行实际生效**的口径」，`None` = 未产生统计
+   （平衡器关闭/未跑，与 `fall_cycle` 同一约定：**未发生 ≠ 未测量**）；声明原文挪到新增的
+   `stance_classification_modes`（映射），并由 `declared_phase_source` 说明由哪条事实选出。生产步态报告
+   （`enabled: false`）因此显示 `stance_classification: null` + 完整映射 —— 这是**如实**，不是缺字段。
+2. `stance_integrity_error` 的**文案口径**变了（判定不变）：它现在记「**首次**越限时」的游程值并附首次
+   越限周期。实测 wave 复评：旧文案「已连续 780 个控制周期」（末周期值）→ 新文案「已连续 6 个控制周期」
+   且 `stance_integrity_error_cycle=9`；`overdue` 仍为 True（越限与否一字未变）。同时新增
+   `inconsistent_cycles=981` / `max_inconsistent_run=827`（组合游程口径，1g 的新观测）。
+
+### 24.6 单测
+
+`tests.unit.test_balance_contract`：49 → **Ran 50 / OK**（证据 `build/iraf-24h-2/02b/r20-balance-contract.txt`）。
+新增/改写的正负对照：映射形状（缺控制模式键 / 取值拼错 / **多一个未定义模式键**都要被拒；反向映射组合
+必须能加载）、组合游程上限（`< max(单类上限)` 被拒、恰好等于可加载）、组合门禁纯函数（单类游程都在限内
+时仍能判越限）、报告侧「越限 ⇔ `stance_integrity_error` 非 None ⇔ 首次越限周期非 None」三态自洽门禁。
+
+### 24.7 复跑命令
+
+```
+PYTHONPATH=src /usr/bin/python3 -m unittest tests.unit.test_balance_contract
+PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_balance.py --config config/go2_loopback.yaml; echo exit=$?
+PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_loopback.py --config config/go2_loopback.yaml; echo exit=$?
+PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_gait_in_place.py --config config/go2_loopback.yaml; echo exit=$?
+PYTHONPATH=src /usr/bin/python3 build/iraf-24h-2/02b/run_gait_double_review_round11.py
+/usr/bin/python3 build/iraf-24h-2/02b/r20_read_balance.py build/acceptance/go2-balance/report.json
+```
+
+### 24.8 诚实边界
+
+① 全部结论 `simulation=true`（`/usr/bin/python3` 3.10.12，单次确定性仿真；未做多种子/扰动扫描）；
+   目标端与真机 `DEFERRED`（板卡不在场）。
+② 静态保持模式下 1f 兜底的**计数天然偏高**（实测 `max_declared_stance_gap_run 370/400` 周期）：该模式下
+   声明支撑集 = 全部腿，任何躯干倾斜导致的单腿瞬时卸载都会被记成「声明支撑窗内不接触」⇒ 该计数在静态
+   模式下**只作观测**，不作判据（静态判据仍是倾斜/漂移/饱和/看门狗，与翻键前逐位一致）；把它变成静态
+   判据需要新的语义（例如静态模式的接触阈值/窗口口径），属新机制，代理不自行开。
+③ **未改**：20 项步态判据与全部阈值、`balance.enabled`（仍 `false`）、`min_stance_legs`（仍 3）、
+   看门狗预算（仍 10）、`locomote`（未回填）、`profiles/**`（未动）、ADR（1g 文本由主窗口 `be906bd` 写入）、
+   `src/iraf_core/**` 与 `examples/demo3_arm/**`（另一窗口）。
+④ **D（行走路线 D1~D4）仍待人工选路**：本轮只落地 E 的修法（1g），对「支撑集是否改为声明支撑集的
+   计划位置」等 D 选项**一字未动**；trot/wave 仍不通过。
+
+
 
 
 

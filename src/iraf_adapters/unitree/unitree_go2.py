@@ -494,19 +494,26 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
 
         return compute
 
-    def _balance_provider(self, params, geometry, trunk_body, balance_params):
+    def _balance_provider(self, params, geometry, trunk_body, balance_params,
+                          declared_phase_provider=None):
         """构造力矩级平衡器的**逐控制周期**回调：`(cycle_index, info) -> 12 维附加力矩`。
 
-        支撑腿的判定口径来自声明 `balance.stance_classification`（决策 1e）：
-        - `contact_only`（旧行为）：只用**实测接触力**（`contact_force_threshold_n`），不做相位推断
-          —— 实测「命令抬的腿 ≠ 物理离地的腿」（静态复现：命令抬 FL 0.08 m 时机身翻 17.765°，
-          最终 RR 离地 0 N、FL 仍承载 44.46 N）⇒ 按相位写成的支撑集与实测恒对不上。
-        - `declared_and_contact`：**声明相位 ∧ 实测接触**。摆动窗口内的腿一律不算支撑腿（不参与
-          mg 分摊、不承受力控、位置权重回落 `weight_position`）⇒ 它的轨迹才抬得起来。理由（实测，
-          调试记录 §15）：`contact_only` 把「该抬但还没抬」的腿继续当支撑腿并给它 ~mg/4 法向力压在
-          台面上，而支撑腿位置权重为 0 ⇒ 轨迹也抬不动它 ⇒ 自锁（wave+B1/trot+B1 四腿稳态支撑相恒
-          为 1.0、clear_swing_cycles 0）。相位用的 `elapsed` 与步态目标生成**同一个起点**：
-          本回调首次被调用时的仿真时刻（`_run_control` 在步进前回调，故与调用方的 `onset` 相等）。
+        支撑腿的判定口径来自声明 `balance.stance_classification`（决策 1e ⇒ **1g**）—— 该段是
+        「控制模式 → 判定口径」的映射，本方法只判定**事实**「本次运行是否存在声明相位」，
+        不写死任何路径名：
+
+        - 有声明相位（`declared_phase_provider is not None`，步态时钟激活）⇒ 取声明里
+          `gait_clock_active` 给出的口径（生产声明 = `declared_and_contact`：**声明相位 ∧ 实测接触**。
+          摆动窗口内的腿一律不算支撑腿（不参与 mg 分摊、不承受力控、位置权重回落 `weight_position`）
+          ⇒ 它的轨迹才抬得起来。理由（实测，调试记录 §15）：`contact_only` 把「该抬但还没抬」的腿继续
+          当支撑腿并给它 ~mg/4 法向力压在台面上，而支撑腿位置权重为 0 ⇒ 轨迹也抬不动它 ⇒ 自锁）。
+          相位用的 `elapsed` 与步态目标生成**同一个起点**：本回调首次被调用时的仿真时刻
+          （`_run_control` 在步进前回调，故与调用方的 `onset` 相等）。
+        - 无声明相位（静态保持等纯位置路径）⇒ 取声明里 `gait_clock_inactive` 给出的口径
+          （生产声明 = `contact_only`：只用**实测接触力**，物理接触即支撑）。此时没有摆动窗口，
+          声明支撑集 = **全部腿**；1f 的兜底仍然生效（任何腿离地/异常接触持续超过声明上限即显式报错），
+          组合游程门禁（决策 1g）亦生效。
+
         没有足够支撑腿时**不施加**平衡力矩（并计数），超过声明的看门狗上限即停止施加。
         """
         threshold = float(params["verification"]["contact_force_threshold_n"])
@@ -522,16 +529,33 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         # B1：支撑/摆动两套位置权重（都来自声明，缺键在 `load_balance_declaration` 就失败了）。
         stance_weight = float(balance_params["stance_weight_position"])
         swing_weight = float(balance_params["weight_position"])
-        # 支撑集判定口径（决策 1e）：取值已在 `load_balance_declaration` 白名单校验过。
-        stance_classification = str(balance_params["stance_classification"])
+        # 支撑集判定口径（决策 1e ⇒ 1g）：**按控制模式**取 —— 控制模式由「是否存在声明相位」这一事实
+        # 决定（不是路径名），映射本身住在声明里；取值合法性已在 `load_balance_declaration` 校验过。
+        classification_modes = dict(balance_params["stance_classification"])
+        declared_phase_source = (
+            "gait_clock" if declared_phase_provider is not None else "no_declared_phase"
+        )
+        stance_classification = str(
+            classification_modes[
+                "gait_clock_active"
+                if declared_phase_provider is not None
+                else "gait_clock_inactive"
+            ]
+        )
+        # 生效口径与「由哪条事实选出」写进证据：**生产侧**写入、报告侧只透传（不在报告侧重算，
+        # 否则「声明里写 A、实际跑 B」会看不出来）。
+        if isinstance(self._balance_stats, dict):
+            self._balance_stats["stance_classification"] = stance_classification
+            self._balance_stats["declared_phase_source"] = declared_phase_source
         # 决策 1f 的 fail-closed 兜底阈值（全来自声明）：① 摆动窗口内「异常接触力」阈值；
-        # ②/③ 两类不一致各自允许的**连续**周期上限（超过即 `stance_integrity_error` 显式报错）。
+        # ②/③/④ 连续游程上限（两类各一 + 决策 1g 的组合游程），超过即 `stance_integrity_error` 显式报错。
         integrity = balance_params["stance_integrity"]
         swing_force_threshold = float(integrity["swing_contact_force_n"])
         # 「连续不一致」游程计数：不放进 `_balance_stats`（它是过程量，不是证据），
         # 但在越限时把各自的**最大游程**写进证据。
         declared_stance_gap_run = 0
         swing_abnormal_run = 0
+        inconsistent_run = 0
         balance_onset = None
 
         def _no_stance_fallback():
@@ -550,7 +574,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             }
 
         def torque_provider(cycle_index, info):
-            nonlocal balance_onset, declared_stance_gap_run, swing_abnormal_run
+            nonlocal balance_onset, declared_stance_gap_run, swing_abnormal_run, inconsistent_run
             contact = self._leg_contact_forces(params, geometry)
             measured = [code for code in sorted(geometry) if float(contact[code]) >= threshold]
             stats = self._balance_stats
@@ -560,73 +584,97 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             if balance_onset is None:
                 balance_onset = float(self.data.time)
             elapsed = float(self.data.time) - balance_onset
-            declared = {
-                code: bool(gait.is_stance(params, gait.leg_phase(params, code, elapsed)))
-                for code in sorted(geometry)
-            }
+            if declared_phase_provider is None:
+                # 无声明相位（静态保持/纯位置路径）：没有摆动窗口 ⇒ 声明支撑集 = **全部腿**
+                # （退化情形，见 `balance.py` 模块 docstring）。这不等于「跳过兜底」：
+                # 此时 1f/1g 的兜底只可能报「声明支撑窗内不接触」（悬空/打滑），照样显式报错。
+                declared = {code: True for code in sorted(geometry)}
+            else:
+                declared = {
+                    code: bool(value)
+                    for code, value in declared_phase_provider(elapsed).items()
+                }
             if stance_classification == "declared_and_contact":
                 stance = [code for code in measured if declared[code]]
-                # 声明摆动却仍接触的腿：正是自锁的观测对象（本轮新计数；不参与分摊、不承受力控）。
-                swing_in_contact = [code for code in measured if not declared[code]]
-                if swing_in_contact:
-                    stats["declared_swing_in_contact_cycles"] = (
-                        int(stats["declared_swing_in_contact_cycles"]) + 1
-                    )
-                stats["declared_swing_in_contact_samples"] = (
-                    int(stats["declared_swing_in_contact_samples"]) + len(swing_in_contact)
-                )
-                # ---- 决策 1f 的 fail-closed 兜底（2026-09-21 19:05 授权落地，只增证据）----
-                # ② 声明支撑窗内实测不接触（悬空/打滑）：**不得当作摆动腿** ⇒ 逐周期计数 + 连续游程。
-                gap_legs = [
-                    code
-                    for code in sorted(geometry)
-                    if declared[code] and float(contact[code]) < threshold
-                ]
-                if gap_legs:
-                    stats["declared_stance_without_contact_cycles"] = (
-                        int(stats["declared_stance_without_contact_cycles"]) + 1
-                    )
-                    stats["declared_stance_without_contact_samples"] = (
-                        int(stats["declared_stance_without_contact_samples"]) + len(gap_legs)
-                    )
-                    declared_stance_gap_run += 1
-                    stats["max_declared_stance_gap_run"] = max(
-                        int(stats["max_declared_stance_gap_run"]), declared_stance_gap_run
-                    )
-                    stats["last_declared_stance_without_contact"] = list(gap_legs)
-                else:
-                    declared_stance_gap_run = 0
-                # ① 摆动窗口内**异常**接触力（> 声明阈值）：记录峰值，并在连续越限时显式报错。
-                abnormal = [
-                    code
-                    for code in swing_in_contact
-                    if float(contact[code]) > swing_force_threshold
-                ]
-                if abnormal:
-                    stats["swing_abnormal_contact_cycles"] = (
-                        int(stats["swing_abnormal_contact_cycles"]) + 1
-                    )
-                    stats["swing_abnormal_contact_samples"] = (
-                        int(stats["swing_abnormal_contact_samples"]) + len(abnormal)
-                    )
-                    swing_abnormal_run += 1
-                    stats["max_swing_abnormal_run"] = max(
-                        int(stats["max_swing_abnormal_run"]), swing_abnormal_run
-                    )
-                else:
-                    swing_abnormal_run = 0
-                for code in swing_in_contact:
-                    stats["swing_max_contact_n"] = max(
-                        float(stats["swing_max_contact_n"]), float(contact[code])
-                    )
-                # 显式报错：越限时给出中文原因（不是只记数），非越限时严格 `None`（= 未发生）。
-                stats["stance_integrity_error"] = balance_module.evaluate_stance_integrity(
-                    integrity,
-                    declared_stance_gap_cycles=declared_stance_gap_run,
-                    swing_abnormal_contact_cycles=swing_abnormal_run,
-                )
             else:
                 stance = list(measured)
+            # ---- 决策 1f 的 fail-closed 兜底（2026-09-21 19:05 授权落地，只增证据）----
+            # **两种控制模式都跑**（决策 1g：口径按控制模式区分，但兜底不随口径消失）。
+            # 声明摆动却仍接触的腿：正是自锁的观测对象（不参与分摊、不承受力控）。
+            swing_in_contact = [code for code in measured if not declared[code]]
+            if swing_in_contact:
+                stats["declared_swing_in_contact_cycles"] = (
+                    int(stats["declared_swing_in_contact_cycles"]) + 1
+                )
+            stats["declared_swing_in_contact_samples"] = (
+                int(stats["declared_swing_in_contact_samples"]) + len(swing_in_contact)
+            )
+            # ② 声明支撑窗内实测不接触（悬空/打滑）：**不得当作摆动腿** ⇒ 逐周期计数 + 连续游程。
+            gap_legs = [
+                code
+                for code in sorted(geometry)
+                if declared[code] and float(contact[code]) < threshold
+            ]
+            if gap_legs:
+                stats["declared_stance_without_contact_cycles"] = (
+                    int(stats["declared_stance_without_contact_cycles"]) + 1
+                )
+                stats["declared_stance_without_contact_samples"] = (
+                    int(stats["declared_stance_without_contact_samples"]) + len(gap_legs)
+                )
+                declared_stance_gap_run += 1
+                stats["max_declared_stance_gap_run"] = max(
+                    int(stats["max_declared_stance_gap_run"]), declared_stance_gap_run
+                )
+                stats["last_declared_stance_without_contact"] = list(gap_legs)
+            else:
+                declared_stance_gap_run = 0
+            # ① 摆动窗口内**异常**接触力（> 声明阈值）：记录峰值，并在连续越限时显式报错。
+            abnormal = [
+                code
+                for code in swing_in_contact
+                if float(contact[code]) > swing_force_threshold
+            ]
+            if abnormal:
+                stats["swing_abnormal_contact_cycles"] = (
+                    int(stats["swing_abnormal_contact_cycles"]) + 1
+                )
+                stats["swing_abnormal_contact_samples"] = (
+                    int(stats["swing_abnormal_contact_samples"]) + len(abnormal)
+                )
+                swing_abnormal_run += 1
+                stats["max_swing_abnormal_run"] = max(
+                    int(stats["max_swing_abnormal_run"]), swing_abnormal_run
+                )
+            else:
+                swing_abnormal_run = 0
+            for code in swing_in_contact:
+                stats["swing_max_contact_n"] = max(
+                    float(stats["swing_max_contact_n"]), float(contact[code])
+                )
+            # ④ 决策 1g 的**组合**游程：本周期至少有一条腿声明与实测不符（两类中任意一类）。
+            # 单类游程会被两类交替重置（gap → swing → gap …），本计数不会 ⇒ 它拦的是
+            # 「持续处于不一致状态」这种单类门禁看不见的形态。
+            inconsistent_run = inconsistent_run + 1 if (gap_legs or abnormal) else 0
+            if gap_legs or abnormal:
+                stats["inconsistent_cycles"] = int(stats["inconsistent_cycles"]) + 1
+                stats["max_inconsistent_run"] = max(
+                    int(stats["max_inconsistent_run"]), inconsistent_run
+                )
+            # 显式报错：越限时给出中文原因（不是只记数），非越限时严格 `None`（= 未发生）。
+            # **粘性**写入：游程越限是「发生过」的事实，报告不得因为末周期恰好恢复正常就遗忘。
+            # 报告侧（`verify_go2_gait_in_place._balance_segment`）按 **max 游程**复算 `overdue`，
+            # 粘性写入才与它等价；非粘性写法只在「末周期仍越限」时偶然一致（潜在恒假字段）。
+            integrity_error = balance_module.evaluate_stance_integrity(
+                integrity,
+                declared_stance_gap_cycles=declared_stance_gap_run,
+                swing_abnormal_contact_cycles=swing_abnormal_run,
+                inconsistent_run_cycles=inconsistent_run,
+            )
+            if integrity_error is not None and stats["stance_integrity_error"] is None:
+                stats["stance_integrity_error"] = integrity_error
+                # 归因证据：**首次**越限的控制周期（与看门狗 `watchdog_trigger_cycle` 同一口径）。
+                stats["stance_integrity_error_cycle"] = int(stats["cycles"])
             # ---- 翻倒窗口 / 启动窗口归因（第十七轮：只增证据，不参与任何判据）----
             # 分母口径必须显式：全采样窗口把翻倒之后在空中/翻滚的周期也算进去（§18.4 同族问题）。
             falling = float(self.data.qpos[2]) < fall_height
@@ -806,15 +854,20 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             "last_stance_legs": [],
             "last_wrench": None,
             "max_abs_torque_nm": 0.0,
-            # 支撑集判定口径（决策 1e）与自锁的观测计数：判定「摆动腿到底抬没抬起来」的证据。
+            # 支撑集判定口径（决策 1e ⇒ 1g）与自锁的观测计数：判定「摆动腿到底抬没抬起来」的证据。
+            # `stance_classification` = **本次运行实际生效**的口径（由声明里对应控制模式的键选出，
+            # 由 provider 在构造时写入）；`declared_phase_source` = 选出它的事实依据。声明原文
+            # （控制模式 → 口径的映射）在 `_balance_summary` 的顶层字段里，两者并列才可审计。
             "stance_classification": None,
+            "declared_phase_source": None,
             "declared_swing_in_contact_cycles": 0,
             "declared_swing_in_contact_samples": 0,
             # 决策 1f 的 fail-closed 兜底（2026-09-21 19:05 授权落地，只增证据、不参与既有判据）：
             # ① 摆动窗口内**异常**接触力（> `stance_integrity.swing_contact_force_n`）；
             # ② 声明支撑窗内实测不接触（悬空/打滑，**不得当作摆动腿**）。
             # `stance_integrity_error` 的 `None` 语义 = 「未越限（未发生）」，不是「未测量」；
-            # 非 `None` 时是**中文错误说明**（显式报错，不是只置一个布尔）。
+            # 非 `None` 时是**中文错误说明**（显式报错，不是只置一个布尔），且为**粘性**（一旦发生过
+            # 就不再回到 `None`，与报告侧按 max 游程复算 `overdue` 等价）。
             "declared_stance_without_contact_cycles": 0,
             "declared_stance_without_contact_samples": 0,
             "max_declared_stance_gap_run": 0,
@@ -823,7 +876,12 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             "swing_abnormal_contact_samples": 0,
             "max_swing_abnormal_run": 0,
             "swing_max_contact_n": 0.0,
+            # 决策 1g 的**组合**游程（两类交替也会持续累加）：`inconsistent_cycles` = 逐周期计数，
+            # `max_inconsistent_run` = 最长连续游程；`stance_integrity_error_cycle` 的 `None` = 未越限。
+            "inconsistent_cycles": 0,
+            "max_inconsistent_run": 0,
             "stance_integrity_error": None,
+            "stance_integrity_error_cycle": None,
             # B1 逐关节权重的实测统计（"声明说支撑腿走力控"要有**兑现**证据，而不是只看开关）。
             "position_weight": {
                 "stance": None,
@@ -844,7 +902,22 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             "stance_weight_position": float(balance_params["stance_weight_position"]),
             "weight_balance": float(balance_params["weight_balance"]),
             "include_gravity_support": bool(balance_params["include_gravity_support"]),
-            "stance_classification": str(balance_params["stance_classification"]),
+            # 决策 1g：口径按**控制模式**给出 ⇒ 报告里必须同时给出「声明原文（映射）」与
+            # 「本次运行实际生效的口径 + 由哪条事实选出」。`stance_classification` 保持"生效口径"
+            # 这一语义（`None` = 本次运行**未产生统计**（平衡器关闭/未跑），与 `fall_cycle` 的
+            # `None` 同一约定：是「未发生」，不是「未测量」）；声明原文在
+            # `stance_classification_modes`，两者并列才看得出「声明里写 A、实际跑 B」。
+            "stance_classification": (
+                None
+                if stats["stance_classification"] is None
+                else str(stats["stance_classification"])
+            ),
+            "stance_classification_modes": dict(balance_params["stance_classification"]),
+            "declared_phase_source": (
+                None
+                if stats["declared_phase_source"] is None
+                else str(stats["declared_phase_source"])
+            ),
             # 决策 1f 的兜底阈值原样透传（判据/证据里的数字必须能在声明里逐字找到）。
             "stance_integrity": dict(balance_params["stance_integrity"]),
             "attitude": dict(balance_params["attitude"]),
@@ -909,8 +982,16 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 ),
                 "max_swing_abnormal_run": int(stats["max_swing_abnormal_run"]),
                 "swing_max_contact_n": float(stats["swing_max_contact_n"]),
+                # 决策 1g 的组合游程（两类交替也持续累加）+ 首次越限周期（`None` = 从未越限）。
+                "inconsistent_cycles": int(stats["inconsistent_cycles"]),
+                "max_inconsistent_run": int(stats["max_inconsistent_run"]),
                 "stance_integrity_error": (
                     None if stats["stance_integrity_error"] is None else str(stats["stance_integrity_error"])
+                ),
+                "stance_integrity_error_cycle": (
+                    None
+                    if stats["stance_integrity_error_cycle"] is None
+                    else int(stats["stance_integrity_error_cycle"])
                 ),
                 "max_abs_torque_nm": float(stats["max_abs_torque_nm"]),
                 "last_wrench": stats["last_wrench"],
@@ -947,6 +1028,10 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         ramp_s = float(_dig(self.declaration, "stand.ramp_s", "声明"))
         q0 = np.asarray(self.data.qpos[self.qpos_adr], dtype=float).copy()
         self._balance_stats = self._new_balance_stats()
+        # 决策 1g：本路径**没有声明相位**（静态保持，无步态足端轨迹/无摆动窗口）⇒ 不传
+        # `declared_phase_provider`，支撑集口径由声明里 `gait_clock_inactive` 那一项决定
+        # （生产声明 = `contact_only`：物理接触即支撑）。这与「有声明相位」是**两条不同的控制模式**，
+        # 不是同一口径的兜底 —— 把步态相位套到静态保持上正是 1f 引入的回归（实测 116.04° 翻倒）。
         torque_provider = (
             self._balance_provider(params, geometry, trunk_body, balance_params)
             if balance_params["enabled"]
@@ -1072,8 +1157,19 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         # 步态路径与步骤 02 的实现**逐位一致**（可作对照实验的对照组）。
         balance_params = self._balance_parameters()
         self._balance_stats = self._new_balance_stats()
+        # 决策 1g：本路径**有声明相位**（步态时钟激活）⇒ 支撑集口径由声明里 `gait_clock_active`
+        # 那一项决定（生产声明 = `declared_and_contact`）。这里只提供「声明相位」这一**事实**，
+        # 不决定口径；相位与步态目标生成共用 `_balance_provider` 的 `elapsed`（首次回调时的仿真
+        # 时刻，与下方 `onset` 相等）⇒ 与步骤 02 的相位口径逐位一致。
+        def declared_phase(elapsed):
+            return {
+                code: bool(gait.is_stance(params, gait.leg_phase(params, code, elapsed)))
+                for code in sorted(geometry)
+            }
+
         torque_provider = (
-            self._balance_provider(params, geometry, trunk_body, balance_params)
+            self._balance_provider(params, geometry, trunk_body, balance_params,
+                                   declared_phase_provider=declared_phase)
             if balance_params["enabled"]
             else None
         )

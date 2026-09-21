@@ -100,73 +100,111 @@ class BalanceDeclarationTests(unittest.TestCase):
             [str(item) for item in section["verification"]["static_disturbance"]["axes"]],
         )
 
-    def test_stance_classification_declared_and_validated(self):
-        """决策 1e：支撑集判定口径必须显式声明，且只允许白名单取值。
+    def test_stance_classification_by_control_mode_declared_and_validated(self):
+        """决策 1e ⇒ **1g**：口径按**控制模式**给出（映射），且只允许白名单取值。
 
-        缺键由 `test_every_required_key_rejected_when_missing` 逐键覆盖（该键已进
-        `REQUIRED_BALANCE_KEYS`）；本用例补的是「**拼错/自造模式必须被拒**」与「另一个合法
-        模式必须能加载」这对正/负对照 —— 否则分不清「门禁严格」与「门禁恒失败」。
+        缺键由 `test_every_required_key_rejected_when_missing` 逐键覆盖（该段已进
+        `REQUIRED_BALANCE_KEYS`）；本用例补的是三条正/负对照 —— 否则分不清「门禁严格」与
+        「门禁恒失败」：① 两个控制模式键都必须能从声明逐字还原（**正向对照**）；
+        ② 任一控制模式取值拼错/自造必须被拒；③ **多出一个未定义的控制模式键**必须被拒
+        （否则「映射」会退化成「随便加一个键就能换个语义」的开放集合）。
         """
         document = _declaration()
+        section = document["balance"]["stance_classification"]
         params = _params(document)
         self.assertEqual(
-            params["stance_classification"],
-            str(document["balance"]["stance_classification"]),
+            sorted(params["stance_classification"]), sorted(balance.STANCE_CLASSIFICATION_KEYS)
         )
-        self.assertIn(params["stance_classification"], balance.STANCE_CLASSIFICATION_MODES)
-        for bad in ("declared", "contact", "declared_and_measured", "", 1, None):
-            with self.assertRaises(DeclarationError):
-                _params(_mutate("balance.stance_classification", bad))
+        for key in balance.STANCE_CLASSIFICATION_KEYS:
+            self.assertEqual(params["stance_classification"][key], str(section[key]))
+            self.assertIn(params["stance_classification"][key], balance.STANCE_CLASSIFICATION_MODES)
         with self.assertRaises(DeclarationError) as ctx:
-            _params(_mutate("balance.stance_classification", "declared"))
+            _params(_mutate("balance.stance_classification", "declared_and_contact"))
         self.assertIn("stance_classification", str(ctx.exception))
-        # 正例对照：两个已定义模式都必须能加载（含"声明相位 ∧ 实测接触"）。
-        for mode in balance.STANCE_CLASSIFICATION_MODES:
-            loaded = _params(_mutate("balance.stance_classification", mode))
-            self.assertEqual(loaded["stance_classification"], mode)
+        for key in balance.STANCE_CLASSIFICATION_KEYS:
+            for bad in ("declared", "contact", "declared_and_measured", "", 1, None):
+                with self.subTest(key=key, bad=bad):
+                    if bad is None:
+                        document = _mutate("balance.stance_classification", _declaration()[
+                            "balance"]["stance_classification"])
+                        del document["balance"]["stance_classification"][key]
+                    else:
+                        document = _mutate(
+                            "balance.stance_classification.%s" % key, bad
+                        )
+                    with self.assertRaises(DeclarationError):
+                        _params(document)
+        # ③ 未定义的控制模式键必须被拒；④ 另一个合法口径的组合必须能加载（正向对照）。
+        document = _mutate(
+            "balance.stance_classification",
+            dict(section, lidar_clock_active="contact_only"),
+        )
+        with self.assertRaises(DeclarationError) as ctx:
+            _params(document)
+        self.assertIn("未定义的控制模式键", str(ctx.exception))
+        loaded = _params(
+            _mutate(
+                "balance.stance_classification",
+                {key: mode for key, mode in zip(
+                    balance.STANCE_CLASSIFICATION_KEYS, reversed(balance.STANCE_CLASSIFICATION_MODES)
+                )},
+            )
+        )
+        self.assertEqual(
+            loaded["stance_classification"]["gait_clock_inactive"],
+            balance.STANCE_CLASSIFICATION_MODES[0],
+        )
 
     def test_stance_integrity_declared_and_validated(self):
-        """决策 1f 兜底（2026-09-21 19:05 授权）：阈值为必需键，且必须可从声明逐字还原。
+        """决策 1f 兜底（2026-09-21 19:05 授权）+ 1g 组合游程（20:35 授权）：阈值为必需键。
 
         缺段/缺键由 `test_every_required_key_rejected_when_missing` 逐键覆盖；本用例补的是
-        「阈值语义」这组正/负对照：① 三个键都能从 YAML 逐字还原（**正向对照**，否则分不清
+        「阈值语义」这组正/负对照：① 四个键都能从 YAML 逐字还原（**正向对照**，否则分不清
         「门禁严格」与「门禁恒失败」）；② 阈值 ≤1 个周期必须被拒（恒真门禁：实测启动瞬态
-        周期 1~2 四腿接触力全 < 2 N，取 1 会让启动瞬态必然报错）；③ 非正接触力阈值必须被拒。
+        周期 1~2 四腿接触力全 < 2 N，取 1 会让启动瞬态必然报错）；③ 非正接触力阈值必须被拒；
+        ④ 组合游程上限小于单类上限必须被拒（否则它会先于单类门禁触发、遮蔽故障类型诊断 ——
+        「零余量声明」）。
         """
         document = _declaration()
         params = _params(document)
         section = document["balance"]["stance_integrity"]
-        self.assertEqual(
-            params["stance_integrity"]["swing_contact_force_n"],
-            float(section["swing_contact_force_n"]),
-        )
-        self.assertEqual(
-            params["stance_integrity"]["max_swing_abnormal_contact_cycles"],
-            int(section["max_swing_abnormal_contact_cycles"]),
-        )
-        self.assertEqual(
-            params["stance_integrity"]["max_declared_stance_gap_cycles"],
-            int(section["max_declared_stance_gap_cycles"]),
-        )
+        for key in balance.REQUIRED_STANCE_INTEGRITY_KEYS:
+            with self.subTest(key=key):
+                self.assertEqual(
+                    params["stance_integrity"][key], float(section[key])
+                    if isinstance(section[key], float) else int(section[key]),
+                )
         for path in (
             "balance.stance_integrity",
             "balance.stance_integrity.swing_contact_force_n",
             "balance.stance_integrity.max_swing_abnormal_contact_cycles",
             "balance.stance_integrity.max_declared_stance_gap_cycles",
+            "balance.stance_integrity.max_inconsistent_run_cycles",
         ):
             with self.assertRaises(DeclarationError):
                 _params(_mutate(path, None))
         for path in (
             "balance.stance_integrity.max_swing_abnormal_contact_cycles",
             "balance.stance_integrity.max_declared_stance_gap_cycles",
+            "balance.stance_integrity.max_inconsistent_run_cycles",
         ):
             for bad in (0, 1, -1):
-                with self.assertRaises(DeclarationError):
-                    _params(_mutate(path, bad))
-            loaded = _params(_mutate(path, 2))
+                with self.subTest(path=path, bad=bad):
+                    with self.assertRaises(DeclarationError):
+                        _params(_mutate(path, bad))
+            loaded = _params(_mutate(path, 12))
             self.assertEqual(
-                loaded["stance_integrity"][path.split(".")[-1]], 2
+                loaded["stance_integrity"][path.split(".")[-1]], 12
             )
+        # ④ 组合游程上限 < 单类上限 ⇒ 零余量（会遮蔽「是悬空/打滑还是自锁」的诊断）⇒ 必须被拒；
+        #    恰好等于单类上限是**允许**的（实现层强制的是 `>=`，不是 `>`）—— 正例对照。
+        for bad in (2, 4):
+            with self.subTest(inconsistent=bad):
+                with self.assertRaises(DeclarationError) as ctx:
+                    _params(_mutate("balance.stance_integrity.max_inconsistent_run_cycles", bad))
+                self.assertIn("遮蔽", str(ctx.exception))
+        at_limit = _params(_mutate("balance.stance_integrity.max_inconsistent_run_cycles", 5))
+        self.assertEqual(at_limit["stance_integrity"]["max_inconsistent_run_cycles"], 5)
         for bad in (0.0, -1.0):
             with self.assertRaises(DeclarationError):
                 _params(_mutate("balance.stance_integrity.swing_contact_force_n", bad))
@@ -175,35 +213,59 @@ class BalanceDeclarationTests(unittest.TestCase):
         """兜底判定的正/负对照（纯函数）：未越限严格 `None`；越限给出**中文**原因。
 
         「显式报错」如果只写成布尔，调用方无法区分「悬空/打滑」与「自锁」两类故障；
-        本用例把它钉成两句可识别的原因（含关键词），并覆盖边界（== 上限仍算未越限）。
+        本用例把它钉成三句可识别的原因（含关键词），并覆盖边界（== 上限仍算未越限）
+        与决策 1g 的**组合游程**（两类交替时单类游程被重置，组合游程仍持续累加）。
         """
         integrity = {
             "swing_contact_force_n": 5.0,
             "max_swing_abnormal_contact_cycles": 5,
             "max_declared_stance_gap_cycles": 5,
+            "max_inconsistent_run_cycles": 12,
         }
         # 正例对照：全部在阈值内 ⇒ 严格 None（不是""、不是 False）。
         self.assertIsNone(
             balance.evaluate_stance_integrity(
-                integrity, declared_stance_gap_cycles=0, swing_abnormal_contact_cycles=0
+                integrity,
+                declared_stance_gap_cycles=0,
+                swing_abnormal_contact_cycles=0,
+                inconsistent_run_cycles=0,
             )
         )
         # 边界：恰好等于声明上限仍算未越限（判据是「超过」）。
         self.assertIsNone(
             balance.evaluate_stance_integrity(
-                integrity, declared_stance_gap_cycles=5, swing_abnormal_contact_cycles=5
+                integrity,
+                declared_stance_gap_cycles=5,
+                swing_abnormal_contact_cycles=5,
+                inconsistent_run_cycles=12,
             )
         )
         gap = balance.evaluate_stance_integrity(
-            integrity, declared_stance_gap_cycles=6, swing_abnormal_contact_cycles=0
+            integrity,
+            declared_stance_gap_cycles=6,
+            swing_abnormal_contact_cycles=0,
+            inconsistent_run_cycles=0,
         )
         self.assertIsInstance(gap, str)
         self.assertIn("不得当作摆动腿", gap)
         swing = balance.evaluate_stance_integrity(
-            integrity, declared_stance_gap_cycles=0, swing_abnormal_contact_cycles=6
+            integrity,
+            declared_stance_gap_cycles=0,
+            swing_abnormal_contact_cycles=6,
+            inconsistent_run_cycles=0,
         )
         self.assertIsInstance(swing, str)
         self.assertIn("自锁", swing)
+        # 决策 1g：两类**交替**（单类游程各自被重置到 ≤ 上限）但持续不一致 ⇒ 组合门禁必须拦下。
+        combined = balance.evaluate_stance_integrity(
+            integrity,
+            declared_stance_gap_cycles=1,
+            swing_abnormal_contact_cycles=1,
+            inconsistent_run_cycles=13,
+        )
+        self.assertIsInstance(combined, str)
+        self.assertIn("声明与实测不一致", combined)
+        self.assertIn("max_inconsistent_run_cycles", combined)
 
     def test_missing_section_rejected(self):
         with self.assertRaises(DeclarationError) as ctx:
@@ -657,7 +719,14 @@ class GaitReportBalanceEvidenceTests(unittest.TestCase):
         section = _declaration()["balance"]
         summary = verify_go2_gait_in_place._balance_report_summary(self._produced_segment())
         self.assertEqual(summary["enabled"], bool(section["enabled"]))
-        self.assertEqual(summary["stance_classification"], str(section["stance_classification"]))
+        # 决策 1g：零值统计段（未跑平衡器）⇒ 生效口径 = None（未发生，不是"未测量"）；
+        # 声明原文必须原样透传（两者并列，才看得出「声明里写 A、实际跑 B」）。
+        self.assertIsNone(summary["stance_classification"])
+        self.assertEqual(
+            summary["stance_classification_modes"],
+            {key: str(value) for key, value in section["stance_classification"].items()},
+        )
+        self.assertIsNone(summary["declared_phase_source"])
         self.assertEqual(summary["weight_position"], float(section["weight_position"]))
         self.assertEqual(summary["stance_weight_position"], float(section["stance_weight_position"]))
         # 决策 1f 兜底阈值必须与声明对齐（新增整段 ⇒ 报告里也要能对着声明核）。
@@ -670,6 +739,9 @@ class GaitReportBalanceEvidenceTests(unittest.TestCase):
                 ),
                 "max_declared_stance_gap_cycles": int(
                     section["stance_integrity"]["max_declared_stance_gap_cycles"]
+                ),
+                "max_inconsistent_run_cycles": int(
+                    section["stance_integrity"]["max_inconsistent_run_cycles"]
                 ),
             },
         )
@@ -689,16 +761,19 @@ class GaitReportBalanceEvidenceTests(unittest.TestCase):
                 "first_stance_cycle",
                 "force_control_cycles",
                 "force_control_cycles_pre_fall",
+                "inconsistent_cycles",
                 "last_declared_stance_without_contact",
                 "max_abs_torque_nm",
                 "max_consecutive_no_stance",
                 "max_declared_stance_gap_run",
+                "max_inconsistent_run",
                 "max_swing_abnormal_run",
                 "no_stance_cycles",
                 "pre_fall_cycles",
                 "pre_fall_force_control_fraction",
                 "pre_fall_force_control_fraction_defined",
                 "stance_integrity_error",
+                "stance_integrity_error_cycle",
                 "stance_legs_histogram",
                 "stance_legs_histogram_all_cycles",
                 "startup_trace",
@@ -745,6 +820,47 @@ class GaitReportBalanceEvidenceTests(unittest.TestCase):
                 segment = self._produced_with_stats(
                     cycles=1000, watchdog_triggered=triggered, watchdog_trigger_cycle=cycle
                 )
+                with self.assertRaises(DeclarationError):
+                    verify_go2_gait_in_place._balance_segment({"balance": segment})
+
+    def test_stance_integrity_error_cycle_agrees_with_overdue(self):
+        """决策 1g 的自洽门禁：按 **max 游程**复算的「越限」⇔ `stance_integrity_error` 非 `None`。
+
+        为什么必须粘性：适配器侧一旦越限就不再回到 `None`（「发生过」的事实），报告侧按 max 游程
+        复算 —— 两者只有**粘性**才等价；非粘性写法只在「末周期仍越限」时偶然一致（潜在恒假字段）。
+        本用例同时覆盖 1g 新增的**组合**游程：两类单类游程都在上限内时，只有组合计数能判越限。
+        """
+        # 正例 1：仅组合游程越限（单类游程 1 / 1 都在上限 5 内）⇒ 必须判越限，且给出首次越限周期。
+        combined_only = self._produced_with_stats(
+            cycles=1000,
+            max_declared_stance_gap_run=1,
+            max_swing_abnormal_run=1,
+            max_inconsistent_run=13,
+            inconsistent_cycles=40,
+            stance_integrity_error="「声明与实测不一致」已连续 13 个控制周期 > 声明上限 12",
+            stance_integrity_error_cycle=41,
+        )
+        self.assertIs(
+            verify_go2_gait_in_place._balance_segment({"balance": combined_only}), combined_only
+        )
+        summary = verify_go2_gait_in_place._balance_report_summary(combined_only)["stats"]
+        self.assertEqual(int(summary["max_inconsistent_run"]), 13)
+        self.assertEqual(int(summary["stance_integrity_error_cycle"]), 41)
+        # 正例 2：全部在限内 ⇒ error 与周期都必须严格为 `None`（不是 ""、不是 0）。
+        in_limit = self._produced_with_stats(
+            cycles=1000, max_inconsistent_run=12, inconsistent_cycles=12
+        )
+        self.assertIsNone(in_limit["stats"]["stance_integrity_error"])
+        self.assertIsNone(in_limit["stats"]["stance_integrity_error_cycle"])
+        # 负例：三类矛盾都必须被拒（越限却无 error / 越限却无周期 / 未越限却给了周期）。
+        broken = (
+            ("error_missing", dict(max_inconsistent_run=13, stance_integrity_error_cycle=41)),
+            ("cycle_missing", dict(max_inconsistent_run=13, stance_integrity_error="越限")),
+            ("cycle_without_overdue", dict(max_inconsistent_run=0, stance_integrity_error_cycle=41)),
+        )
+        for name, overrides in broken:
+            with self.subTest(case=name):
+                segment = self._produced_with_stats(cycles=1000, **overrides)
                 with self.assertRaises(DeclarationError):
                     verify_go2_gait_in_place._balance_segment({"balance": segment})
 

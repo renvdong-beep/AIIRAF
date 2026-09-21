@@ -186,6 +186,13 @@ def _static_case(declaration, root, profile, authority, enabled, balanced_params
         "recovery_window_metrics": settle_metrics,
         "ctrl_saturated_samples": execution["ctrl_saturated_samples"],
         "balance_stats": execution["balance"]["stats"],
+        # 决策 1g：证明「静态保持走的是**无声明相位**那条控制模式」—— 生效口径 / 声明原文 /
+        # 选出它的事实依据三者并列（只从生产侧透传，不在本入口重算）。
+        "stance_classification": execution["balance"]["stance_classification"],
+        "stance_classification_modes": dict(
+            execution["balance"]["stance_classification_modes"]
+        ),
+        "declared_phase_source": execution["balance"]["declared_phase_source"],
     }
     height_error = abs(settle_metrics["height_mean_m"] - execution["height_target_m"])
     if enabled:
@@ -229,6 +236,21 @@ def _static_case(declaration, root, profile, authority, enabled, balanced_params
             "== false",
             not case["balance_stats"]["watchdog_triggered"],
             "看门狗触发说明「有效支撑腿不足」持续超过声明上限：该次保持不成立",
+        )
+        # 决策 1g 的门禁（声明 → 事实 → 生效口径）：静态保持**没有**步态时钟 ⇒ 必须取声明里
+        # `gait_clock_inactive` 给出的口径。若只把口径写在声明里而不按控制模式取，这条会红
+        # （1f 的回归正是「静态保持套用步态相位分类」⇒ 实测 116.0440876799953° 翻倒）。
+        declared_modes = balanced_params["stance_classification"]
+        _check(
+            checks,
+            prefix + ".stance_classification_follows_control_mode",
+            case["stance_classification"],
+            "== %r（无声明相位 ⇒ 取声明 gait_clock_inactive）"
+            % declared_modes["gait_clock_inactive"],
+            case["stance_classification"] == declared_modes["gait_clock_inactive"]
+            and case["declared_phase_source"] == "no_declared_phase",
+            "支撑集口径必须按控制模式从声明取值（declared_phase_source=%r）"
+            % case["declared_phase_source"],
         )
     return case
 
@@ -277,6 +299,12 @@ def _isolation_case(declaration, root, profile, authority, movement_limits, enab
         "steady_metrics": settled_metrics,
         "ctrl_saturated_samples": execution["ctrl_saturated_samples"],
         "balance_stats": execution["balance"]["stats"],
+        # 决策 1g：本路径**有**声明相位 ⇒ 生效口径必须是声明里 `gait_clock_active` 给出的那一个。
+        "stance_classification": execution["balance"]["stance_classification"],
+        "stance_classification_modes": dict(
+            execution["balance"]["stance_classification_modes"]
+        ),
+        "declared_phase_source": execution["balance"]["declared_phase_source"],
         "gait_assessment": {
             key: value for key, value in gait.assess_gait(
                 samples, gait_params, movement_limits["max_tilt_moving_deg"]
@@ -301,6 +329,20 @@ def _isolation_case(declaration, root, profile, authority, movement_limits, enab
             "<= %r" % float(isolation["max_tilt_deg"]),
             metrics["max_tilt_deg"] <= float(isolation["max_tilt_deg"]),
             "倾角上限（相对竖直，不含偏航）",
+        )
+        # 决策 1g 的门禁（声明 → 事实 → 生效口径）：步态路径**有**声明相位 ⇒ 必须取声明里
+        # `gait_clock_active` 给出的口径（否则「口径按控制模式区分」只写在声明里，没被兑现）。
+        declared_modes = params.get("stance_classification") or {}
+        _check(
+            checks,
+            prefix + ".stance_classification_follows_control_mode",
+            case["stance_classification"],
+            "== %r（有声明相位 ⇒ 取声明 gait_clock_active）"
+            % declared_modes.get("gait_clock_active"),
+            case["stance_classification"] == declared_modes.get("gait_clock_active")
+            and case["declared_phase_source"] == "gait_clock",
+            "支撑集口径必须按控制模式从声明取值（declared_phase_source=%r）"
+            % case["declared_phase_source"],
         )
     return case
 
@@ -462,6 +504,9 @@ def main(argv=None):
             "weight_position": balanced_params["weight_position"],
             "weight_balance": balanced_params["weight_balance"],
             "include_gravity_support": balanced_params["include_gravity_support"],
+            # 决策 1g：口径声明段（控制模式 → 判定口径的映射）与兜底阈值原样进报告。
+            "stance_classification": dict(balanced_params["stance_classification"]),
+            "stance_integrity": dict(balanced_params["stance_integrity"]),
             "attitude": balanced_params["attitude"],
             "height": balanced_params["height"],
             "velocity": balanced_params["velocity"],
