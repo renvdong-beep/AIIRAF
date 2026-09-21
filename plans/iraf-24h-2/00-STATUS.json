@@ -23,12 +23,12 @@
     "note": "战役开始前基线：Ran 844 / failures=1 / errors=4 / skipped=4（4 项 loader ERROR + test_vision_processing）"
   },
   "test_latest": {
-    "at_step": "02",
-    "runs": 960,
+    "at_step": "02b",
+    "runs": 989,
     "failures": 1,
     "errors": 4,
     "skipped": 4,
-    "note": "步骤 02 第八轮（本轮 tick；02 已由人工提交 0b3bcde 收口为 DONE）后全量单测（PYTHONPATH=src /usr/bin/python3 -m unittest discover -s tests/unit -t tests/unit，证据 build/iraf-24h-2/02/full-suite-round9.txt）：Ran 960 / failures=1 / errors=4 / skipped=4；上一轮 960/1/4/4 —— 本轮只改台账 Markdown、未新增/修改任何用例，故计数完全相同即为预期结果。失败集合仍为 4 项 loader ERROR（test_agentos_bridge / test_coding_worker_contract / test_runtime_grpc / test_runtime_http_health）+ FAIL test_depth_projection_and_invalid_filter，与战役基线（844/1/4/4）同一批、无新增失败名（compare_suite.py 实测新增失败名 = 0）。"
+    "note": "【第九轮 tick（02b 复核轮）】提交 3716bff 修掉自伤型快照断言后重跑全量单测（PYTHONPATH=src /usr/bin/python3 -m unittest discover -s tests/unit -t tests/unit，证据 build/iraf-24h-2/02b/full-suite-round2.txt）：Ran 989 / failures=1 / errors=4 / skipped=4；失败名集合 = 4 项 loader ERROR（test_agentos_bridge / test_coding_worker_contract / test_runtime_grpc / test_runtime_http_health）+ FAIL test_depth_projection_and_invalid_filter，与战役基线（844/1/4/4）同一批、**新增失败名 = 0**；上一轮的 989/2/4/4 多出的那一项即本轮修掉的断言（断言写成快照，声明一改就假失败）。【上一轮记录】步骤 02 第八轮（02 已由人工提交 0b3bcde 收口为 DONE）后全量单测（PYTHONPATH=src /usr/bin/python3 -m unittest discover -s tests/unit -t tests/unit，证据 build/iraf-24h-2/02/full-suite-round9.txt）：Ran 960 / failures=1 / errors=4 / skipped=4；上一轮 960/1/4/4 —— 本轮只改台账 Markdown、未新增/修改任何用例，故计数完全相同即为预期结果。失败集合仍为 4 项 loader ERROR（test_agentos_bridge / test_coding_worker_contract / test_runtime_grpc / test_runtime_http_health）+ FAIL test_depth_projection_and_invalid_filter，与战役基线（844/1/4/4）同一批、无新增失败名（compare_suite.py 实测新增失败名 = 0）。"
   },
   "blocked": [
     {
@@ -36,6 +36,12 @@
       "reason": "A′ 的四项要求已全部交付并入库（提交 2043111：① 场景初始位姿按实测抬升至足端贴台面 lift_m=0.01837250030255797、独立探针 dist=0；② gait.stance_clearance_m 必需键；③ 接触力探针证明静态四腿力本就是 mg/4，合计 152.617937 N vs mg=153.0 N；④ 重跑同一隔离实验与 wave）。但 **A′ 自带的第 4 条条件分支已被实测触发**：隔离实验（步高 0.001 m）幅度 5 mm 仍翻倒（z_mean -2.989653、倾角 172.139°、漂移 2.59224 m、饱和 2145），wave 正式验收 exit=5、checks 20 / failed 13。⇒「关节空间足端目标偏移」这一执行器形式（sway 与 stance_clearance 同族）在两轮独立实测下均不可用（足–地黏滑推进，幅度与结果非单调）。步骤 02 的「失败/阻塞处理」明令：若需要机身稳定器，**必须回到 ADR 并给出新决策，不得私自加**；步骤「涉及文件」也不含任何力矩级反馈路径 ⇒ 代理不得自行选路、不得新开步骤、不得改判据阈值。【第七轮补充（2026-09-21）】本阻塞自第五轮（提交 2043111）以来未解除，期间无任何实测前提变化；推进器日志（build/iraf-24h-2/push-driver.log）实测 16:39→17:18 共 4 轮催跑、其中 16:44 一轮已按「连续 4 轮未收口」停机；cron repeat 已用 10/48（约剩 19 h）。除 B 之外的路线选择权仍完全在人工手中。",
       "unblock": "人工（主窗口）三件事：① 回写 ADR-0008 的路线决策（力矩/期望力级反馈平衡器 + 落点规划取代关节空间重心转移，或改判其它路线）；② 在 plans/iraf-24h-2/ 另立步骤文件（建议编号 02b，并说明 03/04/05 是否重排）；③ 授权后由下一 tick 按该步骤实现。注：A′ 授权文本本身已含条件分支「若 5 mm 仍翻倒再转 B（力矩级平衡器）」，条件现已满足 —— 若主窗口认可该条件分支即为授权，只需回复一句即可解除本阻塞。A′ ⑤（重测 stand/stop 并如实标注旧数字被取代）**已于第六轮完成**（提交 715fc3a：verify_go2_loopback.py 与 verify_quadruped_skills.py 均 exit=0，新旧值并列于 docs/debug/2026-09-21-quadruped-gait-trot-to-wave.md §11），不再占用下一 tick。【第七轮补充】B 的落地前置已量清（提交 3050ae1，见 docs/debug/2026-09-21-quadruped-gait-trot-to-wave.md §12）：模型侧 12 个力矩型 <motor ... joint=...>（ctrlrange abduction ±23.7 / hip,knee ±45.43）无需改动；缺口在适配器 —— src/iraf_adapters/unitree/unitree_go2.py:704 的 _run_control(...) 只有 target/zero_torque 两条路径，需要新增与 target_provider 并列的执行器级力矩钩子（属架构变更，必须先有 ADR 决策）。另：步骤 02 保持 IN_PROGRESS 是**有意**的（推进器 pending_step() 取第一个非终态步骤，置 BLOCKED 会去推 03）。【第八轮确认解除（2026-09-21）】人工已于 17:28:02 提交 0b3bcde：ADR-0008 新增决策 1c（力矩级反馈平衡器纳入首期移动控制架构）+ 新增步骤 02b（力矩级平衡器：静态抗扰 + 隔离实验 5 mm 不翻 + 既有 20 项判据全绿）+ 02 按范围更正收口为 DONE（稳定性验收移交 02b，判据与阈值一字未改）⇒ 本阻塞自本轮起不再有效，保留条目仅作历史记录。",
       "affects": "02（收口条件）、03、04、05（locomote/navigate_to 依赖步态稳定性）"
+    },
+    {
+      "item": "【2026-09-21 第八轮新增】步骤 02b 第一轮：力矩级平衡器**通路/声明/验收已交付并入库（提交 62ec70a）**，但本步核心判据「隔离实验 5 mm 不翻倒」仍未通过 ⇒ 需人工在调试记录 §13 的决策包（B1/B2/B3）中选路后方可继续",
+      "reason": "实测（simulation=true，/usr/bin/python3 3.10.12，build/iraf-24h-2/02b/acceptance-run3.txt）：静态抗扰（40 N×0.2 s）最坏倾角 1.696017° → 1.366334°、漂移 0.019334 → 0.017456 m、饱和 0（判据全过、有改善）；隔离实验（步高 0.001 m）幅度 0 两组都站住，幅度 0.005 m 实验组**仍翻倒**（−0.297318 / max_tilt 136.194064°）⇒ 验收 exit=5、checks 8 / failed 2。机制判读：驱动失稳的是「机身相对足端目标」这一族的**位置级**驱动（§9/§10 已证），力矩级纠正只能在摩擦预算内抵消一部分，无法同时满足「足够强以止住滑走」与「足够弱以不破坏接触」——首档（水平 ≤40 N/腿）实测把四足顶离地面 254 个周期（45 N·m 力矩的补偿性垂直力差），预算档（≤10 N/腿）则不足以止住滑走。步骤 02b 的「失败/阻塞处理」第 2 条明令：5 mm 仍翻倒但静态 OK ⇒ 需落足点/摆动腿时序层面的干预，**回到 ADR 记录并给出新决策包**，代理不得私自选路、不得放宽判据。",
+      "unblock": "人工（主窗口）二件事：① 在调试记录 §13 的决策包里选路（B1 支撑腿改力矩级力控：include_gravity_support=true + 支撑腿 weight_position=0；B2 = B1 + 迈步式落点；B3 先交付「不做重心转移」的最小移动步态以便尽快交付 locomote）；② 若选 B1/B2，请同时确认是否允许把 DECISION 写进 ADR-0008（本步的 balance 段已声明 include_gravity_support 与 weight_position 两个开关，选 B1 只需改声明值＋把支撑腿的混合权重接到力控，属声明内变更；本代理不自行开这一步）。选路后由下一 tick 按新声明实现。注：代理**不选路**，本轮已把开关置 enabled: false，步态路径与步骤 02 逐位一致（对照组逐字复现历史负结果）。",
+      "affects": "02b（收口条件）、03、04、05（locomote/navigate_to 依赖步态稳定性）"
     }
   ],
   "steps": [
@@ -60,11 +66,11 @@
     {
       "id": "02b",
       "title": "力矩级反馈平衡器（静态抗扰 + 步态稳定）",
-      "status": "TODO",
-      "evidence": null,
-      "commit": null,
-      "updated_at": null,
-      "note": null
+      "status": "IN_PROGRESS",
+      "evidence": "build/iraf-24h-2/02b/{acceptance-run1-fail.txt,acceptance-run2.txt,acceptance-run3.txt,loopback-smoke.txt,loopback-final.txt,probe-balance-*.json,isolation-*-report.json,commit-plan-round1.txt,commit-message-round1.txt,tick-report.md,balance-contract-recheck.txt,full-suite-round2.txt,commit-plan-round2.txt,commit-message-round2.txt}；build/acceptance/go2-balance/report.json",
+      "commit": "62ec70a",
+      "updated_at": "2026-09-21T17:45:23+08:00",
+      "note": "【第一轮（第八轮 tick）已交付通路与验收，判据未过 ⇒ 保持 IN_PROGRESS，等人工选路】交付：① 适配器 `_run_control` 新增**执行器级** torque_provider 钩子（声明权重混合 w_pos/w_bal + 模型 ctrlrange 截断 + 重算饱和；未传钩子时与步骤 15/16 逐位一致）；② 新增 src/iraf_adapters/unitree/balance.py（纯 numpy、不 import mujoco）：声明解析（fail-closed，缺键退出码 2）/ 期望机身力旋量 / 足端力分配（最小范数 + 逐腿截断 + 残差）/ τ=−Jᵀf；③ config/go2_loopback.yaml 新增 balance 段（增益、混合权重、分配上限、看门狗、判据；力矩上限仍只来自模型 ctrlrange）；④ 新增 scripts/verify_go2_balance.py（静态抗扰 + 隔离实验复跑，对照组 enabled=false / 实验组 enabled=true 并跑，声明副本落证据区、仓库声明不改）与 tests/unit/test_balance_contract.py（Ran 29 / OK）。实测（simulation=true，/usr/bin/python3 3.10.12，acceptance-run3.txt）：静态抗扰（40 N×0.2 s）最坏倾角 1.696017° → **1.366334°**、恢复窗口 1.598912284139251° → **1.3169066790848079°**、漂移 0.019334 → **0.017456** m、饱和 0、看门狗未触发（判据全过且有改善）；隔离实验（步高 0.001 m）幅度 0 两组都站住（0.279807 / 0.279516 m）；幅度 **0.005 m 实验组仍翻倒**（−0.297318、min_base_height −5.55571、max_tilt 136.194064°）⇒ **本步核心判据未过**，验收 exit=5、checks 8 / failed 2。对照组把历史负结果逐字复现（稳态窗口口径 height_mean −2.9896527223533664、max_tilt 172.1390149282929、ctrl_saturated 2145，与调试记录 §10.4 一致）⇒ 改动未污染位置级步态路径；loopback 验收 exit=0 且 stand/stop 与 §11 基准逐字相同（0.279953602548388 / 0.0038248382123762478 / 0.11199278558472758）。三个首跑自伤缺陷已修并写进调试记录 §13：法向力下界取 0 会让力矩残差 == 目标力矩（姿态力矩兑现为 0，静态反而更差 4.072° vs 1.696°）；漏 −Jᵀf 负号会让高度/速度纠正变成正反馈（161.68° 翻倒、机身 −17.313 m）；纠正量上限必须 ≪ mg/4≈38 N（首档 40 N/腿水平力在 0.28 m 力臂上产生 ~45 N·m，补偿性垂直力差把四足顶离地面 254 个周期）。声明开关保持 enabled: false（与 gait.stabilization.enabled 同一处理方式），从而步态路径与步骤 02 逐位一致。【下一轮（需人工先选路）】调试记录 §13 决策包：B1（推荐）支撑腿改力矩级力控（include_gravity_support=true + 支撑腿 weight_position=0）；B2 = B1 + 迈步式落点；B3 先交付「不做重心转移」的最小移动步态。未选路前不得自行开工，也不得改判据阈值。诚实边界：静态扰动档对照组也不翻倒（该判据暂非区分性判据）；翻倒后均值是混沌的（同用例两次 −0.297318 / −0.48841113966601235，max_tilt 两次相同）；未回填任何能力（locomote 仍未声明）；真机/目标端 DEFERRED。【第九轮·复核轮（提交 3716bff + 本台账提交 B）】按执行规则第 1 条补交上一轮（第八轮 tick）在回写阶段耗尽额度遗留的两处产物：① `tests/unit/test_balance_contract.py` 的快照断言改为与声明对齐 —— 复核 `Ran 29 / OK / exit=0`（证据 build/iraf-24h-2/02b/balance-contract-recheck.txt），全量单测由 989/2/4/4 回到 **989/1/4/4**（失败名集合 ＝ 战役基线同一批、新增失败名 = 0）；② 本台账的 02b 回写（提交 B），自此台账不再处于「半更新」。**本轮未选路、未改任何判据/阈值、未动 src/** 与 config/**（实测 `balance.enabled` 仍为 false、`stabilization.enabled` 仍为 false）；02b 核心判据（隔离实验 5 mm 不翻倒）仍不通过，验收 `exit=5 / checks 8 / failed 2` 沿用 acceptance-run3.txt（工作树逐字节未变故未重跑）。仍需人工在调试记录 §13 的 B1/B2/B3 中选路后方可继续。**"
     },
     {
       "id": "03",
