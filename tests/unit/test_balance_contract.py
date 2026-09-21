@@ -63,7 +63,9 @@ class BalanceDeclarationTests(unittest.TestCase):
         document = _declaration()
         params = _params(document)
         section = document["balance"]
-        self.assertTrue(params["enabled"])
+        # 开关值**只与声明对齐**、不硬编码：本轮把 enabled 由 true 改为 false 后，
+        # 这条断言曾在本机全量单测里失败（"断言写成快照"而不是"断言契约"）。
+        self.assertEqual(params["enabled"], bool(section["enabled"]))
         self.assertEqual(params["weight_position"], float(section["weight_position"]))
         self.assertEqual(params["weight_balance"], float(section["weight_balance"]))
         self.assertIs(params["include_gravity_support"], bool(section["include_gravity_support"]))
