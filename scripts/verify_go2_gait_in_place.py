@@ -113,6 +113,12 @@ BALANCE_REQUIRED_PATHS = (
     "stats.declared_swing_in_contact_cycles",
     "stats.declared_swing_in_contact_samples",
     "stats.max_abs_torque_nm",
+    "stats.stance_legs_histogram_all_cycles",
+    "stats.startup_trace",
+    "stats.fall_cycle",
+    "stats.pre_fall_cycles",
+    "stats.force_control_cycles_pre_fall",
+    "stats.fallback_cycles_pre_fall",
     "stats.position_weight.force_control_cycles",
     "stats.position_weight.fallback_cycles",
 )
@@ -161,6 +167,55 @@ def _balance_segment(execution):
             "`balance` 段不自洽：force_control_cycles=%d > 0 却没有 first_stance_cycle"
             % force_control
         )
+    # 翻倒窗口 / 启动窗口四条自洽门禁（第十七轮；只查一致性，不引入任何新阈值）：
+    # ① 全周期支撑集直方图的计数之和必须等于周期总数（防「字段产出但没被维护」的恒真字段）；
+    # ② 翻倒前窗口必须被「力控 + 退化」两个计数**完整划分**；
+    # ③ `fall_cycle` 与翻倒前窗口长度必须互为唯一确定（`None` ⇔ 从未翻倒 ⇔ 全周期都在翻倒前）；
+    # ④ 启动窗口逐周期取证的条数必须等于 min(周期数, 看门狗上限 + 1)（边界来自声明）。
+    cycles = int(stats["cycles"])
+    histogram_all = stats["stance_legs_histogram_all_cycles"]
+    if not isinstance(histogram_all, dict):
+        raise quadruped_contract.DeclarationError(
+            "`balance` 段不自洽：stance_legs_histogram_all_cycles 不是映射（实际类型 %s）"
+            % type(histogram_all).__name__
+        )
+    if sum(int(value) for value in histogram_all.values()) != cycles:
+        raise quadruped_contract.DeclarationError(
+            "`balance` 段不自洽：全周期支撑集直方图计数之和 %d != cycles %d"
+            % (sum(int(value) for value in histogram_all.values()), cycles)
+        )
+    pre_fall = int(stats["pre_fall_cycles"])
+    force_pre_fall = int(stats["force_control_cycles_pre_fall"])
+    fallback_pre_fall = int(stats["fallback_cycles_pre_fall"])
+    if force_pre_fall + fallback_pre_fall != pre_fall:
+        raise quadruped_contract.DeclarationError(
+            "`balance` 段不自洽：翻倒前窗口未闭合（力控 %d + 退化 %d != 翻倒前周期 %d）"
+            % (force_pre_fall, fallback_pre_fall, pre_fall)
+        )
+    fall_cycle = stats["fall_cycle"]
+    if fall_cycle is None:
+        if pre_fall != cycles:
+            raise quadruped_contract.DeclarationError(
+                "`balance` 段不自洽：fall_cycle 为 None（未翻倒）却只有 %d/%d 个周期在翻倒前"
+                % (pre_fall, cycles)
+            )
+    elif int(fall_cycle) != pre_fall + 1:
+        raise quadruped_contract.DeclarationError(
+            "`balance` 段不自洽：fall_cycle=%s 与 pre_fall_cycles=%d 矛盾（应为 %d）"
+            % (fall_cycle, pre_fall, pre_fall + 1)
+        )
+    trace = stats["startup_trace"]
+    if not isinstance(trace, list):
+        raise quadruped_contract.DeclarationError(
+            "`balance` 段不自洽：startup_trace 不是列表（实际类型 %s）" % type(trace).__name__
+        )
+    watchdog_limit = int(segment["watchdog"]["max_consecutive_no_stance_cycles"])
+    expected_trace = min(cycles, watchdog_limit + 1)
+    if len(trace) != expected_trace:
+        raise quadruped_contract.DeclarationError(
+            "`balance` 段不自洽：startup_trace 条数 %d != min(cycles %d, 看门狗上限+1 %d)"
+            % (len(trace), cycles, watchdog_limit + 1)
+        )
     return segment
 
 
@@ -174,6 +229,8 @@ def _balance_report_summary(segment):
     stats = segment["stats"]
     cycles = int(stats["cycles"])
     fallback_cycles = int(stats["position_weight"]["fallback_cycles"])
+    pre_fall_cycles = int(stats["pre_fall_cycles"])
+    force_control_pre_fall = int(stats["force_control_cycles_pre_fall"])
     return {
         "enabled": bool(segment["enabled"]),
         "stance_classification": str(segment["stance_classification"]),
@@ -197,10 +254,26 @@ def _balance_report_summary(segment):
             "fallback_cycles": fallback_cycles,
             "fallback_fraction": None if cycles == 0 else float(fallback_cycles) / float(cycles),
             "fallback_fraction_defined": cycles > 0,
+            # 翻倒前窗口（第十七轮，口径显式）：全采样分母会把翻倒后在空中/翻滚的周期也算进去。
+            "fall_cycle": (
+                None if stats["fall_cycle"] is None else int(stats["fall_cycle"])
+            ),
+            "pre_fall_cycles": pre_fall_cycles,
+            "force_control_cycles_pre_fall": force_control_pre_fall,
+            "fallback_cycles_pre_fall": int(stats["fallback_cycles_pre_fall"]),
+            "pre_fall_force_control_fraction": (
+                None
+                if pre_fall_cycles == 0
+                else float(force_control_pre_fall) / float(pre_fall_cycles)
+            ),
+            "pre_fall_force_control_fraction_defined": pre_fall_cycles > 0,
             "declared_swing_in_contact_cycles": int(stats["declared_swing_in_contact_cycles"]),
             "declared_swing_in_contact_samples": int(stats["declared_swing_in_contact_samples"]),
             "max_abs_torque_nm": float(stats["max_abs_torque_nm"]),
             "stance_legs_histogram": dict(stats["stance_legs_histogram"]),
+            "stance_legs_histogram_all_cycles": dict(stats["stance_legs_histogram_all_cycles"]),
+            # 启动窗口逐周期取证（条数 = min(周期数, 看门狗上限 + 1)，边界来自声明）。
+            "startup_trace": [dict(item) for item in stats["startup_trace"]],
         },
     }
 

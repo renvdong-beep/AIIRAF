@@ -513,6 +513,10 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         target_height = float(params["verification"]["height_target_m"])
         min_stance = int(balance_params["allocation"]["min_stance_legs"])
         watchdog_limit = int(balance_params["watchdog"]["max_consecutive_no_stance_cycles"])
+        # 翻倒阈值只读声明（`gait.verification.fall_base_height_m`，与步态判据用的**同一个**键），
+        # 本处不写任何常数；启动窗口 = 看门狗上限 + 1 个周期（同样是声明的派生量）。
+        fall_height = float(params["verification"]["fall_base_height_m"])
+        startup_window = watchdog_limit + 1
         mass = self.robot_mass_kg()
         gravity = self.gravity_mps2()
         # B1：支撑/摆动两套位置权重（都来自声明，缺键在 `load_balance_declaration` 就失败了）。
@@ -543,15 +547,16 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             measured = [code for code in sorted(geometry) if float(contact[code]) >= threshold]
             stats = self._balance_stats
             stats["cycles"] = int(stats["cycles"]) + 1
+            # 相位与步态目标生成共用起点（首次回调时的仿真时刻）。两种口径都算相位：口径只决定
+            # 「相位是否参与支撑集筛选」，`declared` 本身是**只读观测量**（第十七轮起用于逐周期取证）。
+            if balance_onset is None:
+                balance_onset = float(self.data.time)
+            elapsed = float(self.data.time) - balance_onset
+            declared = {
+                code: bool(gait.is_stance(params, gait.leg_phase(params, code, elapsed)))
+                for code in sorted(geometry)
+            }
             if stance_classification == "declared_and_contact":
-                # 声明相位 ∧ 实测接触：相位与步态目标生成共用起点（首次回调时的仿真时刻）。
-                if balance_onset is None:
-                    balance_onset = float(self.data.time)
-                elapsed = float(self.data.time) - balance_onset
-                declared = {
-                    code: bool(gait.is_stance(params, gait.leg_phase(params, code, elapsed)))
-                    for code in sorted(geometry)
-                }
                 stance = [code for code in measured if declared[code]]
                 # 声明摆动却仍接触的腿：正是自锁的观测对象（本轮新计数；不参与分摊、不承受力控）。
                 swing_in_contact = [code for code in measured if not declared[code]]
@@ -564,6 +569,41 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 )
             else:
                 stance = list(measured)
+            # ---- 翻倒窗口 / 启动窗口归因（第十七轮：只增证据，不参与任何判据）----
+            # 分母口径必须显式：全采样窗口把翻倒之后在空中/翻滚的周期也算进去（§18.4 同族问题）。
+            falling = float(self.data.qpos[2]) < fall_height
+            if falling:
+                if stats["fall_cycle"] is None:
+                    stats["fall_cycle"] = int(stats["cycles"])
+            else:
+                stats["pre_fall_cycles"] = int(stats["pre_fall_cycles"]) + 1
+            # 「本周期会不会走力控」在这里就已确定：`len(stance) >= min_stance` 且未被看门狗 latch。
+            # （latch 只可能在 `len(stance) < min_stance` 的分支里被置起，故此处读到的值即进入分支后的值。）
+            use_force_control = bool(len(stance) >= min_stance) and not bool(
+                stats["watchdog_triggered"]
+            )
+            if not falling:
+                key = (
+                    "force_control_cycles_pre_fall"
+                    if use_force_control
+                    else "fallback_cycles_pre_fall"
+                )
+                stats[key] = int(stats[key]) + 1
+            stats["stance_legs_histogram_all_cycles"][len(stance)] = (
+                int(stats["stance_legs_histogram_all_cycles"].get(len(stance), 0)) + 1
+            )
+            if int(stats["cycles"]) <= startup_window:
+                stats["startup_trace"].append(
+                    {
+                        "cycle": int(stats["cycles"]),
+                        "stance_legs": len(stance),
+                        "measured_contact": list(measured),
+                        "declared_stance": [code for code in sorted(geometry) if declared[code]],
+                        "stance": list(stance),
+                        "use_force_control": use_force_control,
+                        "height_m": float(self.data.qpos[2]),
+                    }
+                )
             if len(stance) < min_stance:
                 stats["no_stance_cycles"] = int(stats["no_stance_cycles"]) + 1
                 stats["consecutive_no_stance"] = int(stats["consecutive_no_stance"]) + 1
@@ -688,6 +728,22 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             "first_stance_cycle": None,
             "max_consecutive_no_stance": 0,
             "stance_legs_histogram": {},
+            # 翻倒窗口归因（2026-09-21 第十七轮，**只增证据、不参与判据、不引入阈值**）：
+            # `stance_legs_histogram` 只在**真正进入力控**的分支里累加，因此它的读法是「力控周期的支撑集
+            # 直方图」；而「B1 的参与率」需要一个**分母口径明确**的窗口 —— 全采样窗口会把翻倒之后
+            # 在空中/翻滚的周期也算进分母（§18.4 同族口径问题）。这里同时给出：
+            # · `stance_legs_histogram_all_cycles` = **全部周期**的支撑集直方图（口径与上面那个不同）；
+            # · `fall_cycle` / `pre_fall_cycles` = 按 `gait.verification.fall_base_height_m` 切出的翻倒前窗口；
+            # · `force_control_cycles_pre_fall` / `fallback_cycles_pre_fall` = 该窗口内的兑现/退化周期数；
+            # · `startup_trace` = 启动窗口（`watchdog.max_consecutive_no_stance_cycles + 1` 个周期，
+            #   边界直接来自声明）的**逐周期**取证，用来回答「为什么启动段连续几个周期凑不齐支撑集」。
+            # `fall_cycle` 的 `None` 语义 = 「未发生（未翻倒）」，不是「未测量」。
+            "fall_cycle": None,
+            "pre_fall_cycles": 0,
+            "force_control_cycles_pre_fall": 0,
+            "fallback_cycles_pre_fall": 0,
+            "stance_legs_histogram_all_cycles": {},
+            "startup_trace": [],
             "clamped_legs": [],
             "last_stance_legs": [],
             "last_wrench": None,
@@ -738,10 +794,23 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 ),
                 "max_consecutive_no_stance": int(stats["max_consecutive_no_stance"]),
                 "disabled_cycles": int(stats["disabled_cycles"]),
+                # 翻倒窗口归因（口径显式）：`fall_cycle` 的 `None` = 未翻倒（不是未测量）。
+                "fall_cycle": (
+                    None if stats["fall_cycle"] is None else int(stats["fall_cycle"])
+                ),
+                "pre_fall_cycles": int(stats["pre_fall_cycles"]),
+                "force_control_cycles_pre_fall": int(stats["force_control_cycles_pre_fall"]),
+                "fallback_cycles_pre_fall": int(stats["fallback_cycles_pre_fall"]),
                 "position_weight": dict(stats["position_weight"]),
                 "stance_legs_histogram": {
                     str(key): int(value) for key, value in stats["stance_legs_histogram"].items()
                 },
+                # 与上一键**口径不同**：这个是全部周期（含翻倒后）的支撑集直方图，上面那个只含力控周期。
+                "stance_legs_histogram_all_cycles": {
+                    str(key): int(value)
+                    for key, value in stats["stance_legs_histogram_all_cycles"].items()
+                },
+                "startup_trace": [dict(item) for item in stats["startup_trace"]],
                 "clamped_legs": list(stats["clamped_legs"]),
                 "declared_swing_in_contact_cycles": int(
                     stats["declared_swing_in_contact_cycles"]

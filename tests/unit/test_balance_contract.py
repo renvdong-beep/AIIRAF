@@ -526,11 +526,39 @@ class GaitReportBalanceEvidenceTests(unittest.TestCase):
         return unitree_go2.UnitreeGo2Adapter._balance_summary(fake, params)
 
     @staticmethod
+    def _make_consistent(stats):
+        """夹具自洽化：把**派生字段**（翻倒窗口 / 全周期直方图 / 启动取证）按契约从 `cycles` 派生。
+
+        为什么必须做：本类多数用例只关心**一个**字段（例如 fallback 比值），而 `_balance_segment`
+        的四条自洽门禁会检查这些派生字段 —— 手写夹具若不自洽，用例会因为**无关字段**失败（假失败）。
+        派生规则就是契约本身（详见 `verify_go2_gait_in_place._balance_segment` 的注释）；
+        夹具未摆翻倒 ⇒ 翻倒前窗口 = 全周期，且该窗口由「力控 + 退化」两个计数完整划分。
+        """
+        cycles = int(stats["cycles"])
+        if cycles and not stats["stance_legs_histogram_all_cycles"]:
+            stats["stance_legs_histogram_all_cycles"] = {4: cycles}
+        limit = int(_declaration()["balance"]["watchdog"]["max_consecutive_no_stance_cycles"])
+        if cycles and not stats["startup_trace"]:
+            stats["startup_trace"] = [
+                {"cycle": index + 1} for index in range(min(cycles, limit + 1))
+            ]
+        if stats["fall_cycle"] is None and int(stats["pre_fall_cycles"]) == 0:
+            stats["pre_fall_cycles"] = cycles
+            force_pre_fall = min(
+                cycles, int(stats["position_weight"]["force_control_cycles"])
+            )
+            stats["force_control_cycles_pre_fall"] = force_pre_fall
+            stats["fallback_cycles_pre_fall"] = cycles - force_pre_fall
+        return stats
+
+    @staticmethod
     def _produced_with_stats(**overrides):
         """**正向对照的构造器**：零值统计上覆盖指定字段，仍走生产侧 `_balance_summary`。"""
         params = _params()
         stats = unitree_go2.UnitreeGo2Adapter._new_balance_stats()
         stats.update(overrides)
+        # 覆盖字段之后立即自洽化：否则「只改一个字段」的用例会被派生字段的门禁挡住（假失败）。
+        stats = GaitReportBalanceEvidenceTests._make_consistent(stats)
         fake = types.SimpleNamespace(
             _balance_stats=stats,
             _new_balance_stats=unitree_go2.UnitreeGo2Adapter._new_balance_stats,
@@ -558,15 +586,23 @@ class GaitReportBalanceEvidenceTests(unittest.TestCase):
                 "cycles",
                 "declared_swing_in_contact_cycles",
                 "declared_swing_in_contact_samples",
+                "fall_cycle",
                 "fallback_cycles",
+                "fallback_cycles_pre_fall",
                 "fallback_fraction",
                 "fallback_fraction_defined",
                 "first_stance_cycle",
                 "force_control_cycles",
+                "force_control_cycles_pre_fall",
                 "max_abs_torque_nm",
                 "max_consecutive_no_stance",
                 "no_stance_cycles",
+                "pre_fall_cycles",
+                "pre_fall_force_control_fraction",
+                "pre_fall_force_control_fraction_defined",
                 "stance_legs_histogram",
+                "stance_legs_histogram_all_cycles",
+                "startup_trace",
                 "watchdog_trigger_cycle",
                 "watchdog_triggered",
             ],
@@ -628,6 +664,72 @@ class GaitReportBalanceEvidenceTests(unittest.TestCase):
         self.assertIsNone(stats["first_stance_cycle"])
         self.assertFalse(stats["watchdog_triggered"])
         self.assertEqual(int(stats["max_consecutive_no_stance"]), 0)
+        # 第十七轮新增的四个字段在同一语义下也必须如实（不是 0、不是空字符串）。
+        self.assertIsNone(stats["fall_cycle"])
+        self.assertEqual(int(stats["pre_fall_cycles"]), 0)
+        self.assertEqual(stats["stance_legs_histogram_all_cycles"], {})
+        self.assertEqual(stats["startup_trace"], [])
+
+    def test_prefall_window_is_self_consistent(self):
+        """翻倒窗口四条自洽门禁：正例通过，三类矛盾必须被拒（防「字段产出却没被维护」）。"""
+        consistent = self._produced_with_stats(
+            cycles=1000,
+            fall_cycle=201,
+            pre_fall_cycles=200,
+            force_control_cycles_pre_fall=93,
+            fallback_cycles_pre_fall=107,
+        )
+        self.assertIs(
+            verify_go2_gait_in_place._balance_segment({"balance": consistent}), consistent
+        )
+        # ① 翻倒前窗口未被闭合（93 + 100 != 200）
+        broken_partition = self._produced_with_stats(
+            cycles=1000,
+            fall_cycle=201,
+            pre_fall_cycles=200,
+            force_control_cycles_pre_fall=93,
+            fallback_cycles_pre_fall=100,
+        )
+        # ② fall_cycle 与翻倒前窗口长度矛盾（应为 201）
+        broken_cycle = self._produced_with_stats(
+            cycles=1000,
+            fall_cycle=250,
+            pre_fall_cycles=200,
+            force_control_cycles_pre_fall=93,
+            fallback_cycles_pre_fall=107,
+        )
+        # ③ 未翻倒（None）却只把部分周期记进翻倒前窗口
+        broken_never_fell = self._produced_with_stats(
+            cycles=1000,
+            fall_cycle=None,
+            pre_fall_cycles=200,
+            force_control_cycles_pre_fall=93,
+            fallback_cycles_pre_fall=107,
+        )
+        for name, segment in (
+            ("partition", broken_partition),
+            ("fall_cycle", broken_cycle),
+            ("never_fell", broken_never_fell),
+        ):
+            with self.subTest(case=name):
+                with self.assertRaises(DeclarationError):
+                    verify_go2_gait_in_place._balance_segment({"balance": segment})
+
+    def test_prefall_fraction_uses_prefall_window_as_denominator(self):
+        """翻倒前参与率的分母是**翻倒前周期数**（不是全周期数）：口径必须写进数字本身。"""
+        segment = self._produced_with_stats(
+            cycles=1000,
+            fall_cycle=201,
+            pre_fall_cycles=200,
+            force_control_cycles_pre_fall=93,
+            fallback_cycles_pre_fall=107,
+        )
+        stats = verify_go2_gait_in_place._balance_report_summary(segment)["stats"]
+        self.assertTrue(stats["pre_fall_force_control_fraction_defined"])
+        self.assertAlmostEqual(stats["pre_fall_force_control_fraction"], 0.465, places=12)
+        # 同时给出全窗口口径（分母 1000）供对照：两者的差值正是「口径」本身。
+        self.assertNotEqual(int(stats["cycles"]), int(stats["pre_fall_cycles"]))
+        self.assertEqual(int(stats["force_control_cycles_pre_fall"]), 93)
 
     def test_fallback_fraction_undefined_without_cycles(self):
         """未跑力控周期时 fallback 比值**不可定义** ⇒ null + 标志位 false（不是 0%）。"""
@@ -636,11 +738,13 @@ class GaitReportBalanceEvidenceTests(unittest.TestCase):
         stats = verify_go2_gait_in_place._balance_report_summary(segment)["stats"]
         self.assertIsNone(stats["fallback_fraction"])
         self.assertFalse(stats["fallback_fraction_defined"])
+        # 同一零值段里翻倒前比值同样不可定义（分母 0）——两条口径必须一起如实。
+        self.assertIsNone(stats["pre_fall_force_control_fraction"])
+        self.assertFalse(stats["pre_fall_force_control_fraction_defined"])
 
     def test_fallback_fraction_is_ratio_of_cycles(self):
         """分母是力控周期数：981/1000 ⇒ 0.981（本轮用它取代序列重建口径的 98.1%）。"""
-        segment = copy.deepcopy(self._produced_segment())
-        segment["stats"]["cycles"] = 1000
+        segment = self._produced_with_stats(cycles=1000)
         segment["stats"]["position_weight"]["force_control_cycles"] = 1000
         segment["stats"]["position_weight"]["fallback_cycles"] = 981
         stats = verify_go2_gait_in_place._balance_report_summary(segment)["stats"]

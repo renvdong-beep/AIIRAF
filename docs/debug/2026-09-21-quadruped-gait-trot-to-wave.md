@@ -1239,3 +1239,127 @@ PYTHONPATH=src /usr/bin/python3 -m unittest tests.unit.test_balance_contract
 ```
 
 
+## 21 2026-09-21（第十七轮 tick，翻倒窗口口径修正轮）：把「B1 参与率」的分母口径显式化 —— 9.3% → **26.5%**；并逐周期闭合「启动段为什么凑不齐支撑集」
+
+### 21.1 为什么要做（**路线无关**，且直接改写 D1 的依据强度）
+
+§19.4/§20 用「力控周期 1/1000（fallback 99.9%）」「即使不 latch 也只有 9.3%」来加强 **D1** 的必要性。
+但这两个数的**分母是全采样窗口**（1000 个控制周期），而实测翻倒分别发生在周期 **242**（dc）与 **352**（dc-nowd）
+⇒ 翻倒之后在空中/翻滚的 648 个周期被算进了分母（与 §18.4 同族的「口径」问题，不是新物理）。
+
+本轮只做两件事：**给翻倒窗口与启动窗口加只增证据字段**、**把两个窗口的数字并列出来**。
+不改任何机制/阈值/声明/判据，D1~D4 **一个未实现**。
+
+### 21.2 交付（只增证据 + 四条自洽门禁）
+
+- 适配器 `_balance_provider`（`src/iraf_adapters/unitree/unitree_go2.py`）新增六个统计字段，**全部只增、不参与任何判据**：
+  - `fall_cycle`：首个 `qpos[2] < gait.verification.fall_base_height_m` 的控制周期（`None` = 未翻倒）；
+  - `pre_fall_cycles` / `force_control_cycles_pre_fall` / `fallback_cycles_pre_fall`：翻倒前窗口及其划分；
+  - `stance_legs_histogram_all_cycles`：**全部周期**的支撑集直方图 —— 与既有 `stance_legs_histogram`
+    **口径不同**（后者只在「真正进入力控」的分支里累加，读法是「力控周期的直方图」，旧键**保留不改**）；
+  - `startup_trace`：启动窗口（`watchdog.max_consecutive_no_stance_cycles + 1` 个周期，边界来自声明）
+    的**逐周期取证**：声明支撑集 / 实测接触集 / 支撑集 / 是否力控 / 机身高度。
+- 相位计算从 `declared_and_contact` 分支**提到分支外**（两种口径都算 `declared`，仅作只读观测量）。
+  实测 `gait.leg_phase` / `gait.is_stance` 是**纯函数**（无副作用）⇒ `contact_only` 路径数值不变（见 §21.4）。
+- `scripts/verify_go2_gait_in_place.py`：新增 6 条必需键路径 + **四条自洽门禁**（不引入任何新阈值）：
+  ① 全周期直方图计数之和 == `cycles`；② 翻倒前窗口被「力控 + 退化」**完整划分**；
+  ③ `fall_cycle` 与翻倒前窗口长度**互为唯一确定**（`None` ⇔ 全周期都在翻倒前）；
+  ④ `startup_trace` 条数 == `min(cycles, 看门狗上限 + 1)`。报告摘要新增翻倒窗口字段与
+  `pre_fall_force_control_fraction`（分母 = **翻倒前周期数**；`pre_fall_cycles == 0` 时写 `null` + 标志位 false）。
+- `tests/unit/test_balance_contract.py` **Ran 47 / OK**（+2）：正例对照 + 三类矛盾各一条负向；
+  既有「只改一个字段」的夹具加 `_make_consistent()` 派生器，避免被**无关字段**的门禁判成假失败。
+
+### 21.3 实测（`simulation=true`，`/usr/bin/python3` 3.10.12，1000 个控制周期）
+
+| 用例 | 看门狗预算 | `fall_cycle` | 翻倒前窗口 | 力控/退化（翻倒前） | **翻倒前参与率** | 全窗口参与率（旧口径） |
+|---|---|---|---|---|---|---|
+| dc（生产预算 10） | 10 | **242** | 241 | 1 / 240 | **0.004149377593360996** | 1/1000 |
+| dc-nowd（正例对照） | 1000 | **352** | 351 | 93 / 258 | **0.26495726495726496** | 93/1000 = 0.093 |
+
+全周期支撑集直方图：dc `{'0': 802, '3': 25, '2': 95, '1': 78}`；
+dc-nowd `{'0': 703, '3': 93, '2': 93, '1': 111}`（`0` = 该周期无腿接触，绝大多数是翻倒后）。
+
+三条可复用结论：
+
+1. **口径修正（量级）**：dc-nowd 的力控参与率按**翻倒前窗口**是 **26.5%（93/351）**，而不是全窗口的
+   **9.3%（93/1000）**。§19.4「0.1%」→§20「9.3%」的修正**方向不变、量级继续上调**；
+   两个数字并列时必须标注分母是「翻倒前周期」还是「全周期」。
+2. **latch 的代价可量化**：dc 组只有 **25** 个周期凑齐 3 条支撑腿，其中只有 **1** 个真正进入力控
+   （看门狗在周期 14 latch）⇒ 24/25（**96%**）「本来可以走力控」的周期被 latch 吃掉；
+   并且 dc 的翻倒周期 242 vs dc-nowd 352 ⇒ **不 latch 把翻倒推迟了 110 个周期（1.1 s）**。
+   ⇒ B1 **有效果但不足以止住翻倒**（与 §20.3 同结论，量级更清楚），D1 的**方向性**结论不变。
+3. **启动段逐周期取证（闭合 §20.6④）**：周期 1~2 **四腿接触力全部 < 2 N**（实测接触集为空、h=0.2884）
+   ⇒ 支撑集 0；周期 3 四腿全部接触 ⇒ 支撑集 3（唯一 1 个力控周期）；**周期 4~14 实测接触只有 1~2 条腿**
+   （`FL,RR` / `FL` / `FR,RL,RR` / `FL,FR` / `RL,RR` / …），而**声明支撑集恒为 3 条腿**
+   ⇒ 连续 11 个「无支撑」周期越限、周期 14 latch。
+   **结论：启动段凑不齐支撑集的原因既不是相位分配错误、也不是接触阈值** —— 声明支撑集恒为 3；
+   是**该时刻只有 1~2 只脚真正接触**（A′ 把足端对齐到台面 `dist=0` ⇒ 无预压 ⇒ 头几个周期是冲击式接触，
+   机身高度在这 11 个周期里从 0.2884 掉到 0.2795）。这也解释了 §18.4 的「首采样四腿接触力全 0」。
+   - 补充：周期 15 起四足重新接触 ⇒ 力控恢复（周期 15~20、30~33、35、37~39、52、54~61… 见 `startup_trace`）。
+   - dc-nowd 的 `startup_trace` 有 **1000 行** —— 因为它的看门狗预算被抬到 1000，而条数 = `min(cycles, 上限+1)`
+     是**声明派生**的结果（门禁 ④ 强制），不是缺陷；该副本只存在于证据区（gitignore）。
+
+### 21.4 零回归（逐位）
+
+- **生产步态**（`config/go2_loopback.yaml`，`balance.enabled: false`）：134 → 141 字段，差异 **3 处全部非物理**
+  （`generated_at` / `report_path` / `series_path`）；判据与物理字段**逐位一致**：`exit=5` / `checks 20` /
+  `failed 13`、`height_mean_m -52.96097353575173`、`max_tilt_deg 176.44460017100423`、
+  `max_tracking_error_rad 0.3111402167153192`、`ctrl_saturated_samples 7486`、四腿支撑相 `0.153/0.117/0.129/0.153`；
+  新增 7 个 `balance.*` 字段全部在比对器白名单内（**白名单外 0 个**）。
+  生产 `balance` 段如实为「未启用」：`cycles 0` / `fall_cycle null` / `pre_fall_cycles 0` /
+  `pre_fall_force_control_fraction null` + `defined false`（不拿 0 冒充实测值）。
+  （比对器退出码 3 = 「存在差异」，其语义见 `compare-gait-assessment.py`；本处差异已逐条核对。）
+- **硬规则列的四个数字**（强制逐位门禁）：`verify_go2_loopback.py` **exit=0 / `failed_checks: []`**、
+  `height_mean_m 0.279953602548388`、`max_attitude_error_deg 0.11199278558472758`、
+  `final_speed_mps 0.0038248382123762478` —— **逐位不变**。
+- `verify_go2_balance.py` **exit=0 / passed true / checks 8**：恢复窗口
+  `static_improvement.balance.max_tilt_deg 1.2272792092073515`、`control 1.598912284139251`、
+  `max_drift_m 0.019334348643655627` 与历史记录**逐位一致**。
+  （**同一用例的两个窗口必须区分**：用例级 `max_tilt_deg 1.230354` 是**全程**最坏值，
+  `static_improvement` 是**恢复窗口**最坏值；并列时不得混用。）
+- dc / dc-nowd 组复跑：`exit=5 / failed 11`（与 §19.4 同判据、同失败集合），翻倒周期 242 / 352 为**忠实复现**。
+
+### 21.5 复跑命令
+
+```
+PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_gait_in_place.py \
+  --config build/iraf-24h-2/02b/gait-wave-b1-dc.yaml \
+  --report build/iraf-24h-2/02b/wave-dc-prefall/report.json
+PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_gait_in_place.py \
+  --config build/iraf-24h-2/02b/gait-wave-b1-dc-nowd.yaml \
+  --report build/iraf-24h-2/02b/wave-dc-nowd-prefall/report.json
+PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_gait_in_place.py --config config/go2_loopback.yaml
+/usr/bin/python3 build/iraf-24h-2/02b/read_prefall_evidence.py <report.json> [...]
+PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_balance.py --config config/go2_loopback.yaml
+PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_loopback.py --config config/go2_loopback.yaml
+PYTHONPATH=src /usr/bin/python3 -m unittest tests.unit.test_balance_contract
+```
+
+### 21.6 诚实边界
+
+① 全部结论 `simulation=true`；真机/目标端 `DEFERRED`（板卡不在场）。
+② **本轮不选路**：D1~D4 **一个未实现**、判据/阈值/生产声明**一字未改**、`balance.enabled` 仍 `false`、
+   `stance_classification` 仍 `contact_only`、看门狗预算仍 **10**、`locomote` 未回填、ADR 未由代理改动。
+③ **26.5% 是观测**（翻倒前窗口内的力控周期占比），**不是**「若选 D1 就能站住」的预测；dc-nowd 仍然翻倒
+   （§20.3 的 `max_tilt_deg 178.0961244435719`）。本轮的**唯一**作用是让「B1 到底参与了多少」不再被分母误导。
+④ 翻倒阈值取自声明的 `gait.verification.fall_base_height_m = 0.15`（步态判据用的**同一个**键），
+   本处不新造阈值；换该声明值会改变窗口边界。
+⑤ 启动段的「只有 1~2 只脚接触」是**读数事实**（接触力阈值 2 N 来自声明）；其动力学成因（冲击式接触）
+   与 §18.4 的首周期瞬态一致，但本轮**未**对每只脚的接触冲量逐项取证。
+
+### 21.7 D1~D4 决策包（**定稿**，请回一个字母）
+
+落地前置已钉到 `file:line`，选路后下一 tick 可直接开工，**无需再侦察**：
+
+| 选项 | 落地前置 | 已有实测支撑 | 代价 / 风险 | 解锁 |
+|---|---|---|---|---|
+| **D1**（推荐）支撑集改为「声明支撑集的**计划位置**」，实测接触只作安全门 | 口径分派 `src/iraf_adapters/unitree/unitree_go2.py:546-555`；白名单 `src/iraf_adapters/unitree/balance.py:79`（`STANCE_CLASSIFICATION_MODES`，校验在 `:223-227`）；声明 `config/go2_loopback.yaml` 的 `balance.stance_classification` | 本轮：自锁已解除（四腿 clear_swing 达标、稳态支撑相 0.05）；但 §16/§17 已量出**三腿声明集是「刀刃状态」**（4 组里 2 组不可兑现、另 2 组第三腿法向力仅 0.456331 N） | 不改任何阈值；但按 §16 预期**大概率仍不足以站住**，需与落点变化配套 | 让 B1 真正生效（可读到 `force_control_cycles` 与 20 项判据） |
+| D2 分配器加「投影到可达子空间 + 记残差」 | `src/iraf_adapters/unitree/balance.py:543-545`（`rank < 6` 显式失败处） | §18.2：trot(0.5) 下 2 足支撑的力旋量映射秩恒为 5（缺绕对角线的力矩），是**代数**事实 | 绕两足连线的力矩物理上不可由足端力产生，需接受该方向自由或靠摆腿角动量 ⇒ 新架构决策 | 解锁 trot（2 足动态步态） |
+| D3 落足点规划（B2 迈步；原 `1e` 已写「trot+B1 不达标即再取」，条件**已满足**） | 步态目标生成 `src/iraf_adapters/unitree/gait.py`（`leg_phase` / `sway_windows`，`sway` 节）+ 适配器 `target_provider` | §17：静态可稳的 wave 必须逐相位迈步，每相位 ~80 mm 且方向两两相反（四相可行域交集 0 点） | 成本最高（要重写落点与摆动时序） | **唯一**正面解决「静态余量 ≈ 0」的路线 |
+| D4 先交付「最小移动形态」打通链路（原 B3） | `profiles/unitree_go2_mujoco.yaml:69`（`capabilities: [stand, stop]` → 回填 `locomote`）、`skills/locomote/`（已存在）、适配器 `gait_in_place` 泛化 | 本轮/§20：步态稳定性未通过，但 `stand`/`stop`/静态抗扰/隔离实验**全部通过**（`verify_go2_loopback.py` exit=0 等） | 「四足不离地」的移动不算真行走，须如实标注为最小形态 | 最快让使用者看到「能走/能转/能到点」的链路（S1 交互 + 桌面窗口） |
+
+**代理不选路**：本轮未实现 D1~D4 中任何一个、未改任何阈值/声明、未回填 `locomote`。
+需要人工（主窗口）**一句话**：`D1` / `D2` / `D3` / `D4`（或组合，如 `D1+D3`）。
+
+
+
