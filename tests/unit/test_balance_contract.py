@@ -660,10 +660,25 @@ class GaitReportBalanceEvidenceTests(unittest.TestCase):
         self.assertEqual(summary["stance_classification"], str(section["stance_classification"]))
         self.assertEqual(summary["weight_position"], float(section["weight_position"]))
         self.assertEqual(summary["stance_weight_position"], float(section["stance_weight_position"]))
+        # 决策 1f 兜底阈值必须与声明对齐（新增整段 ⇒ 报告里也要能对着声明核）。
+        self.assertEqual(
+            summary["stance_integrity"],
+            {
+                "swing_contact_force_n": float(section["stance_integrity"]["swing_contact_force_n"]),
+                "max_swing_abnormal_contact_cycles": int(
+                    section["stance_integrity"]["max_swing_abnormal_contact_cycles"]
+                ),
+                "max_declared_stance_gap_cycles": int(
+                    section["stance_integrity"]["max_declared_stance_gap_cycles"]
+                ),
+            },
+        )
         self.assertEqual(
             sorted(summary["stats"]),
             [
                 "cycles",
+                "declared_stance_without_contact_cycles",
+                "declared_stance_without_contact_samples",
                 "declared_swing_in_contact_cycles",
                 "declared_swing_in_contact_samples",
                 "fall_cycle",
@@ -674,15 +689,22 @@ class GaitReportBalanceEvidenceTests(unittest.TestCase):
                 "first_stance_cycle",
                 "force_control_cycles",
                 "force_control_cycles_pre_fall",
+                "last_declared_stance_without_contact",
                 "max_abs_torque_nm",
                 "max_consecutive_no_stance",
+                "max_declared_stance_gap_run",
+                "max_swing_abnormal_run",
                 "no_stance_cycles",
                 "pre_fall_cycles",
                 "pre_fall_force_control_fraction",
                 "pre_fall_force_control_fraction_defined",
+                "stance_integrity_error",
                 "stance_legs_histogram",
                 "stance_legs_histogram_all_cycles",
                 "startup_trace",
+                "swing_abnormal_contact_cycles",
+                "swing_abnormal_contact_samples",
+                "swing_max_contact_n",
                 "watchdog_trigger_cycle",
                 "watchdog_triggered",
             ],
