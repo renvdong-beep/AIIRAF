@@ -496,3 +496,46 @@ PYTHONPATH=src /usr/bin/python3 scripts/profile_check.py --quadruped config/go2_
   `docs/debug/2026-09-21-quadruped-movement-limits.md`、`docs/adr/0008-*.md`）已在本轮标注"被取代"。
 - **未做**：`locomote` 未回填 Profile（wave 验收仍不通过，铁律 2）；下一步 **B**
   （力矩/期望力级反馈平衡器 + 落点规划）需人工授权、在 ADR-0008 落决策并另立步骤后再实现。
+
+## 12 第七轮（2026-09-21）：A′ 收口 + 路线决策包（**本轮不选路**，等人工一句话）
+
+**为什么本轮没有产品进展**：A′ 授权自带的分支条件**已实测满足**（§10.4：步高 0.001 m 下幅度 5 mm 仍翻倒），
+但步骤 02 的「失败/阻塞处理」明令"若需要机身稳定器：必须回到 ADR 并给出新决策，**不得私自加**"，
+`docs/adr/0008-*.md` §2b 也已把"落新决策 + 另立步骤"登记为**人工事项** ⇒ 代理不自行开路。
+本轮只做两件事，**判据/阈值/声明/实现一字未改**：① 把 B 路线的**落地前置量清**（只读测量）；
+② 把六轮实测结论收成一张决策页（本节）。
+
+**B 落地前置（本轮实测，`/usr/bin/python3` 3.10.12；被测模型＝构建产物
+`build/scenes/handoff_lab/handoff_lab.xml`）**
+
+- **模型侧不需要改**：执行器是 12 个 `<motor ... joint=...>`（**力矩型**，非位置型全无），
+  ctrlrange 来自 default class（abduction ±23.7、hip/knee ±45.43）⇒ 力矩级注入不动厂商模型（保持只读）。
+- **适配器侧是缺口**：唯一控制回路是 `src/iraf_adapters/unitree/unitree_go2.py:704`
+  `_run_control(self, target, seconds, ramp_s, zero_torque=False, target_provider=None, sample_callback=None)`；
+  内部为 `pd_torque(q, dq, desired, kp, kd, tau_ff, torque_lower, torque_upper)` 之后
+  `data.ctrl[self.actuator_ids] = ctrl`（写进 ctrl 的**本来就是力矩**），另有 `zero_torque` 直写 0 的分支。
+  ⇒ 力矩/期望力级平衡器需要**新增执行器级钩子**（与 `target_provider` 并列，例如 `torque_provider`），
+  不是"给现有参数再加几行"——这正是它属于**架构变更**、必须先落 ADR 决策的实质原因。
+
+**选项（与 §7.5 / §9.3 / §10.5 同一批，措辞不变）**
+
+| 选项 | 内容 | 实测现状 |
+|---|---|---|
+| A′ | wave + **迈步式**重心转移（足端**重新落点** + 落点规划） | 其"目标偏移/常量平移"子集**已被证明不可行**（§8 可行域为空集；§9 隔离实测 5 mm 翻倒）⇒ 只剩"重新落点"这一支 |
+| **B（推荐）** | **力矩/期望力级**反馈平衡器（机身高/姿态/速度 → 支撑腿力矩级动作）+ 落点规划；落地顺序：四点站立机身高/姿态闭环 → 三腿支撑保持 → 再回 wave | 需新决策 + 新步骤 + 实现（前置见上）；不受"关节空间常量平移"界约束 |
+| C | 本步收口（如实记"失败/阻塞"）并把 03/04 重排到不依赖步态稳定的部分 | 代价：`locomote`/`navigate_to` 都依赖步态稳定 ⇒ 重排后本战役目标（能走/能转/到点）无法达成 |
+
+**解除阻塞需要的人工三件事（措辞不变）**：① `docs/adr/0008-quadruped-locomotion-and-navigation.md`
+落一条新决策；② 在 `plans/iraf-24h-2/` 另立步骤文件（建议编号 02b，并说明 03/04/05 是否重排）；
+③ 授权后由下一 tick 按该步骤实现。A′ 授权文本自带的"5 mm 仍翻倒则转 B"分支条件已满足 ——
+**若认可该条件分支即为授权，回复一句即可**。
+
+**一条台账语义（实测，避免后来者踩）**：本步**不得**把 `00-STATUS.json` 里步骤 02 置为 `BLOCKED`。
+推进器 `build/iraf-24h-2/push_steps.sh` 的 `pending_step()` 取"第一个非终态步骤"⇒ 一旦 02 变 `BLOCKED`，
+它会立刻去推**步骤 03**（在站不住的步态上实现 `locomote`，必然浪费整轮）。保持 `IN_PROGRESS` 时，
+推进器按 `MAX_ATTEMPTS=4` 计数、第 4 轮后打印"✗ 步骤 02 连续 4 轮未收口，停止推进，需人工介入"并 `exit 1`
+（实测日志 `build/iraf-24h-2/push-driver.log` 16:44:14 行）⇒ **停推进、不跳序**。
+
+**诚实边界**：本轮**未重跑验收**（工作树逐字节未变，沿用 §11 的复跑证据：主验收仍 `exit=5`、
+`checks 20 / failed 13`；stand/stop 两条验收 `exit=0`）；`locomote` 仍未回填 Profile（铁律 2）；
+全部结论 `simulation=true`；真机/目标端 `DEFERRED`（板卡不在场）。
