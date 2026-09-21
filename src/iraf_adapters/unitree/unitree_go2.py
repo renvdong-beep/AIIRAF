@@ -26,6 +26,8 @@
 from pathlib import Path
 
 import yaml
+import threading
+
 import numpy as np
 
 from iraf_adapters.unitree.loopback import quat_tilt_deg
@@ -178,6 +180,9 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
     IMPLEMENTED_CAPABILITIES = frozenset(("emergency_stop", "read_state", "stand", "stop"))
 
     def __init__(self, declaration, profile, authority, *, root, mujoco, model, data, bindings):
+        # 物理步进与显示渲染互斥（显示层通过 display_lock() 取同一把锁做快照，避免撕裂）
+        self._lock = threading.Lock()
+        self._display_renderer_cache = None
         super().__init__(declaration, profile, authority)
         self.root = Path(root)
         self.mujoco = mujoco
@@ -243,6 +248,18 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             raise DeclarationError(
                 "stop.mode 只支持 %s，实际: %s" % (list(SUPPORTED_STOP_MODES), stop_mode)
             )
+
+        # 双向校验（声明即事实）：声明 render 段 ⇒ 类必须实现 render_frames，且相机在模型里真实存在。
+        render_section = declaration.get("render")
+        if render_section is None:
+            raise DeclarationError(
+                "声明缺少 render 段（S1 交互与场景观看的分辨率/相机名必须显式声明，禁止实现层默认值）"
+            )
+        for key in ("camera", "width_px", "height_px", "render_hz"):
+            if render_section.get(key) in (None, ""):
+                raise DeclarationError("render.%s 必须显式声明" % key)
+        if not callable(getattr(cls, "render_frames", None)):
+            raise DeclarationError("声明了 render 段但 %s 未实现 render_frames" % cls.__name__)
 
         model_rel = str(_dig(declaration, "model.file", "声明"))
         model_path = Path(model_rel)
@@ -392,6 +409,54 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             "显式拒绝，不返回伪造成功。已校验的指令: %r" % (resolved,)
         )
 
+    # ---- 显示面（S1 交互 / 场景观看）：参数一律来自声明的 render 段 ----
+    def display_lock(self):
+        """返回物理步进使用的互斥锁：显示层只在快照拷贝瞬间持有它（并发契约见 SnapshotMirror）。"""
+        return self._lock
+
+    def render_settings(self):
+        """返回 (camera, width_px, height_px, render_hz)，全部来自声明。"""
+        render = self.declaration.get("render") or {}
+        return (
+            str(render.get("camera")),
+            int(render.get("width_px")),
+            int(render.get("height_px")),
+            float(render.get("render_hz")),
+        )
+
+    def _display_renderer(self):
+        """惰性创建离屏渲染器（分辨率与相机名来自声明，不写死）。"""
+        with self._lock:
+            if self._display_renderer_cache is None:
+                camera, width, height, _hz = self.render_settings()
+                camera_id = self.mujoco.mj_name2id(
+                    self.model, self.mujoco.mjtObj.mjOBJ_CAMERA, camera
+                )
+                if camera_id < 0:
+                    raise DeclarationError(
+                        "声明 render.camera=%r 在模型中不存在（可用相机见模型 ncam）："
+                        "显示参数必须与生成场景一致" % camera
+                    )
+                self._display_renderer_cache = self.mujoco.Renderer(
+                    self.model, height=height, width=width
+                )
+                self._display_renderer_cache._iraf_camera_id = camera_id
+            return self._display_renderer_cache
+
+    def render_frames(self, count=1):
+        """渲染指定数量的 RGB 帧（与臂侧同契约：内部自行加锁，调用方不持锁）。"""
+        count = int(count)
+        if count < 1:
+            raise ValueError("render_frames 的 count 必须为正数")
+        renderer = self._display_renderer()
+        camera_id = getattr(renderer, "_iraf_camera_id", -1)
+        frames = []
+        for _ in range(count):
+            with self._lock:
+                renderer.update_scene(self.data, camera=camera_id)
+                frames.append(np.array(renderer.render()))
+        return frames
+
     def read_state(self):
         data = self.data
         state = {
@@ -466,7 +531,8 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             saturated_total += int(np.count_nonzero(saturated))
             self.data.ctrl[self.actuator_ids] = ctrl
             for _ in range(self.substeps):
-                self.mujoco.mj_step(self.model, self.data)
+                with self._lock:
+                    self.mujoco.mj_step(self.model, self.data)
         return cycles, saturated_total
 
     def describe(self):

@@ -84,6 +84,15 @@ stop:
 sample:
   frequency_hz: 100
 
+# 显示参数（S1 交互 `scenario.py interact` 与场景观看 `--display` 的**唯一来源**）：
+# 实现层与脚本不得写死分辨率或相机名；`render.camera` 必须在被装配的模型里真实存在
+# （from_config 期校验，缺失即失败）；`render_hz` 是窗口渲染频率上限。
+render:
+  camera: overhead_camera
+  width_px: 640
+  height_px: 480
+  render_hz: 30.0
+
 state:
   # 传感器按名字解析（关节名 ≠ 执行器名：go2.xml 关节 FL_hip_joint / 执行器 FL_hip）。
   sensors:

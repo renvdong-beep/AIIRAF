@@ -69,6 +69,8 @@ if str(SRC) not in sys.path:
 import scene_check  # noqa: E402  （同目录的入口层模块：复用它的三层场景包校验）
 
 from iraf_adapters.factory import KNOWN_BACKENDS, load_backend  # noqa: E402
+# S1 交互（interact）用的实时播放：与臂侧 viewer 共用同一份渲染循环实现（机器人无关）
+from iraf_adapters.mujoco.viewer_runner import run_request_live  # noqa: E402
 from iraf_core.authority import ControlAuthorityManager  # noqa: E402
 from iraf_core.policy import AuthenticatedContext  # noqa: E402
 from iraf_core.profile import ProfileError, load_robot_profile, load_safety_policy  # noqa: E402
@@ -1122,6 +1124,194 @@ def list_scenes(root=None):
     }
 
 
+# --------------------------------------------------------------------------
+# S1 命令式交互（interact 子命令）
+# --------------------------------------------------------------------------
+INTERACT_SCHEMA = "iraf.scenario-interactive/v1"
+BUILTIN_READONLY = "state"          # 只读状态（非 Skill）：与场景执行器一致，仅用于取证
+
+
+def parse_command(line, actions):
+    """解析一行交互命令 → {"action","params"}；空行/注释返回 None；格式非法即显式失败。
+
+    格式：`<动作> [键=值 …]`，值按 JSON 解析（`0.3` → 数、`true` → 布尔、`abc` → 字符串）。
+    动作词表来自场景契约（config/scene.schema.json），本函数不内置任何动作名。
+    """
+    text = str(line).strip()
+    if not text or text.startswith("#"):
+        return None
+    tokens = text.split()
+    action = tokens[0]
+    params = {}
+    for token in tokens[1:]:
+        if "=" not in token:
+            raise ScenarioError(
+                "参数必须是 key=value 形式：%r（动作 %s）" % (token, action), EXIT_USAGE
+            )
+        key, _, raw = token.partition("=")
+        if not key:
+            raise ScenarioError("参数名不能为空：%r" % (token,), EXIT_USAGE)
+        try:
+            params[key] = json.loads(raw)
+        except json.JSONDecodeError:
+            params[key] = raw
+    return {"action": action, "params": params}
+
+
+def _state_snapshot(backend):
+    """只读状态快照（不驱动任何控制量）：适配器未实现 read_state 时显式返回 None。"""
+    reader = getattr(backend, "read_state", None)
+    if not callable(reader):
+        return None, "该后端未实现 read_state（只读状态不可用）"
+    try:
+        return reader(), None
+    except Exception as exc:  # noqa: BLE001
+        return None, "read_state 失败：" + type(exc).__name__ + ": " + str(exc)
+
+
+def interact(
+    scene_dir,
+    robot_id,
+    *,
+    commands=None,
+    report_path=None,
+    transcript_path=None,
+    display="auto",
+    render_hz=60.0,
+    seconds=0.0,
+    frames_dir=None,
+    frame_count=0,
+    root=None,
+):
+    """S1：逐条接受命令 → 只允许**已声明能力** → 走 SkillRuntime → 出 transcript 与报告。
+
+    fail-closed 的三道门（都不靠"命令已发出"冒充成功）：
+      1. 动作必须在场景契约词表里；
+      2. 动作必须在 RobotProfile 的 `capabilities` 里（未声明即拒绝，给 IRAF-SKILL-PROVIDER-UNAVAILABLE）；
+      3. 执行必须经 `SkillRuntime.execute`（PolicyGateway/租约/幂等/deadline 全在内），不直连后端。
+    参数与判据一律来自声明：本函数不内置阈值、路径或动作名默认值。
+    """
+    root = Path(root or ROOT)
+    scene_dir = _resolve(root, scene_dir)
+    scene, baseline, _scenario_document, check_report = load_package(scene_dir)
+    scene_id = str(check_report.get("scene") or scene_dir.name)
+    index = capability_index(scene)
+    if robot_id not in index:
+        raise ScenarioError(
+            "场景 %s 未声明本体 %s（已声明：%s）" % (scene_id, robot_id, sorted(index)),
+            EXIT_REFERENCE,
+        )
+    contract = scenario_contract()
+    declaration = machine_declaration(robot_id, index, baseline)
+    states = assemble({"root": str(root), **declaration})
+    profile = states["profile"]
+    declared = {str(item) for item in (profile.capabilities or [])}
+
+    transcript = Path(transcript_path) if transcript_path else (
+        Path(root) / "build" / "acceptance" / "interactive" / ("transcript-%s.jsonl" % robot_id)
+    )
+    transcript.parent.mkdir(parents=True, exist_ok=True)
+    records = []
+    seq = 0
+
+    def emit(record):
+        records.append(record)
+        with transcript.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        print(json.dumps({k: record[k] for k in ("seq", "command", "accepted", "status", "reason")
+                          if k in record}, ensure_ascii=False), flush=True)
+
+    for raw in commands if commands is not None else sys.stdin:
+        seq += 1
+        try:
+            parsed = parse_command(raw, contract["actions"])
+        except ScenarioError as exc:
+            emit({"seq": seq, "command": str(raw).strip(), "accepted": False,
+                  "status": "REJECTED", "error_code": "IRAF-INPUT-INVALID",
+                  "reason": str(exc), "simulation": True})
+            continue
+        if parsed is None:
+            seq -= 1
+            continue
+        action = parsed["action"]
+        params = parsed["params"]
+        command = ("%s %s" % (action, " ".join("%s=%s" % (k, v) for k, v in params.items()))).strip()
+
+        if action == BUILTIN_READONLY:
+            state, error = _state_snapshot(states["backend"])
+            emit({"seq": seq, "command": command, "accepted": True,
+                  "status": "READ_ONLY" if state is not None else "REJECTED",
+                  "error_code": None if state is not None else "IRAF-INTERNAL",
+                  "reason": error or "只读状态（不驱动控制量）", "state": state, "simulation": True})
+            continue
+
+        if action not in contract["actions"]:
+            emit({"seq": seq, "command": command, "accepted": False, "status": "REJECTED",
+                  "error_code": "IRAF-INPUT-INVALID",
+                  "reason": "动作 %r 不在场景契约词表里（先改契再实现）" % action, "simulation": True})
+            continue
+        if action not in declared:
+            emit({"seq": seq, "command": command, "accepted": False, "status": "REJECTED",
+                  "error_code": "IRAF-SKILL-PROVIDER-UNAVAILABLE",
+                  "reason": "本体 %s 的 Profile 未声明能力 %r（已声明：%s）：能力未验收前不得调用"
+                            % (robot_id, action, sorted(declared)),
+                  "simulation": True})
+            continue
+
+        correlation = "interact-%s-%d" % (robot_id, seq)
+        request = _request(profile, states["safety"], action, params,
+                           "%s-mujoco" % profile.name, correlation, key=correlation)
+        started = time.monotonic()
+        display_mode = None
+        if display != "none":
+            display_mode = "auto" if display == "auto" else display
+            viewer = run_request_live(
+                states["backend"], states["runtime"], request, _context(),
+                camera=None, render_hz=render_hz, seconds=seconds,
+                pre_roll_frames=0, frames_dir=frames_dir, frame_count=frame_count,
+                continue_stepping=True, display_mode=None if display_mode == "auto" else display_mode,
+            )
+            result = viewer["holder"]["result"]
+            display_report = {k: viewer[k] for k in ("display_mode", "window_opened", "frames",
+                                                     "frames_written", "error")}
+        else:
+            result = states["runtime"].execute(request, _context())
+            display_report = None
+        wall = time.monotonic() - started
+        state, state_error = _state_snapshot(states["backend"])
+        emit({"seq": seq, "command": command, "accepted": True,
+              "status": (result or {}).get("status"),
+              "error_code": (result or {}).get("error_code"),
+              "reason": (result or {}).get("reason"),
+              "wall_seconds": wall, "state": state, "state_error": state_error,
+              "display": display_report, "simulation": True})
+
+    report = {
+        "schema_version": INTERACT_SCHEMA,
+        "simulation": True,
+        "scene": scene_id,
+        "robot": robot_id,
+        "declared_capabilities": sorted(declared),
+        "contract_actions": sorted(contract["actions"]),
+        "display": display,
+        "transcript_path": str(transcript),
+        "counts": {
+            "commands": len(records),
+            "accepted": sum(1 for r in records if r.get("accepted")),
+            "rejected": sum(1 for r in records if not r.get("accepted")),
+            "succeeded": sum(1 for r in records if r.get("status") == "SUCCEEDED"),
+        },
+        "commands": records,
+    }
+    target = Path(report_path) if report_path else (
+        Path(root) / "build" / "acceptance" / "interactive" / ("report-%s.json" % robot_id)
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    report["report_path"] = str(target)
+    return report
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -1137,6 +1327,30 @@ def main(argv=None):
         action="store_true",
         help="任何故障未被注入即失败（退出码 5）：占位不是通过",
     )
+    ix_parser = subparsers.add_parser(
+        "interact", help="S1 命令式交互：逐条命令 → 只允许已声明能力 → 走 SkillRuntime"
+    )
+    ix_parser.add_argument("--scene", required=True, type=Path, help="场景包目录")
+    ix_parser.add_argument("--robot", required=True, help="场景中声明的本体 id（如 unitree_go2 / piper）")
+    ix_parser.add_argument(
+        "--commands-from",
+        type=Path,
+        default=None,
+        help="命令清单文件（每行一条 `动作 [键=值 …]`）；缺省从 stdin 读取（支持管道与交互式输入）",
+    )
+    ix_parser.add_argument("--report", type=Path, default=None, help="覆盖报告输出路径")
+    ix_parser.add_argument("--transcript", type=Path, default=None, help="覆盖 transcript(JSONL) 路径")
+    ix_parser.add_argument(
+        "--display",
+        choices=("auto", "none", "interactive_viewer", "offscreen_frames"),
+        default="auto",
+        help="auto=探测后自动选择；none=不开窗也不导帧（最快，用于批量/CI）",
+    )
+    ix_parser.add_argument("--frames-dir", type=Path, default=None, help="离屏帧导出目录")
+    ix_parser.add_argument("--frames", type=int, default=0, help="离屏导出帧数（0=不导出）")
+    ix_parser.add_argument("--render-hz", type=float, default=60.0, help="窗口渲染频率")
+    ix_parser.add_argument("--seconds", type=float, default=0.0, help="每条命令执行后保持窗口的秒数（0=保持到关闭窗口）")
+    ix_parser.add_argument("--root", type=Path, default=None, help="仓库根（默认按脚本位置推导）")
     args = parser.parse_args(argv)
 
     if args.command == "list":
@@ -1147,6 +1361,41 @@ def main(argv=None):
             return exc.code
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return EXIT_OK
+
+    if args.command == "interact":
+        commands = None
+        if args.commands_from is not None:
+            path = args.commands_from
+            if not path.is_file():
+                print("命令清单不存在：" + str(path), file=sys.stderr)
+                return EXIT_USAGE
+            commands = path.read_text(encoding="utf-8").splitlines()
+        try:
+            report = interact(
+                args.scene,
+                args.robot,
+                commands=commands,
+                report_path=args.report,
+                transcript_path=args.transcript,
+                display=args.display,
+                render_hz=args.render_hz,
+                seconds=args.seconds,
+                frames_dir=args.frames_dir,
+                frame_count=args.frames,
+                root=args.root,
+            )
+        except ScenarioError as exc:
+            print("· " + str(exc), file=sys.stderr)
+            print("INTERACT_DECLARATION_ERROR", file=sys.stderr)
+            return exc.code
+        print(json.dumps({"passed": report["counts"]["rejected"] == 0,
+                          "counts": report["counts"],
+                          "report_path": report["report_path"],
+                          "transcript_path": report["transcript_path"]},
+                         ensure_ascii=False, indent=2))
+        # 语义：命令全部被接受且无拒绝 → 0；存在被拒绝的命令 → 3（拒绝路径也属"预期行为"，
+        # 由调用方按 counts 判断，不把"有拒绝"当作系统故障）
+        return EXIT_OK if report["counts"]["rejected"] == 0 else EXIT_BACKEND
 
     if args.command != "run":
         parser.print_help(file=sys.stderr)

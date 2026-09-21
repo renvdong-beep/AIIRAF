@@ -539,6 +539,165 @@ def build_grasp_request(
     }
 
 
+def _apply_camera(viewer, camera):
+    """相机设置来自 Profile（camera_settings），此处只做赋值，不含默认值。"""
+    if not camera:
+        return
+    viewer.cam.lookat[:] = camera["lookat_m"]
+    viewer.cam.distance = camera["distance_m"]
+    viewer.cam.azimuth = camera["azimuth_deg"]
+    viewer.cam.elevation = camera["elevation_deg"]
+
+
+def _start_request_thread(runtime, request, context, name="viewer-skill"):
+    """在后台线程执行一个 Skill 请求，返回 (thread, holder)。执行必须走 SkillRuntime（不绕层）。"""
+    holder = {"result": None, "error": None, "ready": threading.Event()}
+
+    def worker():
+        try:
+            holder["result"] = runtime.execute(request, context)
+        except Exception as exc:  # noqa: BLE001 显式记录，不吞错
+            holder["error"] = type(exc).__name__ + ": " + str(exc)
+        finally:
+            holder["ready"].set()
+
+    thread = threading.Thread(target=worker, name=name, daemon=True)
+    return thread, holder
+
+
+def run_request_live(
+    backend,
+    runtime,
+    request,
+    context,
+    *,
+    camera=None,
+    render_hz=60.0,
+    seconds=0.0,
+    pre_roll_frames=30,
+    frames_dir=None,
+    frame_count=0,
+    on_finished=None,
+    continue_stepping=True,
+    display_mode=None,
+    timeout_s=180.0,
+):
+    """**机器人无关**的实时播放：执行一个已构造的 Skill 请求，并在此期间实时镜像仿真状态。
+
+    与 `run_interactive_live` 的关系：后者是臂侧薄包装（自行构造抓取请求、并在结束后 hold 末态），
+    两者的渲染循环共用本函数一份实现。并发契约（实测得出，见 `SnapshotMirror` 文档）：
+      1. 渲染只读 SnapshotMirror 的副本，绝不在执行期间直接 `sync()` 后端的 `data`；
+      2. 快照拷贝期间才持有 `display_lock()`，且不做任何耗时操作；
+      3. 窗口与执行的生命周期在本函数内闭合，不跨调用复用窗口。
+
+    参数：`frames_dir`/`frame_count` 用于无显示设备时的**离屏降级**（导出帧序列并如实标注）；
+    `on_finished` 在执行线程结束后调用一次（臂侧用它保持末态）；`continue_stepping` 决定
+    执行结束后是否继续步进以保持窗口存活（`seconds=0` 语义＝保持窗口直到用户关闭）。
+
+    返回 dict：`display_mode` / `window_opened` / `frames` / `frames_written` / `holder` / `error`。
+    """
+    mode = display_mode or resolve_display_mode()
+    frame_period = 1.0 / max(1.0, float(render_hz))
+    thread, holder = _start_request_thread(runtime, request, context)
+    report = {
+        "display_mode": mode,
+        "window_opened": False,
+        "frames": 0,
+        "frames_written": 0,
+        "holder": holder,
+        "error": None,
+        "continue_stepping": bool(continue_stepping),
+        "render_hz": float(render_hz),
+        "seconds": float(seconds),
+    }
+
+    if mode != DISPLAY_INTERACTIVE:
+        # 离屏/不可用：执行结束后导出帧序列（不谎称"窗口已开"）
+        thread.start()
+        thread.join(timeout=max(float(timeout_s), 30.0))
+        if thread.is_alive():
+            report["error"] = "Skill 执行线程未在预期时间内结束，拒绝导出不稳定状态的帧"
+            return report
+        if holder["error"]:
+            report["error"] = holder["error"]
+            return report
+        if on_finished is not None:
+            on_finished()
+        if mode == DISPLAY_OFFSCREEN and frames_dir is not None and int(frame_count) > 0:
+            if not hasattr(backend, "render_frames"):
+                # 不造帧：后端没有离屏导出能力就如实报告，交给调用方决定
+                report["error"] = "该后端未实现 render_frames（无离屏导出能力），拒绝伪造帧序列"
+                return report
+            try:
+                from PIL import Image
+            except ImportError:
+                Image = None
+            frames_dir = Path(frames_dir)
+            frames_dir.mkdir(parents=True, exist_ok=True)
+            for index in range(int(frame_count)):
+                frame = backend.render_frames(1)[0]
+                if Image is not None:
+                    Image.fromarray(np.asarray(frame)).save(frames_dir / ("frame_%03d.png" % index))
+                report["frames"] += 1
+            report["frames_written"] = report["frames"]
+        return report
+
+    import mujoco.viewer
+
+    snapshot = SnapshotMirror(backend.model)
+    with mujoco.viewer.launch_passive(backend.model, snapshot.refresh(backend)) as viewer:
+        report["window_opened"] = True
+        _apply_camera(viewer, camera)
+
+        # 先渲染若干帧，让用户看到动作前的起始状态。窗口被关掉就停下来，不盲跑。
+        for _ in range(max(0, int(pre_roll_frames))):
+            if not viewer.is_running():
+                break
+            viewer.sync()
+            time.sleep(frame_period)
+
+        thread.start()
+        started = time.monotonic()
+        finished = False
+        while viewer.is_running():
+            snapshot.refresh(backend)
+            viewer.sync()
+            report["frames"] += 1
+            if thread.is_alive():
+                time.sleep(frame_period)
+                continue
+            if not finished:
+                if on_finished is not None:
+                    on_finished()
+                finished = True
+                started = time.monotonic()
+                continue
+            if float(seconds) and time.monotonic() - started >= float(seconds):
+                break
+            stepper = getattr(backend, "step", None)
+            if not continue_stepping or not callable(stepper):
+                # 后端没有单步接口（如四足适配器）：**不假装继续步进**，只保持窗口渲染末态。
+                # 实测：四足适配器无 step()，直接调用会 AttributeError（窗口路径整条失败）。
+                if not callable(stepper):
+                    report["stepping_note"] = (
+                        "该后端未实现 step()：窗口保持期间不步进，画面停在末态（不伪造「持续运动」）"
+                    )
+                report["continue_stepping"] = False
+                time.sleep(frame_period)
+                continue
+            with backend.display_lock():
+                stepper()
+            time.sleep(frame_period)
+
+    thread.join(timeout=max(float(timeout_s), 30.0))
+    if thread.is_alive():
+        report["error"] = "Skill 执行线程未在预期时间内结束"
+        return report
+    if not finished and on_finished is not None:
+        on_finished()
+    return report
+
+
 def run_interactive_live(
     session,
     target_id,
@@ -552,23 +711,13 @@ def run_interactive_live(
     pre_roll_frames=30,
     orientation=None,
 ):
-    """在窗口打开的状态下执行抓取，使完整过程可见。
+    """在窗口打开的状态下执行抓取，使完整过程可见（臂侧薄包装）。
 
-    与 run_interactive 的关系：
-    - run_interactive 是"先抓完、再开窗展示末态"，结果为静态画面；
-    - 本函数把窗口提前到抓取之前打开，并用 SnapshotMirror 让渲染与
-      物理线程解耦，因此 HOME→APPROACH→DESCEND→GRIP→LIFT 全程可见。
-
-    并发契约（三处必须同时成立，缺一即退化为"只有一帧"）：
-    1. 渲染只读 SnapshotMirror 的副本，绝不在抓取期间直接 sync 后端 data；
-    2. 快照拷贝期间才持有 display_lock()，且不做任何耗时操作；
-    3. 窗口与抓取的生命周期在本函数内闭合，不跨调用复用窗口。
-
+    编排（构造抓取请求、结束后 hold 末态、保持窗口直到用户关闭）保留在本函数；
+    渲染循环与并发契约由 `run_request_live` 统一实现，供四足/其它本体复用。
     skill 缺省 pick_object；需要真实时序完整播放时传超时上限更宽的 skill
     （如 display_pick），并配合放宽的 SafetyPolicy。
     """
-    import mujoco.viewer
-
     request = build_grasp_request(
         session.profile,
         session.safety,
@@ -580,69 +729,17 @@ def run_interactive_live(
         orientation=orientation,
         deadline_slack_ms=max(90000, int(duration_ms) * 12 + 60000),
     )
-    holder = {"result": None, "error": None, "ready": threading.Event()}
-
-    def worker():
-        try:
-            holder["result"] = session.runtime.execute(request, session.context)
-        except Exception as exc:  # noqa: BLE001
-            holder["error"] = type(exc).__name__ + ": " + str(exc)
-        finally:
-            holder["ready"].set()
-
-    snapshot = SnapshotMirror(session.backend.model)
     session.mark("PICK")
-    thread = threading.Thread(target=worker, name="viewer-live-pick", daemon=True)
-
-    frame_period = 1.0 / max(1.0, float(render_hz))
-    viewer_seconds = float(seconds) if seconds else 0.0
-    held = False
-
-    with mujoco.viewer.launch_passive(
-        session.backend.model, snapshot.refresh(session.backend)
-    ) as viewer:
-        viewer.cam.lookat[:] = camera["lookat_m"]
-        viewer.cam.distance = camera["distance_m"]
-        viewer.cam.azimuth = camera["azimuth_deg"]
-        viewer.cam.elevation = camera["elevation_deg"]
-
-        # 先渲染若干帧，让用户看到抓取前的起始状态再启动动作。
-        for _ in range(max(0, int(pre_roll_frames))):
-            if not viewer.is_running():
-                break
-            viewer.sync()
-            time.sleep(frame_period)
-
-        thread.start()
-
-        started = time.monotonic()
-        while viewer.is_running():
-            # 每帧只做一次快照拷贝（微秒级持锁），随后渲染本方副本。
-            snapshot.refresh(session.backend)
-            viewer.sync()
-            if thread.is_alive():
-                time.sleep(frame_period)
-                continue
-            if not held:
-                # 抓取线程结束后立刻保持末态。
-                # 否则执行器控制量停在最后一条指令上，机械臂会在持续步进中
-                # 塌回零位（静态路径同样是先 hold 再开窗）。
-                session.hold()
-                held = True
-                started = time.monotonic()
-                continue
-            if viewer_seconds and time.monotonic() - started >= viewer_seconds:
-                break
-            # seconds=0 的语义与静态路径一致：保持窗口与末态，直到用户关闭窗口。
-            # 原先此处直接 break，实测后果是"抓取一结束窗口就消失"，
-            # 用户来不及看清末态与夹持结果。
-            with session.backend.display_lock():
-                session.backend.step()
-            time.sleep(frame_period)
-
-    thread.join(timeout=max(180.0, duration_ms / 1000.0 * 14))
-    if thread.is_alive():
-        raise ViewerError("抓取线程未在预期时间内结束")
-    if not held:
-        session.hold()
-    return holder, True
+    report = run_request_live(
+        session.backend,
+        session.runtime,
+        request,
+        session.context,
+        camera=camera,
+        render_hz=render_hz,
+        seconds=seconds,
+        pre_roll_frames=pre_roll_frames,
+        on_finished=session.hold,
+        timeout_s=max(180.0, float(duration_ms) / 1000.0 * 14),
+    )
+    return report["holder"], bool(report["window_opened"])
