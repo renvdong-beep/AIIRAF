@@ -66,6 +66,11 @@ SIMULATION_EVIDENCE_NOTE = "本清单来自开发端 x86_64 抓取，不构成�
 UNVERIFIED_SENTINELS = {"", None, "unverified", "pending"}
 
 
+# 共享实现：wheel 标签语义与版本键（抓取侧与依赖解析侧共用，禁止在本模块重写）
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import lib_wheel_spec as wheelspec  # noqa: E402
+
+
 class DeclarationError(Exception):
     """声明缺失/非法 → 退出码 2。"""
 
@@ -156,123 +161,27 @@ def parse_wheel_filename(filename: str) -> WheelFile:
     )
 
 
-def _python_tag_alias(python_tag: str) -> str | None:
-    """`cp310` → `py310`（纯 Python wheel 用 py3xx 标签表达同一兼容性）。"""
-    match = re.fullmatch(r"cp(\d+)(\d+)", python_tag)
-    if match:
-        return f"py{match.group(1)}{match.group(2)}"
-    return None
-
-
-def split_manylinux(tag: str) -> tuple[int, int] | None:
-    """返回 manylinux 标签要求的最低 glibc 版本；无法识别（非 manylinux）返回 None。"""
-    if tag in _LEGACY_MANYLINUX:
-        return _LEGACY_MANYLINUX[tag]
-    match = _MANYLINUX_RE.match(tag)
-    if match:
-        return int(match.group(1)), int(match.group(2))
-    return None
-
-
-def arch_of_platform_tag(tag: str) -> str | None:
-    """从声明或文件名的平台标签里取出架构后缀（`manylinux_2_28_aarch64` → `aarch64`）。"""
-    many = split_manylinux(tag)
-    if many is not None:
-        tail = re.split(r"^manylinux(?:_\d+_\d+)?_", tag)[-1]
-        return tail or None
-    bare = _BARE_LINUX_RE.match(tag)
-    if bare:
-        return bare.group(1)
-    if tag in {"win32", "win_amd64", "win_arm64", "macosx"} or tag.startswith("macosx"):
-        return None
-    return None
-
-
-def python_tag_compatible(wheel: WheelFile, python_tag: str) -> bool:
-    if python_tag in wheel.python_tags:
-        return True
-    alias = _python_tag_alias(python_tag)
-    if alias and alias in wheel.python_tags:
-        return True
-    # 纯 Python wheel 用 py3 表达"任意 CPython 3.x"。
-    return wheel.is_pure_python and ("py3" in wheel.python_tags or "py2.py3" in wheel.python_tags)
-
-
-def platform_tag_compatible(
-    wheel: WheelFile,
-    platform_tag: str,
-    reject_platform_tags: tuple[str, ...] = (),
-) -> tuple[bool, str, str]:
-    """判定平台标签是否可用于声明目标。
-
-    返回 `(是否接受, kind, 中文原因)`；kind ∈ {exact, compatible, pure_python}。
-    规则（只严不松）：
-      * 命中声明拒绝标签（win_*/macosx 等）⇒ 拒绝，并说明命中的标签；
-      * `any` + `abi=none` ⇒ 接受，kind=pure_python（与架构无关，安装端可用）；
-      * 与声明标签完全一致 ⇒ 接受，kind=exact；
-      * 同架构的 `manylinux_X_Y_arch`，且 glibc 要求 ≤ 声明值 ⇒ 接受，kind=compatible；
-      * 其余（含更高 glibc 要求、其它架构）⇒ 拒绝。
-    """
-    joined = " ".join(wheel.platform_tags)
-    for rejected in reject_platform_tags:
-        if not rejected:
-            continue
-        # 注意：这里必须用 any()，生成器对象本身恒为真（曾因此把全部候选误判为命中拒绝标签）。
-        if any(rejected == tag or rejected in tag for tag in wheel.platform_tags):
-            return False, "", f"命中声明拒绝的平台标签 {rejected}（文件平台标签：{joined}）"
-
-    if wheel.is_pure_python:
-        return True, "pure_python", "纯 Python wheel（platform=any、abi=none），与架构无关"
-
-    if platform_tag in wheel.platform_tags:
-        return True, "exact", f"平台标签与声明一致（{platform_tag}）"
-
-    declared_many = split_manylinux(platform_tag)
-    declared_arch = arch_of_platform_tag(platform_tag)
-    if declared_many and declared_arch:
-        for tag in wheel.platform_tags:
-            found_many = split_manylinux(tag)
-            if found_many and arch_of_platform_tag(tag) == declared_arch and found_many <= declared_many:
-                return (
-                    True,
-                    "compatible",
-                    f"{tag} 的 glibc 要求 {found_many[0]}.{found_many[1]} ≤ 声明的 "
-                    f"{declared_many[0]}.{declared_many[1]}，同架构可安装",
-                )
-    return False, "", (
-        f"平台标签与声明不符：声明 {platform_tag}（架构 {declared_arch}），文件为 {joined}"
-    )
+# 说明（2026-09-21）：原 `_python_tag_alias` / `python_tag_compatible` / `platform_tag_compatible` 三个自写判定
+# 已删除，判定统一委托 `lib_wheel_spec.classify`（`packaging` 同源）。删除原因：自写规则要求"非纯 Python wheel
+# 必须显式列出 cp310/py310"，把压缩标签 `py2.py3-none-<plat>` 误判为不可用，实测因此错过 `glfw-2.10.2`。
+# `split_manylinux` / `arch_of_platform_tag` 亦一并删除：模块内已无调用点，平台兼容阶梯改由
+# `lib_wheel_spec.compatible_platform_tags` 提供（一处实现）。
 
 
 def classify_wheel(filename: str, spec: "TargetSpec") -> dict:
-    """对单个文件名给出判定结果（供 `classify` 子命令与单测使用，纯函数、不联网）。"""
-    try:
-        wheel = parse_wheel_filename(filename)
-    except TagViolation as exc:
-        return {"filename": filename, "accepted": False, "kind": "", "reason": str(exc), "name": ""}
+    """对单个文件名给出判定结果（供 `classify` 子命令与单测使用，纯函数、不联网）。
 
-    result = {
-        "filename": filename,
-        "name": wheel.name,
-        "version": wheel.version,
-        "python_tags": list(wheel.python_tags),
-        "abi_tags": list(wheel.abi_tags),
-        "platform_tags": list(wheel.platform_tags),
-        "accepted": False,
-        "kind": "",
-        "reason": "",
-    }
-    if not python_tag_compatible(wheel, spec.python_tag):
-        result["reason"] = (
-            f"解释器标签不匹配：声明 {spec.python_tag}（或 py3 纯 Python），"
-            f"文件为 {'.'.join(wheel.python_tags)}"
-        )
-        return result
-    ok, kind, reason = platform_tag_compatible(wheel, spec.platform_tag, spec.reject_platform_tags)
-    result["accepted"] = ok
-    result["kind"] = kind
-    result["reason"] = reason
-    return result
+    **判定委托 `lib_wheel_spec.classify`（`packaging` 同源）**：本模块不再自写标签匹配。
+    背景：抓取侧曾自写"非纯 Python wheel 必须显式列出 cp310/py310"，把 `py2.py3-none-<plat>`
+    这类压缩标签判为不可用（实测因此错过 `glfw-2.10.2`，抓到更旧的 2.10.0），与依赖解析侧
+    用 `packaging` 的结论不一致。两处现已共用同一实现（AGENTS.md 2.11：同一问题只留一份实现）。
+    """
+    return wheelspec.classify(
+        filename,
+        spec.python_tag,
+        spec.platform_tag,
+        tuple(spec.reject_platform_tags),
+    )
 
 
 # --------------------------------------------------------------------------------------
@@ -449,14 +358,6 @@ class Candidate:
     prerelease: bool
 
 
-def _version_key(version: str) -> tuple[tuple[int, ...], int]:
-    """PEP 440 的简化排序键：数字段定长 + 预发布标记（正式版优先）。"""
-    prerelease = 1 if re.search(r"(?:a|b|c|rc|alpha|beta|pre|dev)\d*$", version) else 0
-    numbers = [int(n) for n in re.findall(r"\d+", version)][:6]
-    numbers += [0] * (6 - len(numbers))
-    return tuple(numbers), prerelease
-
-
 def select_candidate(urls: list[str], spec: TargetSpec, package: str) -> tuple[Candidate | None, list[dict]]:
     """从索引候选里选一个 wheel（纯函数、给定索引页 URL 列表）。
 
@@ -466,6 +367,9 @@ def select_candidate(urls: list[str], spec: TargetSpec, package: str) -> tuple[C
          （例：生成 stub 要求 protobuf ≥ 5.29），因此"更新的纯 Python wheel"优于
          "更旧的二进制 wheel"；
       3. 同一版本内：平台精确匹配 > 同架构兼容 manylinux > 纯 Python。
+
+    **判定与版本排序都走共享实现**：能否安装由 `lib_wheel_spec.classify`（`packaging` 同源）决定，
+    排序用 `lib_wheel_spec.version_key`（PEP 440）。这样"人工确认的候选清单"与实际抓取必然是同一套语义。
     """
     rejected: list[dict] = []
     candidates: list[Candidate] = []
@@ -481,8 +385,12 @@ def select_candidate(urls: list[str], spec: TargetSpec, package: str) -> tuple[C
                 {"filename": filename, "reason": f"版本被 pins 约束为 {pin}，该候选为 {verdict['version']}"}
             )
             continue
-        rank = {"exact": 0, "compatible": 1, "pure_python": 2}[verdict["kind"]]
-        numeric, prerelease = _version_key(verdict["version"])
+        rank = wheelspec.KIND_RANK[verdict["kind"]]
+        try:
+            parsed = wheelspec.version_key(verdict["version"])
+        except wheelspec.WheelSpecError as exc:
+            rejected.append({"filename": filename, "reason": str(exc)})
+            continue
         candidates.append(
             Candidate(
                 filename=filename,
@@ -490,17 +398,19 @@ def select_candidate(urls: list[str], spec: TargetSpec, package: str) -> tuple[C
                 version=verdict["version"],
                 kind=verdict["kind"],
                 kind_rank=rank,
-                version_key=numeric,
+                version_key=parsed,
                 reason=verdict["reason"],
-                prerelease=bool(prerelease),
+                prerelease=bool(parsed.is_prerelease),
             )
         )
     if not candidates:
         return None, rejected
-    candidates.sort(
-        key=lambda c: (c.prerelease, tuple(-n for n in c.version_key), c.kind_rank, c.filename)
-    )
-    return candidates[0], rejected
+    # 择优：正式版优先 → 版本降序（PEP 440）→ kind 偏好（exact > compatible > pure_python）→ 文件名兜底
+    pool = [c for c in candidates if not c.prerelease] or candidates
+    pool = sorted(pool, key=lambda c: c.filename)
+    pool = sorted(pool, key=lambda c: c.kind_rank)
+    pool = sorted(pool, key=lambda c: c.version_key, reverse=True)
+    return pool[0], rejected
 
 
 def _http_get(url: str, timeout: float) -> bytes:

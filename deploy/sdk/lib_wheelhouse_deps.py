@@ -37,6 +37,9 @@ from pathlib import Path
 
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import lib_wheel_spec as wheelspec  # noqa: E402  共享：标签语义与版本键（唯一实现）
+
 try:  # packaging 是硬依赖：marker 求值与 wheel 标签匹配都不能靠手写正则
     from packaging.markers import UndefinedEnvironmentName
     from packaging.requirements import InvalidRequirement, Requirement
@@ -103,39 +106,16 @@ def build_environment(target: dict) -> dict:
 # --------------------------------------------------------------------- wheel 解析
 
 def compatible_platform_tags(platform_tag: str) -> list:
-    """声明平台的兼容阶梯。
-
-    在 glibc ≥ 2.28 的系统上，pip 同样接受用更低 glibc 编译的 manylinux wheel
-    （2_27 / 2_17 / manylinux2014 …）。只放"精确等于声明标签"会漏掉真实存在的包
-    ——实测：rpds-py 只发 manylinux_2_17_aarch64，按精确匹配会解析不出来。
-    """
-    import re
-
-    match = re.fullmatch(r"manylinux_(\d+)_(\d+)_(\w+)", platform_tag)
-    if not match:
-        return [platform_tag]
-    major, minor, arch = int(match.group(1)), int(match.group(2)), match.group(3)
-    ladder = []
-    for cand in range(minor, 16, -1):          # manylinux_2_28 → 2_28 … 2_17
-        if major == 2 and cand >= 17:
-            ladder.append(f"manylinux_2_{cand}_{arch}")
-    if major == 2 and minor >= 17:
-        ladder.append(f"manylinux2014_{arch}")  # 2_17 的别名
-    return ladder or [platform_tag]
+    """声明平台的兼容阶梯（**委托 `lib_wheel_spec`，抓取侧与解析侧共用一份实现**）。"""
+    return wheelspec.compatible_platform_tags(platform_tag)
 
 
 def acceptable_tags(target: dict) -> frozenset:
-    python_tag = str(target.get("python_tag") or "")
-    platform_tag = str(target.get("platform_tag") or "")
-    version = (int(python_tag[2]), int(python_tag[3:]))
-    platforms = compatible_platform_tags(platform_tag)
-    tags = set()
-    for platform in platforms:
-        tags |= set(cpython_tags(python_version=version, platforms=[platform]))
-        tags |= set(compatible_tags(python_version=version, platforms=[platform]))
-    if not tags:
-        raise ResolveError(f"无法为 python_tag={python_tag} / platform_tag={platform_tag} 生成可接受标签集")
-    return frozenset(tags)
+    """目标可接受标签集（委托 `lib_wheel_spec.acceptable_tags`，`packaging` 同源）。"""
+    return wheelspec.acceptable_tags(
+        str(target.get("python_tag") or ""),
+        str(target.get("platform_tag") or ""),
+    )
 
 
 def wheel_metadata_text(path: Path) -> str:
@@ -282,43 +262,52 @@ def _iter_hrefs(html: str):
 
 
 def _version_key(version: str):
-    """按 PEP 440 排序（packaging.version.Version），不再手写分段比较。
-
-    手写分段比较会把 `4.0.0a5` 排到 `3.1.10` 之前，从而选到 alpha —— 实测踩到过。
-    """
-    from packaging.version import InvalidVersion, Version
-
+    """按 PEP 440 排序（**委托 `lib_wheel_spec.version_key`**）。"""
     try:
-        return Version(version)
-    except InvalidVersion as exc:
-        raise ResolveError(f"索引中的版本号无法按 PEP 440 解析：{version!r}（{exc}）") from exc
+        return wheelspec.version_key(version)
+    except wheelspec.WheelSpecError as exc:
+        raise ResolveError(str(exc)) from exc
 
 
-def select_candidate(candidates: list, specifiers: list) -> tuple:
-    """从候选中择优：先按版本约束过滤，再排除预发布（除非约束显式允许）。
+def select_candidate(candidates: list, specifiers: list, target: dict | None = None) -> tuple:
+    """从候选中择优：版本约束过滤 → 正式版优先 → 版本降序 → **同版本内 kind 偏好** → 文件名兜底。
 
-    返回 (chosen, note)；chosen 为 None 表示无可用候选。
+    返回 (chosen, note)；chosen 为 None 表示无可用候选。kind 由 `lib_wheel_spec.classify`
+    判定（exact > compatible > pure_python），因此本函数给出的候选与 `fetch_wheelhouse.sh`
+    实际抓取保持同一套语义与同一套偏好 —— 这是"候选清单 == 可安装 wheelhouse"的前提。
     """
-    from packaging.specifiers import InvalidSpecifier, SpecifierSet
-    from packaging.version import Version
+    from packaging.specifiers import SpecifierSet
 
     if not candidates:
         return None, "索引中无标签可用的候选 wheel"
-    pool = candidates
     active_specs = [s for s in specifiers if s]
+    pool = candidates
     if active_specs:
         spec = SpecifierSet(",".join(active_specs))
-        filtered = [c for c in pool if spec.contains(c[0], prereleases=True)]
-        if not filtered:
+        pool = [c for c in pool if spec.contains(c[0], prereleases=True)]
+        if not pool:
             return None, f"候选均不满足版本约束 {active_specs}"
-        pool = filtered
-    stable = [c for c in pool if not Version(c[0]).is_prerelease]
+
+    stable = [c for c in pool if not wheelspec.is_prerelease(c[0])]
     if stable:
-        return stable[0], f"取满足约束的最高稳定版（已排除 {len(pool) - len(stable)} 个预发布）"
-    # 只有预发布：按 pip 语义，当约束本身包含预发布时才允许；此处显式标注，交由人工确认
-    if any(Version(s.strip("<>=")).is_prerelease for s in active_specs if _spec_mentions_prerelease(s)):
-        return pool[0], "仅预发布可用且约束显式提及预发布"
-    return pool[0], "⚠ 仅有预发布版本可用（pip 默认不会选它，需人工确认后再回填）"
+        note = f"取满足约束的最高稳定版（已排除 {len(pool) - len(stable)} 个预发布）"
+        pool = stable
+    else:
+        note = "⚠ 仅有预发布版本可用（pip 默认不会选它，需人工确认后再回填）"
+
+    def kind_rank(entry):
+        filename = entry[1]
+        if not target:
+            return 9
+        verdict = wheelspec.classify(filename, str(target.get("python_tag") or ""),
+                                     str(target.get("platform_tag") or ""),
+                                     tuple(target.get("reject_platform_tags") or ()))
+        return wheelspec.KIND_RANK.get(verdict["kind"], 9) if verdict["accepted"] else 9
+
+    pool = sorted(pool, key=lambda c: c[1])                                  # 文件名：确定性
+    pool = sorted(pool, key=lambda c: kind_rank(c))                          # kind 偏好
+    pool = sorted(pool, key=lambda c: wheelspec.version_key(c[0]), reverse=True)  # 版本降序
+    return pool[0], note
 
 
 def _spec_mentions_prerelease(specifier: str) -> bool:
@@ -381,7 +370,9 @@ def resolve_closure(wheelhouse: Path, target: dict, env: dict, fetcher, max_dept
             record["reason"] = "offline：未探测索引（--offline 模式，只报告一级缺失）"
             continue
         candidates = fetcher.candidates(name)
-        chosen, note = select_candidate(candidates, record["specifier"])
+        # 择优必须与抓取侧同规则（lib_wheel_spec.classify + 同版本内 kind 偏好），
+        # 否则"人工确认的候选清单"与实际抓取仍可能不是同一个 wheel。
+        chosen, note = select_candidate(candidates, record["specifier"], target=target)
         if chosen is None:
             record["reason"] = note
             continue
