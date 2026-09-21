@@ -1,0 +1,20 @@
+{
+  "schema_version": "iraf.plan-ledger/v1",
+  "campaign": "iraf-24h-2",
+  "created_at": "2026-09-21",
+  "source_plan": ".hermes/plans/2026-09-21_quadruped-locomotion-and-goto.md",
+  "adr": "docs/adr/0008-quadruped-locomotion-and-navigation.md",
+  "scope": "四足移动（原地踏步 → 定速直行 → 定速转弯 → 到点）+ 接入 S1 交互与实时观看；x86 仿真侧取证",
+  "decisions": {"max_speed_mps": 0.5, "allow_in_place_turn": true, "gait": "自研参数化 trot（Provider）", "stop_semantics": "移动中 damped_hold；急停 torque_zero_release"},
+  "test_baseline": {"recorded_at": null, "runs": 844, "failures": 1, "errors": 4, "skipped": 4,
+                    "note": "战役开始前基线：Ran 844 / failures=1 / errors=4 / skipped=4（失败集合与长期基线一致）"},
+  "blocked": [],
+  "steps": [
+    {"id": "01", "title": "ADR-0008 定稿 + 移动安全边界声明 + 停止语义矩阵落地", "status": "TODO", "evidence": null, "commit": null, "updated_at": null, "note": null},
+    {"id": "02", "title": "参数化 trot：原地踏步（声明 + 控制器 + 验收）", "status": "TODO", "evidence": null, "commit": null, "updated_at": null, "note": null},
+    {"id": "03", "title": "locomote 技能：定速直行与定速转弯（能力回填）", "status": "TODO", "evidence": null, "commit": null, "updated_at": null, "note": null},
+    {"id": "04", "title": "navigate_to：位姿闭环到点（正/负路径）", "status": "TODO", "evidence": null, "commit": null, "updated_at": null, "note": null},
+    {"id": "05", "title": "接入 S1 交互与实时观看（locomote/navigate_to + 桌面窗口演示）", "status": "TODO", "evidence": null, "commit": null, "updated_at": null, "note": null},
+    {"id": "06", "title": "收尾汇总：证据索引、缺口清单、文档与观感复盘", "status": "TODO", "evidence": null, "commit": null, "updated_at": null, "note": null}
+  ]
+}
