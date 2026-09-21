@@ -508,6 +508,24 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         watchdog_limit = int(balance_params["watchdog"]["max_consecutive_no_stance_cycles"])
         mass = self.robot_mass_kg()
         gravity = self.gravity_mps2()
+        # B1：支撑/摆动两套位置权重（都来自声明，缺键在 `load_balance_declaration` 就失败了）。
+        stance_weight = float(balance_params["stance_weight_position"])
+        swing_weight = float(balance_params["weight_position"])
+
+        def _no_stance_fallback():
+            """支撑集不足 / 看门狗触发：力矩级动作整段放弃，位置权重回落 `weight_position`。
+
+            为什么回落而不是"强制全位置控制"：`weight_position` 是旧实现里**唯一存在**的全局权重，
+            回落到它，\"无有效支撑腿\"时的行为才与既有实现一致（不引入新的隐式默认值）。
+            """
+            stats = self._balance_stats
+            stats["position_weight"]["fallback_cycles"] = (
+                int(stats["position_weight"]["fallback_cycles"]) + 1
+            )
+            return {
+                "balance_torque_nm": np.zeros(len(self.joint_order), dtype=float),
+                "position_weight": np.full(len(self.joint_order), swing_weight, dtype=float),
+            }
 
         def torque_provider(cycle_index, info):
             contact = self._leg_contact_forces(params, geometry)
@@ -520,13 +538,13 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 if int(stats["consecutive_no_stance"]) > watchdog_limit:
                     stats["watchdog_triggered"] = True
                     stats["disabled_cycles"] = int(stats["disabled_cycles"]) + 1
-                return np.zeros(len(self.joint_order), dtype=float)
+                return _no_stance_fallback()
             stats["consecutive_no_stance"] = 0
             if stats["watchdog_triggered"]:
                 # 看门狗一旦触发即保持关闭：不得在“站不住”的状态下继续施加力矩级动作
                 # （否则平衡器自己成为第二个不受监控的控制源）。
                 stats["disabled_cycles"] = int(stats["disabled_cycles"]) + 1
-                return np.zeros(len(self.joint_order), dtype=float)
+                return _no_stance_fallback()
             stance_points = {
                 code: np.asarray(
                     self.data.geom_xpos[int(geometry[code]["contact_geom"])], dtype=float
@@ -578,7 +596,36 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 float(stats["max_abs_torque_nm"]),
                 max((abs(float(value)) for value in torques.values()), default=0.0),
             )
-            return np.array([torques[joint] for joint in self.joint_order], dtype=float)
+            # B1：逐关节位置权重 —— 支撑腿关节取 `stance_weight_position`（0 ⇒ 力控），
+            # 其余（摆动腿）取 `weight_position`。支撑集来自本周期**实测接触力**，
+            # 与声明相位无关（实测「命令抬的腿 ≠ 物理离地的腿」）。
+            stance_joints = {
+                geometry[code]["joints"][key]
+                for code in stance
+                for key in ("hip_joint", "thigh_joint", "calf_joint")
+            }
+            position_weight = np.array(
+                [
+                    stance_weight if joint in stance_joints else swing_weight
+                    for joint in self.joint_order
+                ],
+                dtype=float,
+            )
+            zeroed = int(np.count_nonzero(position_weight == 0.0))
+            stats["position_weight"] = {
+                "stance": stance_weight,
+                "swing": swing_weight,
+                "zeroed_joints_last_cycle": zeroed,
+                "max_zeroed_joints": max(int(stats["position_weight"]["max_zeroed_joints"]), zeroed),
+                "force_control_cycles": int(stats["position_weight"]["force_control_cycles"]) + 1,
+                "fallback_cycles": int(stats["position_weight"]["fallback_cycles"]),
+            }
+            return {
+                "balance_torque_nm": np.array(
+                    [torques[joint] for joint in self.joint_order], dtype=float
+                ),
+                "position_weight": position_weight,
+            }
 
         return torque_provider
 
@@ -595,6 +642,15 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             "last_stance_legs": [],
             "last_wrench": None,
             "max_abs_torque_nm": 0.0,
+            # B1 逐关节权重的实测统计（"声明说支撑腿走力控"要有**兑现**证据，而不是只看开关）。
+            "position_weight": {
+                "stance": None,
+                "swing": None,
+                "zeroed_joints_last_cycle": 0,
+                "max_zeroed_joints": 0,
+                "force_control_cycles": 0,
+                "fallback_cycles": 0,
+            },
         }
 
     def _balance_summary(self, balance_params):
@@ -603,6 +659,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         return {
             "enabled": bool(balance_params["enabled"]),
             "weight_position": float(balance_params["weight_position"]),
+            "stance_weight_position": float(balance_params["stance_weight_position"]),
             "weight_balance": float(balance_params["weight_balance"]),
             "include_gravity_support": bool(balance_params["include_gravity_support"]),
             "attitude": dict(balance_params["attitude"]),
@@ -617,6 +674,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 "no_stance_cycles": int(stats["no_stance_cycles"]),
                 "watchdog_triggered": bool(stats["watchdog_triggered"]),
                 "disabled_cycles": int(stats["disabled_cycles"]),
+                "position_weight": dict(stats["position_weight"]),
                 "stance_legs_histogram": {
                     str(key): int(value) for key, value in stats["stance_legs_histogram"].items()
                 },
@@ -1009,9 +1067,12 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         **逐位一致**：目标位形 = 初始位形到 `target` 的声明斜坡。步态路径（步骤 02）通过
         `target_provider(cycle_index, now) -> 目标向量` 提供每周期参考轨迹，
         走的是**同一段** PD + 重力前馈 + ctrlrange 截断 + 子步推进（不新写第二套控制律）；
-        `torque_provider(cycle_index, info) -> 附加力矩向量`（步骤 02b）是**执行器级**钩子：
-        在位置级 PD 之后按声明权重混合 `τ = w_pos·τ_pd + w_bal·τ_bal`，再按模型 ctrlrange
-        截断并重算饱和标记（力矩上限仍只来自模型，本文件不写任何力矩数字）。
+        `torque_provider(cycle_index, info)`（步骤 02b）是**执行器级**钩子，两种返回形式：
+        ① `ndarray`（旧契约）：全局权重混合 `τ = w_pos·τ_pd + w_bal·τ_bal`；
+        ② `{"balance_torque_nm": …, "position_weight": …}`（B1，逐关节权重）：
+        `τ = position_weight ⊙ τ_pd + w_bal·τ_bal`（支撑腿权重 0 ⇒ 该腿走力矩级力控）。
+        两种形式都先按声明权重混合、再按模型 ctrlrange 截断并重算饱和标记
+        （力矩上限仍只来自模型，本文件不写任何力矩数字）。
         `sample_callback(cycle_index, info)` 只在物理步进之后被调用（量的是步进后的状态）。
         """
         cycles = int(round(float(seconds) * self.control_hz))
@@ -1058,21 +1119,47 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                     q, dq, desired, self.kp, self.kd, tau_ff, self.torque_lower, self.torque_upper
                 )
                 if torque_provider is not None:
-                    extra = np.asarray(
-                        torque_provider(
-                            cycle_index,
-                            {"desired": desired, "ctrl": ctrl, "saturated": saturated},
-                        ),
-                        dtype=float,
+                    returned = torque_provider(
+                        cycle_index,
+                        {"desired": desired, "ctrl": ctrl, "saturated": saturated},
                     )
-                    if extra.shape != ctrl.shape:
-                        raise DeclarationError(
-                            "平衡器返回的力矩向量形状 %r 与关节数 %d 不符"
-                            % (extra.shape, len(self.joint_order))
+                    if isinstance(returned, dict):
+                        # B1（ADR-0008 决策 1d，2026-09-21）：**逐关节**位置权重 —— 支撑腿关节取声明
+                        # `balance.stance_weight_position`（0 ⇒ 该腿完全走力矩级力控，τ_pd 含重力前馈
+                        # 一并乘 0），摆动腿取 `balance.weight_position`。权重向量由 provider 给出：
+                        # 支撑集是它按**实测接触力**判定的，本方法不做第二份相位/接触推断。
+                        for key in ("balance_torque_nm", "position_weight"):
+                            if key not in returned:
+                                raise DeclarationError(
+                                    "平衡器返回的映射缺少键 %r（B1 逐关节权重契约）" % key
+                                )
+                        extra = np.asarray(returned["balance_torque_nm"], dtype=float)
+                        position_weight = np.asarray(returned["position_weight"], dtype=float)
+                        for label, vector in (
+                            ("balance_torque_nm", extra),
+                            ("position_weight", position_weight),
+                        ):
+                            if vector.shape != ctrl.shape:
+                                raise DeclarationError(
+                                    "平衡器返回的 %s 形状 %r 与关节数 %d 不符"
+                                    % (label, vector.shape, len(self.joint_order))
+                                )
+                        if np.any(position_weight < 0.0) or np.any(position_weight > 1.0):
+                            raise DeclarationError(
+                                "平衡器返回的 position_weight 越界（必须落在 [0,1]：>1 是第二份增益、"
+                                "<0 会把 PD 变成正反馈）"
+                            )
+                        ctrl = position_weight * ctrl + balance_weights[1] * extra
+                    else:
+                        extra = np.asarray(returned, dtype=float)
+                        if extra.shape != ctrl.shape:
+                            raise DeclarationError(
+                                "平衡器返回的力矩向量形状 %r 与关节数 %d 不符"
+                                % (extra.shape, len(self.joint_order))
+                            )
+                        ctrl = (
+                            balance_weights[0] * ctrl + balance_weights[1] * extra
                         )
-                    ctrl = (
-                        balance_weights[0] * ctrl + balance_weights[1] * extra
-                    )
                     saturated = np.logical_or(ctrl < self.torque_lower, ctrl > self.torque_upper)
                     ctrl = np.clip(ctrl, self.torque_lower, self.torque_upper)
             saturated_total += int(np.count_nonzero(saturated))

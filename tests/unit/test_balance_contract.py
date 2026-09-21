@@ -143,10 +143,40 @@ class BalanceDeclarationTests(unittest.TestCase):
         self.assertIn("同时为 0", str(ctx.exception))
 
     def test_zero_weight_alone_is_allowed(self):
-        """正向对照：只关掉一侧权重是合法的（不是「恒失败门禁」）。"""
-        params = _params(_mutate("balance.weight_balance", 0.0))
+        """正向对照：只关掉一侧权重是合法的（不是「恒失败门禁」）。
+
+        前提变更（B1，2026-09-21）：支撑腿的位置级权重 `stance_weight_position` 取 0 后，
+        「关掉 weight_balance」不再是合法声明（支撑腿会拿到零控制量 ⇒ 塌陷，见下一条负向用例），
+        因此本用例把 pair 的另一半显式设回非 0 —— 改的是**前提**，不是门禁。
+        """
+        document = _mutate("balance.weight_balance", 0.0)
+        document["balance"]["stance_weight_position"] = 1.0
+        params = _params(document)
         self.assertEqual(params["weight_balance"], 0.0)
         self.assertEqual(params["weight_position"], 1.0)
+
+    def test_stance_weight_requires_balance_torque(self):
+        """B1 负向用例：支撑腿位置权重为 0 时，力矩级权重也必须非 0（否则支撑腿零控制量）。"""
+        document = _mutate("balance.stance_weight_position", 0.0)
+        document["balance"]["weight_balance"] = 0.0
+        with self.assertRaises(DeclarationError) as ctx:
+            _params(document)
+        self.assertIn("stance_weight_position", str(ctx.exception))
+
+    def test_stance_weight_position_declared_and_matches_yaml(self):
+        """B1 核心键必须存在、且与声明文件逐字一致（支撑腿力控的开关就在这里）。"""
+        document = _declaration()
+        section = document["balance"]
+        self.assertIn("stance_weight_position", section)
+        params = _params(document)
+        self.assertEqual(params["stance_weight_position"], float(section["stance_weight_position"]))
+
+    def test_weights_are_bounded_to_unit_interval(self):
+        """权重是 τ_pd 的乘子：>1 是第二份增益（增益已由 control.* 声明）⇒ 实现层强制上界。"""
+        for key in ("weight_position", "stance_weight_position", "weight_balance"):
+            with self.subTest(key=key):
+                with self.assertRaises(DeclarationError):
+                    _params(_mutate("balance.%s" % key, 1.5))
 
     def test_min_stance_legs_must_be_reachable(self):
         with self.assertRaises(DeclarationError) as ctx:
@@ -211,34 +241,56 @@ class DesiredWrenchTests(unittest.TestCase):
         return params, balance.desired_wrench(params, **base)
 
     def test_upright_at_target_is_zero_correction(self):
-        """正向对照：达标且静止 ⇒ 纠正量为零（含重力支撑关闭时 mg 不出现）。"""
-        _params, wrench = self._wrench()
-        np.testing.assert_allclose(wrench["force_n"], np.zeros(3), atol=1e-12)
+        """正向对照：达标且静止 ⇒ **纠正量**为零；总法向力 = 声明的重力支撑项。
+
+        口径（B1，2026-09-21）：`force_n[2] = gravity_support_n + height_correction_n`，
+        所以"是否为零"必须断在**分量**上，总力单独与声明的 `include_gravity_support` 对齐 ——
+        断总力为零等于把断言写成上一版声明（`include_gravity_support: false`）的快照。
+        """
+        params, wrench = self._wrench()
+        components = wrench["components"]
+        self.assertEqual(components["height_correction_n"], 0.0)
+        np.testing.assert_allclose(components["horizontal_damping_n"], np.zeros(2), atol=1e-12)
         np.testing.assert_allclose(wrench["torque_nm"], np.zeros(3), atol=1e-12)
-        self.assertEqual(wrench["components"]["gravity_support_n"], 0.0)
+        expected_support = 15.596408 * 9.81 if params["include_gravity_support"] else 0.0
+        self.assertAlmostEqual(components["gravity_support_n"], expected_support, places=9)
+        self.assertAlmostEqual(wrench["force_n"][2], expected_support, places=9)
 
     def test_gravity_support_only_when_declared(self):
-        document = _mutate("balance.include_gravity_support", True)
-        params = balance.load_balance_declaration(document)
-        wrench = balance.desired_wrench(
-            params,
-            mass_kg=15.596408,
-            gravity_mps2=9.81,
-            height_m=0.27,
-            height_target_m=0.27,
-            vertical_velocity_mps=0.0,
-            roll_rad=0.0,
-            pitch_rad=0.0,
-            horizontal_velocity_world_mps=(0.0, 0.0),
-            angular_velocity_world_rad_s=(0.0, 0.0, 0.0),
-        )
-        self.assertAlmostEqual(wrench["force_n"][2], 15.596408 * 9.81, places=9)
+        """开关两个取值都要覆盖（B1 的核心开关，不能只测声明里当前那一个值）。"""
+        base = {
+            "mass_kg": 15.596408,
+            "gravity_mps2": 9.81,
+            "height_m": 0.27,
+            "height_target_m": 0.27,
+            "vertical_velocity_mps": 0.0,
+            "roll_rad": 0.0,
+            "pitch_rad": 0.0,
+            "horizontal_velocity_world_mps": (0.0, 0.0),
+            "angular_velocity_world_rad_s": (0.0, 0.0, 0.0),
+        }
+        for declared, expected in ((True, 15.596408 * 9.81), (False, 0.0)):
+            with self.subTest(include_gravity_support=declared):
+                params = balance.load_balance_declaration(
+                    _mutate("balance.include_gravity_support", declared)
+                )
+                self.assertIs(params["include_gravity_support"], declared)
+                wrench = balance.desired_wrench(params, **base)
+                self.assertAlmostEqual(wrench["components"]["gravity_support_n"], expected, places=9)
+                self.assertAlmostEqual(wrench["force_n"][2], expected, places=9)
 
     def test_height_error_pushes_up(self):
         params, wrench = self._wrench(height_m=0.25)
         limit = params["height"]["max_force_n"]
-        self.assertGreater(wrench["components"]["height_correction_n"], 0.0)
-        self.assertLessEqual(wrench["force_n"][2], limit)
+        correction = wrench["components"]["height_correction_n"]
+        self.assertGreater(correction, 0.0)
+        # 截断只作用在**纠正量**上；总法向力 = 纠正量 + 声明的重力支撑项（B1 下含 mg）。
+        self.assertLessEqual(correction, limit)
+        self.assertAlmostEqual(
+            wrench["force_n"][2],
+            correction + wrench["components"]["gravity_support_n"],
+            places=9,
+        )
 
     def test_height_correction_is_clamped(self):
         params, wrench = self._wrench(height_m=0.0)
@@ -300,24 +352,59 @@ class FootForceAllocationTests(unittest.TestCase):
         return {"force_n": np.asarray(force, dtype=float), "torque_nm": np.asarray(torque, dtype=float)}
 
     def test_symmetric_wrench_splits_evenly(self):
-        """正向对照：对称足形 + 纯竖直力旋量 ⇒ 四腿均分，且残差 ≈ 0。"""
+        """正向对照：对称足形 + 纯竖直**向上**力旋量 ⇒ 四腿均分，且残差 ≈ 0。
+
+        方向口径（B1，2026-09-21）：法向力含 mg 支撑 ⇒ 运行时恒为正；地面无粘附，负法向力
+        不可兑现，故正例取向上。负向情形的覆盖见下面两条（显式声明下界，不依赖当前声明值）。
+        """
         result = balance.allocate_foot_forces(
-            self.params, self._wrench([0.0, 0.0, -8.0], [0.0, 0.0, 0.0]), self.feet, self.center
+            self.params, self._wrench([0.0, 0.0, 8.0], [0.0, 0.0, 0.0]), self.feet, self.center
         )
         verticals = [result["forces"][code][2] for code in sorted(self.feet)]
         for value in verticals:
-            self.assertAlmostEqual(value, -2.0, places=9)
+            self.assertAlmostEqual(value, 2.0, places=9)
         np.testing.assert_allclose(result["residual"]["force_n"], np.zeros(3), atol=1e-9)
         np.testing.assert_allclose(result["residual"]["torque_nm"], np.zeros(3), atol=1e-9)
         self.assertEqual(result["clamped_legs"], [])
 
-    def test_moment_request_is_realized(self):
-        """姿态力矩必须真的兑现（首跑踩过：法向力下界取 0 会把负向纠正整段截掉，力矩残差 == 目标力矩）。"""
+    def test_negative_normal_realized_when_floor_allows(self):
+        """下界为负时负向纠正必须能被兑现（旧结构的覆盖保留：不依赖当前声明值）。"""
+        params = balance.load_balance_declaration(
+            _mutate("balance.allocation.normal_force_floor_n", -30.0)
+        )
         result = balance.allocate_foot_forces(
-            self.params, self._wrench([0.0, 0.0, 0.0], [1.0, 0.0, 0.0]), self.feet, self.center
+            params, self._wrench([0.0, 0.0, -8.0], [0.0, 0.0, 0.0]), self.feet, self.center
+        )
+        for code in sorted(self.feet):
+            self.assertAlmostEqual(result["forces"][code][2], -2.0, places=9)
+        self.assertEqual(result["clamped_legs"], [])
+
+    def test_zero_floor_clamps_negative_request(self):
+        """下界为 0（B1 口径：地面无粘附）时负向请求必须被**如实截断并记录**，不是静默给 0。"""
+        params = balance.load_balance_declaration(
+            _mutate("balance.allocation.normal_force_floor_n", 0.0)
+        )
+        result = balance.allocate_foot_forces(
+            params, self._wrench([0.0, 0.0, -8.0], [0.0, 0.0, 0.0]), self.feet, self.center
+        )
+        for code in sorted(self.feet):
+            self.assertAlmostEqual(result["forces"][code][2], 0.0, places=9)
+        self.assertEqual(sorted(result["clamped_legs"]), ["FL", "FR", "RL", "RR"])
+        self.assertAlmostEqual(result["residual"]["force_n"][2], -8.0, places=9)
+
+    def test_moment_request_is_realized(self):
+        """姿态力矩必须真的兑现（首跑踩过：法向力下界取 0 会把负向纠正整段截掉，力矩残差 == 目标力矩）。
+
+        口径（B1）：正例带**向上**的竖直偏置（运行时真实情形：法向力 = mg 分摊 + 纠正量），
+        此时两侧腿的差动力全为正、力矩可兑现；净竖直力为 0 的"纯纠正量"情形需要负下界，
+        由 `test_negative_normal_realized_when_floor_allows` 覆盖。
+        """
+        result = balance.allocate_foot_forces(
+            self.params, self._wrench([0.0, 0.0, 8.0], [1.0, 0.0, 0.0]), self.feet, self.center
         )
         np.testing.assert_allclose(result["residual"]["torque_nm"], np.zeros(3), atol=1e-9)
         self.assertNotEqual(result["forces"]["FL"][2], result["forces"]["FR"][2])
+        self.assertEqual(result["clamped_legs"], [])
 
     def test_too_few_stance_legs_rejected(self):
         feet = {"FL": self.feet["FL"], "FR": self.feet["FR"]}

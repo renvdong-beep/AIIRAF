@@ -22,9 +22,14 @@
 
 关键设计取舍（写清楚，避免后来者误读）
 ------------------------------------
-- **不含重力支撑前馈**（`include_gravity_support: false` 显式声明）：站立载荷已由位置级 PD
-  承担（实测四腿合计 152.617937 N ≈ mg=153.0 N），若平衡器再引入 mg 量级的法向力会导致
-  升力翻倍 ⇒ 本模块只输出**纠正量**（高度误差/姿态误差/速度阻尼）。
+- **支撑/摆动两套位置权重**（B1，ADR-0008 决策 1d）：`weight_position` 作用于**非支撑（摆动）**
+  关节；`stance_weight_position`（B1 取 **0**）作用于**支撑**关节 ⇒ 支撑腿只受 `τ_bal` 驱动，
+  `τ_pd`（含 PD + 重力前馈）被整体乘 0；摆动腿仍走位置级 PD + 重力前馈。哪个关节属于支撑，
+  由**实测接触力**判定（不做相位推断，见 `_balance_provider` 的 docstring）。
+- **含重力支撑前馈**（`include_gravity_support: true`，B1）：支撑腿关掉位置级分量后不再有
+  PD 平衡点，mg 支撑**必须**由力矩级提供（`desired_wrench` 的 `F_z = include_gravity_support·mg
+  + 高度纠正`，再经足端力分配摊到各支撑腿）；`false` 只适用于"位置级承重 + 力矩级纠正"的旧结构
+  （实测：站立载荷已由 PD 承担，此时再叠加 mg 会让升力翻倍）。
 - 力旋量的参考点在**躯干体心**（调用方传入实测位置），因此足端力分配解的是
   「合力 = F、合力矩 = τ」的最小范数解（`lstsq`），腿数 ≥3 时才有唯一的最小范数解。
 - 逐腿截断是**诚实截断**：被截断的腿在其中记录 `clamped`，并集汇成 `clamped_legs`
@@ -44,7 +49,11 @@ from iraf_adapters.unitree.quadruped import DeclarationError
 #: `balance` 段必需键（缺任一即显式失败，禁止实现层默认值）。
 REQUIRED_BALANCE_KEYS = (
     "enabled",
+    # 位置级 PD 权重：`weight_position` 作用于**非支撑（摆动）**关节，
+    # `stance_weight_position` 作用于**支撑**关节（B1：取 0 ⇒ 该腿走力矩级力控）。
+    # 两者都必须显式声明：支撑/摆动是两套语义，合成一个全局权重就无法表达 B1。
     "weight_position",
+    "stance_weight_position",
     "weight_balance",
     "include_gravity_support",
     "attitude",
@@ -166,12 +175,30 @@ def load_balance_declaration(declaration):
     _require_keys(section, REQUIRED_BALANCE_KEYS, "balance")
 
     enabled = _boolean(section, "enabled", "balance")
-    weight_position = _number(section, "weight_position", "balance", non_negative=True)
-    weight_balance = _number(section, "weight_balance", "balance", non_negative=True)
+    # 权重是「τ_pd 的乘子」，语义上必须落在 [0,1]：>1 是**第二份增益**（增益已由 control.*
+    # 声明），<0 会把 PD 变成正反馈。上界由实现层强制（防止把声明写成放大器）。
+    weight_position = _number(
+        section, "weight_position", "balance", non_negative=True, maximum=1.0
+    )
+    stance_weight_position = _number(
+        section, "stance_weight_position", "balance", non_negative=True, maximum=1.0
+    )
+    weight_balance = _number(
+        section, "weight_balance", "balance", non_negative=True, maximum=1.0
+    )
     if weight_position == 0.0 and weight_balance == 0.0:
         raise DeclarationError(
             "balance.weight_position 与 balance.weight_balance 不得同时为 0"
             "（总控制量会恒为零：这不是“关闭平衡器”，而是丢掉了位置控制）"
+        )
+    # B1（ADR-0008 决策 1d）：支撑腿走力矩级力控 ⇒ 其 τ_pd 权重为 0，此时**唯一**的控制量
+    # 来自力矩级平衡项；若该项也为 0，支撑腿会拿到零力矩 ⇒ 整机直接塌陷（不是“关闭”，是失能）。
+    # 因此这一对必须显式校验（缺了它就是一条「声明自相矛盾却照跑」的旁路）。
+    if stance_weight_position == 0.0 and weight_balance == 0.0:
+        raise DeclarationError(
+            "balance.stance_weight_position 与 balance.weight_balance 不得同时为 0"
+            "（支撑腿的力矩级力控已关掉位置级分量 ⇒ 两者同时为 0 时支撑腿控制量恒为零，"
+            "整机将直接塌陷）"
         )
     include_gravity_support = _boolean(section, "include_gravity_support", "balance")
 
@@ -239,6 +266,7 @@ def load_balance_declaration(declaration):
     return {
         "enabled": enabled,
         "weight_position": weight_position,
+        "stance_weight_position": stance_weight_position,
         "weight_balance": weight_balance,
         "include_gravity_support": include_gravity_support,
         "attitude": {
