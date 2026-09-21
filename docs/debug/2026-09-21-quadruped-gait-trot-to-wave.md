@@ -436,4 +436,63 @@ PYTHONPATH=src /usr/bin/python3 scripts/probe_quadruped_support_margin.py \
 - 逐位一致门禁的处置：本轮改的是**场景生成**（关键帧基座 z 0.27 → 0.2883725），
   stand/stop 的旧数字（`height_mean_m 0.2801007638069918`、stop 末速 `0.003964950131491022` 等）
   是在 18 mm 穿透的初始条件下测得的 ⇒ **本轮起被取代，必须重测并标注**（A′ ⑤）。
+  **已于第六轮完成，见 §11**（两条验收退出码 0，新旧值并列）。
 - 仍未做：`locomote` 能力未回填（验收不通过，铁律 2）；真机/目标端 `DEFERRED`；全部 `simulation=true`。
+
+## 11 第六轮：A′ ⑤ 重测 stand/stop（对齐后），旧数字如实标注为"被取代"
+
+**动机**：第五轮（提交 2043111）把场景生成改成"按实测把初始位姿抬到足端球贴台面"
+（`lift_m = 0.01837250030255797`，关键帧 `home` 基座 z 0.27 → 0.288372500302558）。
+初始接触状态变了 ⇒ 战役 1（`iraf-24h`）记录的 stand/stop 验收数字**不再是当前事实**。
+按要求重测并**并列"旧值（穿台前提）/ 新值（贴面前提）"** —— 既不静默改数，也不用"测试还绿"掩盖。
+
+复跑命令（`/usr/bin/python3` 3.10.12 + mujoco 3.3.3，`simulation=true`，工作区在台账提交 `a4c124c` 后冻结）：
+
+```bash
+PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_loopback.py     --config config/go2_loopback.yaml  # 退出码 0
+PYTHONPATH=src /usr/bin/python3 scripts/verify_quadruped_skills.py --config config/go2_loopback.yaml  # 退出码 0
+PYTHONPATH=src /usr/bin/python3 scripts/profile_check.py --quadruped config/go2_loopback.yaml         # 退出码 0
+```
+
+被测模型确为**对齐后**的构建产物（不是旧 XML）：`build/scenes/handoff_lab/handoff_lab.xml`
+（mtime 2026-09-21 17:05:54）的场景报告 `initial_alignment.applied = true`、
+`lift_m = 0.01837250030255797`、`residual_after_m = -3.025580133653172e-10`；
+`verify_go2_loopback.py` 报
+`model_sha256 = a50a5346225cef92ba7338059fdb234f3c9f11a3e6e702c6fd7afbed618ae588`。
+
+| 量 | 旧值（穿台 18.372 mm 前提，战役 1） | 新值（贴台面，本轮实测） | 判据 / 容差 | 结果 |
+|---|---|---|---|---|
+| loopback `stand.height_mean_m` | 0.2801007638069918 | **0.279953602548388** | 0.27 ± 0.02 | 通过（偏差 9.95 mm，旧 10.1 mm） |
+| loopback `stand.height_std_m` | 7.351396160228674e-05 | **3.302184116303541e-05** | ≤ 0.01 | 通过（降 55%） |
+| loopback `stand.hold_seconds` | 7.499999999999341 | 7.499999999999341 | ≥ 6.0 | **逐位不变** |
+| loopback `stand.max_attitude_error_deg` | 0.05779130222480239 | **0.11199278558472758** | ≤ 5.0 | 通过（余量 45 倍） |
+| loopback `stand.max_tracking_error_rad` | 0.04473942561095967 | **0.04646826440572238** | ≤ 0.07 | 通过 |
+| loopback `stop.final_speed_mps` | 0.003964950131491022 | **0.0038248382123762478** | ≤ 0.05 | 通过 |
+| loopback `stop.seconds_to_static` | 0.29000000000009685 | **0.2800000000000935** | — | 通过 |
+| loopback `stop.static_entered` / `collapsed` | true / true | true / true | 必须 | 不变 |
+| loopback 判据 | 10 通过 / 0 失败 | **10 通过 / 0 失败**（`failed_checks: []`） | — | 不变 |
+| skills `stand` 墙钟 | 0.39167014486156404 | **0.3259358201175928** | ≤ 租约 TTL（声明） | SUCCEEDED |
+| skills `stand` 位移 | 0.00643820654999534 | **0.0069012464253042785** | ≤ 0.05 | 通过 |
+| skills `stand` 倾角 | 0.05779130222366524 | **0.07057470486485902** | ≤ 10.0 | 通过 |
+| skills `stop` 墙钟 | 0.5178679858800024 | **0.46566887316294014** | ≤ 租约 TTL（声明） | SUCCEEDED |
+| 拒绝用例 | 7/7 命中预期错误码 | **7/7 命中同一批错误码** | 下限 5 | 不变 |
+
+- **结论**：stand/stop 全部判据仍然通过（两条验收均 `exit=0`）；数字按预期变化 ⇒
+  旧值是"穿透前提下的平衡点"，新值是"贴面前提下的平衡点"，差异属同一量级
+  （高度 −0.147 mm、跟踪 +0.0017 rad、末速 −0.00014 m/s）。
+- **诚实边界（未定位机制）**：`max_attitude_error_deg` 0.0578° → 0.1120°、
+  skills `stand` 倾角 0.0578° → 0.0706° 只登记实测变化，**未定位成因**
+  （候选假设：贴面 vs 穿入的接触法向力分布不同 ⇒ 静定配平初值不同 —— 未验证，不写成结论）。
+  两者都远离 5.0° / 10.0° 上限，不影响任何判据结论。
+- **无回归**：`verify_go2_gait_in_place.py` 复跑仍 `exit=5`、`checks 20 / failed 13`，
+  原始输出与 `build/iraf-24h-2/02/acceptance-wave-align-run1.txt` **逐字节一致**
+  （仅多出本轮 shell 追加的 `exit=5` 行）⇒ 本轮的注释/文档改动不引入任何回归。
+- **声明未被改动**：`config/go2_loopback.yaml` 本次只动注释，
+  `check_yaml_values_unchanged.py` 实测 **111 个叶子键、0 处键/值变化**
+  （证据 `build/iraf-24h-2/02/diff-config-comments-only.txt`）。
+- **仍引用旧数字、本轮未改的文档（登记为待同步项）**：`docs/progress/2026-09-20-sdk-unitree-24h.md`、
+  `docs/project-progress.md` —— 属带日期的历史里程碑记录，是否回填交人工决定；
+  当前性文档（`config/go2_loopback.yaml` 注释、`docs/debug/2026-09-20-quadruped-skills-and-rejection-paths.md`、
+  `docs/debug/2026-09-21-quadruped-movement-limits.md`、`docs/adr/0008-*.md`）已在本轮标注"被取代"。
+- **未做**：`locomote` 未回填 Profile（wave 验收仍不通过，铁律 2）；下一步 **B**
+  （力矩/期望力级反馈平衡器 + 落点规划）需人工授权、在 ADR-0008 落决策并另立步骤后再实现。
