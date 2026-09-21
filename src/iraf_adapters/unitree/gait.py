@@ -1,4 +1,7 @@
-"""参数化 trot 步态生成器（步骤 02）：相位 → 足端轨迹 → 关节角（解析 IK）。
+"""参数化步态生成器（步骤 02）：相位 → 足端轨迹 → 关节角（解析 IK）。
+
+支持 `gait.kind` = `trot`（对角小跑，动态）与 `wave`（准静态四相位，首期步态）；
+两者的差异**全部**在声明里（相位偏移、占空比、步高/步频），代码路径共用。
 
 本模块只做三件事，全部**声明驱动**：
 
@@ -9,8 +12,8 @@
 2. **几何实测**（`measure_leg_geometry`）：大腿/小腿长度、中立足端位置、关节轴方向
    全部**从被测模型量出来**，而不是把某个约定写死进代码。实测值与文档约定不符即失败
    （例如本模块的平面 IK 只在髋关节轴为 ±x、膝/踝轴为 ±y 时成立）。
-3. **相位 → 关节角**（`foot_offset` / `leg_ik` / `trot_joint_targets`）与**验收判定**
-   （`assess_trot`）：目标角必须在 Profile 声明的关节限位内，否则显式失败；验收判据
+3. **相位 → 关节角**（`foot_offset` / `leg_ik` / `gait_joint_targets`）与**验收判定**
+   （`assess_gait`）：目标角必须在 Profile 声明的关节限位内，否则显式失败；验收判据
    与阈值全部来自声明（倾角上限直接消费安全策略里的移动边界，不写第二份数字）。
 
 分层与边界
@@ -40,8 +43,16 @@ from iraf_adapters.unitree.quadruped import (
     ModelUnavailableError,
 )
 
-#: 已实现的步态类型（只允许对角小跑；其余类型声明即失败，不做近似）。
-GAIT_KINDS = ("trot",)
+#: 已实现的步态类型（其余类型声明即失败，不做近似）：
+#:
+#: - `trot`：对角小跑——两条对角腿同时摆动，同一时刻只有一组（两条腿）支撑，是**动态**步态，
+#:   需要机身平衡器才能稳定；
+#: - `wave`：准静态四相位步态——一次只抬一条腿，任意时刻至少 `n-1` 条腿支撑，
+#:   重心始终落在支撑多边形内 ⇒ **静态稳定**，不需要平衡器（首期步态，ADR-0008 决策 1）。
+GAIT_KINDS = ("trot", "wave")
+
+#: wave 的相位偏移等间隔（四相位：0 / 0.25 / 0.5 / 0.75）。
+WAVE_PHASE_SPACING = 0.25
 
 #: 已实现的摆动相抬脚轨迹形状。`sine` = 半个正弦：`h·sin(πv)`，落地/离地时刻高度为 0。
 SWING_PROFILES = ("sine", "cosine")
@@ -147,13 +158,6 @@ def load_gait_declaration(declaration, profile_joints):
         duty_factor = float(section["duty_factor"])
     except (TypeError, ValueError):
         raise DeclarationError("gait.duty_factor 必须是数字，实际: %r" % (section["duty_factor"],))
-    # 占空比 = 一个周期里处于支撑相的比例。对角小跑要求每条腿的支撑相不少于半个周期，
-    # 否则会出现「少于两条腿着地」乃至腾空相（四足在此阶段无支撑 ⇒ 必然塌落）。
-    if not (0.5 <= duty_factor < 1.0):
-        raise DeclarationError(
-            "gait.duty_factor 必须落在 [0.5, 1.0)，实际: %r"
-            "（小于 0.5 表示支撑相不足半个周期，对角小跑会出现无支撑的腾空相）" % (duty_factor,)
-        )
 
     swing_profile = str(section["swing_profile"])
     if swing_profile not in SWING_PROFILES:
@@ -174,6 +178,27 @@ def load_gait_declaration(declaration, profile_joints):
     if len(legs_section) != 4:
         raise DeclarationError(
             "gait.legs 必须恰好声明 4 条腿（对角小跑的步态定义要求四足），实际: %d" % len(legs_section)
+        )
+
+    # 占空比 = 一个周期里处于支撑相的比例。下限由**步态定义**决定（不是调参量，更不是实现层默认值）：
+    # - trot：一次两条对角腿摆动，支撑相少于半个周期就会出现「少于两条腿着地」乃至腾空相
+    #   （四足在该时刻无支撑 ⇒ 必然塌落）；
+    # - wave：一次只抬一条腿，静态稳定要求任意时刻至少 n−1 条腿支撑 ⇒ duty ≥ (n−1)/n（四足 = 0.75）。
+    # 因此把「一次只抬一条腿」这条不可违反的几何约束写成声明门禁：duty 更小意味着两条腿会同时摆动。
+    n_legs = len(legs_section)
+    if kind == "wave":
+        duty_lower = float(n_legs - 1) / float(n_legs)
+        duty_reason = (
+            "wave（准静态）要求任意时刻至少 %d 条腿支撑（一次只抬一条腿），"
+            "占空比不得小于 (n−1)/n = %.6f" % (n_legs - 1, duty_lower)
+        )
+    else:
+        duty_lower = 0.5
+        duty_reason = "对角小跑要求支撑相不少于半个周期（<0.5 会出现无支撑的腾空相）"
+    if not (duty_lower <= duty_factor < 1.0):
+        raise DeclarationError(
+            "gait.duty_factor 必须落在 [%.6f, 1.0)，实际: %r（%s）"
+            % (duty_lower, duty_factor, duty_reason)
         )
 
     known_joints = set(str(item) for item in (profile_joints or ()))
@@ -216,24 +241,49 @@ def load_gait_declaration(declaration, profile_joints):
     if len(set(all_joints)) != len(all_joints):
         raise DeclarationError("gait.legs 的关节绑定出现重复：同一关节不得属于两条腿")
 
-    # 对角配对自洽门禁：小跑的相位结构必须是「两组各两条腿、组间相位差半个周期」。
-    reference = sorted(set(round(leg["phase_offset"], 9) for leg in legs.values()))
-    if len(reference) != 2:
-        raise DeclarationError(
-            "对角小跑要求相位偏移恰好分成两组，实际 %d 组: %s" % (len(reference), reference)
-        )
-    delta = abs((reference[1] - reference[0]) % 1.0)
-    if abs(delta - 0.5) > 1.0e-6:
-        raise DeclarationError(
-            "对角小跑要求两组相位偏移相差半个周期（0.5），实际相差: %r" % delta
-        )
-    groups = {offset: [] for offset in reference}
+    # 相位结构自洽门禁（按步态类型分派，都是**声明不可违反**的几何约束）：
+    # - trot：恰好两组、每组两条腿、组间相位差半个周期（对角配对）；
+    # - wave：每条腿一个独立相位、四相位等间隔 0.25 ⇒ 任意时刻恰好一条腿处于摆动相。
+    groups = {}
     for code, leg in legs.items():
-        groups[round(leg["phase_offset"], 9)].append(code)
-    for offset, members in sorted(groups.items()):
-        if len(members) != 2:
+        groups.setdefault(round(leg["phase_offset"], 9), []).append(code)
+    reference = sorted(groups)
+    if kind == "trot":
+        if len(reference) != 2:
             raise DeclarationError(
-                "相位偏移 %r 的腿数量必须为 2（对角配对），实际: %s" % (offset, sorted(members))
+                "对角小跑要求相位偏移恰好分成两组，实际 %d 组: %s" % (len(reference), reference)
+            )
+        delta = abs((reference[1] - reference[0]) % 1.0)
+        if abs(delta - 0.5) > 1.0e-6:
+            raise DeclarationError(
+                "对角小跑要求两组相位偏移相差半个周期（0.5），实际相差: %r" % delta
+            )
+        for offset in reference:
+            members = groups[offset]
+            if len(members) != 2:
+                raise DeclarationError(
+                    "相位偏移 %r 的腿数量必须为 2（对角配对），实际: %s" % (offset, sorted(members))
+                )
+    else:
+        if len(reference) != n_legs:
+            raise DeclarationError(
+                "wave（准静态）要求每条腿各有独立的相位偏移（一次只抬一条腿），"
+                "实际只有 %d 个相位偏移: %s" % (len(reference), reference)
+            )
+        for offset in reference:
+            if len(groups[offset]) != 1:
+                raise DeclarationError(
+                    "wave 的每个相位偏移只能绑定 1 条腿，相位偏移 %r 上绑定了: %s"
+                    % (offset, sorted(groups[offset]))
+                )
+        spacing = [
+            (reference[(index + 1) % n_legs] - reference[index]) % 1.0
+            for index in range(n_legs)
+        ]
+        if max(abs(value - WAVE_PHASE_SPACING) for value in spacing) > 1.0e-9:
+            raise DeclarationError(
+                "wave 要求相位偏移等间隔 %r（四相位 0/0.25/0.5/0.75），实际相邻间隔: %s"
+                % (WAVE_PHASE_SPACING, [round(value, 9) for value in spacing])
             )
 
     verification = section["verification"]
@@ -277,10 +327,11 @@ def load_gait_declaration(declaration, profile_joints):
             ),
         },
         "legs": legs,
-        "phase_groups": {
-            "a": sorted(groups[reference[0]]),
-            "b": sorted(groups[reference[1]]),
-        },
+        # 相位组（按相位偏移升序）：trot 得到 2 组、每组 2 条腿，wave 得到 4 组、每组 1 条腿。
+        # 判据（`assess_gait`）按该结构逐组比较，不再假定「只有两组」。
+        "phase_groups": [
+            {"offset": float(offset), "legs": sorted(groups[offset])} for offset in reference
+        ],
         "verification": {
             "report": str(verification["report"]),
             "duration_s": _positive(verification["duration_s"], "gait.verification.duration_s"),
@@ -571,9 +622,13 @@ def stabilization_offset(params, body_velocity_mps, body_omega_rad_s, trunk_rel_
     )
 
 
-def trot_joint_targets(params, geometry, home, joint_limits, elapsed_s, amplitude=1.0,
+def gait_joint_targets(params, geometry, home, joint_limits, elapsed_s, amplitude=1.0,
                        body_velocity_mps=(0.0, 0.0, 0.0), body_omega_rad_s=(0.0, 0.0, 0.0)):
     """步态相位 → 12 个关节的目标角；目标越出 Profile 限位即显式失败。
+
+    与 `gait.kind` 无关：相位→足端偏移（`foot_offset`）与支撑/摆动判定（`is_stance`）
+    都只消费声明里的 duty 与相位偏移，因此 trot（两组各两条腿）与 wave（四相位各一条腿）
+    共用同一条目标角生成路径（差异只在声明，不在代码）。
 
     `home`：Profile `spec.home`（髋关节由 IK 给出，需与 home 相加的偏移为零）。
     `joint_limits`：Profile 的关节限位；只允许在声明范围内活动（调用参数只能收紧，铁律 1.3）。
@@ -608,6 +663,11 @@ def trot_joint_targets(params, geometry, home, joint_limits, elapsed_s, amplitud
                 % (value, joint, float(lower), float(upper))
             )
     return targets
+
+
+def trot_joint_targets(*args, **kwargs):
+    """旧名薄包装（步骤 02 的 trot 路径仍按旧名调用）：语义与 `gait_joint_targets` 完全相同。"""
+    return gait_joint_targets(*args, **kwargs)
 
 
 def amplitude_at(params, elapsed_s):
@@ -673,8 +733,13 @@ def _clear_swing_cycles(samples, params, leg):
     return clear, len(cycles)
 
 
-def assess_trot(samples, params, tilt_limit_deg):
-    """按声明判据验收原地踏步；返回 `{checks, failed_checks, metrics}`。"""
+def assess_gait(samples, params, tilt_limit_deg):
+    """按声明判据验收原地踏步（trot 与 wave 共用）；返回 `{checks, failed_checks, metrics}`。
+
+    「接触序列结构」与「支撑腿数」两条判据都按**声明的相位结构**泛化，
+    因此对 trot（两组各两条腿、跨组半周期折叠）与 wave（四相位各一条腿、组间等间隔 0.25）
+    是同一段代码、同一组阈值：差异只在声明，不在判据实现。
+    """
     verification = params["verification"]
     checks = _Checks()
     legs = sorted(params["legs"])
@@ -823,33 +888,89 @@ def assess_trot(samples, params, tilt_limit_deg):
             "「一直粘在地上」与「一直悬空」都要被拦下" % (leg, steady_fraction, duty),
         )
 
-    group_a = params["phase_groups"]["a"]
-    group_b = params["phase_groups"]["b"]
-    half = bins // 2
+    # 相位结构判据（按声明泛化，trot 与 wave 共用）：
+    # ① **组内一致**：同一相位偏移上的腿（trot 的同组两条腿），支撑相相位环必须逐格一致；
+    # ② **组间按声明相位差平移后一致**：把后一组的相位环平移声明相位差对应的格数后，
+    #    必须与前一组的相位环一致 ⇒ 观测到的接触序列与声明的相位顺序同序。
+    # trot 退化为原有语义（同组 FL/RR 一致；两组按半周期 = bins/2 折叠一致），数值口径不变。
+    phase_groups = params["phase_groups"]
     within = []
-    for group in (group_a, group_b):
-        first, second = group[0], group[1]
-        within.append(
-            max(
-                abs(per_leg[first]["stance_profile"][index] - per_leg[second]["stance_profile"][index])
-                for index in range(bins)
+    for group in phase_groups:
+        reference_leg = group["legs"][0]
+        for other_leg in group["legs"][1:]:
+            within.append(
+                max(
+                    abs(
+                        per_leg[reference_leg]["stance_profile"][index]
+                        - per_leg[other_leg]["stance_profile"][index]
+                    )
+                    for index in range(bins)
+                )
             )
+    pairs = []
+    cross = 0.0
+    for index in range(1, len(phase_groups)):
+        previous = phase_groups[index - 1]
+        current = phase_groups[index]
+        delta = (current["offset"] - previous["offset"]) % 1.0
+        # 平移方向（**符号很关键，四相位才暴露出来**）：腿的相位是 `(u + offset) % 1`，`u = 时间/周期`。
+        # offset 更大 ⇒ 该腿的相位在**同一绝对时刻**更靠前 ⇒ 它的支撑/摆动窗口在绝对相位轴上
+        # 出现得更**早**。因此本组（offset 更大）的相位环 = 前一组按 −shift 格平移：
+        #   current[k] == reference[(k + shift) % bins]，其中 shift = round(Δ·bins)。
+        # 注意 trot 的 Δ = 0.5：+shift 与 −shift 模 bins 相同（半周期在环上自逆），
+        # 所以方向写反在 trot 下**完全不可见**，wave（Δ = 0.25）才让它显形
+        # （实测三对相邻组 max_abs_diff 全为 1.0，证据 build/iraf-24h-2/02/diagnose-phase-structure.txt）。
+        shift = int(round(delta * bins)) % bins
+        reference_profile = per_leg[previous["legs"][0]]["stance_profile"]
+        moved_profile = per_leg[current["legs"][0]]["stance_profile"]
+        difference = max(
+            abs(reference_profile[(k + shift) % bins] - moved_profile[k]) for k in range(bins)
         )
-    cross = max(
-        abs(
-            per_leg[group_a[0]]["stance_profile"][index]
-            - per_leg[group_b[0]]["stance_profile"][(index + half) % bins]
+        cross = max(cross, difference)
+        pairs.append(
+            {
+                "from": previous["legs"][0],
+                "to": current["legs"][0],
+                "declared_offset_delta": delta,
+                "shift_bins": shift,
+                "max_abs_diff": difference,
+            }
         )
-        for index in range(bins)
-    )
     checks.add(
-        "diagonal_phase_structure",
-        {"within_group_max_diff": within, "cross_group_max_diff": cross},
-        "同组相位环最大差 <= %r，跨组（半周期折叠）最大差 <= %r" % (tolerance, tolerance),
-        max(within) <= tolerance and cross <= tolerance,
-        "接触序列的对角结构：同组腿 %s / %s 的支撑相相位环必须一致，"
-        "两组之间必须相差半个周期（把「真对角小跑」与「四条腿同时乱抬」分开）"
-        % (group_a, group_b),
+        "phase_sequence_structure",
+        {"within_group_max_diff": within, "cross_group_max_diff": cross, "pairs": pairs},
+        "同组相位环最大差 <= %r，相邻组按声明相位差平移后的最大差 <= %r" % (tolerance, tolerance),
+        (not within or max(within) <= tolerance) and cross <= tolerance,
+        "接触序列必须与声明的相位顺序一致（把「声明式步态」与「四条腿乱抬」分开）：%s"
+        % "；".join(
+            "相位偏移 %r → 腿 %s" % (group["offset"], group["legs"]) for group in phase_groups
+        ),
+    )
+
+    # 支撑腿数判据：把「两条腿同时抬起」（wave 的静态稳定性前提被破坏）拦下。
+    # 目标值 = 声明 duty × 腿数（wave: 0.75×4 = 3 条；trot: 0.5×4 = 2 条），
+    # 允许量与「单腿支撑相比例」用同一个声明容差（duty_tolerance）折算到腿数上。
+    support_profile = [
+        float(sum(per_leg[leg]["stance_profile"][index] for leg in legs))
+        for index in range(bins)
+    ]
+    support_target = duty * float(len(legs))
+    support_allowance = float(verification["duty_tolerance"]) * float(len(legs))
+    checks.add(
+        "support_legs_profile",
+        {"min": float(min(support_profile)), "max": float(max(support_profile))},
+        "任意相位上的平均支撑腿数 >= %.6f（= duty %r × %d 条腿 − duty_tolerance %r × %d）"
+        % (support_target - support_allowance, duty, len(legs),
+           verification["duty_tolerance"], len(legs)),
+        min(support_profile) >= support_target - support_allowance,
+        "随相位变化的平均支撑腿数 min=%.6f / max=%.6f（%s）"
+        % (
+            min(support_profile),
+            max(support_profile),
+            "wave 的静态稳定性要求任意时刻 ≥ %d 条腿支撑" % int(round(support_target))
+            if params["kind"] == "wave"
+            else "trot 要求两组对角腿交替支撑（任意时刻 2 条）",
+        ),
     )
 
     failed = [item["name"] for item in checks.items if not item["passed"]]
@@ -869,6 +990,12 @@ def assess_trot(samples, params, tilt_limit_deg):
         "steady_samples": len(steady),
         "contact_force_threshold_n": threshold,
         "per_leg": per_leg,
-        "phase_groups": {"a": group_a, "b": group_b},
+        "phase_groups": phase_groups,
+        "support_legs": {"min": float(min(support_profile)), "max": float(max(support_profile))},
     }
     return {"checks": checks.items, "failed_checks": failed, "metrics": metrics}
+
+
+def assess_trot(*args, **kwargs):
+    """旧名薄包装（既有的 trot 调用点与单测仍按旧名调用）：语义与 `assess_gait` 完全相同。"""
+    return assess_gait(*args, **kwargs)

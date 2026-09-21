@@ -1,11 +1,15 @@
 """步态契约层测试（步骤 02）：声明校验、IK、相位→目标角、阻尼偏移、验收判定。
 
 覆盖三类：
-1. **正例**：真实声明能通过校验；IK 与实测中立位形逐位一致；合成「合格采样序列」能判为通过
-   （没有正例对照就无法区分「门禁严格」与「门禁恒失败」）。
-2. **负例**：步频为 0、占空比越界（<0.5 与 ≥1.0）、步高为负、相位不对角、缺键、未知轨迹形状、
-   越出 Profile 限位、判据不达标（饱和/不离地/相位结构错/漂移/高度波动）。
+1. **正例**：真实声明（首期 = wave 四相位）能通过校验；IK 与实测中立位形逐位一致；
+   合成「合格采样序列」能判为通过（没有正例对照就无法区分「门禁严格」与「门禁恒失败」）。
+2. **负例**：步频为 0、占空比越界（trot <0.5 / wave <0.75 / ≥1.0）、步高为负、相位不自洽
+   （trot 不对角、wave 非等间隔或两条腿共用相位）、缺键、未知轨迹形状、越出 Profile 限位、
+   判据不达标（饱和/不离地/相位结构错/两条腿同时离地/漂移/高度波动）。
 3. **边界**：阻尼偏移的截断、机身零平动但滚转时的横向偏移（ω × r 项）、斜坡。
+
+两条路线都在覆盖内：`wave` 是首期步态（真实声明），`trot` 是二期性能优化（声明键保留，
+由 `_trot_params()` 在本文件内构造，避免「二期复用」只停留在注释里）。
 
 全部用例不依赖 MuJoCo 与本机是否跑过场景构建（几何由参数直接给出）。
 """
@@ -54,6 +58,16 @@ def _params(document=None, joints=None):
     return gait.load_gait_declaration(document or _declaration(), joints or _profile_joints())
 
 
+def _trot_params():
+    """trot 路线的声明（对角小跑）：在真实声明的副本上改回两组、组间半周期。"""
+    document = _declaration()
+    document["gait"]["kind"] = "trot"
+    document["gait"]["duty_factor"] = 0.5
+    for code, offset in (("FL", 0.0), ("RR", 0.0), ("FR", 0.5), ("RL", 0.5)):
+        document["gait"]["legs"][code]["phase_offset"] = offset
+    return gait.load_gait_declaration(document, _profile_joints())
+
+
 def _geometry():
     """与实测同形状的几何（不依赖 mujoco）：四条腿都直接在大腿锚点下方。"""
     geometry = {}
@@ -90,12 +104,17 @@ def _limits():
     return {joint: [float(v[0]), float(v[1])] for joint, v in profile["joint_limits"].items()}
 
 
-def _samples(params, *, lift_height_m=0.03, period_hz=None, stance_frac=0.5, height=0.278,
+def _samples(params, *, lift_height_m=0.03, period_hz=None, stance_frac=None, height=0.278,
              height_ripple=0.002, displacement=0.001, saturated=0, tracking=0.09,
              broken_leg=None, duration_s=10.0, tilt=1.0):
-    """合成采样序列：按声明的相位结构给出各腿接触力（支撑 60 N / 摆动 0 N）。"""
+    """合成采样序列：按声明的相位结构给出各腿接触力（支撑 60 N / 摆动 0 N）。
+
+    `stance_frac` 缺省取**声明**的 duty（不是写死的 0.5）：否则声明一改（trot 0.5 → wave 0.75），
+    正例对照就会因为「合成序列与声明不符」整条翻红，把「声明变更」误报成「实现回归」。
+    """
     frequency = float(period_hz or params["frequency_hz"])
     period = 1.0 / frequency
+    stance_frac = float(params["duty_factor"]) if stance_frac is None else float(stance_frac)
     steps = int(duration_s * 100)
     samples = []
     for index in range(steps):
@@ -103,7 +122,13 @@ def _samples(params, *, lift_height_m=0.03, period_hz=None, stance_frac=0.5, hei
         contact = {}
         for code in sorted(params["legs"]):
             phase = ((t / period) + params["legs"][code]["phase_offset"]) % 1.0
-            stance = phase < stance_frac
+            # 边界归属必须**确定性**：wave duty = 0.75 时每 0.04 s 就有一个采样点正好落在
+            # 支撑/摆动边界上，而 `1.25*t` 与 `(1.25*t + 0.25) % 1` 的浮点结果会一个落在
+            # 边界内、一个落在外（实测 t=0.6：0.7499999999999999 判支撑、0.9999999999999999 判摆动），
+            # 于是合成序列出现「同一边界、两条腿归属相反」的浮点假象，把相位结构与离地判据
+            # 一起打红。夹具按边距归属（真实模型不存在「恰好等于边界」的瞬时归属）。
+            # 这不是放宽判据：判据阈值一字未改，改的是夹具在边界上的确定性。
+            stance = phase < stance_frac - 1.0e-9
             if code == broken_leg:
                 stance = True
             contact[code] = 60.0 if stance else 0.0
@@ -128,15 +153,56 @@ def _samples(params, *, lift_height_m=0.03, period_hz=None, stance_frac=0.5, hei
 class GaitDeclarationTests(unittest.TestCase):
     def test_real_declaration_is_valid_and_self_consistent(self):
         params = _params()
+        self.assertEqual("wave", params["kind"])
+        self.assertEqual(0.75, params["duty_factor"])
+        self.assertAlmostEqual(1.0 / params["frequency_hz"], params["period_s"], places=12)
+        # 相位组的约定：按相位偏移**升序**给出，每组带自己的偏移。wave 是四组各一条腿
+        # （0 / 0.25 / 0.5 / 0.75）；判据按该结构逐组比较，不再假定「只有两组」。
+        self.assertEqual(
+            [
+                (0.0, ["FL"]),
+                (0.25, ["RR"]),
+                (0.5, ["FR"]),
+                (0.75, ["RL"]),
+            ],
+            [(group["offset"], group["legs"]) for group in params["phase_groups"]],
+        )
+        self.assertEqual(4, len(params["legs"]))
+
+    def test_trot_route_is_retained_for_phase_two(self):
+        """二期性能优化的 trot 路线必须仍然可加载（否则「保留」只是注释里的说法）。"""
+        params = _trot_params()
         self.assertEqual("trot", params["kind"])
         self.assertEqual(0.5, params["duty_factor"])
-        self.assertAlmostEqual(1.0 / params["frequency_hz"], params["period_s"], places=12)
-        # 分组标签的约定：`a` = 相位偏移较小的那组（真实声明里 FL/RR = 0.0），
-        # `b` = 偏移较大的那组（FR/RL = 0.5）。判据对两组只做对称比较，标签本身不承载语义，
-        # 但必须与实现的分组约定同文，否则「负向相位结构用例」会对错组。
-        self.assertEqual(["FL", "RR"], params["phase_groups"]["a"])
-        self.assertEqual(["FR", "RL"], params["phase_groups"]["b"])
-        self.assertEqual(4, len(params["legs"]))
+        self.assertEqual(
+            [(0.0, ["FL", "RR"]), (0.5, ["FR", "RL"])],
+            [(group["offset"], group["legs"]) for group in params["phase_groups"]],
+        )
+
+    def test_wave_duty_below_static_stability_fails(self):
+        """wave 的静态稳定前提「任意时刻 ≥ n−1 条腿支撑」⇒ duty ≥ (n−1)/n = 0.75，更小即拒绝。"""
+        document = _declaration()
+        document["gait"]["duty_factor"] = 0.70
+        with self.assertRaises(DeclarationError) as caught:
+            gait.load_gait_declaration(document, _profile_joints())
+        message = str(caught.exception)
+        self.assertIn("duty_factor", message)
+        self.assertIn("0.750000", message)
+
+    def test_wave_requires_one_leg_per_phase(self):
+        """两条腿共用同一相位偏移 ⇒ 同一时刻会抬起两条腿，必须显式失败。"""
+        document = _declaration()
+        document["gait"]["legs"]["FR"]["phase_offset"] = 0.25
+        with self.assertRaises(DeclarationError) as caught:
+            gait.load_gait_declaration(document, _profile_joints())
+        self.assertIn("wave", str(caught.exception))
+
+    def test_wave_requires_even_phase_spacing(self):
+        document = _declaration()
+        document["gait"]["legs"]["RL"]["phase_offset"] = 0.7
+        with self.assertRaises(DeclarationError) as caught:
+            gait.load_gait_declaration(document, _profile_joints())
+        self.assertIn("等间隔", str(caught.exception))
 
     def test_missing_section_fails(self):
         document = _declaration()
@@ -309,7 +375,9 @@ class PhaseAndTargetTests(unittest.TestCase):
         # 必须取**摆动相**相位：支撑相（u < duty）在检查形状之前就返回中立偏移，
         # 用 0.25 这类支撑相相位会让「未知形状」永远走不到校验分支（恒不触发的负向用例）。
         with self.assertRaises(DeclarationError):
-            gait.foot_offset(params["duty_factor"] + 0.25, params)
+            gait.foot_offset(
+                params["duty_factor"] + (1.0 - params["duty_factor"]) * 0.5, params
+            )
 
     def test_amplitude_ramp(self):
         params = _params()
@@ -330,8 +398,8 @@ class PhaseAndTargetTests(unittest.TestCase):
             self.assertLessEqual(value, upper + 1e-9)
 
     def test_diagonal_legs_share_the_same_target_at_same_phase(self):
-        """同相位的两条腿（对角）在同一时刻必须给出相同的关节角——步态结构的直接检查。"""
-        params = _params()
+        """trot：同相位的两条腿（对角）在同一时刻必须给出相同的关节角——步态结构的直接检查。"""
+        params = _trot_params()
         targets = gait.trot_joint_targets(
             params, _geometry(), _home(), _limits(), 0.123, 1.0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
         )
@@ -342,6 +410,41 @@ class PhaseAndTargetTests(unittest.TestCase):
             self.assertAlmostEqual(
                 targets["FR_%s" % joint], targets["RL_%s" % joint], places=12
             )
+
+    def test_wave_swing_window_moves_exactly_one_leg(self):
+        """wave：同一时刻只有一条腿处在摆动相 ⇒ 该相位上只有一条腿的目标角与其他腿不同。"""
+        params = _params()
+        targets = gait.gait_joint_targets(
+            params, _geometry(), _home(), _limits(), 0.123, 1.0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
+        )
+        # 相位 0.123 时：FL(0.123) / RR(0.373) / FR(0.623) 支撑，RL(0.873) 摆动（duty 0.75）。
+        for joint in ("thigh_joint", "calf_joint"):
+            stance_value = targets["FL_%s" % joint]
+            for code in ("RR", "FR"):
+                self.assertAlmostEqual(
+                    stance_value, targets["%s_%s" % (code, joint)], places=12,
+                    msg="相位 0.123 时 %s 与 FL 同处支撑相，目标角必须相同" % code,
+                )
+            self.assertGreater(
+                abs(targets["RL_%s" % joint] - stance_value), 1.0e-6,
+                msg="相位 0.123 时 RL 处在摆动相，目标角必须与支撑腿不同（否则摆动相没生效）",
+            )
+
+    def test_legacy_names_are_thin_wrappers(self):
+        """旧名（trot_joint_targets / assess_trot）必须与泛化后的名字等价，不是第二套实现。"""
+        params = _params()
+        self.assertEqual(
+            gait.assess_gait(_samples(params), params, 15.0),
+            gait.assess_trot(_samples(params), params, 15.0),
+        )
+        self.assertEqual(
+            gait.gait_joint_targets(
+                params, _geometry(), _home(), _limits(), 0.5, 1.0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
+            ),
+            gait.trot_joint_targets(
+                params, _geometry(), _home(), _limits(), 0.5, 1.0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
+            ),
+        )
 
     def test_out_of_limit_target_fails_instead_of_clipping(self):
         params = _params()
@@ -409,12 +512,31 @@ class AssessmentTests(unittest.TestCase):
 
     def test_conforming_series_passes(self):
         params = _params()
-        result = gait.assess_trot(_samples(params), params, 15.0)
+        result = gait.assess_gait(_samples(params), params, 15.0)
         self.assertEqual([], result["failed_checks"])
         metrics = result["metrics"]
         self.assertGreater(metrics["samples"], 900)
         for leg in ("FL", "FR", "RL", "RR"):
             self.assertGreaterEqual(metrics["per_leg"][leg]["clear_swing_cycles"], 8)
+        # 正例对照必须同时覆盖新增的支撑腿数判据。断言**门禁口径**而不是 3.0：
+        # 合成序列在相位边界上有一格是部分支撑（实测 min = 2.9），写成 `== 3.0` 会把
+        # 夹具的采样量化误报成实现回归。门禁仍是「≥ duty × 腿数 − duty_tolerance × 腿数 = 2.6」。
+        self.assertGreaterEqual(metrics["support_legs"]["min"], 2.6)
+        self.assertLessEqual(metrics["support_legs"]["max"], 4.0)
+
+    def test_two_legs_airborne_together_fails_support_gate(self):
+        """wave 的静态稳定前提被破坏（同一时刻两条腿离地）⇒ 支撑腿数判据必须失败。"""
+        params = _params()
+        samples = _samples(params)
+        period = params["period_s"]
+        for sample in samples:
+            phase = (float(sample["time_s"]) / period) % 1.0
+            # 人为把 RR / FR 的支撑相压到 1/4 周期（原本 duty = 0.75）⇒ 支撑腿数必然低于声明目标。
+            for code in ("RR", "FR"):
+                own = (phase + params["legs"][code]["phase_offset"]) % 1.0
+                sample["contact_n"][code] = 60.0 if own < 0.25 else 0.0
+        result = gait.assess_gait(samples, params, 15.0)
+        self.assertIn("support_legs_profile", result["failed_checks"])
 
     def test_saturation_fails(self):
         params = _params()
@@ -461,7 +583,7 @@ class AssessmentTests(unittest.TestCase):
             wrong = ((t / period) + wrong_offset) % 1.0
             sample["contact_n"]["RR"] = 60.0 if wrong < params["duty_factor"] else 0.0
         result = gait.assess_trot(samples, params, 15.0)
-        self.assertIn("diagonal_phase_structure", result["failed_checks"])
+        self.assertIn("phase_sequence_structure", result["failed_checks"])
 
     def test_empty_samples_fail_loudly(self):
         params = _params()

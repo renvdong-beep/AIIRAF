@@ -455,8 +455,12 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 forces[code] += abs(float(result[0]))
         return forces
 
-    def trot_in_place(self, lease, duration_ms=None, execution_id=None):
-        """参数化 trot 原地踏步：位移目标恒为 0，只做支撑/摆动切换（步骤 02）。
+    def gait_in_place(self, lease, duration_ms=None, execution_id=None):
+        """参数化步态原地踏步：位移目标恒为 0，只做支撑/摆动切换（步骤 02）。
+
+        步态类型由声明决定（`gait.kind` = `trot` 或 `wave`）：本方法不写第二条实现——
+        相位与轨迹由 `iraf_adapters.unitree.gait` 消费声明后给出，本方法只负责
+        守卫顺序、租约/执行记录、以及把目标角交给**既有**的 PD + 重力前馈。
 
         与能力面的关系：本方法**不声明能力**（Profile 的 capabilities 仍只有 stand/stop；
         步态能力经技能层验收后回填属步骤 03）。台账按规范能力名 `locomote` 登记，
@@ -487,7 +491,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             amplitude = gait.amplitude_at(params, elapsed)
             velocity = self._body_frame_velocity(trunk_body)
             omega = self._body_frame_omega(trunk_body)
-            targets = gait.trot_joint_targets(
+            targets = gait.gait_joint_targets(
                 params, geometry, home, limits, elapsed, amplitude, velocity, omega
             )
             return np.array([targets[joint] for joint in self.joint_order], dtype=float)
@@ -526,7 +530,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         report = {
             "simulation": True,
             "capability": "locomote",
-            "path": "trot_in_place",
+            "path": "gait_in_place",
             "execution_id": active_id,
             "fencing_token": int(lease.fencing_token),
             "control_source_owner": str(getattr(lease, "owner", "")),
@@ -570,6 +574,14 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         }
         self.ledger.finish(active_id, "SUCCEEDED")
         return report
+
+    def trot_in_place(self, lease, duration_ms=None, execution_id=None):
+        """旧名薄包装（步骤 02 新增时的名字）：语义与 `gait_in_place` 完全相同。
+
+        保留原因：既有调用点（`scripts/view_go2_gait.py` 等显示入口）不改名也能继续工作；
+        步态类型仍由声明给出，`trot_in_place` 不是「第二条实现」。
+        """
+        return self.gait_in_place(lease, duration_ms=duration_ms, execution_id=execution_id)
 
     def locomote(self, velocity, duration_ms, lease, execution_id=None):
         """速度指令：首期无步态控制器，显式拒绝（不伪造「指令已生效」）。

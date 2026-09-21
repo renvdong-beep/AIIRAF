@@ -118,16 +118,30 @@ locomotion:
 # 它们由实现层 `iraf_adapters.unitree.gait.measure_leg_geometry` 从被测模型实测，
 # 避免同一事实两处（实测证据 build/iraf-24h-2/02/probe-legs.txt）。
 gait:
-  kind: trot
-  # 步频（一个完整步态周期的 Hz）：1.6 Hz ⇒ 周期 0.625 s。
-  # 取值依据 = 步频×步高×kd 扫描（证据 build/iraf-24h-2/02/scan-*.json），
-  # 判据是「高度标准差 / 倾角 / 跟踪误差 / 控制量饱和」四项，见下面 verification 的注释。
-  frequency_hz: 1.6
-  # 摆动相抬脚高度：0.05 m（足端球半径 0.022 m，抬脚需明显大于地形尺度才谈得上「踏步」）。
-  step_height_m: 0.05
-  # 支撑相占周期比例：对角小跑的 0.5（恰好一个对角组支撑，另一个对角组摆动）。
-  duty_factor: 0.5
-  # 摆动相抬脚轨迹形状：半个正弦 h·sin(πv)，离地/落地时刻高度为 0（无阶跃）。
+  # 步态类型：wave = 准静态四相位步态（一次只抬一条腿 ⇒ 任意时刻 ≥3 条腿支撑 ⇒ **静态稳定**，
+  # 不需要机身平衡器）。依据：ADR-0008 决策 1（2026-09-21 修订为 wave，trot 列为二期性能优化）。
+  # 为什么不用 trot：动态小跑的 19 条判据 11 条失败（height_mean_m −38.66691503360235、
+  # max_tilt_deg 149.00568880619002、max_displacement_m 3.5763946259283177 等），
+  # 且 26 组参数扫描（步频×步高×kd）+ 阻尼/截断对照**每一组都倒下** ⇒ 调参不是出路。
+  # 证据：build/iraf-24h-2/02/scan*.json、build/iraf-24h-2/02/acceptance-final.txt。
+  kind: wave
+  # 步频（一个完整步态周期的 Hz）：1.25 Hz ⇒ 周期 0.8 s、每条腿的摆动窗口 0.2 s。
+  # 取值依据：10 s 验收时长内 12.5 个周期（扣掉 1 s 幅度斜坡后约 11 个稳态周期，
+  # 满足 min_clear_swing_cycles_per_leg = 8）；再快会缩短摆动窗口（落地冲击变大），
+  # 再慢会减少可用于「明确离地」统计的稳态周期数。
+  frequency_hz: 1.25
+  # 摆动相抬脚高度：0.08 m。
+  # 取值依据（**实测**，不是拍脑袋）：中立位形（关键帧 home）下四个足端球最低点在台面下
+  # 0.0183725 m（证据 build/iraf-24h-2/02/probe-neutral-clearance.txt）；又因腿的 PD 柔度，
+  # 需要「命令抬起约 0.017 m」才真正把接触力卸到阈值以下（trot 扫描实测：抬脚 ≤0.01 m 从未离地、
+  # ≥0.02 m 才离地）。因此步高必须明显大于该卸载阈值，摆动窗口才有一段是**真的**离地。
+  step_height_m: 0.08
+  # 支撑相占周期比例：准静态 wave 的 0.75。
+  # 取值依据 = 静态稳定条件「任意时刻至少 n−1 条腿支撑」⇒ duty ≥ (n−1)/n = 0.75（四足）。
+  # 该下限由 `gait.load_gait_declaration` 按 kind 分派后强制（更小的占空比会让两条腿同时摆动）。
+  duty_factor: 0.75
+  # 摆动相抬脚轨迹形状：半个正弦 h·sin(πv)（离地/落地时刻高度为 0，无阶跃）。
+  # 在同样步高下它在摆动窗口起点/终点的斜率最大 ⇒「真正离地」的窗口最宽，正是 wave 需要的方向。
   swing_profile: sine
   # 幅度斜坡：0 → 满幅用时（s），避免起步的阶跃输入把机身弹起来。
   ramp_s: 1.0
@@ -140,6 +154,9 @@ gait:
   #   enabled=true  k=0.12 clamp=0.20 ⇒ height_mean −79.019873 m、ctrl_saturated 8314、tracking 1.5155
   # ⇒ 开阻尼在**每一项**指标上都更差，且放宽截断上限更差（排除了「偏移被截断导致阻尼不足」的假设）。
   # 因此本声明取实测最优的一档（关闭）；**不是**放宽判据：19 项判据与阈值一字未改，验收仍为不通过。
+  # 改走 wave 后的判断（**未重新做扫描**，如实登记）：准静态 wave 任意时刻 ≥3 条腿支撑，
+  # 不存在 trot 那种「只剩两条腿 ⇒ 足端跟着机身走」的正反馈前提，因此保持关闭、不引入平衡器；
+  # 若将来 trot 二期重新启用，必须先补该形式的扫描证据再改 enabled。
   # 缺任一键即失败（键位保留：schema 要求本段三键齐备；关闭只改 enabled，不删键）。
   stabilization:
     enabled: false
@@ -150,9 +167,9 @@ gait:
   # 腿部身份与相位偏移（矩阵式外置，禁止在实现层写 leg 名与关节名的对应关系）。
   legs:
     FL: {hip_joint: FL_hip_joint, thigh_joint: FL_thigh_joint, calf_joint: FL_calf_joint, contact_geom: FL, phase_offset: 0.0}
-    RR: {hip_joint: RR_hip_joint, thigh_joint: RR_thigh_joint, calf_joint: RR_calf_joint, contact_geom: RR, phase_offset: 0.0}
+    RR: {hip_joint: RR_hip_joint, thigh_joint: RR_thigh_joint, calf_joint: RR_calf_joint, contact_geom: RR, phase_offset: 0.25}
     FR: {hip_joint: FR_hip_joint, thigh_joint: FR_thigh_joint, calf_joint: FR_calf_joint, contact_geom: FR, phase_offset: 0.5}
-    RL: {hip_joint: RL_hip_joint, thigh_joint: RL_thigh_joint, calf_joint: RL_calf_joint, contact_geom: RL, phase_offset: 0.5}
+    RL: {hip_joint: RL_hip_joint, thigh_joint: RL_thigh_joint, calf_joint: RL_calf_joint, contact_geom: RL, phase_offset: 0.75}
   verification:
     report: build/acceptance/go2-trot-in-place/report.json
     # 验收持续时长：10 s ⇒ 16 个完整步态周期（扣掉 1 s 斜坡后仍有 14 个稳态周期）。
@@ -174,9 +191,14 @@ gait:
     max_displacement_m: 0.05
     # 支撑判定阈值（足端接触法向力 N）：单腿站立载荷约 mg/4 ≈ 38 N，2 N 只判「是否着地」。
     contact_force_threshold_n: 2.0
-    # 「明确离地」的判据：一个周期内支撑相比例 ≤ duty − 本值（即至少 1/4 周期离地）。
+    # 「明确离地」的判据（**实现口径**：一个周期内支撑相比例 ≤ 1 − 本值，即至少 1/4 周期离地；
+    # 早先本行注释写成 `duty − 本值`，与实现不一致，已按实现改正——阈值一字未改）。
+    # ⚠ 未决冲突（已登记，未私自改判据）：duty = 0.75 时本判据要求「支撑相 ≤ 0.75」，而
+    #   「任意时刻 ≥3 条腿支撑」又要求「离地比例 ≤ 1/4」⇒ 两者夹出「离地比例恰好 = 1/4」的零余量点：
+    #   一条腿的离地窗口必须恰好铺满整个摆动窗口（含起落瞬间），落地/离地的卸载时间必须为零。
+    #   证据与推导见 docs/debug/2026-09-21-quadruped-gait-trot-to-wave.md；处理方式待人工决策。
     min_swing_fraction: 0.25
-    # 10 s × 1.6 Hz = 16 周期，扣掉 1 s 斜坡后约 14 个稳态周期；本下限取 8（留 ~1.8 倍余量）。
+    # 10 s × 1.25 Hz = 12.5 周期，扣掉 1 s 斜坡后约 11 个稳态周期；本下限取 8（留 ~1.4 倍余量）。
     min_clear_swing_cycles_per_leg: 8
     # 稳态支撑相比例与声明占空比的**对称**容差：|实测 − duty| ≤ 本值。
     # 目的不是「精确对表」，而是把两种退化形态拦下：脚一直粘在地上（≈1.0）或一直悬空（≈0.0）。
