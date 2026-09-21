@@ -63,6 +63,9 @@ def _trot_params():
     document = _declaration()
     document["gait"]["kind"] = "trot"
     document["gait"]["duty_factor"] = 0.5
+    # sway 是 wave 的静态稳定必要项：trot 的同一摆动窗口内有两条腿（对角腿对所需重心方向
+    # 实测夹角 180.00°），逐相位转移无定义 ⇒ 声明 sway 的 trot 必须显式失败，故此处删除。
+    document["gait"].pop("sway")
     for code, offset in (("FL", 0.0), ("RR", 0.0), ("FR", 0.5), ("RL", 0.5)):
         document["gait"]["legs"][code]["phase_offset"] = offset
     return gait.load_gait_declaration(document, _profile_joints())
@@ -158,16 +161,28 @@ class GaitDeclarationTests(unittest.TestCase):
         self.assertAlmostEqual(1.0 / params["frequency_hz"], params["period_s"], places=12)
         # 相位组的约定：按相位偏移**升序**给出，每组带自己的偏移。wave 是四组各一条腿
         # （0 / 0.25 / 0.5 / 0.75）；判据按该结构逐组比较，不再假定「只有两组」。
+        # 腿的分配 = **环形抬腿顺序** RL → RR → FR → FL（相位偏移升序 = 抬腿顺序的逆序）：
+        # 只有环序才能让「重心转移方向」每窗口转 90°（旧分配会让 x 分量 +/− 来回跳）。
         self.assertEqual(
             [
                 (0.0, ["FL"]),
-                (0.25, ["RR"]),
-                (0.5, ["FR"]),
+                (0.25, ["FR"]),
+                (0.5, ["RR"]),
                 (0.75, ["RL"]),
             ],
             [(group["offset"], group["legs"]) for group in params["phase_groups"]],
         )
         self.assertEqual(4, len(params["legs"]))
+        # 双腿摆动顺序（按摆动窗口起点升序）必须与声明的相位偏移升序严格逆序：
+        # 窗口起点 = (duty − offset) mod 1 ⇒ offset 越大越早抬。
+        windows = gait.sway_windows(params)[0]
+        self.assertEqual(
+            ["RL", "RR", "FR", "FL"],
+            [code for code, _ in sorted(windows.items(), key=lambda item: item[1])],
+        )
+        # 重心转移（决策 A）：wave 必须声明 sway，且方向与实测足迹的内法线一致。
+        self.assertIsNotNone(params["sway"])
+        self.assertGreater(params["sway"]["amplitude_m"], 0.0)
 
     def test_trot_route_is_retained_for_phase_two(self):
         """二期性能优化的 trot 路线必须仍然可加载（否则「保留」只是注释里的说法）。"""
@@ -192,7 +207,9 @@ class GaitDeclarationTests(unittest.TestCase):
     def test_wave_requires_one_leg_per_phase(self):
         """两条腿共用同一相位偏移 ⇒ 同一时刻会抬起两条腿，必须显式失败。"""
         document = _declaration()
-        document["gait"]["legs"]["FR"]["phase_offset"] = 0.25
+        document["gait"]["legs"]["RR"]["phase_offset"] = document["gait"]["legs"]["FR"][
+            "phase_offset"
+        ]
         with self.assertRaises(DeclarationError) as caught:
             gait.load_gait_declaration(document, _profile_joints())
         self.assertIn("wave", str(caught.exception))
@@ -287,8 +304,9 @@ class GaitDeclarationTests(unittest.TestCase):
         self.assertIn("相位", str(caught.exception))
 
     def test_quarter_period_offset_fails(self):
+        """相位偏移不构成「一腿一相位」的等间隔结构（改一条腿即破坏）⇒ 失败。"""
         document = _declaration()
-        document["gait"]["legs"]["FR"]["phase_offset"] = 0.25
+        document["gait"]["legs"]["RL"]["phase_offset"] = 0.5
         with self.assertRaises(DeclarationError):
             gait.load_gait_declaration(document, _profile_joints())
 
@@ -596,6 +614,177 @@ class AssessmentTests(unittest.TestCase):
         result = gait.assess_trot(samples, params, 15.0)
         self.assertIn("min_base_height_m", result["failed_checks"])
         self.assertIn("height_mean_m", result["failed_checks"])
+
+
+class SwayContractTests(unittest.TestCase):
+    """逐相位重心转移（决策 A）的契约：声明校验、方向门禁（正/负对照）、相位→偏移、被消费性。
+
+    背景（实测）：对称矩形足迹下抬起任意单腿的三腿支撑三角形静态余量仅 ±0.000227483 m（≈0），
+    且常量重心平移的可行域为空集 ⇒ wave 必须逐相位把重心移进当前支撑三角形。
+    """
+
+    def _document(self):
+        return _declaration()
+
+    def test_wave_without_sway_fails(self):
+        """wave 缺 sway ⇒ 声明非法（不做默认值兜底）。"""
+        document = self._document()
+        document["gait"].pop("sway")
+        with self.assertRaises(DeclarationError) as caught:
+            gait.load_gait_declaration(document, _profile_joints())
+        self.assertIn("gait.sway", str(caught.exception))
+
+    def test_trot_with_sway_fails(self):
+        """trot 声明 sway ⇒ 声明非法（同一窗口两条腿的方向相反，逐相位转移无定义）。"""
+        document = self._document()
+        document["gait"]["kind"] = "trot"
+        document["gait"]["duty_factor"] = 0.5
+        for code, offset in (("FL", 0.0), ("RR", 0.0), ("FR", 0.5), ("RL", 0.5)):
+            document["gait"]["legs"][code]["phase_offset"] = offset
+        with self.assertRaises(DeclarationError) as caught:
+            gait.load_gait_declaration(document, _profile_joints())
+        self.assertIn("sway", str(caught.exception))
+
+    def test_missing_sway_key_fails(self):
+        for key in ("amplitude_m", "axis", "phase_map", "smooth_s", "ramp_s",
+                    "direction_tolerance_deg"):
+            with self.subTest(key=key):
+                document = self._document()
+                document["gait"]["sway"].pop(key)
+                with self.assertRaises(DeclarationError) as caught:
+                    gait.load_gait_declaration(document, _profile_joints())
+                self.assertIn(key, str(caught.exception))
+
+    def test_sway_axis_must_be_subset_of_xy(self):
+        document = self._document()
+        document["gait"]["sway"]["axis"] = ["z"]
+        with self.assertRaises(DeclarationError) as caught:
+            gait.load_gait_declaration(document, _profile_joints())
+        self.assertIn("axis", str(caught.exception))
+
+    def test_sway_direction_tolerance_upper_bound(self):
+        """容差写成 180° 会让方向门禁恒真 ⇒ 上界由实现层强制（门禁绿、计数 0 的同族缺陷）。"""
+        document = self._document()
+        document["gait"]["sway"]["direction_tolerance_deg"] = 180.0
+        with self.assertRaises(DeclarationError) as caught:
+            gait.load_gait_declaration(document, _profile_joints())
+        self.assertIn("direction_tolerance_deg", str(caught.exception))
+
+    def test_sway_phase_map_must_cover_all_legs(self):
+        document = self._document()
+        document["gait"]["sway"]["phase_map"].pop("RR")
+        with self.assertRaises(DeclarationError) as caught:
+            gait.load_gait_declaration(document, _profile_joints())
+        self.assertIn("phase_map", str(caught.exception))
+
+    def test_sway_direction_report_accepts_real_declaration(self):
+        """正例对照：真实声明的方向必须通过实测足迹门禁（否则门禁恒失败，等于没有门禁）。"""
+        params = _params()
+        report = gait.sway_direction_report(params, _geometry())
+        self.assertTrue(report["declared"])
+        self.assertLess(report["max_angle_error_deg"], params["sway"]["direction_tolerance_deg"])
+        for code in ("FL", "FR", "RL", "RR"):
+            with self.subTest(leg=code):
+                self.assertTrue(report["per_leg"][code]["passed"])
+        # 抬每条腿时「足迹中心」相对该腿支撑三角形的余量都 ≈ 0（这正是必须做重心转移的原因）。
+        for code, item in report["per_leg"].items():
+            with self.subTest(leg=code):
+                self.assertLess(abs(item["margin_at_footprint_center_m"]), 1e-3)
+
+    def test_sway_direction_report_rejects_flipped_direction(self):
+        """负例对照：方向写反（本应朝支撑三角形内）必须被门禁拦下。"""
+        document = self._document()
+        flipped = document["gait"]["sway"]["phase_map"]["FL"]
+        document["gait"]["sway"]["phase_map"]["FL"] = {"x": -flipped["x"], "y": -flipped["y"]}
+        params = gait.load_gait_declaration(document, _profile_joints())
+        with self.assertRaises(DeclarationError) as caught:
+            gait.sway_direction_report(params, _geometry())
+        self.assertIn("FL", str(caught.exception))
+
+    def test_sway_direction_report_rejects_zero_vector(self):
+        document = self._document()
+        document["gait"]["sway"]["phase_map"]["FR"] = {"x": 0.0, "y": 0.0}
+        with self.assertRaises(DeclarationError) as caught:
+            gait.load_gait_declaration(document, _profile_joints())
+        self.assertIn("零矢量", str(caught.exception))
+
+    def test_sway_offset_holds_declared_direction_inside_window(self):
+        """窗口中部（远离过渡）⇒ 偏移 = 幅度 × 声明方向。"""
+        params = _params()
+        period = params["period_s"]
+        sway = params["sway"]
+        for code, start in gait.sway_windows(params)[0].items():
+            with self.subTest(leg=code):
+                u = (start + 0.125) % 1.0
+                dx, dy = gait.sway_offset_m(params, u * period)
+                direction = sway["directions"][code]
+                self.assertAlmostEqual(sway["amplitude_m"] * direction[0], dx, places=12)
+                self.assertAlmostEqual(sway["amplitude_m"] * direction[1], dy, places=12)
+
+    def test_sway_offset_is_continuous_at_window_boundary(self):
+        """窗口边界处偏移连续，且等于相邻两个方向的平滑中点（不产生阶跃输入）。"""
+        params = _params()
+        period = params["period_s"]
+        amplitude = params["sway"]["amplitude_m"]
+        # RL 窗口 = [0, 0.25)、RR 窗口 = [0.25, 0.5)：边界 0.25 上两方向为 (0.592,−0.806) 与 (0.592,+0.806)
+        # ⇒ 平滑后方向为 (1, 0)，偏移 = (amplitude, 0)。
+        left = gait.sway_offset_m(params, (0.25 - 1e-9) * period)
+        right = gait.sway_offset_m(params, (0.25 + 1e-9) * period)
+        self.assertAlmostEqual(amplitude, left[0], places=6)
+        self.assertAlmostEqual(amplitude, right[0], places=6)
+        self.assertAlmostEqual(0.0, left[1], places=6)
+        self.assertAlmostEqual(0.0, right[1], places=6)
+        self.assertLess(abs(left[0] - right[0]) + abs(left[1] - right[1]), 1e-5)
+
+    def test_sway_offset_respects_declared_ramp(self):
+        """斜坡由声明给出：建立期内偏移按比例缩小，不是实现层默认值。"""
+        document = self._document()
+        document["gait"]["sway"]["ramp_s"] = 0.4
+        params = gait.load_gait_declaration(document, _profile_joints())
+        period = params["period_s"]
+        # t = 0.1 s（相位 0.125，RL 窗口中部）⇒ 斜坡兑现 0.1/0.4 = 0.25。
+        dx, dy = gait.sway_offset_m(params, 0.1)
+        direction = params["sway"]["directions"]["RL"]
+        self.assertAlmostEqual(0.25 * params["sway"]["amplitude_m"] * direction[0], dx, places=12)
+        self.assertAlmostEqual(0.25 * params["sway"]["amplitude_m"] * direction[1], dy, places=12)
+        # t = 0 是斜坡起点：偏移必须是 (0, 0)，不是「未定义」也不是半个偏移。
+        self.assertEqual((0.0, 0.0), gait.sway_offset_m(params, 0.0))
+
+    def test_sway_axis_restricts_components(self):
+        document = self._document()
+        document["gait"]["sway"]["axis"] = ["y"]
+        params = gait.load_gait_declaration(document, _profile_joints())
+        period = params["period_s"]
+        dx, dy = gait.sway_offset_m(params, 0.125 * period)
+        self.assertEqual(0.0, dx)
+        self.assertNotEqual(0.0, dy)
+
+    def test_sway_is_consumed_by_joint_targets(self):
+        """声明必须被消费：幅度从 >0 改为 0，目标角必须随之改变（否则声明是装饰）。"""
+        params = _params()
+        document = self._document()
+        document["gait"]["sway"]["amplitude_m"] = 0.0
+        zero = gait.load_gait_declaration(document, _profile_joints())
+        geometry = _geometry()
+        elapsed = 0.1  # 相位 0.125：RL 摆动窗口中部
+        with_sway = gait.gait_joint_targets(
+            params, geometry, _home(), _limits(), elapsed, 1.0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
+        )
+        without = gait.gait_joint_targets(
+            zero, geometry, _home(), _limits(), elapsed, 1.0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
+        )
+        differences = [abs(with_sway[j] - without[j]) for j in with_sway]
+        self.assertGreater(max(differences), 1.0e-3)
+
+    def test_trot_has_no_sway_and_is_unchanged(self):
+        """trot 路线不声明 sway ⇒ 偏移恒为 0（逐位不变，二期复用不受影响）。"""
+        params = _trot_params()
+        self.assertIsNone(params["sway"])
+        for elapsed in (0.0, 0.19, 0.5, 1.3):
+            with self.subTest(elapsed=elapsed):
+                self.assertEqual((0.0, 0.0), gait.sway_offset_m(params, elapsed))
+        self.assertEqual({"declared": False, "reason": "本步态类型不声明 gait.sway"},
+                         gait.sway_direction_report(params, _geometry()))
 
 
 if __name__ == "__main__":

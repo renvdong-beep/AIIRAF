@@ -165,11 +165,68 @@ gait:
     # 偏移上限（m）：超出即截断（不与 Profile 限位冲突；实测最大偏移见调试记录）。
     max_linear_offset_m: 0.04
   # 腿部身份与相位偏移（矩阵式外置，禁止在实现层写 leg 名与关节名的对应关系）。
+  # 偏移分配 = **环形抬腿顺序** RL → RR → FR → FL（每 1/4 周期抬下一条，相位偏移升序 =
+  # 抬腿顺序的逆序）。为什么必须是环形顺序（2026-09-21 决策 A 的实现约束，实测推导）：
+  # 抬每条腿时重心要移向「剩余三腿支撑三角形的内法线」方向，而该方向对四条腿分别是
+  #   RL (+x,−y)、RR (+x,+y)、FR (−x,+y)、FL (−x,−y)
+  # ⇒ 只有按环序抬腿时该矢量才**每次转 90°**（平滑旋转，重心沿闭合曲线走）；
+  #   旧分配（FL/RR/FR/RL = 0/0.25/0.5/0.75，抬腿顺序 RL→FR→RR→FL）会让 x 分量每窗口翻转
+  #   （+x/−x/+x/−x），重心在两个相位之间来回跳，属**声明层面的抖动**。
   legs:
     FL: {hip_joint: FL_hip_joint, thigh_joint: FL_thigh_joint, calf_joint: FL_calf_joint, contact_geom: FL, phase_offset: 0.0}
-    RR: {hip_joint: RR_hip_joint, thigh_joint: RR_thigh_joint, calf_joint: RR_calf_joint, contact_geom: RR, phase_offset: 0.25}
-    FR: {hip_joint: FR_hip_joint, thigh_joint: FR_thigh_joint, calf_joint: FR_calf_joint, contact_geom: FR, phase_offset: 0.5}
+    FR: {hip_joint: FR_hip_joint, thigh_joint: FR_thigh_joint, calf_joint: FR_calf_joint, contact_geom: FR, phase_offset: 0.25}
+    RR: {hip_joint: RR_hip_joint, thigh_joint: RR_thigh_joint, calf_joint: RR_calf_joint, contact_geom: RR, phase_offset: 0.5}
     RL: {hip_joint: RL_hip_joint, thigh_joint: RL_thigh_joint, calf_joint: RL_calf_joint, contact_geom: RL, phase_offset: 0.75}
+  # 逐相位重心转移（wave 的静态稳定必要项，2026-09-21 决策 A）。缺本段 ⇒ 声明非法（退出码 2）。
+  # 为什么必需（实测，不重复量）：中立站姿四足接触点构成 0.3868 × 0.2840 m 矩形，整机
+  # （15.596408 kg）重心投影距「抬单腿后支撑三角形」最紧边的有符号余量仅 ±0.000227483 m
+  # （抬 RL/RR 为负）；矩形对角线恒过中心 ⇒ 与站位宽度无关。且「常量重心平移」可行域为空集
+  # （对角腿对所需平移夹角 180.00°、两相位余量之和上确界 +0.000000000 m，穷举 10201 点最优
+  # 余量 −0.000227483 m）⇒ 只能**逐相位**把重心移进当前支撑三角形。
+  # 证据：build/iraf-24h-2/02/{support-margin-round3.json,probe-constant-shift.txt}。
+  sway:
+    # 机身（重心）逐相位的位移目标幅度（m，躯干系水平面）。
+    # 取值依据 = 探针实测「目标余量 0.010 m」所需的平移量（FL 0.009796 m、RL 0.010228 m 量级）
+    # ÷ 关节空间偏移的兑现率：命令平移 (0.010,0.010) 时机身实测只位移 (0.00561,0.00370)
+    # （兑现 56%/37%，证据 build/iraf-24h-2/02/trial-static-three-leg.json）⇒ 需按兑现率放大；
+    # 档位由本步扫描实测选定（build/iraf-24h-2/02/scan-sway-run*.txt）：0.02/0.03/0.05 档
+    # height_mean_m 在 −3.0 ~ −7.8 之间（均翻倒），0.06 档最好（height_mean_m +0.226235、
+    # min_base_height_m 0.1351、max_displacement_m 0.90133）⇒ 本档为实测最优，**不是**判据放宽。
+    # ⚠ 诚实边界：本形式的重心转移**已被隔离实测证明不是可用执行器**（见下 ramp_s 注释与
+    # docs/debug/2026-09-21-quadruped-gait-trot-to-wave.md §9）：抬腿高度 0.001 m（四足基本不离地）
+    # 时，幅度 0（对照）z_mean 0.279955 m / 倾角 0.091° / 漂移 0.00649 m；
+    # 而幅度 0.005 m（5 mm）即 z_mean −12.184303 m、倾角 171.175°、漂移 4.78069 m。
+    amplitude_m: 0.06
+    # 参与转移的轴（躯干系）：x = 前后、y = 左右。两个分量都需要（对角腿对的方向不与轴平行）。
+    axis: [x, y]
+    # 各腿摆动窗口内机身要移动的**单位方向**＝抬起该腿后支撑三角形「最紧边」的内法线
+    # （实测方向见上表）。装配期由 `gait.sway_direction_report` 按被测模型的实测足迹复核
+    # （夹角 ≤ direction_tolerance_deg），写反即显式失败——这条门禁抓的是「方向写反」这类
+    # 会静默失效的缺陷（照着错方向跑，判据全绿但机身翻倒）。
+    phase_map:
+      FL: {x: -0.592, y: -0.806}
+      FR: {x: -0.592, y: 0.806}
+      RL: {x: 0.592, y: -0.806}
+      RR: {x: 0.592, y: 0.806}
+    # 相邻窗口之间的方向过渡时长（s）：升余弦核平滑，避免阶跃输入。
+    # 取值以「过渡不产生高加速度」为准：0.8 s 周期下 0.20 s ≈ 窗口长度的 0.8，
+    # 横向加速度量级 ≈ A·(2π/T)²（A = 0.06 m ⇒ 1.85 m/s²）。档位同样是扫描实测最优
+    # （0.08/0.16/0.20 三档里 0.20 最好；降低步频到 0.4 Hz 不改善 ⇒ 不是速度问题）。
+    smooth_s: 0.20
+    # 幅度建立的斜坡时长（s）：0 = 首次抬腿前就建立满幅。
+    # 为什么单独给斜坡（不与步高 ramp_s 共用）：步高从 0 起坡是合理的（避免起步冲击），
+    # 但**重心转移必须在第一次抬腿之前就到位**，否则第一个摆动窗口在「重心仍在支撑三角形边界上」
+    # 的状态下抬起 ⇒ 第一个周期就倾覆（实测 wave 首个周期即倾 4.20°，见时间线证据）。
+    # ⚠ 隔离实测（本步，证据 build/iraf-24h-2/02/scan-sway-isolation.txt）：把步高降到 0.001 m
+    # （四足基本不离地、支撑相 1.0）后，幅度 0 的对照完全稳定（z_mean 0.279955、倾角 0.091°、
+    # 漂移 0.00649 m、饱和 0），而幅度 0.005/0.01/0.02/0.04 m 全部翻倒 ⇒ 失稳由**重心转移本身**
+    # 造成，与抬腿/落地动力学无关；且 5 mm 即失稳、幅度越大不一定越差（非单调）⇒ 是足–地
+    # 黏滑推进（stick-slip）而不是「重心没移到位」。⇒ 本形式（关节空间足端目标偏移）不是可用的
+    # 重心转移执行器，路线需人工再决策（见调试记录 §9）。
+    ramp_s: 0.0
+    # 方向门禁容差（度）：声明方向与实测内法线的夹角上限（上界 45° 由实现层强制，
+    # 防止把容差写成 180° 让门禁恒真）。
+    direction_tolerance_deg: 5.0
   verification:
     report: build/acceptance/go2-trot-in-place/report.json
     # 验收持续时长：10 s ⇒ 16 个完整步态周期（扣掉 1 s 斜坡后仍有 14 个稳态周期）。

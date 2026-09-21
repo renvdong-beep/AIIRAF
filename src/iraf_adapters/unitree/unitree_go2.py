@@ -477,6 +477,9 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
 
         params = self._gait_parameters()
         geometry = self._leg_geometry(params)
+        # 重心转移方向的实测复核（wave 必需）：声明方向与「抬腿后支撑三角形最紧边内法线」不符
+        # 时显式失败（DeclarationError）。这条门禁放在调用点（需要被测模型的实测足迹）。
+        sway_report = gait.sway_direction_report(params, geometry)
         seconds = self.resolve_duration_ms(duration_ms, params["verification"]["duration_s"])
         home = {joint: float(self.profile.home[joint]) for joint in self.joint_order}
         limits = {
@@ -548,6 +551,21 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 "swing_profile": params["swing_profile"],
                 "ramp_s": params["ramp_s"],
                 "phase_groups": params["phase_groups"],
+                # 逐相位重心转移（wave 必需；trot 为 null 而不是缺键——缺键会被下游读成"未登记"）
+                "sway": None
+                if params["sway"] is None
+                else {
+                    "amplitude_m": params["sway"]["amplitude_m"],
+                    "axis": list(params["sway"]["axis"]),
+                    "smooth_s": params["sway"]["smooth_s"],
+                    "ramp_s": params["sway"]["ramp_s"],
+                    "direction_tolerance_deg": params["sway"]["direction_tolerance_deg"],
+                    "directions": {
+                        code: [float(item[0]), float(item[1])]
+                        for code, item in params["sway"]["directions"].items()
+                    },
+                },
+                "sway_direction_check": sway_report,
                 "legs": {
                     code: {
                         "hip_joint": item["hip_joint"],

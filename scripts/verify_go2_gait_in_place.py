@@ -266,6 +266,21 @@ def main(argv=None):
                 "swing_profile": params["swing_profile"],
                 "ramp_s": params["ramp_s"],
                 "phase_groups": params["phase_groups"],
+                # 逐相位重心转移的声明值（wave 必需）：报告里给出幅度/轴/平滑/斜坡/方向与门禁容差，
+                # 便于把「声明了什么」与「实测跑了什么」对齐着看（trot 为 null）。
+                "sway": None
+                if params["sway"] is None
+                else {
+                    "amplitude_m": params["sway"]["amplitude_m"],
+                    "axis": list(params["sway"]["axis"]),
+                    "smooth_s": params["sway"]["smooth_s"],
+                    "ramp_s": params["sway"]["ramp_s"],
+                    "direction_tolerance_deg": params["sway"]["direction_tolerance_deg"],
+                    "directions": {
+                        code: [float(item[0]), float(item[1])]
+                        for code, item in params["sway"]["directions"].items()
+                    },
+                },
             },
             "control": {
                 "frequency_hz": control_hz,

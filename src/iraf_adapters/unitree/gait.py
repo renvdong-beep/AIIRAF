@@ -73,6 +73,29 @@ REQUIRED_GAIT_KEYS = (
 #: `gait.stabilization` 必需键（机身阻尼参数；缺键即失败，不允许实现层默认值）。
 REQUIRED_STABILIZATION_KEYS = ("enabled", "linear_damping_s", "max_linear_offset_m")
 
+#: `gait.sway` 必需键（逐相位重心转移；缺键即失败，不允许实现层默认值）。
+#:
+#: 为什么 wave 必须带它（实测，见 `docs/debug/2026-09-21-quadruped-gait-trot-to-wave.md`）：
+#: 对称矩形足迹下两条对角腿的连线**恒过足迹中心**，抬起任意一条腿后三腿支撑三角形与该连线的
+#: 交集只有中心一点 ⇒ 支撑余量实测 `-0.000227483 m`（≈0）；且「常量重心平移」的可行域为**空集**
+#: （对角腿对所需平移方向夹角 180.00°、两相位余量之和上确界 +0.000000000 m）。
+#: 因此 wave 的静态稳定**只能**靠逐相位把重心投影移进当前支撑三角形（决策 A，2026-09-21）。
+REQUIRED_SWAY_KEYS = (
+    "amplitude_m",
+    "axis",
+    "phase_map",
+    "smooth_s",
+    "ramp_s",
+    "direction_tolerance_deg",
+)
+
+#: `gait.sway.axis` 允许的轴（躯干系水平面；z 不参与重心转移）。
+SWAY_AXES = ("x", "y")
+
+#: 重心转移方向的实测校验容差允许区间（度）。上界防止把容差写成 180°
+#: 从而让「方向门禁」退化成恒真门禁（门禁绿、计数 0 的同族缺陷）。
+SWAY_DIRECTION_TOLERANCE_DEG_RANGE = (0.0, 45.0)
+
 #: 每条腿必需键。
 REQUIRED_LEG_KEYS = ("hip_joint", "thigh_joint", "calf_joint", "contact_geom", "phase_offset")
 
@@ -130,6 +153,91 @@ def _positive(value, label, *, allow_zero=False):
             "%s 必须%s，实际: %r" % (label, "非负" if allow_zero else "为正数", value)
         )
     return number
+
+
+def _load_sway(section, legs, kind):
+    """解析 `gait.sway`（逐相位重心转移）；返回规范化字典或 `None`。
+
+    - `wave`：**必须**声明本段（静态稳定的前提，决策 A）；
+    - 其它步态类型：**不得**声明本段（trot 的两条对角腿在同一窗口摆动，所需重心方向相反，
+      逐相位转移无定义 ⇒ 声明即失败，而不是静默忽略）。
+    """
+    sway = section.get("sway")
+    if sway is None:
+        if kind == "wave":
+            raise DeclarationError(
+                "wave 必须声明 gait.sway（逐相位重心转移）：对称足迹下三腿支撑三角形的静态余量"
+                "实测 -0.000227483 m（≈0）、常量重心平移可行域为空集 ⇒ 缺重心转移的 wave "
+                "不满足静态稳定前提，显式失败而不是照跑"
+            )
+        return None
+    if not isinstance(sway, dict):
+        raise DeclarationError("gait.sway 必须是映射（缺段即失败，不允许默认值兜底）")
+    if kind != "wave":
+        raise DeclarationError(
+            "gait.sway 只对 wave 生效：%s 的同一摆动窗口内有两条腿（对角腿对所需重心方向实测夹角 "
+            "180.00°），逐相位重心转移无定义" % kind
+        )
+    missing = [key for key in REQUIRED_SWAY_KEYS if key not in sway]
+    if missing:
+        raise DeclarationError("gait.sway 缺少必需键: %s" % missing)
+
+    axis = [str(item) for item in (sway["axis"] or [])]
+    if not axis or any(item not in SWAY_AXES for item in axis):
+        raise DeclarationError(
+            "gait.sway.axis 只能取 %s 的非空子集，实际: %r" % (list(SWAY_AXES), sway["axis"])
+        )
+
+    amplitude = _positive(sway["amplitude_m"], "gait.sway.amplitude_m", allow_zero=True)
+    smooth_s = _positive(sway["smooth_s"], "gait.sway.smooth_s", allow_zero=True)
+    ramp_s = _positive(sway["ramp_s"], "gait.sway.ramp_s", allow_zero=True)
+    tolerance = _positive(
+        sway["direction_tolerance_deg"], "gait.sway.direction_tolerance_deg", allow_zero=True
+    )
+    low, high = SWAY_DIRECTION_TOLERANCE_DEG_RANGE
+    if not (low <= tolerance <= high):
+        raise DeclarationError(
+            "gait.sway.direction_tolerance_deg 必须落在 [%r, %r]（否则方向门禁会退化成恒真门禁），"
+            "实际: %r" % (low, high, sway["direction_tolerance_deg"])
+        )
+
+    phase_map = sway["phase_map"]
+    if not isinstance(phase_map, dict):
+        raise DeclarationError("gait.sway.phase_map 必须是映射（腿 → 重心转移方向，腿名来自声明）")
+    if set(str(item) for item in phase_map) != set(legs):
+        raise DeclarationError(
+            "gait.sway.phase_map 的腿集合必须与 gait.legs 完全一致，实际: %r vs %r"
+            % (sorted(str(item) for item in phase_map), sorted(legs))
+        )
+    directions = {}
+    for code, value in phase_map.items():
+        code = str(code)
+        if isinstance(value, dict):
+            keys = ("x", "y")
+            if any(key not in value for key in keys):
+                raise DeclarationError("gait.sway.phase_map.%s 必须是 {x, y} 数字" % code)
+            vector = (float(value["x"]), float(value["y"]))
+        elif isinstance(value, (list, tuple)) and len(value) == 2:
+            vector = (float(value[0]), float(value[1]))
+        else:
+            raise DeclarationError(
+                "gait.sway.phase_map.%s 必须是 {x, y} 映射或 [x, y] 两元序列" % code
+            )
+        norm = math.hypot(vector[0], vector[1])
+        if norm <= 1.0e-12:
+            raise DeclarationError(
+                "gait.sway.phase_map.%s 的方向向量是零矢量：重心转移方向无定义" % code
+            )
+        directions[code] = (vector[0] / norm, vector[1] / norm)
+
+    return {
+        "amplitude_m": amplitude,
+        "axis": axis,
+        "smooth_s": smooth_s,
+        "ramp_s": ramp_s,
+        "direction_tolerance_deg": tolerance,
+        "directions": directions,
+    }
 
 
 def load_gait_declaration(declaration, profile_joints):
@@ -286,6 +394,8 @@ def load_gait_declaration(declaration, profile_joints):
                 % (WAVE_PHASE_SPACING, [round(value, 9) for value in spacing])
             )
 
+    sway = _load_sway(section, legs, kind)
+
     verification = section["verification"]
     if not isinstance(verification, dict):
         raise DeclarationError("gait.verification 必须是映射（验收判据只能来自声明）")
@@ -327,6 +437,8 @@ def load_gait_declaration(declaration, profile_joints):
             ),
         },
         "legs": legs,
+        # 逐相位重心转移（wave 必需，其它步态类型为 None）：幅度/方向/平滑/斜坡全部来自声明。
+        "sway": sway,
         # 相位组（按相位偏移升序）：trot 得到 2 组、每组 2 条腿，wave 得到 4 组、每组 1 条腿。
         # 判据（`assess_gait`）按该结构逐组比较，不再假定「只有两组」。
         "phase_groups": [
@@ -589,6 +701,176 @@ def is_stance(params, phase):
     return (float(phase) % 1.0) < float(params["duty_factor"])
 
 
+def sway_windows(params):
+    """每条腿的摆动窗口起点（相位环 0→1）与窗口长度。
+
+    腿的相位是 `(u + offset) % 1`，摆动相是 `相位 ≥ duty` ⇒ 摆动窗口为
+    `u ∈ [duty − offset, 1 − offset)`。wave（duty = 0.75、四相位等间隔 0.25）下四个窗口
+    长度相同且**恰好铺满**相位环（任意时刻恰好一条腿摆动），因此「哪个窗口包含 u」是唯一的。
+    """
+    duty = float(params["duty_factor"])
+    window = 1.0 - duty
+    return {code: ((duty - float(leg["phase_offset"])) % 1.0) for code, leg in params["legs"].items()}, window
+
+
+def sway_leg_at_phase(params, phase):
+    """相位 → 当前处于摆动相的那条腿（wave 的窗口铺满相位环，故该映射唯一）。"""
+    windows, window = sway_windows(params)
+    u = float(phase) % 1.0
+    for code, start in sorted(windows.items()):
+        end = start + window
+        if start <= u < end or (end > 1.0 and u < end - 1.0):
+            return code
+    raise DeclarationError(
+        "相位 %r 不落在任何腿的摆动窗口内：wave 的摆动窗口必须恰好铺满相位环"
+        "（检查 duty_factor 与相位偏移间隔）" % u
+    )
+
+
+def _sway_kernel_mass(begin, end, center, span):
+    """升余弦平滑核在区间 `[begin, end]` 上的质量占比（解析式，处处连续）。
+
+    核：`K(x) = (1/2)(1 − cos(2πx/span))`，支集 `|x| ≤ span/2`；其 CDF 为
+    `(x + span/2)/span − sin(2πx/span)/(2π)`。用解析式而不是离散采样：**离散核在窗口边界上
+    会跳变**（核中心那一点正好落在阶梯的台阶上，u 跨过边界时该点整体换边 ⇒ 不连续，
+    实测 0.03 的幅度在边界两侧差 0.019）。解析卷积处处连续且不依赖采样密度。
+    """
+    def cdf(offset):
+        x = max(-0.5 * span, min(0.5 * span, offset))
+        return (x + 0.5 * span) / span - math.sin(2.0 * math.pi * x / span) / (2.0 * math.pi)
+
+    return max(0.0, cdf(end - center) - cdf(begin - center))
+
+
+def _sway_direction_blend(params, u, smooth_fraction):
+    """相位 → 平滑后的重心转移**单位**方向（升余弦核解析卷积，无阶跃、无跳变）。
+
+    过渡窗口长度 `smooth_fraction`（相位单位）来自声明 `gait.sway.smooth_s`；混合后归一化
+    ⇒ 过渡期间幅度不塌陷（只旋转方向，模长恒等于声明幅度）。
+    """
+    directions = params["sway"]["directions"]
+    if smooth_fraction <= 0.0:
+        return directions[sway_leg_at_phase(params, u)]
+    span = min(float(smooth_fraction), 1.0)
+    windows, width = sway_windows(params)
+    total_x = 0.0
+    total_y = 0.0
+    total_mass = 0.0
+    # 窗口与核都可能跨过相位环的 0/1 接缝：把每个窗口按 −1/0/+1 三次平移后再求交，
+    # 避免在接缝处漏掉质量（漏质量会让方向在接缝附近偏）。
+    for code, start in sorted(windows.items()):
+        for shift in (-1.0, 0.0, 1.0):
+            begin = start + shift
+            mass = _sway_kernel_mass(begin, begin + width, u, span)
+            if mass <= 0.0:
+                continue
+            vector = directions[code]
+            total_x += mass * vector[0]
+            total_y += mass * vector[1]
+            total_mass += mass
+    norm = math.hypot(total_x, total_y)
+    if total_mass <= 1.0e-12 or norm <= 1.0e-9:
+        raise DeclarationError(
+            "相位 %r 上的重心转移方向平滑结果为零矢量：声明方向互相抵消或窗口未铺满相位环"
+            "（检查 phase_map 与 duty_factor）" % u
+        )
+    return (total_x / norm, total_y / norm)
+
+
+def sway_offset_m(params, elapsed_s):
+    """相位 → **机身（重心）**应移动的水平偏移矢量 `(dx_m, dy_m)`（躯干系）。
+
+    符号约定（调用点必须遵守）：本函数给出机身要移动的方向，因此**足端目标要减去它**
+    （足端在机身系里相对机身反向退让，机身才会朝该方向走），见 `gait_joint_targets`。
+
+    证据（为什么需要它）：对称矩形足迹下抬起任意单腿的静态余量实测 `-0.000227483 m`；
+    抬脚前把重心推向「剩余三腿支撑三角形」的方向才能拿到正余量（探针实测：目标余量 0.010 m 时
+    需平移 FL (−0.005784, −0.007877)、RR (+0.006053, +0.008244) m，方向即支撑三角形最紧边的内法线）。
+    """
+    sway = params.get("sway")
+    if sway is None:
+        return 0.0, 0.0
+    if float(sway["amplitude_m"]) == 0.0:
+        return 0.0, 0.0
+    period = float(params["period_s"])
+    u = (float(elapsed_s) / period) % 1.0
+    direction = _sway_direction_blend(params, u, float(sway["smooth_s"]) / period)
+    ramp = float(sway["ramp_s"])
+    scale = 1.0 if ramp <= 0.0 else min(1.0, max(float(elapsed_s), 0.0) / ramp)
+    amplitude = float(sway["amplitude_m"]) * scale
+    axis = sway["axis"]
+    return (
+        amplitude * direction[0] if "x" in axis else 0.0,
+        amplitude * direction[1] if "y" in axis else 0.0,
+    )
+
+
+def sway_direction_report(params, geometry):
+    """按**实测**足迹校验声明的重心转移方向；不规则/方向相反即显式失败。
+
+    判据（可复算）：抬腿 L 后的支撑三角形中，与「足迹中心」（= 整机重心投影的近似）余量最小的
+    那条边的**内法线**，就是抬 L 时必须把重心移过去的方向。声明方向与它的夹角必须 ≤ 声明容差。
+    这条门禁抓的是「方向写反/写错腿」——它会静默失效（照着错方向跑，判据全绿但机器人翻倒），
+    因此必须有：实测方向由几何算出，声明方向只用于比对（不是自己跟自己比）。
+    """
+    sway = params.get("sway")
+    if sway is None:
+        return {"declared": False, "reason": "本步态类型不声明 gait.sway"}
+    codes = sorted(params["legs"])
+    feet = {code: np.asarray(geometry[code]["trunk_rel_m"][:2], dtype=float) for code in codes}
+    center = np.mean([feet[code] for code in codes], axis=0)
+    tolerance = float(sway["direction_tolerance_deg"])
+    items = {}
+    for code in codes:
+        stance = [feet[other] for other in codes if other != code]
+        best = None
+        for index in range(len(stance)):
+            start = stance[index]
+            end = stance[(index + 1) % len(stance)]
+            edge = end - start
+            normal = np.array([-edge[1], edge[0]], dtype=float)
+            length = float(np.linalg.norm(normal))
+            if length <= 1.0e-12:
+                continue
+            normal = normal / length
+            if float((np.mean(stance, axis=0) - start).dot(normal)) < 0.0:
+                normal = -normal  # 内法线：指向支撑三角形内部
+            margin = float((center - start).dot(normal))
+            if best is None or margin < best[0]:
+                best = (margin, normal)
+        if best is None:
+            raise DeclarationError("腿 %s 的支撑多边形退化（三点共线）：无法校验重心转移方向" % code)
+        declared = np.asarray(sway["directions"][code], dtype=float)
+        required = best[1]
+        cosine = float(np.clip(declared.dot(required), -1.0, 1.0))
+        angle = math.degrees(math.acos(cosine))
+        items[code] = {
+            "declared": [float(declared[0]), float(declared[1])],
+            "required": [float(required[0]), float(required[1])],
+            "margin_at_footprint_center_m": float(best[0]),
+            "angle_error_deg": float(angle),
+            "passed": bool(angle <= tolerance),
+        }
+    failed = [code for code, item in items.items() if not item["passed"]]
+    if failed:
+        raise DeclarationError(
+            "gait.sway.phase_map 方向与实测支撑三角形内法线不符（容差 %r°）：%s ⇒ 显式失败"
+            "（方向写反会让机器人朝支撑三角形外移动，判据仍会「通过」而机身翻倒）"
+            % (tolerance, {code: round(items[code]["angle_error_deg"], 6) for code in failed})
+        )
+    return {
+        "declared": True,
+        "amplitude_m": float(sway["amplitude_m"]),
+        "axis": list(sway["axis"]),
+        "smooth_s": float(sway["smooth_s"]),
+        "ramp_s": float(sway["ramp_s"]),
+        "direction_tolerance_deg": tolerance,
+        "footprint_center_xy_m": [float(center[0]), float(center[1])],
+        "per_leg": items,
+        "max_angle_error_deg": float(max(item["angle_error_deg"] for item in items.values())),
+    }
+
+
 def stabilization_offset(params, body_velocity_mps, body_omega_rad_s, trunk_rel_m):
     """机身阻尼的足端偏移量 `(dx_m, dy_m)`（步态稳定性的核心，见下）。
 
@@ -636,6 +918,10 @@ def gait_joint_targets(params, geometry, home, joint_limits, elapsed_s, amplitud
     由适配器从自由关节速度变换而来），仅用于声明化的阻尼偏移；缺省为零 = 无阻尼（不引入隐式行为）。
     """
     targets = {}
+    # 逐相位重心转移（wave 必需）：机身要往 +sway 移动 ⇒ 足端目标在机身系里减 sway。
+    # 四条腿**同向**接受该偏移（支撑腿把机身推过去；摆动腿的落点随机身一起走，保持站姿形状），
+    # 偏移由声明给出（幅度/方向/平滑/斜坡），实现层不含任何数字默认值。
+    sway = sway_offset_m(params, elapsed_s)
     for code, geom in geometry.items():
         phase = leg_phase(params, code, elapsed_s)
         dx, dz = foot_offset(phase, params, amplitude)
@@ -643,8 +929,8 @@ def gait_joint_targets(params, geometry, home, joint_limits, elapsed_s, amplitud
             params, body_velocity_mps, body_omega_rad_s, geom["trunk_rel_m"]
         )
         q_hip, q1, q2 = leg_solve(
-            geom["neutral_x_m"] + dx + damping[0],
-            damping[1],
+            geom["neutral_x_m"] + dx + damping[0] - float(sway[0]),
+            damping[1] - float(sway[1]),
             geom["neutral_z_m"] + dz,
             geom["l1_m"],
             geom["l2_m"],
