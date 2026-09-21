@@ -25,11 +25,13 @@
 
 from pathlib import Path
 
+import math
 import yaml
 import threading
 
 import numpy as np
 
+from iraf_adapters.unitree import balance as balance_module
 from iraf_adapters.unitree import gait
 from iraf_adapters.unitree.loopback import quat_tilt_deg
 from iraf_adapters.unitree.quadruped import (
@@ -188,6 +190,10 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         # 未使用步态的路径（stand/stop）不因步态声明问题而失败。
         self._gait_params = None
         self._leg_geometry_cache = None
+        # 力矩级平衡器（步骤 02b）：声明同样惰性解析；`_balance_stats` 记录"要求 vs 兑现"
+        # （无有效支撑腿的周期数、被截断的腿、最近一次力旋量），供报告与调试定位。
+        self._balance_params = None
+        self._balance_stats = None
         super().__init__(declaration, profile, authority)
         self.root = Path(root)
         self.mujoco = mujoco
@@ -440,6 +446,289 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             for code, item in geometry.items()
         }
 
+    def _balance_parameters(self):
+        """惰性解析并缓存 `balance` 段（步骤 02b）。
+
+        与 `_gait_parameters` 同一理由：依赖机型身份与模型的完整校验放在**调用点**，
+        未使用平衡器的路径（stand/stop/纯位置级步态）不因它失败。一旦调用仍是显式失败
+        （`DeclarationError`），不是默认值兜底。
+        """
+        if self._balance_params is None:
+            self._balance_params = balance_module.load_balance_declaration(self.declaration)
+        return self._balance_params
+
+    def robot_mass_kg(self):
+        """整机质量（kg）：从被测模型读出（禁止在声明里写第二份质量）。"""
+        return float(np.sum(np.asarray(self.model.body_mass, dtype=float)))
+
+    def gravity_mps2(self):
+        """重力加速度绝对值（m/s²）：从被测模型的 `opt.gravity` 读出（不写第二份数字）。"""
+        value = abs(float(self.model.opt.gravity[2]))
+        if not (value > 0.0):
+            raise ModelUnavailableError(
+                "模型 opt.gravity[2]=%r 不是可用的重力值：平衡器不成立" % (self.model.opt.gravity[2],)
+            )
+        return value
+
+    def _attitude_terms(self):
+        """当前躯干滚转/俯仰（rad，不含偏航）与四元数：与样本里的口径同一套公式。"""
+        quat = np.asarray(self.data.qpos[3:7], dtype=float).copy()
+        w, x, y, z = (float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3]))
+        r20 = 2.0 * (x * z - w * y)
+        r21 = 2.0 * (y * z + w * x)
+        r22 = 1.0 - 2.0 * (x * x + y * y)
+        roll = math.atan2(r21, r22)
+        pitch = math.asin(max(-1.0, min(1.0, -r20)))
+        return quat, roll, pitch
+
+    def _foot_jacobian(self, dof_addresses):
+        """返回 `jacobian(point_world, foot_body)` 的 3×3 平动雅可比（列 = 该腿三个关节自由度）。"""
+        def compute(point_world, foot_body):
+            jacp = np.zeros((3, int(self.model.nv)), dtype=float)
+            jacr = np.zeros((3, int(self.model.nv)), dtype=float)
+            self.mujoco.mj_jac(
+                self.model, self.data, jacp, jacr,
+                np.asarray(point_world, dtype=float).reshape(3), int(foot_body),
+            )
+            return np.asarray(jacp[:, list(dof_addresses)], dtype=float)
+
+        return compute
+
+    def _balance_provider(self, params, geometry, trunk_body, balance_params):
+        """构造力矩级平衡器的**逐控制周期**回调：`(cycle_index, info) -> 12 维附加力矩`。
+
+        支撑腿的判定用**实测接触力**（`contact_force_threshold_n`），不用声明的相位——实测
+        「命令抬的腿 ≠ 物理离地的腿」（静态复现：命令抬 FL 0.08 m 时机身翻 17.765°，
+        最终 RR 离地 0 N、FL 仍承载 44.46 N）⇒ 按相位写成的支撑集与实测恒对不上。
+        没有足够支撑腿时**不施加**平衡力矩（并计数），超过声明的看门狗上限即停止施加。
+        """
+        threshold = float(params["verification"]["contact_force_threshold_n"])
+        target_height = float(params["verification"]["height_target_m"])
+        min_stance = int(balance_params["allocation"]["min_stance_legs"])
+        watchdog_limit = int(balance_params["watchdog"]["max_consecutive_no_stance_cycles"])
+        mass = self.robot_mass_kg()
+        gravity = self.gravity_mps2()
+
+        def torque_provider(cycle_index, info):
+            contact = self._leg_contact_forces(params, geometry)
+            stance = [code for code in sorted(geometry) if float(contact[code]) >= threshold]
+            stats = self._balance_stats
+            stats["cycles"] = int(stats["cycles"]) + 1
+            if len(stance) < min_stance:
+                stats["no_stance_cycles"] = int(stats["no_stance_cycles"]) + 1
+                stats["consecutive_no_stance"] = int(stats["consecutive_no_stance"]) + 1
+                if int(stats["consecutive_no_stance"]) > watchdog_limit:
+                    stats["watchdog_triggered"] = True
+                    stats["disabled_cycles"] = int(stats["disabled_cycles"]) + 1
+                return np.zeros(len(self.joint_order), dtype=float)
+            stats["consecutive_no_stance"] = 0
+            if stats["watchdog_triggered"]:
+                # 看门狗一旦触发即保持关闭：不得在“站不住”的状态下继续施加力矩级动作
+                # （否则平衡器自己成为第二个不受监控的控制源）。
+                stats["disabled_cycles"] = int(stats["disabled_cycles"]) + 1
+                return np.zeros(len(self.joint_order), dtype=float)
+            stance_points = {
+                code: np.asarray(
+                    self.data.geom_xpos[int(geometry[code]["contact_geom"])], dtype=float
+                ).copy()
+                for code in stance
+            }
+            center = np.asarray(self.data.xpos[int(trunk_body)], dtype=float).copy()
+            quat, roll, pitch = self._attitude_terms()
+            wrench = balance_module.desired_wrench(
+                balance_params,
+                mass_kg=mass,
+                gravity_mps2=gravity,
+                height_m=float(self.data.qpos[2]),
+                height_target_m=target_height,
+                vertical_velocity_mps=float(self.data.qvel[2]),
+                roll_rad=roll,
+                pitch_rad=pitch,
+                horizontal_velocity_world_mps=np.asarray(self.data.qvel[0:2], dtype=float),
+                angular_velocity_world_rad_s=np.asarray(self.data.qvel[3:6], dtype=float),
+            )
+            allocation = balance_module.allocate_foot_forces(
+                balance_params, wrench, stance_points, center
+            )
+            torques = {joint: 0.0 for joint in self.joint_order}
+            for code in stance:
+                joints = [geometry[code]["joints"][key] for key in ("hip_joint", "thigh_joint", "calf_joint")]
+                dof_addresses = [self.bindings[joint]["dof_adr"] for joint in joints]
+                jacobian = self._foot_jacobian(dof_addresses)(
+                    stance_points[code], geometry[code]["foot_body"]
+                )
+                leg = balance_module.leg_joint_torques(
+                    allocation["forces"][code], jacobian, joints
+                )
+                torques.update(leg)
+            stats["stance_legs_histogram"][len(stance)] = (
+                int(stats["stance_legs_histogram"].get(len(stance), 0)) + 1
+            )
+            stats["clamped_legs"] = sorted(
+                set(stats["clamped_legs"]) | set(allocation["clamped_legs"])
+            )
+            stats["last_wrench"] = {
+                "force_n": [float(value) for value in wrench["force_n"]],
+                "torque_nm": [float(value) for value in wrench["torque_nm"]],
+                "components": wrench["components"],
+                "residual": allocation["residual"],
+            }
+            stats["last_stance_legs"] = list(stance)
+            stats["max_abs_torque_nm"] = max(
+                float(stats["max_abs_torque_nm"]),
+                max((abs(float(value)) for value in torques.values()), default=0.0),
+            )
+            return np.array([torques[joint] for joint in self.joint_order], dtype=float)
+
+        return torque_provider
+
+    @staticmethod
+    def _new_balance_stats():
+        return {
+            "cycles": 0,
+            "no_stance_cycles": 0,
+            "consecutive_no_stance": 0,
+            "disabled_cycles": 0,
+            "watchdog_triggered": False,
+            "stance_legs_histogram": {},
+            "clamped_legs": [],
+            "last_stance_legs": [],
+            "last_wrench": None,
+            "max_abs_torque_nm": 0.0,
+        }
+
+    def _balance_summary(self, balance_params):
+        """报告里的 `balance` 段：声明值 + 实测统计（要求 vs 兑现）。"""
+        stats = self._balance_stats or self._new_balance_stats()
+        return {
+            "enabled": bool(balance_params["enabled"]),
+            "weight_position": float(balance_params["weight_position"]),
+            "weight_balance": float(balance_params["weight_balance"]),
+            "include_gravity_support": bool(balance_params["include_gravity_support"]),
+            "attitude": dict(balance_params["attitude"]),
+            "height": dict(balance_params["height"]),
+            "velocity": dict(balance_params["velocity"]),
+            "allocation": dict(balance_params["allocation"]),
+            "watchdog": dict(balance_params["watchdog"]),
+            "robot_mass_kg": self.robot_mass_kg(),
+            "gravity_mps2": self.gravity_mps2(),
+            "stats": {
+                "cycles": int(stats["cycles"]),
+                "no_stance_cycles": int(stats["no_stance_cycles"]),
+                "watchdog_triggered": bool(stats["watchdog_triggered"]),
+                "disabled_cycles": int(stats["disabled_cycles"]),
+                "stance_legs_histogram": {
+                    str(key): int(value) for key, value in stats["stance_legs_histogram"].items()
+                },
+                "clamped_legs": list(stats["clamped_legs"]),
+                "max_abs_torque_nm": float(stats["max_abs_torque_nm"]),
+                "last_wrench": stats["last_wrench"],
+            },
+        }
+
+    def balance_hold(self, lease, duration_ms=None, execution_id=None):
+        """静态抗扰保持（步骤 02b 的验收入口）：站立位形 + 声明的水平冲量 → 恢复判定。
+
+        与 `stand` 的差别只有一处：本路径在位置级 PD 之上叠加**力矩级平衡器**，用于证明
+        「静态抗扰」这条能力（`stand` 保持逐位一致，不受本路径影响）。冲量大小/时长/
+        判据阈值全部来自 `balance.verification.static_disturbance`，本方法不写任何数字。
+        """
+        self.estop.assert_clear()
+        self.require_lease(lease, "locomote")
+        if execution_id is not None:
+            self.require_active_execution(execution_id, lease, capability="locomote")
+            active_id = str(execution_id)
+        else:
+            active_id = self.begin_execution("locomote", lease)
+
+        balance_params = self._balance_parameters()
+        verification = balance_params["verification"]["static_disturbance"]
+        params = self._gait_parameters()
+        geometry = self._leg_geometry(params)
+        trunk_body = gait.trunk_body_id(self.model, self.mujoco, params)
+        seconds = self.resolve_duration_ms(
+            duration_ms, float(verification["duration_s"]) + float(verification["hold_s"])
+        )
+        home = {joint: float(self.profile.home[joint]) for joint in self.joint_order}
+        desired = np.array([home[joint] for joint in self.joint_order], dtype=float)
+        # 目标位形的过渡斜坡复用 `stand.ramp_s`（同一事实不写第二份数字）：初始关键帧位形与
+        # 目标一致时等价于无过渡（实测关键帧 home 与 Profile spec.home 逐关节相同）。
+        ramp_s = float(_dig(self.declaration, "stand.ramp_s", "声明"))
+        q0 = np.asarray(self.data.qpos[self.qpos_adr], dtype=float).copy()
+        self._balance_stats = self._new_balance_stats()
+        torque_provider = (
+            self._balance_provider(params, geometry, trunk_body, balance_params)
+            if balance_params["enabled"]
+            else None
+        )
+        disturbance = {
+            "force_n": float(verification["force_n"]),
+            "axes": list(verification["axes"]),
+            "duration_s": float(verification["duration_s"]),
+        }
+        samples = []
+        onset = float(self.data.time)
+        base_body = int(trunk_body)
+        axes = {"x": 0, "y": 1}
+        applied = np.zeros(6, dtype=float)
+        for axis in disturbance["axes"]:
+            applied[axes[axis]] = disturbance["force_n"]
+
+        def target_provider(cycle_index, now):
+            elapsed = now - onset
+            active = 1.0 if elapsed < disturbance["duration_s"] else 0.0
+            self.data.xfrc_applied[base_body] = applied * active
+            alpha = 1.0 if ramp_s <= 0.0 else min(1.0, max(elapsed, 0.0) / ramp_s)
+            return q0 + alpha * (desired - q0)
+
+        def sample_callback(cycle_index, info):
+            quat = np.asarray(self.data.qpos[3:7], dtype=float).copy()
+            _quat, roll, pitch = self._attitude_terms()
+            samples.append(
+                {
+                    "time_s": float(self.data.time),
+                    "elapsed_s": float(self.data.time - onset),
+                    "disturbance_active": bool(self.data.time - onset < disturbance["duration_s"]),
+                    "base_height_m": float(self.data.qpos[2]),
+                    "base_position_xy_m": [float(self.data.qpos[0]), float(self.data.qpos[1])],
+                    "base_linear_speed_mps": float(np.linalg.norm(self.data.qvel[0:3])),
+                    "tilt_deg": float(quat_tilt_deg(quat)),
+                    "roll_deg": float(np.degrees(roll)),
+                    "pitch_deg": float(np.degrees(pitch)),
+                    "ctrl_saturated": int(np.count_nonzero(info["saturated"])),
+                    "tracking_error_rad": float(np.max(np.abs(info["desired"] - np.asarray(
+                        self.data.qpos[self.qpos_adr], dtype=float)))),
+                }
+            )
+
+        cycles, saturated = self._run_control(
+            None,
+            seconds,
+            0.0,
+            target_provider=target_provider,
+            torque_provider=torque_provider,
+            sample_callback=sample_callback,
+        )
+        self.data.xfrc_applied[base_body] = np.zeros(6, dtype=float)
+        report = {
+            "simulation": True,
+            "capability": "locomote",
+            "path": "balance_hold",
+            "execution_id": active_id,
+            "fencing_token": int(lease.fencing_token),
+            "control_source_owner": str(getattr(lease, "owner", "")),
+            "declared_duration_s": float(seconds),
+            "duration_ms": seconds * 1000.0,
+            "control_cycles": cycles,
+            "ctrl_saturated_samples": int(saturated),
+            "disturbance": disturbance,
+            "height_target_m": float(params["verification"]["height_target_m"]),
+            "balance": self._balance_summary(balance_params),
+            "samples": samples,
+        }
+        self.ledger.finish(active_id, "SUCCEEDED")
+        return report
+
     def _leg_contact_forces(self, params, geometry):
         """按声明的接触几何量出每条腿的法向接触力（N）。只统计足端与外部（地面等）的接触。"""
         forces = {code: 0.0 for code in params["legs"]}
@@ -488,6 +777,15 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         samples = []
         onset = float(self.data.time)
         trunk_body = gait.trunk_body_id(self.model, self.mujoco, params)
+        # 力矩级平衡器（步骤 02b）：声明 enabled=false 时不传 torque_provider，
+        # 步态路径与步骤 02 的实现**逐位一致**（可作对照实验的对照组）。
+        balance_params = self._balance_parameters()
+        self._balance_stats = self._new_balance_stats()
+        torque_provider = (
+            self._balance_provider(params, geometry, trunk_body, balance_params)
+            if balance_params["enabled"]
+            else None
+        )
 
         def target_provider(cycle_index, now):
             elapsed = now - onset
@@ -528,6 +826,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             seconds,
             float(params["ramp_s"]),
             target_provider=target_provider,
+            torque_provider=torque_provider,
             sample_callback=sample_callback,
         )
         report = {
@@ -542,6 +841,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             "control_cycles": cycles,
             "substeps_per_control": self.substeps,
             "ctrl_saturated_samples": int(saturated),
+            "balance": self._balance_summary(balance_params),
             "gait": {
                 "kind": params["kind"],
                 "frequency_hz": params["frequency_hz"],
@@ -702,13 +1002,16 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
 
     # ---- 内部 ----
     def _run_control(self, target, seconds, ramp_s, zero_torque=False, target_provider=None,
-                     sample_callback=None):
+                     torque_provider=None, sample_callback=None):
         """按控制频率跑一段控制：PD（或零力矩）+ 按声明子步推进物理。
 
-        默认行为（`target_provider is None`）与步骤 15/16 的实现**逐位一致**：
-        目标位形 = 初始位形到 `target` 的声明斜坡。步态路径（步骤 02）通过
+        默认行为（`target_provider is None` 且 `torque_provider is None`）与步骤 15/16 的实现
+        **逐位一致**：目标位形 = 初始位形到 `target` 的声明斜坡。步态路径（步骤 02）通过
         `target_provider(cycle_index, now) -> 目标向量` 提供每周期参考轨迹，
         走的是**同一段** PD + 重力前馈 + ctrlrange 截断 + 子步推进（不新写第二套控制律）；
+        `torque_provider(cycle_index, info) -> 附加力矩向量`（步骤 02b）是**执行器级**钩子：
+        在位置级 PD 之后按声明权重混合 `τ = w_pos·τ_pd + w_bal·τ_bal`，再按模型 ctrlrange
+        截断并重算饱和标记（力矩上限仍只来自模型，本文件不写任何力矩数字）。
         `sample_callback(cycle_index, info)` 只在物理步进之后被调用（量的是步进后的状态）。
         """
         cycles = int(round(float(seconds) * self.control_hz))
@@ -724,6 +1027,14 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         )
         start = float(self.data.time)
         saturated_total = 0
+        # 混合权重只在**用到力矩通路时**才从声明解析（无平衡器声明的本体不会因缺段失败）。
+        balance_weights = None
+        if torque_provider is not None:
+            balance_params = self._balance_parameters()
+            balance_weights = (
+                float(balance_params["weight_position"]),
+                float(balance_params["weight_balance"]),
+            )
         for cycle_index in range(cycles):
             q = np.asarray(self.data.qpos[self.qpos_adr], dtype=float)
             dq = np.asarray(self.data.qvel[self.dof_adr], dtype=float)
@@ -746,6 +1057,24 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 ctrl, saturated = pd_torque(
                     q, dq, desired, self.kp, self.kd, tau_ff, self.torque_lower, self.torque_upper
                 )
+                if torque_provider is not None:
+                    extra = np.asarray(
+                        torque_provider(
+                            cycle_index,
+                            {"desired": desired, "ctrl": ctrl, "saturated": saturated},
+                        ),
+                        dtype=float,
+                    )
+                    if extra.shape != ctrl.shape:
+                        raise DeclarationError(
+                            "平衡器返回的力矩向量形状 %r 与关节数 %d 不符"
+                            % (extra.shape, len(self.joint_order))
+                        )
+                    ctrl = (
+                        balance_weights[0] * ctrl + balance_weights[1] * extra
+                    )
+                    saturated = np.logical_or(ctrl < self.torque_lower, ctrl > self.torque_upper)
+                    ctrl = np.clip(ctrl, self.torque_lower, self.torque_upper)
             saturated_total += int(np.count_nonzero(saturated))
             self.data.ctrl[self.actuator_ids] = ctrl
             for _ in range(self.substeps):

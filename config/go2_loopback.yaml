@@ -50,6 +50,90 @@ control:
   # 本键只允许取值 model：任何"在配置里另写一套限幅"的写法都是第二份安全边界，必须显式失败。
   torque_limit_source: model
 
+# 力矩级反馈平衡器（步骤 02b / ADR-0008 决策 1c）：在位置级 PD 之上按声明权重叠加**执行器级力矩**，
+# 提供机身高/姿态/角速度反馈。缺任一键即显式失败（退出码 2），无默认值兜底。
+# 为什么必须做（实测，勿重复量）：位置级（关节空间）足端目标偏移这一族执行器已被两轮独立实测证否 ——
+# 步高压到 0.001 m（四足基本不离地、支撑相 1.0）后，幅度 0 的对照稳定
+# （z_mean 0.279955 m、倾角 0.091°、漂移 0.00649 m、饱和 0），而幅度 **5 mm** 即翻倒
+# （z_mean −2.989653 m、倾角 172.139°、饱和 2145）；且「常量重心平移」可行域为**空集**。
+# ⚠ 力矩上限**不在这里声明**：最终控制量仍按模型 ctrlrange 截断（control.torque_limit_source=model
+# 是唯一来源），本段只声明反馈增益/权重/分配上限/判据。
+balance:
+  # ⚠ 当前取值 **false**（不是"没做"，而是实测未取得本步目标收益）：机制/通路/验收/判据全部已交付，
+  #   但第一轮实测结论是**部分有效、目标未达**（证据 build/iraf-24h-2/02b/acceptance-run2.txt）：
+  #     · 静态抗扰（40 N 水平冲量 0.2 s）：最坏倾角 1.598912284139251°（对照）→ 1.3169066790848079°（平衡器），
+  #       漂移 0.019334348643655627 → 0.017455565896686762 m，饱和 0，看门狗未触发 ⇒ 判据全过、**有改善**；
+  #     · 隔离实验（步高 0.001 m、sway 0.005 m，即本步的核心判据"5 mm 不再翻倒"）：仍翻倒
+  #       （z_mean −0.297318、min_base_height −5.55571、max_tilt 136.194064°）⇒ **判据未过**。
+  #   ⇒ 按步骤 02b「失败/阻塞处理」第 2 条（5 mm 仍翻倒但静态 OK ⇒ 需落足点/摆动腿时序干预，
+  #     回到 ADR 记录并给出新决策包），开关保持关闭、由人工决策下一步；关闭同时保证
+  #     步态路径与步骤 02 的实现**逐位一致**（对照组的数字即历史负结果的逐字复现）。
+  enabled: false
+  # 位置级 PD 与力矩级平衡项的混合权重：τ = w_pos·τ_pd + w_bal·τ_bal（两键不得同时为 0）。
+  weight_position: 1.0
+  weight_balance: 1.0
+  # 是否把 mg 作为法向支撑前馈。当前 false 的理由：站立载荷已由位置级 PD 承担
+  # （实测四腿接触力合计 152.617937 N ≈ mg=153.0 N），再叠加一份 mg 会让升力翻倍。
+  include_gravity_support: false
+  # 姿态 PD（滚转/俯仰，不含偏航）与力矩上限。量级推导：足形 0.3868(x) × 0.2840(y) m
+  # ⇒ 垂直力差 Δ 产生 τ_x ≈ 0.284·Δ；Δ 取到 90 N 上限时 τ_x ≈ 25 N·m ⇒ 力矩上限取 20 N·m
+  # （再大只会让力分配被逐腿法向力上限截断，不增加可实现力矩）。
+  attitude:
+    kp_nm_per_rad: 60.0
+    kd_nm_s_per_rad: 6.0
+    max_torque_nm: 5.0
+  # 高度保持 PD：纠正量（不含 mg），按 max_force_n 截断。取 600 N/m ⇒ 10 mm 高度误差请求 6 N。
+  height:
+    kp_n_per_m: 600.0
+    kd_n_s_per_m: 60.0
+    max_force_n: 40.0
+  # 机身速度阻尼（**不含位置项**：逐相位重心转移是有意的机身位移，位置项会与它对抗）。
+  # ⚠ 首跑档（linear_gain 80 / max_force 60、attitude max 20 N·m）实测**过度**：40 N 水平冲量下
+  #   四足失去接触 254 个周期并翻倒（167.83°），因为反力上限超出「摩擦/接触预算」
+  #   （单腿法向 ~mg/4≈38 N）⇒ 力分配解出的力矩让腿把机身顶飞。本档按「纠正量必须远小于
+  #   mg/4」的预算整体下调（水平 ≤10 N/腿、法向 ≤30 N/腿、力矩 ≤5 N·m）。
+  velocity:
+    linear_gain_ns_per_m: 20.0
+    max_force_n: 10.0
+    angular_gain_nms_per_rad: 4.0
+    max_torque_nm: 4.0
+  # 足端力分配：支撑腿数下限（四足 ⇒ ≥3 才有唯一最小范数解）、逐腿法向力上下限、水平力上限。
+  # ⚠ `normal_force_floor_n` 是**纠正量**的下界（本平衡器不含 mg 支撑），因此可以为负：
+  #   首跑取 0.0 时实测「力矩残差 == 目标力矩」（姿态力矩完全没兑现，静态抗倾覆反而更差
+  #   4.07° vs 对照组 1.70°）—— 负向纠正被整段截掉，力旋量解不出可实现解。
+  allocation:
+    min_stance_legs: 3
+    max_normal_force_n: 30.0
+    normal_force_floor_n: -30.0
+    max_horizontal_force_n: 10.0
+  # 看门狗：连续「无有效支撑腿」的周期数上限；超过即停止施加平衡力矩并记 watchdog_triggered
+  # （不得在站不住的状态下继续施加力矩级动作）。
+  watchdog:
+    max_consecutive_no_stance_cycles: 10
+  # 验收判据（数字全在这里，脚本与实现层不写第二份）。
+  verification:
+    report: build/acceptance/go2-balance/report.json
+    # 静态抗扰：站立位形下在躯干上施加声明的水平力，力撤除后必须回到阈值内。
+    # 后续 3.8 s 为恢复窗口（判据取恢复窗口内的最坏值，不是取末值——末值会被"倒下后躺平"骗过）。
+    static_disturbance:
+      force_n: 40.0
+      axes: [x, y]
+      duration_s: 0.2
+      hold_s: 3.8
+      max_tilt_deg: 15.0
+      max_height_error_m: 0.05
+      max_drift_m: 0.15
+      max_saturated_samples: 0
+    # 隔离实验（第 5 轮同一实验的复跑）：步高压到 0.001 m 关掉抬腿/落地动力学，幅度扫描；
+    # 判据 = no_fall_amplitude_m（0.005 m）档不再翻倒 —— 对照：修前该档 z_mean −2.989653 m。
+    isolation:
+      step_height_m: 0.001
+      amplitudes_m: [0.0, 0.005, 0.01, 0.02]
+      duration_s: 4.0
+      no_fall_amplitude_m: 0.005
+      fall_base_height_m: 0.15
+      max_tilt_deg: 15.0
+
 stand:
   # 站立参考位形来自 Profile 的 spec.home（避免数字出现两份）。
   pose_source: profile_home
