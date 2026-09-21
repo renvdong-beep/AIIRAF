@@ -1,8 +1,8 @@
 # 四足行走与到点战役结果汇总（战役 `iraf-24h-2` 收尾）
 
 - 生成方式：`/usr/bin/python3 build/iraf-24h-2/06/build_evidence_index.py`（核对脚本在 gitignore 证据区，不随仓库分发）
-- 数据来源：`plans/iraf-24h-2/00-STATUS.json`（唯一权威台账，机器可读）；核对基准提交 `03cea10`
-- 核对结果：步骤 7 个，状态 {'DONE': 2, 'DEFERRED': 4, 'IN_PROGRESS': 1}；台账声明证据路径 49 条，盘上存在 47 条，缺失 2 条；提交问题 0 条
+- 数据来源：`plans/iraf-24h-2/00-STATUS.json`（唯一权威台账，机器可读）；核对基准提交 `4be03be`
+- 核对结果：步骤 7 个，状态 {'DONE': 3, 'DEFERRED': 4}；台账声明证据路径 56 条，盘上存在 56 条，缺失 0 条；提交问题 0 条
 
 > 本文由脚本生成：只要台账 `evidence` 声明与盘上事实不一致（或某个「关键数字的来源文件」不存在），脚本就退 3 且**不会**写出「0 缺失」——因此「0 缺失」本身是一条可复跑的判据，不是人工结论。
 
@@ -32,9 +32,9 @@
 | 03 | locomote 技能：定速直行与定速转弯（能力回填） | DEFERRED | — | — | — | 0/0 |
 | 04 | navigate_to：位姿闭环到点（正/负路径） | DEFERRED | — | — | — | 0/0 |
 | 05 | 接入 S1 交互与实时观看（locomote/navigate_to + 桌面窗口演示） | DEFERRED | — | — | — | 0/0 |
-| 06 | 收尾汇总：证据索引、缺口清单、文档与观感复盘 | IN_PROGRESS | — | — | — | 16/18 |
+| 06 | 收尾汇总：证据索引、缺口清单、文档与观感复盘 | DONE | `4be03be` | 是 | 2 | 25/25 |
 
-- 无提交的步骤（**终态为 `DEFERRED`，属预期**，显式登记而非忽略）：`03`(DEFERRED)、`04`(DEFERRED)、`05`(DEFERRED)、`06`(IN_PROGRESS)——它们没有实现产物，因此没有提交与证据；这不是「声明了产物却拿不出来」。
+- 无提交的步骤（**终态为 `DEFERRED`，属预期**，显式登记而非忽略）：`03`(DEFERRED)、`04`(DEFERRED)、`05`(DEFERRED)——它们没有实现产物，因此没有提交与证据；这不是「声明了产物却拿不出来」。
 
 ## 3. 关键验收数字（逐条给出盘上可查的来源）
 
@@ -134,15 +134,22 @@
 
 - 台账未声明证据（该步无实现产物）。
 
-### 步骤 06 — 收尾汇总：证据索引、缺口清单、文档与观感复盘（IN_PROGRESS）
+### 步骤 06 — 收尾汇总：证据索引、缺口清单、文档与观感复盘（DONE）
 
 - `build/iraf-24h-2/06/build_evidence_index.py`
 - `build/iraf-24h-2/06/evidence-index.json`
 - `build/iraf-24h-2/06/evidence-index.txt`
-- `build/iraf-24h-2/06/index-run1.txt`
-- `build/iraf-24h-2/06/index-run2.txt`
+- `build/iraf-24h-2/06/index-run*.txt`（目录/glob，展开 4 个文件）
 - `build/iraf-24h-2/06/make_broken_ledgers.py`
 - `build/iraf-24h-2/06/negative-control.txt`
+- `build/iraf-24h-2/06/negative/`（目录/glob，展开 11 个文件）
+- `build/iraf-24h-2/06/check_step_status.py`
+- `build/iraf-24h-2/06/check_gaps_same_source.py`
+- `build/iraf-24h-2/06/run_acceptance.sh`
+- `build/iraf-24h-2/06/diff_ledger.py`
+- `build/iraf-24h-2/06/diff-ledger-phase1.txt`
+- `build/iraf-24h-2/06/writeback_ledger.py`
+- `build/iraf-24h-2/06/full-suite.txt`
 - `build/iraf-24h-2/06/probe_ledger_evidence.py`
 - `build/iraf-24h-2/06/probe_reports.py`
 - `build/iraf-24h-2/06/probe_reports2.py`
@@ -152,8 +159,8 @@
 - `build/iraf-24h-2/06/probe-sources.txt`
 - `build/iraf-24h-2/06/commit-plan.txt`
 - `build/iraf-24h-2/06/commit-message.txt`
-- **缺失**：`build/iraf-24h-2/06/summary.txt`
-- **缺失**：`build/iraf-24h-2/06/tick-report.md`
+- `build/iraf-24h-2/06/summary.txt`
+- `build/iraf-24h-2/06/tick-report.md`
 
 ## 5. 诚实缺口（未实现 / 只承诺范围）
 
