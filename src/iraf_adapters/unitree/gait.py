@@ -62,6 +62,7 @@ REQUIRED_GAIT_KEYS = (
     "kind",
     "frequency_hz",
     "step_height_m",
+    "stance_clearance_m",
     "duty_factor",
     "swing_profile",
     "ramp_s",
@@ -260,6 +261,10 @@ def load_gait_declaration(declaration, profile_joints):
 
     frequency_hz = _positive(section["frequency_hz"], "gait.frequency_hz")
     step_height_m = _positive(section["step_height_m"], "gait.step_height_m")
+    # 中立（支撑/摆动）足端目标的离地间隙（m，> 0）：由调用点加到实测中立足端 z 上。
+    # 为什么必须 > 0：语义是「目标位形不压进支撑面之下」，取 0 就是「目标恰好压在面上」，
+    # 与「声明一个间隙」自相矛盾；缺键/非正则显式失败（不允许实现层默认值）。
+    stance_clearance_m = _positive(section["stance_clearance_m"], "gait.stance_clearance_m")
     ramp_s = _positive(section["ramp_s"], "gait.ramp_s", allow_zero=True)
 
     try:
@@ -421,6 +426,7 @@ def load_gait_declaration(declaration, profile_joints):
         "frequency_hz": frequency_hz,
         "period_s": 1.0 / frequency_hz,
         "step_height_m": step_height_m,
+        "stance_clearance_m": stance_clearance_m,
         "duty_factor": duty_factor,
         "swing_profile": swing_profile,
         "ramp_s": ramp_s,
@@ -922,6 +928,10 @@ def gait_joint_targets(params, geometry, home, joint_limits, elapsed_s, amplitud
     # 四条腿**同向**接受该偏移（支撑腿把机身推过去；摆动腿的落点随机身一起走，保持站姿形状），
     # 偏移由声明给出（幅度/方向/平滑/斜坡），实现层不含任何数字默认值。
     sway = sway_offset_m(params, elapsed_s)
+    # 中立目标的离地间隙（步骤 02 A′ ②）：实测中立足端 z（躯干系，`measure_leg_geometry`）
+    # 再抬高本值 ⇒ 目标位形的足端球最低点在支撑面**之上**，而不是压进面下。
+    # 只抬高 z，不动 x/y（不与 sway 的横向转移混叠）。
+    clearance = float(params["stance_clearance_m"])
     for code, geom in geometry.items():
         phase = leg_phase(params, code, elapsed_s)
         dx, dz = foot_offset(phase, params, amplitude)
@@ -931,7 +941,7 @@ def gait_joint_targets(params, geometry, home, joint_limits, elapsed_s, amplitud
         q_hip, q1, q2 = leg_solve(
             geom["neutral_x_m"] + dx + damping[0] - float(sway[0]),
             damping[1] - float(sway[1]),
-            geom["neutral_z_m"] + dz,
+            geom["neutral_z_m"] + clearance + dz,
             geom["l1_m"],
             geom["l2_m"],
         )

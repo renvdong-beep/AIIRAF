@@ -85,3 +85,22 @@ spec:
         body: base_link
         pos_m: [0.0, 0.0, 0.057]
         quat_wxyz: [1.0, 0.0, 0.0, 0.0]
+    # 初始位姿对齐（步骤 02 A′ ①，2026-09-21）：把初始位姿抬到「本体最低几何点刚好落在支撑面」。
+    # 为什么必须显式声明：这是**改变初始条件**的构建期行为，隐式施加会让任何"看起来像 Profile"的
+    # 文件也能改物理初始态；缺本段即不做（Piper 等其它本体不受影响）。
+    # 实测依据：关键帧 `home` 下四足足端球最低点在台面下 **18.372 mm**
+    # （证据 build/iraf-24h-2/02/probe-neutral-clearance.txt：dist=-0.018372500、球半径 0.022 m）。
+    # 抬升量由构建器按编译后的模型**实测**得出并写入场景报告（`initial_alignment` 段），不是常数。
+    initial_alignment:
+      enabled: true
+      # 只支持这一种语义（单次平移基座 z，使最低几何点落在支撑面）；其它取值显式失败，不做近似。
+      mode: lift_lowest_geom_to_support_plane
+      # 支撑面 z 的来源（场景声明内的点号路径）：地形工作台顶面。
+      support_plane_source: terrain.workbench.top_z_m
+      # 量"最低点"时的几何范围：只支持 collision（`contype/conaffinity` 非零的可碰撞几何）。
+      # 为什么不是"所有 geom"：视觉网格不参与接触，把它们算进来没有物理意义
+      # （本步实测：厂商 `FL_calf/calf_0` 视觉网格用包围球下界会算出 −0.096406 m，
+      #  抬升量从 18.372 mm 变成 96.406 mm；证据 build/iraf-24h-2/02/scene-initial-alignment-run1.txt）。
+      geometry_scope: collision
+      # 对齐容差（m）：抬升后 |最低点 − 支撑面| ≤ 本值视为完成（数值容差，不是物理阈值）。
+      tolerance_m: 1.0e-4

@@ -229,14 +229,58 @@ class GaitDeclarationTests(unittest.TestCase):
         self.assertIn("gait", str(caught.exception))
 
     def test_missing_key_fails(self):
-        for key in ("frequency_hz", "step_height_m", "duty_factor", "swing_profile", "ramp_s",
-                    "stabilization", "legs", "verification"):
+        for key in ("frequency_hz", "step_height_m", "stance_clearance_m", "duty_factor",
+                    "swing_profile", "ramp_s", "stabilization", "legs", "verification"):
             with self.subTest(key=key):
                 document = _declaration()
                 document["gait"].pop(key)
                 with self.assertRaises(DeclarationError) as caught:
                     gait.load_gait_declaration(document, _profile_joints())
                 self.assertIn(key, str(caught.exception))
+
+    def test_stance_clearance_must_be_positive(self):
+        """负向：间隙为 0 或负即失败（"声明一个间隙"与"目标压在支撑面上"自相矛盾）。"""
+        for value in (0.0, -0.005):
+            with self.subTest(value=value):
+                document = _declaration()
+                document["gait"]["stance_clearance_m"] = value
+                with self.assertRaises(DeclarationError) as caught:
+                    gait.load_gait_declaration(document, _profile_joints())
+                self.assertIn("stance_clearance_m", str(caught.exception))
+
+    def test_stance_clearance_raises_neutral_target_by_exactly_that_amount(self):
+        """正例对照：中立（支撑）目标的足端 z 恰好抬高空隙值 —— 证明该键真被消费、不是装饰。
+
+        判据用**独立反解**：把 `gait_joint_targets` 给出的支撑相关节代回同一模型的正运动学，
+        得到的足端 z 必须等于「间隙为 0 时的足端 z + 间隙」。只断言"能跑"会让一个恒不生效的键通过。
+        """
+        geometry = _geometry()
+        base_document = _declaration()
+        # 横向重心转移会把足端目标推到矢状面外（髋关节随之转动），本判据只量 z：
+        # 两个对照都把 sway 幅度置 0，保证比较的是同一相位、同一髋角下的纯 z 差。
+        # 两个对照的间隙都**显式给定**（不用真实声明值），这样判据与实参选值解耦。
+        base_document["gait"]["sway"]["amplitude_m"] = 0.0
+        base_document["gait"]["stance_clearance_m"] = 0.001
+        base = _params(base_document)
+        for leg, item in geometry.items():
+            base_joints = gait.gait_joint_targets(
+                base, geometry, _home(), _limits(), 0.0
+            )
+            raised_document = _declaration()
+            raised_document["gait"]["sway"]["amplitude_m"] = 0.0
+            raised_document["gait"]["stance_clearance_m"] = 0.05
+            raised = _params(raised_document)
+            raised_joints = gait.gait_joint_targets(
+                raised, geometry, _home(), _limits(), 0.0
+            )
+            leg_joints = item["joints"]
+            q2_base = base_joints[leg_joints["thigh_joint"]]
+            q3_base = base_joints[leg_joints["calf_joint"]]
+            q2_raised = raised_joints[leg_joints["thigh_joint"]]
+            q3_raised = raised_joints[leg_joints["calf_joint"]]
+            z_base = gait.leg_forward_kinematics(q2_base, q3_base, item["l1_m"], item["l2_m"])[1]
+            z_raised = gait.leg_forward_kinematics(q2_raised, q3_raised, item["l1_m"], item["l2_m"])[1]
+            self.assertAlmostEqual(z_raised - z_base, 0.049, places=9)
 
     def test_missing_verification_key_fails(self):
         document = _declaration()

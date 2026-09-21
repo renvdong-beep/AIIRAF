@@ -47,6 +47,10 @@ EXIT_MODEL = 5
 REPORT_SCHEMA_VERSION = "iraf.robot-pick-scene/v1"
 REPORT_KIND = "scene_model"
 
+#: `spec.model.initial_alignment.geometry_scope` 支持的取值：只支持可碰撞几何
+#: （"最低点"的物理含义是"能触地的点"；把视觉网格算进来会得到没有物理意义的抬升量）。
+GEOM_SCOPES = ("collision",)
+
 
 class SceneBuildError(ValueError):
     """场景生成失败（显式失败，不降级、不伪造成功）。"""
@@ -646,6 +650,282 @@ def _fix_keyframe_dimensions(xml_root, tree, path, free_props):
     tree.write(str(path), encoding="unicode", xml_declaration=True)
 
 
+def _dig_scene_path(document, dotted, label):
+    """按点号路径取场景声明里的量；解析不到即显式失败（不允许默认值兜底）。"""
+    node = document
+    for part in str(dotted).split("."):
+        if not isinstance(node, dict) or part not in node:
+            _fail(
+                EXIT_DECLARATION,
+                "%s 的路径 %r 在场景声明里解析不到（在 %r 处断开）" % (label, dotted, part),
+            )
+        node = node[part]
+    return node
+
+
+def _subtree_body_ids(model, mujoco, root_body_id):
+    """root body 及其全部子孙 body 的 id 集合（按 body_parentid 走，不假设命名）。"""
+    ids = {int(root_body_id)}
+    changed = True
+    while changed:
+        changed = False
+        for index in range(int(model.nbody)):
+            if index in ids:
+                continue
+            if int(model.body_parentid[index]) in ids:
+                ids.add(index)
+                changed = True
+    return ids
+
+
+def _lowest_geom_z(model, data, mujoco, body_ids, scope):
+    """给定 body 集合内所有 geom 的**最低点**世界 z（按几何类型精确算，不用包围球近似）。
+
+    返回 `(最低点 z, 取到最低点的 geom 名)`。类型不在支持表内即显式失败 —— 宁可报错，也不要拿
+    包围球半径充当"最低点"（那会把抬升量算错，而且错得看不出来，属"静默错误结果"）。
+
+    `scope`：量哪些 geom。只支持 `collision`（`contype/conaffinity` 非零的可碰撞几何）——
+    "最低点"的物理含义是"能触地的点"，视觉网格不参与接触，把它们算进来会得到没有物理意义的抬升量
+    （本步实测：把视觉网格用包围球下界算进最低点，抬升量从 18.372 mm 变成 96.406 mm）。
+
+    mesh 口径（**实测**，见 build/iraf-24h-2/02/diagnose_mesh_scale.py）：MuJoCo 把 mesh geom 的
+    `geom_size` 存成网格本地的半边长（实测 `FL_calf/calf_0`：size.z=0.157580154 == |本地极值 z|），
+    顶点数据不做缩放 ⇒ 世界坐标 = `geom_xpos + geom_xmat @ v`。用 `pos − rbound` 当最低点会低估
+    （`calf_0`：−0.096406 m vs 真实最低点 +0.000502 m），是本次首跑抬升 96 mm 的成因。
+    """
+    kind = mujoco.mjtGeom
+    sphere = int(kind.mjGEOM_SPHERE)
+    box = int(kind.mjGEOM_BOX)
+    capsule = int(kind.mjGEOM_CAPSULE)
+    cylinder = int(kind.mjGEOM_CYLINDER)
+    mesh = int(kind.mjGEOM_MESH)
+    ellipsoid = int(getattr(kind, "mjGEOM_ELLIPSOID", -1))
+    lowest = None
+    lowest_name = ""
+    lowest_type = ""
+    if scope != "collision":
+        _fail(
+            EXIT_DECLARATION,
+            "initial_alignment.geometry_scope 只支持 collision（可碰撞几何），实际: %r" % (scope,),
+        )
+    for gid in range(int(model.ngeom)):
+        if int(model.geom_bodyid[gid]) not in body_ids:
+            continue
+        if scope == "collision" and not (
+            int(model.geom_contype[gid]) or int(model.geom_conaffinity[gid])
+        ):
+            continue
+        position = np.asarray(data.geom_xpos[gid], dtype=float)
+        size = np.asarray(model.geom_size[gid], dtype=float)
+        rotation = np.asarray(data.geom_xmat[gid], dtype=float).reshape(3, 3)
+        gtype = int(model.geom_type[gid])
+        if gtype == sphere:
+            z = float(position[2]) - float(size[0])
+        elif gtype == box:
+            z = float(position[2]) - float(
+                abs(rotation[2, 0]) * size[0]
+                + abs(rotation[2, 1]) * size[1]
+                + abs(rotation[2, 2]) * size[2]
+            )
+        elif gtype in (capsule, cylinder):
+            # 胶囊/圆柱的轴是 geom 局部 z：最低点 = 中心 − (|R[2,2]|·半长 + 半径)。
+            z = float(position[2]) - float(abs(rotation[2, 2]) * size[1] + size[0])
+        elif gtype == mesh:
+            mesh_id = int(model.geom_dataid[gid])
+            if mesh_id < 0:
+                _fail(EXIT_MODEL, "geom %d 是 mesh 但没有网格数据" % gid)
+            start = int(model.mesh_vertadr[mesh_id])
+            count = int(model.mesh_vertnum[mesh_id])
+            if count <= 0:
+                _fail(EXIT_MODEL, "geom %d 的网格没有顶点" % gid)
+            verts = np.asarray(model.mesh_vert[start : start + count], dtype=float)
+            # 每个顶点在世界系下的 z = geom 原点 z + R 的第三行 · 顶点（顶点不做缩放）。
+            z = float(np.min(float(position[2]) + verts.dot(rotation[2, :])))
+        elif gtype == ellipsoid:
+            # 椭球最低点没有解析式（半轴长度 = size、局部轴为 geom 的坐标轴）：
+            # 用 |R[2,·]|·size 的保守下界（只会多抬，不会少抬），并在报告里写明用的是下界。
+            z = float(position[2]) - float(np.linalg.norm(size[:3]))
+        else:
+            _fail(
+                EXIT_MODEL,
+                "无法计算 geom %d（type=%d）的最低点：初始位姿对齐不支持该几何类型，不做近似"
+                % (gid, gtype),
+            )
+        if lowest is None or z < float(lowest):
+            lowest = float(z)
+            lowest_name = (
+                mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, gid) or ("geom#%d" % gid)
+            )
+            lowest_type = str(mujoco.mjtGeom(gtype)).split(".")[-1]
+    if lowest is None:
+        _fail(
+            EXIT_MODEL,
+            "本体子树内没有任何 %s geom：无法做初始位姿对齐" % scope,
+        )
+    return float(lowest), lowest_name, lowest_type
+
+
+def _align_initial_pose(xml_root, tree, path, model_decl, scene, trunk_body_name):
+    """A′ ①（步骤 02）：按**实测**把初始位姿抬到「本体最低几何点刚好落在支撑面」。
+
+    为什么必须显式声明（`spec.model.initial_alignment`）：这是**改变初始条件**的构建期行为，
+    隐式施加会让任何"看起来像 Profile"的文件都能改物理初始态；缺本段即不做（其它本体不受影响）。
+
+    实测背景：关键帧 `home` 下四足足端球最低点在台面下 18.372 mm
+    （build/iraf-24h-2/02/probe-neutral-clearance.txt）。本函数只做**一次平移**（基座自由关节的 z），
+    不动关节角、不动姿态；抬升量由编译后的模型实测得出，不是写死的常数。
+    **首期只处理厂商自带关键帧**：厂商没有关键帧时不新增（不替厂商决定初始位形）。
+    """
+    section = model_decl.get("initial_alignment")
+    if section is None:
+        return None
+    if not isinstance(section, dict):
+        _fail(EXIT_DECLARATION, "spec.model.initial_alignment 必须是映射")
+    enabled = section.get("enabled")
+    if not isinstance(enabled, bool):
+        _fail(EXIT_DECLARATION, "spec.model.initial_alignment.enabled 必须显式给 true/false")
+    if not enabled:
+        return {"enabled": False, "note": "声明为 false：不做初始位姿对齐"}
+    mode = str(section.get("mode", ""))
+    if mode != "lift_lowest_geom_to_support_plane":
+        _fail(
+            EXIT_DECLARATION,
+            "spec.model.initial_alignment.mode 只支持 lift_lowest_geom_to_support_plane，"
+            "实际: %r（其余语义未实现，不做近似）" % (section.get("mode"),),
+        )
+    source = section.get("support_plane_source")
+    if not source:
+        _fail(
+            EXIT_DECLARATION,
+            "spec.model.initial_alignment.support_plane_source 缺失（支撑面 z 的来源路径必须声明）",
+        )
+    tolerance = section.get("tolerance_m")
+    if (
+        not isinstance(tolerance, (int, float))
+        or isinstance(tolerance, bool)
+        or not np.isfinite(float(tolerance))
+        or float(tolerance) <= 0.0
+    ):
+        _fail(EXIT_DECLARATION, "spec.model.initial_alignment.tolerance_m 必须是正数")
+    tolerance = float(tolerance)
+    scope = str(section.get("geometry_scope", ""))
+    if scope not in GEOM_SCOPES:
+        _fail(
+            EXIT_DECLARATION,
+            "spec.model.initial_alignment.geometry_scope 只支持 %s，实际: %r"
+            % (list(GEOM_SCOPES), section.get("geometry_scope")),
+        )
+    support_z = float(
+        _dig_scene_path(scene, source, "spec.model.initial_alignment.support_plane_source")
+    )
+
+    keyframe_element = xml_root.find("keyframe")
+    if keyframe_element is None:
+        return {
+            "enabled": True,
+            "mode": mode,
+            "applied": False,
+            "reason": "厂商模型没有 keyframe：不新增（不替厂商决定初始位形）",
+            "support_plane_z_m": support_z,
+            "geometry_scope": scope,
+        }
+
+    probe = mujoco.MjModel.from_xml_path(str(path))
+    trunk_id = mujoco.mj_name2id(probe, mujoco.mjtObj.mjOBJ_BODY, trunk_body_name)
+    if trunk_id < 0:
+        _fail(EXIT_REFERENCE, "初始位姿对齐：模型里没有躯干 body " + str(trunk_body_name))
+    body_ids = _subtree_body_ids(probe, mujoco, trunk_id)
+    base_joint = -1
+    for index in range(int(probe.njnt)):
+        if (
+            int(probe.jnt_type[index]) == int(mujoco.mjtJoint.mjJNT_FREE)
+            and int(probe.jnt_bodyid[index]) == int(trunk_id)
+        ):
+            base_joint = index
+            break
+    if base_joint < 0:
+        _fail(
+            EXIT_REFERENCE,
+            "初始位姿对齐：躯干 body %s 没有自由关节，无法抬升初始位姿" % trunk_body_name,
+        )
+    address = int(probe.jnt_qposadr[base_joint])
+    data = mujoco.MjData(probe)
+
+    entries = []
+    for key in list(keyframe_element):
+        name = str(key.get("name"))
+        qpos = (key.get("qpos") or "").split()
+        if len(qpos) < address + 3:
+            _fail(
+                EXIT_MODEL,
+                "关键帧 %r 的 qpos 长度 %d 不足以容纳基座自由关节（需要 ≥ %d）"
+                % (name, len(qpos), address + 3),
+            )
+        key_id = mujoco.mj_name2id(probe, mujoco.mjtObj.mjOBJ_KEY, name)
+        if key_id < 0:
+            _fail(EXIT_MODEL, "关键帧 %r 在编译后的模型里找不到" % name)
+        mujoco.mj_resetDataKeyframe(probe, data, key_id)
+        mujoco.mj_forward(probe, data)
+        lowest, geom_name, geom_type = _lowest_geom_z(probe, data, mujoco, body_ids, scope)
+        base_before = float(data.qpos[address + 2])
+        lift = support_z - lowest
+        entries.append(
+            {
+                "name": name,
+                "lowest_z_before_m": lowest,
+                "lowest_geom": geom_name,
+                "lowest_geom_type": geom_type,
+                "base_z_before_m": base_before,
+                "lift_m": lift,
+                "base_z_after_m": base_before + lift,
+            }
+        )
+        qpos[address + 2] = "%.9f" % (base_before + lift)
+        key.set("qpos", " ".join(qpos))
+
+    ET.indent(tree, space="    ")
+    tree.write(str(path), encoding="unicode", xml_declaration=True)
+
+    # 后置校验：重新编译，逐关键帧复核最低点与支撑面的残差（抬升量必须真的生效）。
+    verify_model = mujoco.MjModel.from_xml_path(str(path))
+    verify_data = mujoco.MjData(verify_model)
+    verify_trunk = mujoco.mj_name2id(verify_model, mujoco.mjtObj.mjOBJ_BODY, trunk_body_name)
+    verify_ids = _subtree_body_ids(verify_model, mujoco, verify_trunk)
+    residuals = []
+    for entry in entries:
+        key_id = mujoco.mj_name2id(verify_model, mujoco.mjtObj.mjOBJ_KEY, entry["name"])
+        mujoco.mj_resetDataKeyframe(verify_model, verify_data, key_id)
+        mujoco.mj_forward(verify_model, verify_data)
+        lowest, geom_name, geom_type = _lowest_geom_z(
+            verify_model, verify_data, mujoco, verify_ids, scope
+        )
+        residual = lowest - support_z
+        entry["residual_after_m"] = residual
+        entry["lowest_geom_after"] = geom_name
+        entry["lowest_geom_type_after"] = geom_type
+        residuals.append(abs(residual))
+        if abs(residual) > tolerance:
+            _fail(
+                EXIT_MODEL,
+                "初始位姿对齐未收敛：关键帧 %r 的最低点残差 %.9f m 超出容差 %.9f m"
+                % (entry["name"], residual, tolerance),
+            )
+    return {
+        "enabled": True,
+        "mode": mode,
+        "applied": True,
+        "support_plane_z_m": support_z,
+        "support_plane_source": str(source),
+        "geometry_scope": scope,
+        "tolerance_m": tolerance,
+        "trunk_body": trunk_body_name,
+        "base_joint_qpos_address": address,
+        "keyframes": entries,
+        "max_abs_residual_m": max(residuals),
+        "method": "编译后模型 + 关键帧 + mj_forward 实测最低点，单次平移基座 z",
+    }
+
+
 def _model_facts(path):
     """编译生成模型并回报名字表（注入是否真的生效以编译结果为准）。"""
     model = mujoco.MjModel.from_xml_path(str(path))
@@ -750,6 +1030,10 @@ def build_scene_model(scene_dir, robot, root=None, output=None):
     _fix_keyframe_dimensions(
         xml_root, tree, staging, [item for item in props if "quaternion_wxyz" in item]
     )
+    # 初始位姿对齐（A′ ①）：按实测把本体最低几何点抬到支撑面。缺声明即不做（返回 None）。
+    initial_alignment = _align_initial_pose(
+        xml_root, tree, staging, model, scene, trunk_body_name
+    )
     try:
         compiled, facts = _model_facts(staging)
     except Exception as exc:  # MuJoCo 编译失败即显式失败，不落半成品
@@ -812,6 +1096,8 @@ def build_scene_model(scene_dir, robot, root=None, output=None):
         "acceptance": (baseline or {}).get("acceptance"),
         "simulation": True,
         "vendor_source": vendor,
+        # 初始位姿对齐的实测证据（抬升量/最低点 geom/后置残差）；未声明该段的本体为 null。
+        "initial_alignment": initial_alignment,
         "injections": injections,
         "sensors": {
             "injected": injected_sensors,

@@ -212,6 +212,78 @@ class InjectionTests(SceneBuilderFixture):
         self.assertEqual(report["model_facts"]["njnt"], 14)
 
 
+class InitialAlignmentTests(SceneBuilderFixture):
+    """初始位姿对齐（A′ ①）：抬升量按**实测**最低可碰撞几何点算，并独立复核。"""
+
+    def test_alignment_lifts_lowest_collision_geom_onto_support_plane(self):
+        """正例：抬升量 = 实测最低点与支撑面的间隙；编译产物独立复核后残差为 0。
+
+        回归重点（本步实测缺陷）：最低点必须落在**可碰撞几何**上。首版把视觉网格的包围球下界
+        当最低点，抬升量从 18.372 mm 变成 96.406 mm —— 那会让四足悬空 78 mm 起步。
+        """
+        import mujoco
+
+        report = self.build()
+        section = report["initial_alignment"]
+        self.assertTrue(section["enabled"])
+        self.assertTrue(section["applied"])
+        self.assertEqual(section["geometry_scope"], "collision")
+        entry = section["keyframes"][0]
+        self.assertEqual(entry["name"], "home")
+        self.assertIn(entry["lowest_geom"], ("FL", "FR", "RL", "RR"))
+        self.assertEqual(entry["lowest_geom_type"], "mjGEOM_SPHERE")
+        self.assertAlmostEqual(entry["lift_m"], -entry["lowest_z_before_m"], places=9)
+        self.assertAlmostEqual(entry["base_z_after_m"] - entry["base_z_before_m"], entry["lift_m"], places=9)
+        self.assertLessEqual(abs(entry["residual_after_m"]), section["tolerance_m"])
+        # 独立复核（不读报告）：编译产物 + 关键帧 → 四足足端球最低点落在支撑面（z=0）上。
+        model = mujoco.MjModel.from_xml_path(str(self.output))
+        data = mujoco.MjData(model)
+        mujoco.mj_resetDataKeyframe(model, data, 0)
+        mujoco.mj_forward(model, data)
+        for leg in ("FL", "FR", "RL", "RR"):
+            gid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, leg)
+            lowest = float(data.geom_xpos[gid][2]) - float(model.geom_size[gid][0])
+            self.assertLess(abs(lowest), 1.0e-6, msg="%s 的最低点 %.9f 未落在支撑面" % (leg, lowest))
+
+    def test_absent_section_leaves_initial_pose_untouched(self):
+        """正向对照（fail-closed 的另一半）：没有该声明段 ⇒ 不做对齐，厂商关键帧原样保留。"""
+        self.mutate_profile(lambda document: document["spec"]["model"].pop("initial_alignment"))
+        report = self.build()
+        self.assertIsNone(report["initial_alignment"])
+
+    def test_unknown_mode_fails(self):
+        self.mutate_profile(
+            lambda document: document["spec"]["model"]["initial_alignment"].__setitem__(
+                "mode", "snap_to_ground"
+            )
+        )
+        self.assertBuildFails(scene_builder.EXIT_DECLARATION, "mode")
+
+    def test_missing_support_plane_source_fails(self):
+        self.mutate_profile(
+            lambda document: document["spec"]["model"]["initial_alignment"].pop(
+                "support_plane_source"
+            )
+        )
+        self.assertBuildFails(scene_builder.EXIT_DECLARATION, "support_plane_source")
+
+    def test_unresolvable_support_plane_path_fails(self):
+        self.mutate_profile(
+            lambda document: document["spec"]["model"]["initial_alignment"].__setitem__(
+                "support_plane_source", "terrain.no_such_layer.top_z_m"
+            )
+        )
+        self.assertBuildFails(scene_builder.EXIT_DECLARATION, "terrain.no_such_layer.top_z_m")
+
+    def test_invalid_geometry_scope_fails(self):
+        self.mutate_profile(
+            lambda document: document["spec"]["model"]["initial_alignment"].__setitem__(
+                "geometry_scope", "visual"
+            )
+        )
+        self.assertBuildFails(scene_builder.EXIT_DECLARATION, "geometry_scope")
+
+
 class NegativeReferenceTests(SceneBuilderFixture):
     def test_unknown_sensor_anchor_site_fails(self):
         """厂商来源传感器的锚点必须真的存在于厂商模型里（改名字即失败）。"""
