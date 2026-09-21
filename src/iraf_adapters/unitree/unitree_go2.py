@@ -567,7 +567,14 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             if len(stance) < min_stance:
                 stats["no_stance_cycles"] = int(stats["no_stance_cycles"]) + 1
                 stats["consecutive_no_stance"] = int(stats["consecutive_no_stance"]) + 1
+                stats["max_consecutive_no_stance"] = max(
+                    int(stats["max_consecutive_no_stance"]),
+                    int(stats["consecutive_no_stance"]),
+                )
                 if int(stats["consecutive_no_stance"]) > watchdog_limit:
+                    if not stats["watchdog_triggered"]:
+                        # 归因证据：看门狗**首次**触发的控制周期（从 1 起数）。
+                        stats["watchdog_trigger_cycle"] = int(stats["cycles"])
                     stats["watchdog_triggered"] = True
                     stats["disabled_cycles"] = int(stats["disabled_cycles"]) + 1
                 return _no_stance_fallback()
@@ -577,6 +584,10 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 # （否则平衡器自己成为第二个不受监控的控制源）。
                 stats["disabled_cycles"] = int(stats["disabled_cycles"]) + 1
                 return _no_stance_fallback()
+            if stats["first_stance_cycle"] is None:
+                # 归因证据：**首次真正进入力控**的控制周期（从 1 起数）。用于把「启动瞬态凑不齐支撑集」
+                # 与「结构性凑不齐」分开 —— 只看 `no_stance_cycles` 总量无法区分这两者。
+                stats["first_stance_cycle"] = int(stats["cycles"])
             stance_points = {
                 code: np.asarray(
                     self.data.geom_xpos[int(geometry[code]["contact_geom"])], dtype=float
@@ -670,6 +681,12 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             "consecutive_no_stance": 0,
             "disabled_cycles": 0,
             "watchdog_triggered": False,
+            # 看门狗归因（只增证据、不参与判据）：触发发生在**第几个控制周期**、以及首次凑齐支撑集的周期。
+            # `None` 的语义是「未发生」（未触发 / 从未凑齐），不是「未测量」；与 `watchdog_triggered`
+            # 的自洽关系由验收入口 `_balance_segment` 强制（触发 ⇔ 周期非 None）。
+            "watchdog_trigger_cycle": None,
+            "first_stance_cycle": None,
+            "max_consecutive_no_stance": 0,
             "stance_legs_histogram": {},
             "clamped_legs": [],
             "last_stance_legs": [],
@@ -711,6 +728,15 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 "cycles": int(stats["cycles"]),
                 "no_stance_cycles": int(stats["no_stance_cycles"]),
                 "watchdog_triggered": bool(stats["watchdog_triggered"]),
+                "watchdog_trigger_cycle": (
+                    None
+                    if stats["watchdog_trigger_cycle"] is None
+                    else int(stats["watchdog_trigger_cycle"])
+                ),
+                "first_stance_cycle": (
+                    None if stats["first_stance_cycle"] is None else int(stats["first_stance_cycle"])
+                ),
+                "max_consecutive_no_stance": int(stats["max_consecutive_no_stance"]),
                 "disabled_cycles": int(stats["disabled_cycles"]),
                 "position_weight": dict(stats["position_weight"]),
                 "stance_legs_histogram": {

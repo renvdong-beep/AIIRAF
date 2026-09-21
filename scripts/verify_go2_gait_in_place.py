@@ -107,6 +107,9 @@ BALANCE_REQUIRED_PATHS = (
     "stats.cycles",
     "stats.no_stance_cycles",
     "stats.watchdog_triggered",
+    "stats.watchdog_trigger_cycle",
+    "stats.first_stance_cycle",
+    "stats.max_consecutive_no_stance",
     "stats.declared_swing_in_contact_cycles",
     "stats.declared_swing_in_contact_samples",
     "stats.max_abs_torque_nm",
@@ -141,6 +144,23 @@ def _balance_segment(execution):
                     "`balance` 段缺少本入口消费的键: %s" % dotted
                 )
             node = node[part]
+    # 归因证据的自洽门禁（只查一致性，不引入新阈值）：触发 ⇔ 触发周期非 None；
+    # 「首次进入力控的周期」缺失却记到力控周期 ⇒ 说明字段产出但没被维护（恒真字段），
+    # 一律 fail-closed，绝不静默通过。
+    stats = segment["stats"]
+    triggered = bool(stats["watchdog_triggered"])
+    trigger_cycle = stats["watchdog_trigger_cycle"]
+    if triggered != (trigger_cycle is not None):
+        raise quadruped_contract.DeclarationError(
+            "`balance` 段不自洽：watchdog_triggered=%r 与 watchdog_trigger_cycle=%r 矛盾"
+            % (triggered, trigger_cycle)
+        )
+    force_control = int(stats["position_weight"]["force_control_cycles"])
+    if force_control > 0 and stats["first_stance_cycle"] is None:
+        raise quadruped_contract.DeclarationError(
+            "`balance` 段不自洽：force_control_cycles=%d > 0 却没有 first_stance_cycle"
+            % force_control
+        )
     return segment
 
 
@@ -164,6 +184,15 @@ def _balance_report_summary(segment):
             "cycles": cycles,
             "no_stance_cycles": int(stats["no_stance_cycles"]),
             "watchdog_triggered": bool(stats["watchdog_triggered"]),
+            "watchdog_trigger_cycle": (
+                None
+                if stats["watchdog_trigger_cycle"] is None
+                else int(stats["watchdog_trigger_cycle"])
+            ),
+            "first_stance_cycle": (
+                None if stats["first_stance_cycle"] is None else int(stats["first_stance_cycle"])
+            ),
+            "max_consecutive_no_stance": int(stats["max_consecutive_no_stance"]),
             "force_control_cycles": int(stats["position_weight"]["force_control_cycles"]),
             "fallback_cycles": fallback_cycles,
             "fallback_fraction": None if cycles == 0 else float(fallback_cycles) / float(cycles),

@@ -525,6 +525,20 @@ class GaitReportBalanceEvidenceTests(unittest.TestCase):
         )
         return unitree_go2.UnitreeGo2Adapter._balance_summary(fake, params)
 
+    @staticmethod
+    def _produced_with_stats(**overrides):
+        """**正向对照的构造器**：零值统计上覆盖指定字段，仍走生产侧 `_balance_summary`。"""
+        params = _params()
+        stats = unitree_go2.UnitreeGo2Adapter._new_balance_stats()
+        stats.update(overrides)
+        fake = types.SimpleNamespace(
+            _balance_stats=stats,
+            _new_balance_stats=unitree_go2.UnitreeGo2Adapter._new_balance_stats,
+            robot_mass_kg=lambda: 15.596408,
+            gravity_mps2=lambda: 9.80665,
+        )
+        return unitree_go2.UnitreeGo2Adapter._balance_summary(fake, params)
+
     def test_real_producer_satisfies_required_paths(self):
         """真实生产形状必须通过必需键路径校验（否则门禁恒失败而不是严格）。"""
         segment = self._produced_segment()
@@ -547,10 +561,13 @@ class GaitReportBalanceEvidenceTests(unittest.TestCase):
                 "fallback_cycles",
                 "fallback_fraction",
                 "fallback_fraction_defined",
+                "first_stance_cycle",
                 "force_control_cycles",
                 "max_abs_torque_nm",
+                "max_consecutive_no_stance",
                 "no_stance_cycles",
                 "stance_legs_histogram",
+                "watchdog_trigger_cycle",
                 "watchdog_triggered",
             ],
         )
@@ -576,6 +593,41 @@ class GaitReportBalanceEvidenceTests(unittest.TestCase):
                 del node[parts[-1]]
                 with self.assertRaises(DeclarationError):
                     verify_go2_gait_in_place._balance_segment({"balance": segment})
+
+    def test_watchdog_trigger_cycle_agrees_with_triggered(self):
+        """看门狗归因自洽门禁：触发 ⇔ 触发周期非 None（正例通过、两种矛盾都必须被拒）。"""
+        consistent = self._produced_with_stats(
+            cycles=1000, watchdog_triggered=True, watchdog_trigger_cycle=12
+        )
+        self.assertIs(
+            verify_go2_gait_in_place._balance_segment({"balance": consistent}), consistent
+        )
+        for triggered, cycle in ((True, None), (False, 7)):
+            with self.subTest(triggered=triggered, cycle=cycle):
+                segment = self._produced_with_stats(
+                    cycles=1000, watchdog_triggered=triggered, watchdog_trigger_cycle=cycle
+                )
+                with self.assertRaises(DeclarationError):
+                    verify_go2_gait_in_place._balance_segment({"balance": segment})
+
+    def test_force_control_cycles_require_first_stance_cycle(self):
+        """力控周期 > 0 却记不到「首次进入力控的周期」⇒ 不自洽，必须拒（防恒真字段）。"""
+        segment = self._produced_with_stats(cycles=1000)
+        segment["stats"]["position_weight"]["force_control_cycles"] = 1
+        with self.assertRaises(DeclarationError):
+            verify_go2_gait_in_place._balance_segment({"balance": segment})
+        segment["stats"]["first_stance_cycle"] = 1
+        self.assertIs(
+            verify_go2_gait_in_place._balance_segment({"balance": segment}), segment
+        )
+
+    def test_zero_state_cycle_trace_is_explicitly_none(self):
+        """`None` 的语义是「未发生」而非「未测量」：零值统计段必须逐项如实。"""
+        stats = self._produced_segment()["stats"]
+        self.assertIsNone(stats["watchdog_trigger_cycle"])
+        self.assertIsNone(stats["first_stance_cycle"])
+        self.assertFalse(stats["watchdog_triggered"])
+        self.assertEqual(int(stats["max_consecutive_no_stance"]), 0)
 
     def test_fallback_fraction_undefined_without_cycles(self):
         """未跑力控周期时 fallback 比值**不可定义** ⇒ null + 标志位 false（不是 0%）。"""

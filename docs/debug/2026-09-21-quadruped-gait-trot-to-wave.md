@@ -1132,6 +1132,11 @@ dc 组复跑（同一份 `build/iraf-24h-2/02b/gait-wave-b1-dc.yaml`；报告**�
 ③ `watchdog_triggered: true` 只如实登记布尔值，**未定位触发原因**（属未证明项）：可能是
    `no_stance_cycles` 连续计数越限，也可能是别处；要归因须另立步骤读 `balance.watchdog` 声明与
    `_balance_provider` 的判断顺序，本轮**不编因果**。
+   **【自 §20 起被取代】**（2026-09-21 第十六轮）该归因已实测完成：原因是「连续无支撑周期 >
+   `balance.watchdog.max_consecutive_no_stance_cycles`（=10）」这一条唯一条件，**触发周期 = 14**
+   （t≈0.14 s，启动瞬态内；首次凑齐支撑集为周期 3），且触发后 **latch**；单键正例对照（预算 10→1000）
+   即翻转成 `false`，力控周期由 1 升到 **93（9.3%）** 但**仍翻倒** ⇒ 本节的「0.1%」读法须修正为
+   「即使不 latch，B1 也只真正参与 9.3% 的周期」。见 §20。
 ④ 生产报告本轮**改写了**默认路径 `build/acceptance/go2-trot-in-place/report.json`（配置声明的报告路径，
    即生产证据路径本身），上一轮的生产报告副本保留在 `build/iraf-24h-2/02b/prod-wave/report.json`（18:04），
    本轮比对即以它为参考；dc 组因另有 `--report` 命名空间化，上一轮证据**未被覆盖**。
@@ -1145,6 +1150,91 @@ PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_gait_in_place.py \
   --config build/iraf-24h-2/02b/gait-wave-b1-dc.yaml \
   --report build/iraf-24h-2/02b/wave-dc-balance-count/report.json
 /usr/bin/python3 build/iraf-24h-2/02b/compare-gait-assessment.py <新报告> <参考报告>
+PYTHONPATH=src /usr/bin/python3 -m unittest tests.unit.test_balance_contract
+```
+
+
+## 20 2026-09-21（第十六轮 tick，看门狗归因轮）：把 §19.5③ 的「触发原因未定位」变成实测 —— 触发周期 14（启动瞬态）、单键正例对照翻转
+
+### 20.1 为什么要做（**路线无关**，且是 D1~D4 选路的输入）
+
+§19.4 用「力控周期 **1/1000**（fallback 99.9%）」加强 D1 的必要性。但若这个「几乎全程退出」其实是
+看门狗在**启动瞬间 latch** 造成的，它就**不能**当作「B1 结构性无法生效」的证据 —— 这正是 §19.5③ 登记的
+未证明项。本轮只增**证据字段**并做**单键正例对照**，不改任何机制/阈值/声明，D1~D4 一个未实现。
+
+### 20.2 代码级归因（单写者，结论确定）
+
+`watchdog_triggered = True` 在 `src/iraf_adapters/unitree/unitree_go2.py` 里**只有一处**赋值
+（`_balance_provider` 内，条件唯一）：`consecutive_no_stance > balance.watchdog.max_consecutive_no_stance_cycles`；
+另一处（`_new_balance_stats`）是初值 `False`。⇒ 触发原因在代码层不存在第二来源，
+且一旦触发即 **latch**（后续即使凑齐支撑集也继续 fallback）。
+
+### 20.3 实测（`simulation=true`，`/usr/bin/python3` 3.10.12，1000 个控制周期）
+
+| 用例 | 看门狗预算 | `watchdog_triggered` | `watchdog_trigger_cycle` | `first_stance_cycle` | `force_control_cycles` | `no_stance_cycles` | `max_consecutive_no_stance` |
+|---|---|---|---|---|---|---|---|
+| dc（生产预算 10） | 10 | **true** | **14** | 3 | **1** | 975 | 780 |
+| dc-nowd（**正例对照**，只改这一个键 10→1000） | 1000 | **false** | `null` | 3 | **93** | 907 | 672 |
+
+三条结论：
+
+1. **归因成立**：只把 `balance.watchdog.max_consecutive_no_stance_cycles` 由 10 改到 1000
+   （**证据区副本** `build/iraf-24h-2/02b/gait-wave-b1-dc-nowd.yaml`，生产声明未动），
+   `watchdog_triggered` 即由 true 翻成 false ⇒ 成因就是该条件本身（正例对照，非恒真字段）。
+2. **触发出现在启动瞬态内**：触发周期 = **14** ⇒ t ≈ 0.14 s @100 Hz，而首次凑齐支撑集是周期 **3**。
+   即：周期 3 有一次力控，周期 4~14 连续 **11** 个周期凑不齐「声明相位 ∧ 实测接触」的三腿支撑
+   （与 §18 已记录的「首采样四腿接触力全 0 + tilt 3.38° + |v| 0.110 m/s」首周期瞬态一致），
+   第 14 周期越限 ⇒ latch ⇒ 其后 **986** 个周期不再施加力矩级动作。
+   `max_consecutive_no_stance = 780` 是**翻倒之后**在空中/翻滚的长段，**不是**启动段。
+3. **但 latch 不是失败的成因**：对照组（不 latch）力控周期只从 1 升到 **93（9.3%）**，**仍然翻倒**
+   （`height_mean_m -42.35080842852962`、`max_tilt_deg 178.0961244435719`、
+   `max_displacement_m 1.4936505927856871`、`ctrl_saturated_samples 0`）。
+   ⇒ §19.4「B1 几乎全程退出 ⇒ D1 必要性被加强」的**读法须修正**：0.1% 中确实有 11 个启动周期是 latch
+   造成的（量级见 1→93），但**即使不 latch，B1 也只在 9.3% 的周期真正参与**
+   ⇒ D1 的**方向性**结论不变，但**量级**应按 **9.3%** 而不是 99.9% 解读。
+
+### 20.4 只增证据的契约（fail-closed）
+
+- 新增三键进 `BALANCE_REQUIRED_PATHS`：`stats.watchdog_trigger_cycle`、`stats.first_stance_cycle`、
+  `stats.max_consecutive_no_stance`；`_balance_segment` 增**两条自洽门禁**（不引入任何新阈值）：
+  ① 触发 ⇔ `watchdog_trigger_cycle` 非 `None`；② `force_control_cycles > 0` ⇒ `first_stance_cycle` 非 `None`
+  （防「字段产出但没被维护」的恒真字段）。
+- `None` 的语义 = 「**未发生**」，不是「未测量」；报告摘要同步给出三键。
+- `tests/unit/test_balance_contract.py` **Ran 45 / OK**（+3：正例对照、两种矛盾各一条负向、零值段逐项如实）。
+
+### 20.5 零回归证据（逐位）
+
+- **生产步态**（`config/go2_loopback.yaml`，`balance.enabled: false`）新报告 vs 上一轮生产报告：
+  131→134 字段，差异 **3 处全部非物理**（`generated_at` / `report_path` / `series_path`），
+  判据与物理字段逐位一致：`exit=5` / `checks 20` / `failed 13`、`height_mean_m -52.96097353575173`、
+  `max_tilt_deg 176.44460017100423`、`max_tracking_error_rad 0.3111402167153192`、
+  `ctrl_saturated_samples 7486`。
+- **dc 组**复跑 vs 上一轮 dc 证据：132→135 字段、差异同上 3 处非物理，物理与判据逐位一致
+  （`-78.8292944475062` / `177.92464537728526` / `0.3922505382574959` / sat 0）
+  ⇒ 触发周期 14 来自一次**忠实复现**，不是另一次不同的运行。
+- `verify_go2_balance.py` **exit=0 / checks 8 / failed_checks []**；
+  全量单测 **Ran 1046 / failures=1 / errors=4 / skipped=4**（失败名集合与战役基线同一批、新增 = 0；+3 为本轮新增用例）。
+
+### 20.6 诚实边界
+
+① 全部结论 `simulation=true`；真机/目标端 `DEFERRED`（板卡不在场）。
+② 生产声明未动：`balance.enabled: false`、`stance_classification: contact_only`、看门狗预算仍 **10**；
+   D1~D4 **一个未实现**、判据/阈值一字未改、`locomote` 未回填、ADR 未由代理改动。
+③ 对照副本 `gait-wave-b1-dc-nowd.yaml` 只存在于证据区（gitignore），**不是**放宽生产门禁。
+④ 触发原因已定位到「连续无支撑周期越限」，但**为什么周期 4~14 连续 11 个周期凑不齐三腿**
+   （启动接触瞬态的具体时长与成因）本轮只给出与 §18 一致性，**未逐周期取证** ⇒ 登记为未证明项。
+⑤ 本轮**不选路**：D1~D4 仍需人工决策。
+
+### 20.7 复跑命令
+
+```
+PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_gait_in_place.py \
+  --config build/iraf-24h-2/02b/gait-wave-b1-dc.yaml \
+  --report build/iraf-24h-2/02b/wave-dc-trace/report.json
+PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_gait_in_place.py \
+  --config build/iraf-24h-2/02b/gait-wave-b1-dc-nowd.yaml \
+  --report build/iraf-24h-2/02b/wave-dc-nowd/report.json
+PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_balance.py --config config/go2_loopback.yaml
 PYTHONPATH=src /usr/bin/python3 -m unittest tests.unit.test_balance_contract
 ```
 
