@@ -1273,12 +1273,25 @@ def interact(
             )
             result = viewer["holder"]["result"]
             display_report = {k: viewer[k] for k in ("display_mode", "window_opened", "frames",
-                                                     "frames_written", "error")}
+                                                     "frames_written", "error", "stepping_note",
+                                                     "display_env")}
+            # 执行线程内的异常必须留痕（否则表现为 status=None 而看不出原因）
+            if viewer["holder"].get("error"):
+                display_report["execution_error"] = viewer["holder"]["error"]
         else:
             result = states["runtime"].execute(request, _context())
             display_report = None
         wall = time.monotonic() - started
         state, state_error = _state_snapshot(states["backend"])
+        if result is None or (isinstance(result, dict) and not result.get("status")):
+            # 执行返回空/无 status：按 fail-closed 记为 FAILED，并保留原始结果供定位
+            emit({"seq": seq, "command": command, "accepted": True,
+                  "status": "FAILED",
+                  "error_code": (result or {}).get("error_code") or "IRAF-EXECUTION-FAILED",
+                  "reason": (result or {}).get("reason") or "执行未返回结构化 status（原始结果见 raw_result）",
+                  "raw_result": result, "wall_seconds": wall, "state": state,
+                  "state_error": state_error, "display": display_report, "simulation": True})
+            continue
         emit({"seq": seq, "command": command, "accepted": True,
               "status": (result or {}).get("status"),
               "error_code": (result or {}).get("error_code"),

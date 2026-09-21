@@ -8,7 +8,12 @@ spec:
   requires: [stop]
   preconditions: []
   intentExamples: ["停止机器人", "立即停止当前动作", "stop"]
-  timeoutSeconds: 2
+  # 租约 TTL = 本值（src/iraf_core/runtime.py: authority.acquire(ttl_seconds=manifest.timeout_seconds)），
+  # 必须覆盖**一次完整停机**：机型声明 stop.duration_s=3.0 s。原值 2 s 在快路径（墙钟约 0.5 s）
+  # 看不出来，但挂上 MuJoCo 窗口后墙钟被判据/渲染拖长，实测报 LeaseConflict: lease expired
+  # （2026-09-21，`scenario.py interact --display interactive_viewer` 第二条命令）。现取 10 s：
+  # 覆盖 3 s 声明时长 + 余量；profile_check --quadruped 的门禁 8 会钉住"TTL ≥ 声明时长"。
+  timeoutSeconds: 10
   cancellation: not_applicable
   recovery: [request_handover]
   safetyClass: safety_action

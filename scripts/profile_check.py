@@ -458,7 +458,11 @@ def check_quadruped(declaration_path, root=ROOT):
     4. Profile 关节限位只**收紧**模型 `jnt_range`（调用参数只能收紧，铁律 1.3）；
     5. `spec.home` 覆盖全部关节且落在声明限位内；
     6. `declared ⊆ implemented` 能力契约（factory 的方法层 + 四足契约的"真的已实现"层）；
-    7. 力矩上限逐项等于模型 `actuator_ctrlrange`（独立复算，防止将来改读配置数字）。
+    7. 力矩上限逐项等于模型 `actuator_ctrlrange`（独立复算，防止将来改读配置数字）；
+    8. **技能租约 TTL（`skill.yaml` 的 `timeoutSeconds`）≥ 本机型声明的动作时长**
+       —— TTL 直接决定 `ControlAuthorityManager.acquire(ttl_seconds=…)`，覆盖不了一次完整动作
+       就会在执行中途报 `LeaseConflict: lease expired`（实测踩到：stop 声明 2 s 而 stop.duration_s=3.0 s，
+       快路径墙钟仅约 0.5 s 所以长期未暴露，挂上显示窗口后被拖长才暴露）。
     """
     from iraf_adapters.unitree import quadruped as quadruped_contract
     from iraf_adapters.unitree import unitree_go2
@@ -615,6 +619,51 @@ def check_quadruped(declaration_path, root=ROOT):
             "Profile 未声明任何运动能力（capabilities 为空）：这是**事实**（技能层未验收），"
             "不是漏写；技能验收后回填即可，本步骤不代其声明。"
         )
+
+    # 门禁 8：技能租约 TTL ≥ 机型声明的动作时长（见函数 docstring 第 8 条）。
+    # 映射只覆盖"已声明能力"；时长字段名来自机型声明本身（四足阶段语义），不在此处写数字。
+    skill_ttl_records = []
+    declared_caps = set(str(item) for item in profile.capabilities)
+    duration_sources = {
+        "stand": ("stand.duration_s",),
+        "stop": ("stop.duration_s",),
+    }
+    skills_root = Path(root) / "skills"
+    for capability, keys in duration_sources.items():
+        if capability not in declared_caps:
+            continue
+        manifest_path = skills_root / capability / "skill.yaml"
+        record = {"capability": capability, "manifest": str(manifest_path.relative_to(root))
+                  if manifest_path.is_relative_to(root) else str(manifest_path)}
+        if not manifest_path.is_file():
+            failures.append("能力 %s 已声明但缺少技能清单：%s" % (capability, manifest_path))
+            skill_ttl_records.append(record)
+            continue
+        try:
+            manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+            ttl = float(((manifest.get("spec") or {}).get("timeoutSeconds")))
+        except (OSError, TypeError, ValueError) as exc:
+            failures.append("技能清单 %s 的 spec.timeoutSeconds 不可解析：%s" % (manifest_path, exc))
+            skill_ttl_records.append(record)
+            continue
+        required = 0.0
+        for key in keys:
+            node = declaration
+            for part in key.split("."):
+                node = (node or {}).get(part) if isinstance(node, dict) else None
+            if node is None:
+                failures.append("机型声明缺少 %s（技能 TTL 门禁需要它来定下界）" % key)
+                continue
+            required += float(node)
+        record.update({"timeout_seconds": ttl, "declared_duration_s": required})
+        if ttl < required:
+            failures.append(
+                "技能 %s 的租约 TTL=%.3f s 覆盖不了机型声明的动作时长 %.3f s（%s）："
+                "长动作会在执行中途报 LeaseConflict: lease expired"
+                % (capability, ttl, required, ",".join(keys))
+            )
+        skill_ttl_records.append(record)
+    report["skill_ttl_gate"] = skill_ttl_records
 
     report["passed"] = not failures
     return report

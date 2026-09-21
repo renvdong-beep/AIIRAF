@@ -539,6 +539,31 @@ def build_grasp_request(
     }
 
 
+def display_environment():
+    """返回显示相关的环境事实 + 是否需要提醒（把窗口开到了非桌面显示时给出可操作提示）。
+
+    实测教训（2026-09-21）：本机 shell 的 `DISPLAY=localhost:11.0`（X 转发目标），而桌面会话是 `:0`
+    （套接字 /tmp/.X11-unix/X0、授权 /run/user/1000/gdm/Xauthority）。此时窗口"确实开出来了"
+    （报告 window_opened=true、渲染了几十帧），但**使用者在他的桌面上看不到** —— 报告里必须写明
+    实际使用的显示与桌面显示不同，并给出正确命令，否则"窗口已开"会误导。
+    """
+    env = {key: os.environ.get(key) for key in ("DISPLAY", "XAUTHORITY", "MUJOCO_GL")}
+    local = sorted(p.name[1:] for p in Path("/tmp/.X11-unix").glob("X*")) if Path("/tmp/.X11-unix").is_dir() else []
+    desktop = ":" + local[0] if local else None
+    current = env.get("DISPLAY") or ""
+    warning = None
+    if desktop and current and current != desktop and ":" in current:
+        warning = (
+            "窗口开在 DISPLAY=%s（可能是 X 转发目标），而本机桌面会话在 %s："
+            "使用者看不到窗口。要看得见请显式指定 DISPLAY=%s XAUTHORITY=<桌面授权文件，如 "
+            "/run/user/%s/gdm/Xauthority> MUJOCO_GL=glfw"
+            % (current, desktop, desktop, os.getuid())
+        )
+    return {"display": current or None, "xauthority": env.get("XAUTHORITY"),
+            "mujoco_gl": env.get("MUJOCO_GL"), "desktop_display": desktop,
+            "local_sockets": local, "warning": warning}
+
+
 def _apply_camera(viewer, camera):
     """相机设置来自 Profile（camera_settings），此处只做赋值，不含默认值。"""
     if not camera:
@@ -599,8 +624,10 @@ def run_request_live(
     mode = display_mode or resolve_display_mode()
     frame_period = 1.0 / max(1.0, float(render_hz))
     thread, holder = _start_request_thread(runtime, request, context)
+    display_env = display_environment()
     report = {
         "display_mode": mode,
+        "display_env": display_env,
         "window_opened": False,
         "frames": 0,
         "frames_written": 0,
@@ -647,6 +674,9 @@ def run_request_live(
     snapshot = SnapshotMirror(backend.model)
     with mujoco.viewer.launch_passive(backend.model, snapshot.refresh(backend)) as viewer:
         report["window_opened"] = True
+        if display_env.get("warning"):
+            # 不阻止运行，但把"使用者可能看不到"这件事写进日志与报告（可审计）
+            print("[viewer] 注意：" + display_env["warning"], flush=True)
         _apply_camera(viewer, camera)
 
         # 先渲染若干帧，让用户看到动作前的起始状态。窗口被关掉就停下来，不盲跑。

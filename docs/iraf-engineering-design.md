@@ -177,7 +177,18 @@ iraf package --profile <profile>   # 输出 SBOM、签名摘要与可部署包
 | 四足 loopback（站立/停止/状态） | `scripts/verify_go2_loopback.py --config config/go2_loopback.yaml` |
 | S2 脚本化场景与故障注入 | `scripts/scenario.py list` · `scripts/scenario.py run --scene <id> --scenario <id>` |
 | S1 命令式交互（只允许已声明能力） | `scripts/scenario.py interact --scene <id> --robot <id> [--commands-from <文件>] [--display auto|none|interactive_viewer|offscreen_frames] [--frames N --frames-dir <dir>] [--seconds N]` |
-| 场景实时观看（窗口/离屏，机器人与机械臂通用） | 同上的 `--display interactive_viewer`（需 DISPLAY，可在动作执行期间实时渲染）/ `--display offscreen_frames --frames N`（无 DISPLAY 时降级导出帧） |
+| 场景实时观看（窗口/离屏，机器人与机械臂通用） | 同上的 `--display interactive_viewer`（可在动作执行期间实时渲染）/ `--display offscreen_frames --frames N`（无 DISPLAY 时降级导出帧） |
+
+**桌面可见性注意（实测教训）**：SSH/cron 会话里的 `DISPLAY` 常是 X 转发目标（例如 `localhost:11.0`），
+此时窗口"确实开了"（报告 `window_opened=true`）但使用者在桌面上看不到。要看得见必须显式指向桌面：
+
+```
+DISPLAY=:0 XAUTHORITY=/run/user/$(id -u)/gdm/Xauthority MUJOCO_GL=glfw \
+PYTHONPATH=src /usr/bin/python3 scripts/scenario.py interact \
+    --scene scenes/handoff_lab --robot unitree_go2 --display interactive_viewer
+```
+
+viewer 报告中的 `display_env` 会记录实际 DISPLAY/XAUTHORITY/桌面套接字，并在"窗口不在桌面显示上"时给出 `warning`（可审计，不静默）。
 | 厂商资产按锁重取/校验 | `scripts/fetch_vendor_assets.py --verify-lock` |
 | SDK 打包与产物校验 | `bash deploy/sdk/build_sdk.sh [--dry-run] [--verify]` |
 | 离线 wheelhouse 抓取 | `bash deploy/sdk/fetch_wheelhouse.sh [--dry-run] [--verify]` |
