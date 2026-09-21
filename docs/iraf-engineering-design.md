@@ -177,6 +177,7 @@ iraf package --profile <profile>   # 输出 SBOM、签名摘要与可部署包
 | 四足 loopback（站立/停止/状态） | `scripts/verify_go2_loopback.py --config config/go2_loopback.yaml` |
 | S2 脚本化场景与故障注入 | `scripts/scenario.py list` · `scripts/scenario.py run --scene <id> --scenario <id>` |
 | S1 命令式交互（只允许已声明能力） | `scripts/scenario.py interact --scene <id> --robot <id> [--commands-from <文件>] [--display auto|none|interactive_viewer|offscreen_frames] [--frames N --frames-dir <dir>] [--seconds N]` |
+| 机型运行时绑定声明（交互/S2 用） | `config/machines/<robot>.yaml`：Profile + Backend 入口 + **后端配置来源**（`robot.backend_config.mode`：四足用声明文件本身；机械臂用 `scene_report` 指向场景报告）+ 安全策略。场景基线的 `robots.<id>` 指向本文件 |
 | 场景实时观看（窗口/离屏，机器人与机械臂通用） | 同上的 `--display interactive_viewer`（可在动作执行期间实时渲染）/ `--display offscreen_frames --frames N`（无 DISPLAY 时降级导出帧） |
 
 **桌面可见性注意（实测教训）**：SSH/cron 会话里的 `DISPLAY` 常是 X 转发目标（例如 `localhost:11.0`），

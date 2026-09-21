@@ -4,7 +4,9 @@ schema_version: iraf.scene-baseline/v1
 scene: scene.yaml
 
 robots:
-  piper: config/piper_simulation_baseline.yaml
+  # piper 的**运行时绑定**（Profile + Backend + 后端配置来源 + 安全策略）在 config/machines/piper.yaml；
+  # 构建基线 config/piper_simulation_baseline.yaml 仍负责场景生成与参考姿态（两者分工不同，不互相复制）。
+  piper: config/machines/piper.yaml
   # 步骤 17 闭合：Go2 的机型基线就是 loopback/技能层共用的声明文件
   # （config/go2_loopback.yaml：模型、控制增益、站立位形来源、传感器、技能验收）。
   # 两处（scene.robots[].profile 与 baseline.robots）必须同时是路径，不允许一处占位一处路径。

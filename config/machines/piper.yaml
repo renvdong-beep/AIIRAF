@@ -1,0 +1,22 @@
+schema_version: iraf.machine-declaration/v1
+# 机型声明（S1 交互 `scenario.py interact` / S2 场景执行 `scenario.py run` 的**运行时绑定**）。
+#
+# 与"构建基线"（config/piper_simulation_baseline.yaml）分工不同，禁止互相复制：
+#   构建基线 = 场景生成 + 参考姿态 + 求解参数 + 验收阈值（build_piper_baseline.py 消费）
+#   本文件   = 运行时绑定：Profile + Backend 入口 + **后端配置来源** + 安全策略
+#
+# 后端配置来源必须显式声明（脚本禁止猜测）：四足用 `mode: self`（声明文件本身即后端配置），
+# 机械臂用 `mode: scene_report`（后端配置来自场景报告：model_path/manipulation.gripper/vision）。
+robot:
+  id: piper
+  profile: profiles/piper_mujoco.yaml
+  backend: mujoco_arm
+  backend_config:
+    mode: scene_report
+    report: build/models/piper-pick-scene.json
+    # 抓取目标容差：必须显式声明（缺失即装配失败，不猜默认值）。
+    target_tolerance_m: 0.005
+    # 交互/演示按实时步进（看得清过程）；批量与 CI 可另建声明把 realtime 设 false。
+    realtime: true
+skills:
+  safety_policy: profiles/safety/simulation_lab.yaml

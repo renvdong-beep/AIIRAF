@@ -286,13 +286,22 @@ class BindingTests(RunnerFixture):
     """后端绑定必须来自机型声明：缺声明即显式失败，绝不猜入口。"""
 
     def test_unbound_robot_fails_before_motion(self):
-        # piper 的机型基线属另一编辑窗口且未声明 robot.backend ⇒ nominal 预检即失败。
-        code, message = self.error_message(
-            "run", "--scene", str(self.package), "--scenario", "nominal"
-        )
-        self.assertEqual(code, scenario.EXIT_REFERENCE, msg=message)
-        self.assertIn("robot.backend", message)
-        self.assertIn("piper", message)
+        """缺 robot.backend 的机型声明必须在运动前失败（不猜入口）。
+
+        2026-09-21 更新：此前用 piper 做这个负例，是因为 piper 当时未接入本机制；
+        A1 之后 piper 已在 `config/machines/piper.yaml` 声明 `robot.backend: mujoco_arm`，
+        因此本用例改为**构造一份缺 robot.backend 的声明**来证伪——意图与判据不变，前提更新。
+        """
+        document = load_yaml(REAL_DECLARATION)
+        document = json.loads(json.dumps(document))
+        document["robot"].pop("backend", None)
+        tmp = Path(self._tmp.name) / "no-backend.yaml"
+        dump_yaml(tmp, document)
+        index = {"piper": {"profile": document["robot"]["profile"]}}
+        with self.assertRaises(scenario.ScenarioError) as ctx:
+            scenario.machine_declaration("piper", index, {"robots": {"piper": str(tmp)}})
+        self.assertEqual(ctx.exception.code, scenario.EXIT_REFERENCE)
+        self.assertIn("robot.backend", str(ctx.exception))
 
     def test_declared_binding_matches_registry(self):
         index = scenario.capability_index(load_yaml(self.scene_path))
@@ -340,8 +349,12 @@ class CliContractTests(RunnerFixture):
         self.assertIn("handoff_lab", scenes)
         robots = {item["id"]: item for item in scenes["handoff_lab"]["robots"]}
         self.assertEqual(robots["unitree_go2"]["runner_backend"], "unitree_go2_mujoco")
-        self.assertIsNone(robots["piper"]["runner_backend"])
-        self.assertTrue(robots["piper"]["runner_binding_reason"])
+        # 2026-09-21（A1）：piper 已在 config/machines/piper.yaml 声明运行时绑定（后端配置取自场景报告）
+        self.assertEqual(robots["piper"]["runner_backend"], "mujoco_arm")
+        self.assertFalse(robots["piper"]["runner_binding_reason"])
+        # 仍未绑定的本体继续给出原因（fail-closed 的另一半证据）
+        self.assertIsNone(robots["humanoid_static"]["runner_backend"])
+        self.assertTrue(robots["humanoid_static"]["runner_binding_reason"])
         names = {item["name"] for item in scenes["handoff_lab"]["scenarios"]}
         self.assertIn("stand_stop", names)
         self.assertIn("fault_sensor_unavailable", names)

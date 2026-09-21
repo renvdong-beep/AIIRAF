@@ -477,6 +477,84 @@ def plan_faults(entry, plan, sensors, contract):
 # --------------------------------------------------------------------------
 # 运行时装配与逐步执行
 # --------------------------------------------------------------------------
+SUPPORTED_BACKEND_CONFIG_MODES = ("scene_report",)
+
+
+def build_backend_config(root, declaration, spec):
+    """按声明的 `robot.backend_config` 构造后端配置（缺失声明＝用声明文件本身）。
+
+    支持的模式（必须显式声明，缺声明/未知模式即显式失败，禁止猜测）：
+      * `scene_report`：后端配置取自场景报告 JSON（机械臂路径）——报告必须存在、可解析，
+        且含 `output`（模型）与 `gripper`；抓取目标集合由 `targets[]`/`target_id` 构造，
+        容差必须由 `target_tolerance_m` 显式给出（不猜默认值）。
+    """
+    if not isinstance(spec, dict):
+        raise ScenarioError(
+            "robot.backend_config 必须是对象（声明 mode 与来源）：实际 %r" % (spec,), EXIT_DECLARATION
+        )
+    mode = str(spec.get("mode") or "")
+    if mode not in SUPPORTED_BACKEND_CONFIG_MODES:
+        raise ScenarioError(
+            "robot.backend_config.mode=%r 不受支持（可用：%s）；缺声明时应删除整段而不是留空"
+            % (mode, list(SUPPORTED_BACKEND_CONFIG_MODES)),
+            EXIT_DECLARATION,
+        )
+    report_ref = spec.get("report")
+    if not isinstance(report_ref, str) or not report_ref:
+        raise ScenarioError(
+            "robot.backend_config(mode=scene_report) 必须声明 report 路径（场景报告 JSON）",
+            EXIT_DECLARATION,
+        )
+    report_path = _resolve(root, report_ref)
+    if not report_path.is_file():
+        raise ScenarioError(
+            "场景报告不存在：%s（先跑构建入口生成场景与报告）" % report_path, EXIT_REFERENCE
+        )
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ScenarioError("场景报告不可解析（%s）：%s" % (report_path, exc), EXIT_REFERENCE)
+    if not isinstance(report, dict):
+        raise ScenarioError("场景报告必须是对象：%s" % report_path, EXIT_DECLARATION)
+
+    model_path = report.get("output")
+    if not isinstance(model_path, str) or not model_path:
+        raise ScenarioError("场景报告缺少 output（模型路径）：%s" % report_path, EXIT_DECLARATION)
+    if not Path(model_path).is_file():
+        raise ScenarioError("场景报告指向的模型不存在：%s" % model_path, EXIT_REFERENCE)
+    gripper = report.get("gripper")
+    if not isinstance(gripper, dict) or not gripper:
+        raise ScenarioError(
+            "场景报告缺少 gripper 段（夹爪几何/位形是装配后端的必需项）：%s" % report_path,
+            EXIT_DECLARATION,
+        )
+    tolerance = spec.get("target_tolerance_m")
+    if not isinstance(tolerance, (int, float)) or float(tolerance) <= 0:
+        raise ScenarioError(
+            "robot.backend_config.target_tolerance_m 必须是正数（抓取判据容差只来自声明）",
+            EXIT_DECLARATION,
+        )
+    entries = report.get("targets") or ([{"id": report.get("target_id")}] if report.get("target_id") else [])
+    targets = {
+        str(item.get("id")): {"body": str(item.get("id")), "pose_tolerance_m": float(tolerance)}
+        for item in entries
+        if isinstance(item, dict) and item.get("id")
+    }
+    if not targets:
+        raise ScenarioError("场景报告没有可用目标（targets[]/target_id 均为空）：%s" % report_path, EXIT_DECLARATION)
+
+    realtime = spec.get("realtime")
+    if not isinstance(realtime, bool):
+        raise ScenarioError("robot.backend_config.realtime 必须是布尔值（是否按实时步进）", EXIT_DECLARATION)
+    return {
+        "model_path": model_path,
+        "manipulation": {"targets": targets, "gripper": gripper},
+        "vision": report.get("vision"),
+        "realtime": realtime,
+        "source_report": str(report_path),
+    }
+
+
 def assemble(runtime_inputs):
     """装配某一本体的运行时：Profile + 安全策略 + 技能注册表 + 后端（失败不返回半成品）。"""
     root = runtime_inputs["root"]
@@ -499,10 +577,18 @@ def assemble(runtime_inputs):
         raise ScenarioError("安全策略非法（%s）：%s" % (safety_ref, exc), EXIT_DECLARATION)
     registry = SkillRegistry().load_directory(Path(root) / "skills")
     authority = ControlAuthorityManager()
+    # 后端配置来源：声明里有 robot.backend_config 就按它构造（机械臂走场景报告）；
+    # 没有则该声明文件本身即后端配置（四足路径，行为不变）。
+    declaration_spec = (runtime_inputs.get("declaration_document") or {}).get("robot") or {}
+    config_spec = declaration_spec.get("backend_config")
+    if config_spec is None:
+        backend_config = str(_resolve(root, runtime_inputs["declaration"]))
+    else:
+        backend_config = build_backend_config(root, runtime_inputs.get("declaration_document"), config_spec)
     try:
         backend = load_backend(
             KNOWN_BACKENDS[runtime_inputs["backend"]],
-            str(_resolve(root, runtime_inputs["declaration"])),
+            backend_config,
             profile,
             authority,
         )
@@ -1272,9 +1358,12 @@ def interact(
                 continue_stepping=True, display_mode=None if display_mode == "auto" else display_mode,
             )
             result = viewer["holder"]["result"]
-            display_report = {k: viewer[k] for k in ("display_mode", "window_opened", "frames",
-                                                     "frames_written", "error", "stepping_note",
-                                                     "display_env")}
+            # 可选键必须用 get：机械臂后端有 step()，此时不会产生 stepping_note
+            # （此前用直接索引取值，导致机械臂窗口路径 KeyError 整条失败 —— 实测于 2026-09-21）
+            display_report = {k: viewer.get(k) for k in (
+                "display_mode", "window_opened", "frames", "frames_written", "error", "display_env")}
+            if viewer.get("stepping_note"):
+                display_report["stepping_note"] = viewer["stepping_note"]
             # 执行线程内的异常必须留痕（否则表现为 status=None 而看不出原因）
             if viewer["holder"].get("error"):
                 display_report["execution_error"] = viewer["holder"]["error"]
