@@ -72,7 +72,12 @@ stand:
   max_tracking_error_rad: 0.07
 
 stop:
-  # 力矩型执行器松力即失能：stop = 控制量归零（这是本阶段唯一实现的停机语义，别的取值必须显式失败）。
+  # 力矩型执行器松力即失能：stop = 控制量归零（**站立态**停机语义；别的取值必须显式失败）。
+  # 与移动语义的关系（步骤 01，战役 iraf-24h-2）：移动中的 stop 由
+  # `iraf_skills.quadruped.resolve_stop_mode` 解析为 `damped_hold`（受控停止），
+  # 本键只在**未移动**时生效，且是既有验收事实（步骤 15/17 报告）——本步不改变站立停机语义，
+  # 以免 stand/stop 的既有实测数字（height_mean_m=0.2801007638069918、末速 0.003964950131491022 m/s）
+  # 发生任何变化（逐位一致门禁）。若要改为 damped_hold，须另立步骤并重跑 loopback 验收。
   mode: torque_zero_release
   duration_s: 3.0
   # 速度衰减判定：松力后必须出现"连续 static_hold_s 秒速度低于 speed_tolerance_mps"的静止段。
@@ -80,6 +85,31 @@ stop:
   static_hold_s: 0.5
   # 末段速度的统计窗口（末段速度 = 最后 final_window_s 秒的均值）。
   final_window_s: 0.2
+
+# 移动语义的**控制实现参数**（步骤 01）：只写实现参数与"来源路径"，
+# **不写**任何速度/加速度/位移/倾角阈值 —— 阈值只在安全策略
+# `profiles/safety/quadruped_lab.yaml` 的 `spec.quadruped_limits` 声明一次（避免同一事实两处）。
+# 消费点：`iraf_skills.quadruped.load_locomotion_declaration`（解析来源 + 跨文件自洽门禁）；
+# 缺任一键、来源路径解析不到、或自洽不成立都显式失败（退出码 2 风格，不做默认值兜底）。
+locomotion:
+  # 速度指令斜坡时长（s）：v=0 → 安全策略 max_speed_mps 所用的控制预算。
+  # 与 max_accel_mps2 互锁：自洽门禁要求 ramp_s × max_accel_mps2 ≥ max_speed_mps
+  # （0.5 × 1.0 = 0.5 = max_speed_mps，恰好成立 ⇒ 从静止到最高速用时 1 s）。
+  ramp_s: 1.0
+  # 控制环频率：与 control.frequency_hz 是**同一事实** ⇒ 只声明来源路径，不写第二个数字
+  # （写第二份数字就会出现"两处不一致时听谁的"的问题）。
+  control_frequency_source: control.frequency_hz
+  # 控制心跳周期（ms）：每个控制周期一次心跳（100 Hz ⇒ 10 ms）。
+  # 看门狗超时上限只在安全策略声明（quadruped_limits.watchdog_timeout_ms=100 ms）；
+  # 自洽门禁要求 heartbeat_period_ms ≤ watchdog_timeout_ms。
+  heartbeat_period_ms: 10.0
+  # 看门狗触发时的停止语义：**只允许** damped_hold（受控停止）。
+  # 失能停机只用于急停/安全事件；声明成 torque_zero_release 会被显式拒绝。
+  watchdog_action: damped_hold
+  # damped_hold 的参数来源（禁止第二份数字）：减速走同一段斜坡，保持位形复用 stand 的参考位形来源。
+  damped_hold:
+    deceleration_source: locomotion.ramp_s
+    hold_pose_source: stand.pose_source
 
 sample:
   frequency_hz: 100

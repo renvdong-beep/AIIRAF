@@ -20,8 +20,26 @@
   超限即拒绝，并由调用方用 `SkillRuntime.record_pre_dispatch_failure` 落执行记录；
 - `check_workspace`：对**实测**状态求位移与倾角，与声明上限比对（"动作有没有把本体带出工作空间"）。
 
+移动语义（步骤 01，战役 `iraf-24h-2`）
+------------------------------------
+站立语义（"有没有动"）与移动语义（"能不能按这个速度/方向走"）是两套边界，**不共用键**：
+
+- `load_movement_limits`：读 `max_accel_mps2` / `allow_in_place_turn` / `max_tilt_moving_deg` /
+  `workspace_m` / `watchdog_timeout_ms`，并按类型分别校验（数值、布尔、矩形、模式表）；
+- `enforce_velocity_limits(..., movement=…, current_velocity=…, ramp_s=…)`：在既有线速度/角速度
+  上限之外，追加**加速度上限**（由机型声明的 `locomotion.ramp_s` 决定）与**原地转弯开关**；
+- `enforce_state_freshness`：看门狗/失联门禁——状态年龄超过声明超时即拒绝新指令；
+- `check_workspace_moving`：对**实测**位置比对声明工作空间矩形，并对移动中的倾角用 `max_tilt_moving_deg`；
+- `resolve_stop_mode`：按运行状态决定 `stop` 的语义（移动 → `damped_hold`），调用方不得自行选择，
+  未知模式与"非急停路径请求失能停机"一律显式失败；
+- `load_locomotion_declaration`：读机型声明的 `locomotion` 段（斜坡/心跳/控制频率来源/damped_hold
+  参数来源），解析每个"来源"点号路径并与安全策略做跨文件自洽校验（斜坡必须够到达最大速度、
+  心跳周期必须小于看门狗超时）。
+
 诚实边界
 --------
+- 以上门禁是**调度前**边界；其调用方是步态控制器与移动/到点路径（步骤 02~04）。
+  本步（步骤 01）只交付"声明 + 门禁 + 正/负路径证据"，**不宣称已接线到运行时**。
 - 全部结论属于**仿真**（`simulation: true`）；目标端/真机验收 DEFERRED（板卡不在场）。
 - `locomote` 在本后端未实现：Provider 显式拒绝（`UnsupportedCapabilityError`），
   绝不返回"指令已生效"。
@@ -43,6 +61,32 @@ LIMIT_KEYS = (
 #: 已登记的错误码（`src/iraf_sdk/errors.py`，步骤 16 以 code-only 登记）。
 COMMAND_REJECTED_CODE = "IRAF-QUADRUPED-COMMAND-REJECTED"
 
+#: 移动语义的数值上限（步骤 01）：与站立的 4 个键**分开**，因为它们是"能不能按这个速度/方向走"，
+#: 而 `LIMIT_KEYS` 是"站着有没有被带走"。两者混用会让"站得稳"与"走得对"共用一条判据。
+MOVEMENT_NUMERIC_KEYS = ("max_accel_mps2", "max_tilt_moving_deg", "watchdog_timeout_ms")
+
+#: 工作空间矩形（绝对坐标，单位 m）：四个边界都必须声明，缺一即失败。
+WORKSPACE_RECT_KEYS = ("x_min", "x_max", "y_min", "y_max")
+
+#: 已登记的停止语义。缺任一 ⇒ 声明非法（缺 `damped_hold` 就无法表达"移动中受控停止"）。
+REGISTERED_STOP_MODES = ("damped_hold", "torque_zero_release")
+
+#: `stop_modes.<模式>` 允许出现的键：`applies_to`（适用路径，必需且非空）+ `detail`（中文说明）。
+STOP_MODE_ENTRY_KEYS = ("applies_to", "detail")
+
+#: `locomotion` 段的必需键（缺一即失败；不设默认值）。
+LOCOMOTION_REQUIRED_KEYS = (
+    "ramp_s",
+    "control_frequency_source",
+    "heartbeat_period_ms",
+    "watchdog_action",
+    "damped_hold",
+)
+
+#: 看门狗触发时**唯一**允许的停止语义：受控停止。声明成失能停机即失败。
+WATCHDOG_STOP_MODE = "damped_hold"
+
+
 
 class SkillContractError(ValueError):
     """技能层声明/边界问题：显式失败，不做默认值兜底。"""
@@ -54,8 +98,12 @@ class SkillContractError(ValueError):
         self.code = type(self).code
 
 
-def load_quadruped_limits(safety_policy_path):
-    """从安全策略声明读四足边界上限；缺段、缺键、非法取值都显式失败。"""
+def _load_safety_spec(safety_policy_path):
+    """读取安全策略并做 kind 校验，返回 `(path, spec)`。
+
+    `load_quadruped_limits`（站立语义）与 `load_movement_limits`（移动语义）共用本函数：
+    同一份文件的解析只做一次，避免两套读法对"是不是安全策略"给出不同答案。
+    """
     path = Path(safety_policy_path)
     if not path.is_file():
         raise SkillContractError("安全策略文件不存在: %s" % path)
@@ -65,32 +113,166 @@ def load_quadruped_limits(safety_policy_path):
         raise SkillContractError("安全策略不是合法 YAML: %s (%s)" % (path, exc))
     if not isinstance(document, dict) or document.get("kind") != "SafetyPolicy":
         raise SkillContractError("安全策略 kind 必须是 SafetyPolicy: %s" % path)
-    spec = document.get("spec") or {}
+    return path, (document.get("spec") or {})
+
+
+def _require_mapping(node, key, scope):
+    """取一个必需的子映射；缺失或类型不对都显式失败（不做空字典兜底）。"""
+    if key not in node:
+        raise SkillContractError("%s 缺少必需段: %s" % (scope, key))
+    value = node[key]
+    if not isinstance(value, dict):
+        raise SkillContractError("%s.%s 必须是映射，实际: %r" % (scope, key, value))
+    return value
+
+
+def _require_positive_number(mapping, key, scope):
+    """取一个必需的正有限数值；缺失/非数值/非正数都显式失败。"""
+    if key not in mapping:
+        raise SkillContractError("%s 缺少必需键: %s" % (scope, key))
+    try:
+        value = float(mapping[key])
+    except (TypeError, ValueError):
+        raise SkillContractError("%s.%s 不是数值: %r" % (scope, key, mapping[key]))
+    if not math.isfinite(value) or value <= 0.0:
+        raise SkillContractError("%s.%s 必须是正的有限数值，实际: %r" % (scope, key, value))
+    return value
+
+
+def _load_quadruped_limits_node(safety_policy_path):
+    """返回 `(path, quadruped_limits)`，缺段即显式失败（两个 loader 共用）。"""
+    path, spec = _load_safety_spec(safety_policy_path)
     limits = spec.get("quadruped_limits")
     if not isinstance(limits, dict):
         raise SkillContractError(
             "安全策略缺少 spec.quadruped_limits：四足速度/工作空间上限必须显式声明"
             "（禁止在脚本或 Skill schema 里另写一份边界）: %s" % path
         )
+    return path, limits
+
+
+def load_quadruped_limits(safety_policy_path):
+    """从安全策略声明读四足边界上限；缺段、缺键、非法取值都显式失败。"""
+    path, limits = _load_quadruped_limits_node(safety_policy_path)
     missing = [key for key in LIMIT_KEYS if key not in limits]
     if missing:
         raise SkillContractError("spec.quadruped_limits 缺少必需键: %s" % missing)
+    return {key: _require_positive_number(limits, key, "spec.quadruped_limits") for key in LIMIT_KEYS}
+
+
+def load_stop_modes(safety_policy_path):
+    """读 `spec.stop_modes`：登记**两层**停止语义，并写明各自适用路径。
+
+    规则（战役 `iraf-24h-2` 硬规则 3）：`damped_hold`（移动中的受控停止）与
+    `torque_zero_release`（失能停机，只用于急停/安全事件）必须**并列登记**；
+    缺任一模式、适用路径为空、出现未登记的模式名或未知键，都显式失败——
+    停止语义的"混用"必须首先在声明层就不可能表达。
+    """
+    path, spec = _load_safety_spec(safety_policy_path)
+    return _validate_stop_modes(spec, "spec", path)
+
+
+def _validate_stop_modes(spec, scope, path):
+    """校验并归一化停止语义表（loader 与 `resolve_stop_mode` 共用同一份校验）。"""
+    stop_modes = spec.get("stop_modes")
+    if not isinstance(stop_modes, dict):
+        raise SkillContractError(
+            "%s 缺少 stop_modes：受控停止与失能停机必须并列登记"
+            "（缺声明即失败，不得由实现层猜默认语义）: %s" % (scope, path)
+        )
+    missing = [mode for mode in REGISTERED_STOP_MODES if mode not in stop_modes]
+    if missing:
+        raise SkillContractError("%s.stop_modes 缺少已登记语义: %s" % (scope, missing))
+    unknown = sorted(set(stop_modes) - set(REGISTERED_STOP_MODES))
+    if unknown:
+        raise SkillContractError(
+            "%s.stop_modes 出现未登记的停止语义: %s（登记集: %s）"
+            % (scope, unknown, list(REGISTERED_STOP_MODES))
+        )
     parsed = {}
-    for key in LIMIT_KEYS:
-        try:
-            value = float(limits[key])
-        except (TypeError, ValueError):
-            raise SkillContractError("spec.quadruped_limits.%s 不是数值: %r" % (key, limits[key]))
-        if not math.isfinite(value) or value <= 0.0:
+    for mode in REGISTERED_STOP_MODES:
+        entry = stop_modes[mode]
+        if not isinstance(entry, dict):
+            raise SkillContractError("%s.stop_modes.%s 必须是映射，实际: %r" % (scope, mode, entry))
+        extra = sorted(set(entry) - set(STOP_MODE_ENTRY_KEYS))
+        if extra:
             raise SkillContractError(
-                "spec.quadruped_limits.%s 必须是正的有限数值，实际: %r" % (key, value)
+                "%s.stop_modes.%s 出现未知键: %s（允许: %s）"
+                % (scope, mode, extra, list(STOP_MODE_ENTRY_KEYS))
             )
-        parsed[key] = value
+        applies_to = entry.get("applies_to")
+        if not isinstance(applies_to, list) or not applies_to or not all(
+            isinstance(item, str) and item for item in applies_to
+        ):
+            raise SkillContractError(
+                "%s.stop_modes.%s 必须用非空的 applies_to 写明适用路径（禁止只写模式名）"
+                % (scope, mode)
+            )
+        parsed[mode] = {"applies_to": list(applies_to), "detail": str(entry.get("detail") or "")}
     return parsed
 
 
-def enforce_velocity_limits(velocity, limits):
-    """按声明上限校验规范速度字段；超限即拒绝（`IRAF-QUADRUPED-COMMAND-REJECTED`）。"""
+def load_movement_limits(safety_policy_path):
+    """读**移动语义**边界（步骤 01 新增）：加速度上限、原地转弯开关、工作空间矩形、看门狗、停止语义。
+
+    与 `load_quadruped_limits` 分开：返回的是"能不能按这个速度/方向走"的边界，
+    调用方是步态控制器与移动/到点路径（步骤 02~04）。
+    """
+    path, limits = _load_quadruped_limits_node(safety_policy_path)
+    scope = "spec.quadruped_limits"
+    parsed = {key: _require_positive_number(limits, key, scope) for key in MOVEMENT_NUMERIC_KEYS}
+
+    if "allow_in_place_turn" not in limits:
+        raise SkillContractError(
+            "%s 缺少 allow_in_place_turn：是否允许原地转弯必须显式声明（不得由实现层假定）" % scope
+        )
+    allow_in_place_turn = limits["allow_in_place_turn"]
+    if not isinstance(allow_in_place_turn, bool):
+        raise SkillContractError(
+            "%s.allow_in_place_turn 必须是布尔值，实际: %r（字符串 'false' 不是 false）"
+            % (scope, allow_in_place_turn)
+        )
+    parsed["allow_in_place_turn"] = allow_in_place_turn
+
+    rect = _require_mapping(limits, "workspace_m", scope)
+    missing_rect = [key for key in WORKSPACE_RECT_KEYS if key not in rect]
+    if missing_rect:
+        raise SkillContractError("%s.workspace_m 缺少边界: %s" % (scope, missing_rect))
+    # 四个边界都是**绝对坐标**，允许为负（工作空间可以整体位于原点左侧/后方）。
+    parsed["workspace_m"] = {
+        key: _require_number(rect, key, scope + ".workspace_m") for key in WORKSPACE_RECT_KEYS
+    }
+    for axis in ("x", "y"):
+        if parsed["workspace_m"]["%s_min" % axis] >= parsed["workspace_m"]["%s_max" % axis]:
+            raise SkillContractError(
+                "%s.workspace_m 的 %s 边界自相矛盾：min %r ≥ max %r"
+                % (scope, axis, parsed["workspace_m"]["%s_min" % axis],
+                   parsed["workspace_m"]["%s_max" % axis])
+            )
+
+    parsed["stop_modes"] = load_stop_modes(safety_policy_path)
+    return parsed
+
+
+def _require_number(mapping, key, scope):
+    """取一个必需的有限数值（允许负值：工作空间下界本体就是负的）。"""
+    if key not in mapping:
+        raise SkillContractError("%s 缺少必需键: %s" % (scope, key))
+    try:
+        value = float(mapping[key])
+    except (TypeError, ValueError):
+        raise SkillContractError("%s.%s 不是数值: %r" % (scope, key, mapping[key]))
+    if not math.isfinite(value):
+        raise SkillContractError("%s.%s 必须是有限数值，实际: %r" % (scope, key, value))
+    return value
+
+
+def enforce_velocity_limits(velocity, limits, movement=None, current_velocity=None, ramp_s=None):
+    """按声明上限校验速度指令；超限即拒绝（`IRAF-QUADRUPED-COMMAND-REJECTED`）。
+
+    `movement`（可选的移动语义边界）与 `current_velocity` / `ramp_s` **必须同时给出**：
+    给了 `movement` 就要求按声明斜坡推算加速度，不允许用隐式默认值（"从零起步"是假定，不是事实）。
+    """
     speed = math.hypot(float(velocity["vx_mps"]), float(velocity["vy_mps"]))
     rate = abs(float(velocity["wz_rad_s"]))
     if speed > float(limits["max_speed_mps"]):
@@ -104,7 +286,259 @@ def enforce_velocity_limits(velocity, limits):
             "（安全策略 quadruped_limits.max_yaw_rate_rad_s）"
             % (rate, float(limits["max_yaw_rate_rad_s"]))
         )
-    return {"speed_mps": speed, "yaw_rate_rad_s": rate}
+    measured = {"speed_mps": speed, "yaw_rate_rad_s": rate}
+    if movement is None:
+        if current_velocity is not None or ramp_s is not None:
+            raise SkillContractError(
+                "缺少移动语义边界（movement）：给了 current_velocity/ramp_s 却没有声明边界，"
+                "无法校验加速度上限与原地转弯开关"
+            )
+        return measured
+
+    for key in ("max_accel_mps2", "allow_in_place_turn"):
+        if key not in movement:
+            raise SkillContractError("移动语义边界缺少必需键: %s" % key)
+    if current_velocity is None or ramp_s is None:
+        raise SkillContractError(
+            "移动语义的加速度门禁需要 current_velocity 与 ramp_s（机型声明 locomotion.ramp_s）；"
+            "不允许用\"从零起步\"之类的隐式默认值"
+        )
+    ramp = float(ramp_s)
+    if not math.isfinite(ramp) or ramp <= 0.0:
+        raise SkillContractError("斜坡时长 ramp_s 必须是正的有限数值，实际: %r" % ramp_s)
+    dvx = float(velocity["vx_mps"]) - float(current_velocity["vx_mps"])
+    dvy = float(velocity["vy_mps"]) - float(current_velocity["vy_mps"])
+    accel = math.hypot(dvx, dvy) / ramp
+    max_accel = float(movement["max_accel_mps2"])
+    if accel > max_accel:
+        raise SkillContractError(
+            "速度指令加速度 %g m/s² 超过声明上限 %g m/s²"
+            "（斜坡 ramp_s=%g s，安全策略 quadruped_limits.max_accel_mps2）"
+            % (accel, max_accel, ramp)
+        )
+    in_place_turn = bool(speed <= 0.0 and rate > 0.0)
+    if in_place_turn and not bool(movement["allow_in_place_turn"]):
+        raise SkillContractError(
+            "声明不允许原地转弯（quadruped_limits.allow_in_place_turn=false），"
+            "但指令为纯偏航速度 %g rad/s 且线速度为零" % rate
+        )
+    measured.update(
+        {"accel_mps2": accel, "in_place_turn": in_place_turn, "ramp_s": ramp}
+    )
+    return measured
+
+
+def enforce_state_freshness(state_age_s, movement_limits):
+    """看门狗/失联门禁：状态年龄超过声明 `watchdog_timeout_ms` ⇒ 拒绝新指令（ADR-0008 §2）。
+
+    状态过期时的正确动作是拒绝下发（并保持上一次受控停止），**不是**用过期状态继续控制。
+    """
+    watchdog_s = float(movement_limits["watchdog_timeout_ms"]) / 1000.0
+    age = float(state_age_s)
+    if not math.isfinite(age) or age < 0.0:
+        raise SkillContractError("状态年龄必须是有限非负数值，实际: %r" % state_age_s)
+    if age > watchdog_s:
+        raise SkillContractError(
+            "控制状态已过期：年龄 %g ms > 声明看门狗超时 %g ms"
+            "（安全策略 quadruped_limits.watchdog_timeout_ms）⇒ 拒绝下发新指令"
+            % (age * 1000.0, watchdog_s * 1000.0)
+        )
+    return {"state_age_s": age, "watchdog_timeout_s": watchdog_s, "fresh": True}
+
+
+def check_workspace_moving(before_state, after_state, movement_limits):
+    """移动语义工作空间门禁：**绝对位置**落在声明矩形内，且移动中倾角 ≤ `max_tilt_moving_deg`。"""
+    rect = movement_limits["workspace_m"]
+    before = [float(v) for v in before_state["base_position_m"]]
+    after = [float(v) for v in after_state["base_position_m"]]
+    tilt = tilt_deg_from_quaternion(after_state["base_quaternion_wxyz"])
+    checks = []
+    for axis, index in (("x", 0), ("y", 1)):
+        low = float(rect["%s_min" % axis])
+        high = float(rect["%s_max" % axis])
+        value = after[index]
+        checks.append(
+            {
+                "name": "workspace.%s_max" % axis,
+                "measured": value,
+                "limit": high,
+                "passed": bool(value <= high),
+                "detail": "移动后躯干绝对坐标 %s 不得越出声明工作空间上界" % axis,
+            }
+        )
+        checks.append(
+            {
+                "name": "workspace.%s_min" % axis,
+                "measured": value,
+                "limit": low,
+                "passed": bool(value >= low),
+                "detail": "移动后躯干绝对坐标 %s 不得越出声明工作空间下界" % axis,
+            }
+        )
+    tilt_limit = float(movement_limits["max_tilt_moving_deg"])
+    checks.append(
+        {
+            "name": "workspace.tilt_moving_deg",
+            "measured": tilt,
+            "limit": tilt_limit,
+            "passed": bool(tilt <= tilt_limit),
+            "detail": "移动中躯干相对竖直的倾斜角（不含偏航）",
+        }
+    )
+    return {
+        "simulation": True,
+        "position_m": after,
+        "travel_m": math.hypot(after[0] - before[0], after[1] - before[1]),
+        "tilt_deg": tilt,
+        "workspace_m": {key: float(rect[key]) for key in WORKSPACE_RECT_KEYS},
+        "limits": {
+            "max_tilt_moving_deg": tilt_limit,
+            "watchdog_timeout_ms": float(movement_limits["watchdog_timeout_ms"]),
+        },
+        "checks": checks,
+        "passed": all(item["passed"] for item in checks),
+    }
+
+
+def resolve_stop_mode(stop_modes, moving, standing_mode, emergency=False, requested=None):
+    """按**运行状态**决定本次 `stop` 的语义；调用方不得自行选择，禁止混用。
+
+    规则（ADR-0008 决策 3 / 战役硬规则 3）：
+    - 急停或安全事件 → `torque_zero_release`（失能停机，唯一合法入口）；此时若请求受控停止，拒绝（不得降级）。
+    - 移动中 → `damped_hold`（减速到零并保持站立）。
+    - 未移动 → 机型声明的站立停机语义 `standing_mode`（**既有验收事实**，本步不改变）。
+    - 任何非急停路径显式请求 `torque_zero_release` → 拒绝（失能停机不得作为常规停止）。
+    - 未知/未登记的模式名 → 拒绝。
+    """
+    if not isinstance(stop_modes, dict):
+        raise SkillContractError("stop_modes 必须是映射（来自安全策略 stop_modes）")
+    _validate_stop_modes({"stop_modes": stop_modes}, "spec", "<传入的停止语义表>")
+    if standing_mode not in stop_modes:
+        raise SkillContractError(
+            "站立停机语义 %r 未在 stop_modes 登记（登记集: %s）" % (standing_mode, sorted(stop_modes))
+        )
+    if requested is not None and requested not in stop_modes:
+        raise SkillContractError(
+            "未知停止模式: %r（登记集: %s）——未登记的语义不得被请求" % (requested, sorted(stop_modes))
+        )
+    if emergency:
+        if requested is not None and requested != "torque_zero_release":
+            raise SkillContractError(
+                "急停/安全事件路径不得降级为受控停止（请求 %r）：安全语义只允许收紧" % requested
+            )
+        return "torque_zero_release"
+    if requested == "torque_zero_release":
+        raise SkillContractError(
+            "常规 stop 不得请求 torque_zero_release（失能停机只用于急停/安全事件）："
+            "语义混用被拒绝，请请求 damped_hold 或走急停路径"
+        )
+    if moving:
+        return "damped_hold"
+    return str(standing_mode)
+
+
+def _resolve_declaration_path(declaration, dotted_path, scope):
+    """解析机型声明内部的点号路径；任一段缺失即显式失败（禁止静默回退到默认值）。"""
+    if not isinstance(dotted_path, str) or not dotted_path:
+        raise SkillContractError("%s 必须是声明内的点号路径字符串，实际: %r" % (scope, dotted_path))
+    node = declaration
+    for part in dotted_path.split("."):
+        if not isinstance(node, dict) or part not in node:
+            raise SkillContractError(
+                "%s 指向的路径 %r 在机型声明中不存在（第 %r 段缺失）——声明来源必须可解析"
+                % (scope, dotted_path, part)
+            )
+        node = node[part]
+    return node
+
+
+def load_locomotion_declaration(declaration, movement_limits, standing_limits):
+    """读机型声明的 `locomotion` 段并做跨文件自洽门禁（步骤 01）。
+
+    本段只写**控制实现参数**与**来源路径**，不写任何速度/位移阈值（阈值只在安全策略里，
+    避免同一事实两处）。自洽门禁两条（任一不成立即失败）：
+    `ramp_s × max_accel_mps2 ≥ max_speed_mps`（斜坡必须够到达声明最高速度）
+    与 `heartbeat_period_ms ≤ watchdog_timeout_ms`（心跳周期不得大于失联判定）。
+    """
+    if not isinstance(declaration, dict):
+        raise SkillContractError("机型声明必须是映射")
+    locomotion = declaration.get("locomotion")
+    if not isinstance(locomotion, dict):
+        raise SkillContractError(
+            "机型声明缺少 locomotion 段：斜坡时长/控制频率来源/心跳周期/看门狗动作/"
+            "damped_hold 参数来源都必须显式声明（缺声明即失败，不得用实现层默认值）"
+        )
+    missing = [key for key in LOCOMOTION_REQUIRED_KEYS if key not in locomotion]
+    if missing:
+        raise SkillContractError("locomotion 段缺少必需键: %s" % missing)
+
+    scope = "locomotion"
+    ramp_s = _require_positive_number(locomotion, "ramp_s", scope)
+    heartbeat_ms = _require_positive_number(locomotion, "heartbeat_period_ms", scope)
+
+    frequency_hz = _resolve_declaration_path(
+        declaration, locomotion["control_frequency_source"], scope + ".control_frequency_source"
+    )
+    try:
+        frequency_hz = float(frequency_hz)
+    except (TypeError, ValueError):
+        raise SkillContractError(
+            "locomotion.control_frequency_source 解析结果不是数值: %r" % (frequency_hz,)
+        )
+    if not math.isfinite(frequency_hz) or frequency_hz <= 0.0:
+        raise SkillContractError(
+            "locomotion.control_frequency_source 解析结果必须为正的有限数值，实际: %r" % (frequency_hz,)
+        )
+
+    watchdog_action = locomotion["watchdog_action"]
+    stop_modes = movement_limits["stop_modes"]
+    if watchdog_action not in stop_modes:
+        raise SkillContractError(
+            "locomotion.watchdog_action=%r 不在已登记停止语义 %s 内"
+            % (watchdog_action, sorted(stop_modes))
+        )
+    if watchdog_action != WATCHDOG_STOP_MODE:
+        raise SkillContractError(
+            "locomotion.watchdog_action 必须是 %s（看门狗超时属受控停止；失能停机只用于急停/安全事件），"
+            "实际: %r" % (WATCHDOG_STOP_MODE, watchdog_action)
+        )
+
+    damped_hold = _require_mapping(locomotion, "damped_hold", scope)
+    damped_hold_missing = [
+        key for key in ("deceleration_source", "hold_pose_source") if key not in damped_hold
+    ]
+    if damped_hold_missing:
+        raise SkillContractError("locomotion.damped_hold 缺少来源键: %s" % damped_hold_missing)
+    resolved_sources = {}
+    for key in ("deceleration_source", "hold_pose_source"):
+        path_value = damped_hold[key]
+        resolved = _resolve_declaration_path(
+            declaration, path_value, "%s.damped_hold.%s" % (scope, key)
+        )
+        resolved_sources[key] = {"path": path_value, "value": resolved}
+
+    required_ramp = float(movement_limits["max_accel_mps2"])
+    max_speed = float(standing_limits["max_speed_mps"])
+    if ramp_s * required_ramp < max_speed - 1e-12:
+        raise SkillContractError(
+            "声明自相矛盾：ramp_s=%g s × max_accel_mps2=%g m/s² = %g m/s < max_speed_mps=%g m/s"
+            "（斜坡时长必须够到达声明最高速度）" % (ramp_s, required_ramp, ramp_s * required_ramp, max_speed)
+        )
+    watchdog_ms = float(movement_limits["watchdog_timeout_ms"])
+    if heartbeat_ms > watchdog_ms:
+        raise SkillContractError(
+            "声明自相矛盾：heartbeat_period_ms=%g ms > watchdog_timeout_ms=%g ms"
+            "（心跳周期大于失联判定会让每一次心跳都被判超时）" % (heartbeat_ms, watchdog_ms)
+        )
+
+    return {
+        "ramp_s": ramp_s,
+        "control_frequency_hz": frequency_hz,
+        "control_frequency_source": locomotion["control_frequency_source"],
+        "heartbeat_period_ms": heartbeat_ms,
+        "watchdog_action": watchdog_action,
+        "damped_hold": resolved_sources,
+    }
 
 
 def tilt_deg_from_quaternion(quaternion_wxyz):

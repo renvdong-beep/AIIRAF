@@ -29,3 +29,46 @@ spec:
     # 实测（步骤 17 验收报告）用于比对，不是拍出来的阈值——超限即判据失败。
     max_base_translation_m: 0.05
     max_tilt_deg: 10.0
+
+    # ---- 移动语义边界（步骤 01，战役 iraf-24h-2：能走、能转、能到点）----
+    # 与上面四条**分开**：上面是"站着有没有被带走"，这里是"能不能按这个速度/方向走"。
+    # 消费点：src/iraf_skills/quadruped.py 的 load_movement_limits /
+    # enforce_velocity_limits(movement=…) / check_workspace_moving / enforce_state_freshness
+    # 与 resolve_stop_mode；缺任一键即显式失败，禁止实现层默认值。
+    # 加速度上限：与机型声明的 locomotion.ramp_s 互锁
+    # （自洽门禁：ramp_s × max_accel_mps2 ≥ max_speed_mps）。
+    # 推导：0.5 m/s ÷ 1.0 s 斜坡 = 0.5 m/s²；即"从静止到声明最高速度用时 1 s"这一控制预算。
+    max_accel_mps2: 0.5
+    # 是否允许原地转弯（只有偏航速度、线速度为零）：使用者已确认的硬约束，
+    # 取值 true；实现层不得假定，声明 false 时纯偏航指令必须被拒。
+    allow_in_place_turn: true
+    # 移动中躯干相对竖直的倾斜角上限（不含偏航）：15°，取自 ADR-0008 §2 的建议上限
+    # （站立 10° 的放宽值）；本值需由步骤 02/03 的踏步/直行/转弯实测复核——
+    # 若实测超限，修的是控制器而不是本阈值。
+    max_tilt_moving_deg: 15.0
+    # 工作空间矩形（**绝对坐标**，m）：躯干质心必须落在矩形内。
+    # 推导（实测 build/iraf-24h-2/01/probe-workspace.txt）：台面 half_size_m=0.8（scene.yaml，
+    # 编译后 workbench box 半边长实测 0.8 m）、Go2 躯干碰撞盒半长实测 0.1881 m ⇒
+    # 台面边缘到躯干边缘的最小余量 = 0.8 − 0.5 = 0.30 m > 0.1881 m，尚余 0.11 m 给步态摆动与读数延迟。
+    # 0.5 是保守取整下界（不是"能走多远"的期望值，而是**不许越出**的边界）。
+    workspace_m:
+      x_min: -0.5
+      x_max: 0.5
+      y_min: -0.5
+      y_max: 0.5
+    # 看门狗超时：控制状态年龄超过本值 ⇒ 拒绝下发新指令（取受控停止），
+    # 推导：10 个控制周期（控制频率 100 Hz 声明于机型声明 control.frequency_hz）= 100 ms；
+    # 与机型声明的 locomotion.heartbeat_period_ms 自洽（心跳周期必须 ≤ 本值）。
+    watchdog_timeout_ms: 100.0
+
+  # 停止语义矩阵（ADR-0008 决策 3 / 铁律 1.6）：两种语义**并列登记**且必须写明适用路径。
+  # 缺任一模式、applies_to 为空、出现未登记的模式名都显式失败
+  # （由 src/iraf_skills/quadruped.py 的 load_stop_modes / _validate_stop_modes 消费）。
+  # 运行期由 resolve_stop_mode 按"是否处于移动 + 是否急停"决定，**调用方不得自行选择**。
+  stop_modes:
+    damped_hold:
+      applies_to: [locomote_stop, navigate_to_stop, arrival, watchdog_timeout]
+      detail: 受控停止——减速到零并保持站立；移动中的 stop、到点收尾与看门狗超时都取本语义。
+    torque_zero_release:
+      applies_to: [emergency_stop, safety_event, declared_release]
+      detail: 失能停机——力矩型执行器松力后躺倒；只用于急停/安全事件，以及机型声明 stop.mode 所指的站立态松力停机（既有验收事实，步骤 01 未变更）。
