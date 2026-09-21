@@ -22,11 +22,11 @@
   },
   "test_latest": {
     "at_step": "02",
-    "runs": 925,
+    "runs": 932,
     "failures": 1,
     "errors": 4,
     "skipped": 4,
-    "note": "步骤 02 后：Ran 925 / failures=1 / errors=4 / skipped=4。+44 = 本步新增 tests/unit/test_gait_contract.py 的 44 例；失败集合与基线逐项一致（4 项 loader ERROR：test_agentos_bridge / test_coding_worker_contract / test_runtime_grpc / test_runtime_http_health，加 FAIL test_depth_projection_and_invalid_filter），无回归"
+    "note": "步骤 02（wave 路线落地，提交 f2c66cb）后：Ran 932 / failures=1 / errors=4 / skipped=4。+7 = 本步新增的 wave 用例（tests/unit/test_gait_contract.py 44 → 51 例）；失败集合与战役基线逐项一致（4 项 loader ERROR：test_agentos_bridge / test_coding_worker_contract / test_runtime_grpc / test_runtime_http_health，加 FAIL test_depth_projection_and_invalid_filter），无回归"
   },
   "blocked": [],
   "steps": [
@@ -43,10 +43,10 @@
       "id": "02",
       "title": "参数化 trot：原地踏步（声明 + 控制器 + 验收）",
       "status": "IN_PROGRESS",
-      "evidence": "build/acceptance/go2-trot-in-place/report.json（trot 判决：11/19 判据失败）; build/iraf-24h-2/02/{acceptance-final.txt,scan*.json,tick-report.md}",
-      "commit": "681eaaa",
-      "updated_at": "2026-09-21T16:09:35+0800",
-      "note": "【2026-09-21 决策改走 wave】trot 路线已给出完整判决并入库（提交 681eaaa）：19 条判据 11 条失败（height_mean_m -38.66691503360235、height_std_m 50.77553945155333、min_base_height_m -174.8562035777835、max_tilt_deg 149.00568880619002、max_displacement_m 3.5763946259283177、ctrl_saturated_samples 7306、max_tracking_error_rad 0.3101749935977546、四腿支撑相 0.1111/0.1344/0.1789/0.1311 vs 声明 0.5）；26 组参数扫描 + 阻尼/截断对照已证明调参不是出路，声明取 stabilization.enabled=false（判据与阈值一字未改）。使用者决策：A 首期改准静态 wave（duty 0.75、四相位、≥3 腿支撑 ⇒ 静态稳定、不需平衡器）；C trot 作为二期性能优化保留在库（gait.kind 切换即可）。下一步：按 02 步文件（已按 wave 重写）改声明与实现，验收判据结构不变，仅 duty 目标随声明变化。"
+      "evidence": "build/iraf-24h-2/02/{acceptance-wave-run1.txt,timeline-wave-run1.txt,trial-cosine-run.txt,probe-neutral-clearance.txt,probe-phase-boundary.txt,diagnose-phase-structure.txt,diagnose-phase-structure-fixed.txt,commit-plan.txt,tick-report.md}（证据区，gitignore）; build/acceptance/go2-trot-in-place/report.json（wave 判决：12/20 判据失败）; build/iraf-24h-2/02/trial-cosine-h010-report.json（cosine 对照试验）",
+      "commit": "f2c66cb",
+      "updated_at": "2026-09-21T16:20:04+08:00",
+      "note": "【2026-09-21 决策改走 wave】trot 路线已给出完整判决并入库（提交 681eaaa）：19 条判据 11 条失败（height_mean_m -38.66691503360235、height_std_m 50.77553945155333、min_base_height_m -174.8562035777835、max_tilt_deg 149.00568880619002、max_displacement_m 3.5763946259283177、ctrl_saturated_samples 7306、max_tracking_error_rad 0.3101749935977546、四腿支撑相 0.1111/0.1344/0.1789/0.1311 vs 声明 0.5）；26 组参数扫描 + 阻尼/截断对照已证明调参不是出路，声明取 stabilization.enabled=false（判据与阈值一字未改）。使用者决策：A 首期改准静态 wave（duty 0.75、四相位、≥3 腿支撑 ⇒ 静态稳定、不需平衡器）；C trot 作为二期性能优化保留在库（gait.kind 切换即可）。下一步：按 02 步文件（已按 wave 重写）改声明与实现，验收判据结构不变，仅 duty 目标随声明变化。 【2026-09-21T16:20 本轮已落地 wave 路线（提交 f2c66cb），验收仍不通过】① 交付：gait.kind 分派（wave 占空比下限 (n-1)/n 由腿数推导、四相位等间隔、一腿一相位）、phase_groups 改为按偏移升序的组列表、新增 support_legs_profile 判据、trot_joint_targets/assess_trot → gait_joint_targets/assess_gait（旧名薄包装）、unitree_go2.trot_in_place → gait_in_place（薄包装）、验收入口更名 scripts/verify_go2_gait_in_place.py（旧名薄包装转发退出码）；verification 判据与阈值一字未改（只改了 min_swing_fraction 的注释口径并登记未决冲突）。② 实测（simulation=true，/usr/bin/python3）：wave（sine/步高 0.08/1.25 Hz）12/20 条判据失败：height_mean_m -62.23686161508254、height_std_m 71.50775636419188、min_base_height_m -240.03824818702557、max_tilt_deg 135.95309870935603、ctrl_saturated_samples 7579、max_tracking_error_rad 0.5300321885478345、support_legs min 0.06818181818181818、四腿支撑相 0.11/0.105/0.142/0.124；时间线显示第一个摆动周期即倾 4.20°、单足接触力峰值 200~450 N（机体重 153 N）、2.81 s 后走出台面。③ 对照试验（cosine/步高 0.10，同代码只改声明）失败形态相同（height_mean_m -67.61332065178927、min_base_height_m -253.58113165758192、sat 7822）⇒ 摆动轨迹形状与步高不是原因，按战役规则停手、不再扫参数网格。④ **可证明的声明缺陷（未私自改，待人工决策）**：duty=0.75 时「任意时刻 ≥3 条腿支撑」⇒ 单腿离地比例 ≤ 0.25；而 clear_swing 判据要求支撑相 ≤ 1-0.25=0.75 ⇒ 离地比例 ≥ 0.25 ⇒ 只允许「离地窗口恰好铺满整个摆动窗口（含起落瞬间、卸载时间为零）」的零余量解 ⇒ 该判据在 wave 下**不可满足**，不是实现没调好（推导见 docs/debug/2026-09-21-quadruped-gait-trot-to-wave.md §3 根因 A）。⑤ 本轮修正的真实缺陷：相位结构判据的平移方向写反（腿的相位是 (u+offset)%1 ⇒ 正确关系是 current[k]==reference[(k+shift)%bins]）；trot 的 Δ=0.5 在相位环上自逆（+10 ≡ -10 mod 20）故方向错误在 trot 下完全不可见，wave 的 Δ=0.25 才暴露：改正前三对相邻组 max_abs_diff 全为 1.0，改正后 0.006651884700665134/0.011961722488038284/0.021052631578947323。⑥ 本轮实测的关键约束（供后续复用）：关键帧 home 下四足球最低点在台面下 0.0183725 m，且因 PD 柔度需命令抬起约 0.017 m 才真正卸载接触 ⇒ 步高必须明显大于该卸载阈值，这也解释了 trot 扫描里「抬脚 ≤0.01 m 从不离地」的现象。⑦ 合同：tests.unit.test_gait_contract Ran 51 / OK；profile_check --quadruped exit=0；全量单测 Ran 932 / failures=1 / errors=4 / skipped=4（失败集合与基线逐项一致）。⑧ 能力仍未回填 Profile（locomote 未声明）；需人工决策的选项见 build/iraf-24h-2/02/tick-report.md。"
     },
     {
       "id": "03",
