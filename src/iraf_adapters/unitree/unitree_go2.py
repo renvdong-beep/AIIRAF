@@ -497,9 +497,16 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
     def _balance_provider(self, params, geometry, trunk_body, balance_params):
         """构造力矩级平衡器的**逐控制周期**回调：`(cycle_index, info) -> 12 维附加力矩`。
 
-        支撑腿的判定用**实测接触力**（`contact_force_threshold_n`），不用声明的相位——实测
-        「命令抬的腿 ≠ 物理离地的腿」（静态复现：命令抬 FL 0.08 m 时机身翻 17.765°，
-        最终 RR 离地 0 N、FL 仍承载 44.46 N）⇒ 按相位写成的支撑集与实测恒对不上。
+        支撑腿的判定口径来自声明 `balance.stance_classification`（决策 1e）：
+        - `contact_only`（旧行为）：只用**实测接触力**（`contact_force_threshold_n`），不做相位推断
+          —— 实测「命令抬的腿 ≠ 物理离地的腿」（静态复现：命令抬 FL 0.08 m 时机身翻 17.765°，
+          最终 RR 离地 0 N、FL 仍承载 44.46 N）⇒ 按相位写成的支撑集与实测恒对不上。
+        - `declared_and_contact`：**声明相位 ∧ 实测接触**。摆动窗口内的腿一律不算支撑腿（不参与
+          mg 分摊、不承受力控、位置权重回落 `weight_position`）⇒ 它的轨迹才抬得起来。理由（实测，
+          调试记录 §15）：`contact_only` 把「该抬但还没抬」的腿继续当支撑腿并给它 ~mg/4 法向力压在
+          台面上，而支撑腿位置权重为 0 ⇒ 轨迹也抬不动它 ⇒ 自锁（wave+B1/trot+B1 四腿稳态支撑相恒
+          为 1.0、clear_swing_cycles 0）。相位用的 `elapsed` 与步态目标生成**同一个起点**：
+          本回调首次被调用时的仿真时刻（`_run_control` 在步进前回调，故与调用方的 `onset` 相等）。
         没有足够支撑腿时**不施加**平衡力矩（并计数），超过声明的看门狗上限即停止施加。
         """
         threshold = float(params["verification"]["contact_force_threshold_n"])
@@ -511,6 +518,9 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         # B1：支撑/摆动两套位置权重（都来自声明，缺键在 `load_balance_declaration` 就失败了）。
         stance_weight = float(balance_params["stance_weight_position"])
         swing_weight = float(balance_params["weight_position"])
+        # 支撑集判定口径（决策 1e）：取值已在 `load_balance_declaration` 白名单校验过。
+        stance_classification = str(balance_params["stance_classification"])
+        balance_onset = None
 
         def _no_stance_fallback():
             """支撑集不足 / 看门狗触发：力矩级动作整段放弃，位置权重回落 `weight_position`。
@@ -528,10 +538,32 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             }
 
         def torque_provider(cycle_index, info):
+            nonlocal balance_onset
             contact = self._leg_contact_forces(params, geometry)
-            stance = [code for code in sorted(geometry) if float(contact[code]) >= threshold]
+            measured = [code for code in sorted(geometry) if float(contact[code]) >= threshold]
             stats = self._balance_stats
             stats["cycles"] = int(stats["cycles"]) + 1
+            if stance_classification == "declared_and_contact":
+                # 声明相位 ∧ 实测接触：相位与步态目标生成共用起点（首次回调时的仿真时刻）。
+                if balance_onset is None:
+                    balance_onset = float(self.data.time)
+                elapsed = float(self.data.time) - balance_onset
+                declared = {
+                    code: bool(gait.is_stance(params, gait.leg_phase(params, code, elapsed)))
+                    for code in sorted(geometry)
+                }
+                stance = [code for code in measured if declared[code]]
+                # 声明摆动却仍接触的腿：正是自锁的观测对象（本轮新计数；不参与分摊、不承受力控）。
+                swing_in_contact = [code for code in measured if not declared[code]]
+                if swing_in_contact:
+                    stats["declared_swing_in_contact_cycles"] = (
+                        int(stats["declared_swing_in_contact_cycles"]) + 1
+                    )
+                stats["declared_swing_in_contact_samples"] = (
+                    int(stats["declared_swing_in_contact_samples"]) + len(swing_in_contact)
+                )
+            else:
+                stance = list(measured)
             if len(stance) < min_stance:
                 stats["no_stance_cycles"] = int(stats["no_stance_cycles"]) + 1
                 stats["consecutive_no_stance"] = int(stats["consecutive_no_stance"]) + 1
@@ -597,8 +629,9 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 max((abs(float(value)) for value in torques.values()), default=0.0),
             )
             # B1：逐关节位置权重 —— 支撑腿关节取 `stance_weight_position`（0 ⇒ 力控），
-            # 其余（摆动腿）取 `weight_position`。支撑集来自本周期**实测接触力**，
-            # 与声明相位无关（实测「命令抬的腿 ≠ 物理离地的腿」）。
+            # 其余（摆动腿）取 `weight_position`。支撑集口径由声明
+            # `balance.stance_classification` 决定（`contact_only` = 只按实测接触；
+            # `declared_and_contact` = 声明相位 ∧ 实测接触），本处不做第二份推断。
             stance_joints = {
                 geometry[code]["joints"][key]
                 for code in stance
@@ -642,6 +675,10 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             "last_stance_legs": [],
             "last_wrench": None,
             "max_abs_torque_nm": 0.0,
+            # 支撑集判定口径（决策 1e）与自锁的观测计数：判定「摆动腿到底抬没抬起来」的证据。
+            "stance_classification": None,
+            "declared_swing_in_contact_cycles": 0,
+            "declared_swing_in_contact_samples": 0,
             # B1 逐关节权重的实测统计（"声明说支撑腿走力控"要有**兑现**证据，而不是只看开关）。
             "position_weight": {
                 "stance": None,
@@ -662,6 +699,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             "stance_weight_position": float(balance_params["stance_weight_position"]),
             "weight_balance": float(balance_params["weight_balance"]),
             "include_gravity_support": bool(balance_params["include_gravity_support"]),
+            "stance_classification": str(balance_params["stance_classification"]),
             "attitude": dict(balance_params["attitude"]),
             "height": dict(balance_params["height"]),
             "velocity": dict(balance_params["velocity"]),
@@ -679,6 +717,12 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                     str(key): int(value) for key, value in stats["stance_legs_histogram"].items()
                 },
                 "clamped_legs": list(stats["clamped_legs"]),
+                "declared_swing_in_contact_cycles": int(
+                    stats["declared_swing_in_contact_cycles"]
+                ),
+                "declared_swing_in_contact_samples": int(
+                    stats["declared_swing_in_contact_samples"]
+                ),
                 "max_abs_torque_nm": float(stats["max_abs_torque_nm"]),
                 "last_wrench": stats["last_wrench"],
             },

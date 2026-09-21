@@ -24,8 +24,17 @@
 ------------------------------------
 - **支撑/摆动两套位置权重**（B1，ADR-0008 决策 1d）：`weight_position` 作用于**非支撑（摆动）**
   关节；`stance_weight_position`（B1 取 **0**）作用于**支撑**关节 ⇒ 支撑腿只受 `τ_bal` 驱动，
-  `τ_pd`（含 PD + 重力前馈）被整体乘 0；摆动腿仍走位置级 PD + 重力前馈。哪个关节属于支撑，
-  由**实测接触力**判定（不做相位推断，见 `_balance_provider` 的 docstring）。
+  `τ_pd`（含 PD + 重力前馈）被整体乘 0；摆动腿仍走位置级 PD + 重力前馈。哪些关节属于支撑，
+  由声明的 `stance_classification` 决定（2026-09-21 决策 1e）：
+  · `contact_only`（默认，旧行为）：只用**实测接触力**判定，不做相位推断 —— 实测「命令抬的腿 ≠
+    物理离地的腿」（静态复现：命令抬 FL 0.08 m 时机身翻 17.765°，最终 RR 离地 0 N、FL 仍承载
+    44.46 N）⇒ 按相位写成的支撑集与实测对不上。
+  · `declared_and_contact`：**声明相位 ∧ 实测接触** —— 摆动窗口内的腿一律不参与 mg 分摊、不承受
+    力控（只作安全兜底），从而让「摆动腿走轨迹」真的能抬起来。存在理由（实测，见调试记录 §15）：
+    `contact_only` 会把「该抬但还没抬」的腿继续当成支撑腿并给它 ~mg/4 法向力压在台面上，而支撑腿
+    位置权重为 0 ⇒ 轨迹也抬不动它 ⇒ **自锁**（wave+B1 与 trot+B1 实测四腿稳态支撑相恒为 1.0、
+    clear_swing_cycles 0、声明摆动窗口内 900/900 与 1800/1800 采样全部仍接触）。
+    取该模式即「摆动腿走轨迹」的字面兑现；阈值一字未改，只换支撑集口径。
 - **含重力支撑前馈**（`include_gravity_support: true`，B1）：支撑腿关掉位置级分量后不再有
   PD 平衡点，mg 支撑**必须**由力矩级提供（`desired_wrench` 的 `F_z = include_gravity_support·mg
   + 高度纠正`，再经足端力分配摊到各支撑腿）；`false` 只适用于"位置级承重 + 力矩级纠正"的旧结构
@@ -56,6 +65,9 @@ REQUIRED_BALANCE_KEYS = (
     "stance_weight_position",
     "weight_balance",
     "include_gravity_support",
+    # 支撑集判定口径（2026-09-21 决策 1e）：`contact_only`（旧行为）/`declared_and_contact`。
+    # 必须显式声明：两种口径的语义差别是「摆动腿能不能抬起来」，不能由实现层猜。
+    "stance_classification",
     "attitude",
     "height",
     "velocity",
@@ -63,6 +75,11 @@ REQUIRED_BALANCE_KEYS = (
     "watchdog",
     "verification",
 )
+
+#: `balance.stance_classification` 的允许取值（2026-09-21 决策 1e）。
+#: - `contact_only`：只用实测接触力判定支撑腿（旧行为，逐位不变）；
+#: - `declared_and_contact`：声明相位 ∧ 实测接触（摆动窗口内的腿不参与 mg 分摊、不承受力控）。
+STANCE_CLASSIFICATION_MODES = ("contact_only", "declared_and_contact")
 
 #: `balance.attitude` 必需键（滚转/俯仰 PD 与力矩上限）。
 REQUIRED_ATTITUDE_KEYS = ("kp_nm_per_rad", "kd_nm_s_per_rad", "max_torque_nm")
@@ -201,6 +218,14 @@ def load_balance_declaration(declaration):
             "整机将直接塌陷）"
         )
     include_gravity_support = _boolean(section, "include_gravity_support", "balance")
+    # 支撑集判定口径（决策 1e）：**不是**自由文本 —— 只允许两个已定义模式，别的取值一律显式失败
+    # （否则拼错一个词就会静默落到某个未声明的语义上）。
+    stance_classification = section["stance_classification"]
+    if stance_classification not in STANCE_CLASSIFICATION_MODES:
+        raise DeclarationError(
+            "balance.stance_classification=%r 不是允许的支撑集判定口径（可选 %s）"
+            % (stance_classification, "/".join(STANCE_CLASSIFICATION_MODES))
+        )
 
     attitude = _require_section(section.get("attitude"), "balance.attitude")
     _require_keys(attitude, REQUIRED_ATTITUDE_KEYS, "balance.attitude")
@@ -269,6 +294,7 @@ def load_balance_declaration(declaration):
         "stance_weight_position": stance_weight_position,
         "weight_balance": weight_balance,
         "include_gravity_support": include_gravity_support,
+        "stance_classification": stance_classification,
         "attitude": {
             "kp_nm_per_rad": _number(
                 attitude, "kp_nm_per_rad", "balance.attitude", non_negative=True

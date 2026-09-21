@@ -83,6 +83,11 @@ balance:
   # 旧结构（位置级承重 + 力矩级纠正）取 false：站立载荷已由 PD 承担（实测四腿合计 152.617937 N
   # ≈ mg=153.0 N），再叠加一份 mg 会让升力翻倍。
   include_gravity_support: true
+  # 支撑集判定口径（决策 1e）：`contact_only` = 只用实测接触力（旧行为，逐位不变）；
+  # `declared_and_contact` = 声明相位 ∧ 实测接触（摆动窗口内的腿不参与 mg 分摊/力控）。
+  # ⚠ 生产声明保持 `contact_only`：取 `declared_and_contact` 会让「摆动腿抬起来」——
+  #   该口径的实测复评（trot/wave）落在证据区副本上，见 docs/debug §18。
+  stance_classification: contact_only
   # 姿态 PD（滚转/俯仰，不含偏航）与力矩上限。
   # B1 下本档**必须按倒立摆权限重新定档**（实测，勿回退）：支撑腿失去位置伺服后，整机的姿态
   # 稳定性只剩本段（不再有"腿的 PD 平衡点"兜底）⇒ 失稳项 m·g·h = 15.596408×9.81×0.28 ≈ 42.8 N·m/rad。

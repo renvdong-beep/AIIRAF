@@ -932,3 +932,107 @@ PYTHONPATH=src /usr/bin/python3 scripts/profile_check.py --quadruped config/go2_
    **资源账**：本阻塞自第十轮（提交 `ed2c0fa`）以来未解除；cron repeat **17/48**；
    推进器第 **4/4** 轮已到顶（`build/iraf-24h-2/push-driver.log`）⇒ 自停、不跳序；**建议答复前暂停 job**。
 
+## 18 2026-09-21（决策 1e 落地轮；台账口径「第十四轮 tick」）：让 B1 生效 —— 声明相位 ∧ 实测接触
+
+主窗口决策 **1e**（提交 `b314bb2`）：「**先做 B1 生效 + trot 复评**；B2 仅在 trot+B1 不达标时再取；
+B3 暂不取；禁止再做同类可行域探针；判据与阈值不动」。本轮据此把 §15.3 的候选 ①（支撑集判定语义）
+落成**声明开关**并在 trot(0.5)/wave(0.75) 上复评。
+
+### 18.1 交付（本轮入库）
+
+1. `balance.stance_classification`（**必需键**，白名单 `contact_only` / `declared_and_contact`；
+   缺键/自造取值一律 `DeclarationError`）。生产声明取 `contact_only` ⇒ **生产路径与步骤 02
+   逐位一致**（stand/stop/位置级步态未被污染）；实验组由证据区副本开启。
+2. `_balance_provider` 按口径分派：`declared_and_contact` = **声明相位 ∧ 实测接触** —— 摆动窗口内的腿
+   一律排除出支撑集（不参与 mg 分摊、不承受力控、位置权重回落 `weight_position`）。相位用
+   `gait.leg_phase/is_stance`（生产同一原语），`elapsed` 起点取「本回调首次被调用的仿真时刻」，
+   与步态目标生成的 `onset` 同源。新增统计 `declared_swing_in_contact_cycles/samples`。
+3. 单测 `tests.unit.test_balance_contract` **Ran 35 / OK**（+1：`stance_classification` 白名单
+   正/负对照；缺键由既有「逐必需键遍历」用例覆盖）。
+
+### 18.2 实测 1：trot(0.5) 被生产分配器的**秩门禁硬拒绝** —— 代数上不可行
+
+`gait-trot-b1-dc.yaml`（kind=trot、duty 0.5、对角相位、删 sway、`min_stance_legs: 2`、
+口径 `declared_and_contact`）跑生产验收入口：
+
+```
+$ verify_go2_gait_in_place.py --config gait-trot-b1-dc.yaml
+声明非法（步态目标/几何）：力旋量映射矩阵秩 5 < 6（支撑腿共线或重合）：显式失败而不是返回近似解
+exit=2      （证据：build/iraf-24h-2/02b/gait-trot-b1-dc.txt；**未生成报告**）
+```
+
+成因（代数，不是调参）：duty 0.5 下任一时刻**只有 2 条声明支撑腿**，而两条对角足的足端力到力旋量的
+映射 `G = [I; [r]×]`（第 ① 条注释里的 `wrench_matrix`）秩只有 **5**：缺的那一维正是**绕两足连线
+（支撑对角线）的力矩**。`allocate_foot_forces` 的 `rank < 6` 是**有意的显式失败**（"不给近似解"）
+⇒ 「动态稳定性交给平衡器」在 2 足支撑下不成立。**推论**：trot 路线要么换分配器口径（投影到可达
+子空间 + 如实记残差），要么改用「≥3 足支撑」的步态族（wave/爬行）；两者都是新架构决策，代理不选路。
+（附：上一轮 trot+B1 之所以"跑得起来"，是因为 `contact_only` 下四足全在地面上 ⇒ 支撑集 4 ⇒ 秩 6 ——
+自锁**恰好掩盖**了这个代数约束。）
+
+### 18.3 实测 2：wave + `declared_and_contact` —— 自锁**解除**（腿真的抬起来了），但平衡器 98.1% 采样退化为 fallback
+
+`verify_go2_gait_in_place.py --config gait-wave-b1-dc.yaml` ⇒ **exit=5 / checks 20 / failed 11**
+（证据 `build/iraf-24h-2/02b/gait-wave-b1-dc.txt`、`build/acceptance/go2-gait-in-place/wave-b1-dc/`）：
+
+- **自锁确实解除了**（这是本轮唯一的好消息，且是战役首次）：`failed_checks` 里**没有**任何
+  `leg_*_clear_swing_cycles` ⇒ 四条腿都满足 `min_clear_swing_cycles_per_leg: 8`（FL/FR 报告为
+  12/12）；四腿稳态支撑相 0.050000 / 0.044444 / 0.050000 / 0.058889（对照上一轮 `contact_only`
+  的 **1.0**）。
+- **但仍翻倒**：`height_mean_m -78.8292944475062`、`height_std_m 84.24090043946428`、
+  `min_base_height_m -280.88670153813973`、`max_displacement_m 5.739053146911488`、
+  `max_tilt_deg 177.92464537728526`（roll 179.66148741059092 / pitch 88.33617342560798）、
+  `max_tracking_error_rad 0.3922505382574959`、`ctrl_saturated_samples 0`；
+  逐腿 `max_contact_n` FL 458.4426579965769 / FR 357.2694226986997（**冲击**量级，mg=153.0 N）。
+- **为什么"腿抬起来了"反而更差 —— 支撑集与抬腿互斥**：同一份序列的重建
+  （`reconstruct_stance_support.py wave-b1-dc`，用生产 `load_gait_declaration`/`leg_phase`/`is_stance`
+  与声明阈值）：支撑集 ≥ `min_stance_legs=3` 的采样只有 **19 / 1000 = 0.0190** ⇒
+  **fallback 981/1000 = 0.9810**；支撑集大小 min 0 / max 3 / 均值 0.3380；按相位分箱 0.208~0.500。
+  ⇒ 平衡器在 98.1% 的采样里整段放弃（回落全位置控制 + 零力矩级动作），实测**退化成本轮之前的
+  「位置级 wave」**（§10.4/§11 的同类负结果），因而照旧翻倒。
+  机制链：摆动腿一离地 ⇒ 声明支撑三条腿里只要有一条瞬时离地（或摆动腿被排除后剩余接触不足 3）
+  ⇒ `len(stance) < min_stance_legs` ⇒ `_no_stance_fallback()`。**姿态权限又回到"支撑腿没有位置伺服"**，
+  于是"抬腿"与"有姿态权限"在同一时刻不可兼得。
+- 诚实标注：本项是**重建**（生产报告不含该口径，见 §18.5），但重建的两次抽样与手工核算一致
+  （如 idx 1：实测 {FL,RL,RR} ∩ 声明 {FL,FR,RR} = {FL,RR} = 2 < 3 ⇒ fallback）。
+
+### 18.4 口径修正：首采样的「全零接触 + 倾角 3.38°」是**既有瞬态**，与本轮改动无关
+
+`wave-b1`（`contact_only`）与 `wave-b1-dc` 的**首个采样逐位相同**：`t=0.010`、`h=0.288`、
+`tilt 3.38°`、`roll −3.38°`、`|v| 0.110 m/s`、四腿接触力全 **0.0**（接触探针在首采样读数不全，
+两种口径都一样）。之后 `contact_only` **重新收敛**（idx 7：tilt 1.22°、四腿 35.2/43.5/33.4/42.6 N
+≈ mg/4），而 `declared_and_contact` **发散**（idx 2 起 108.5/90.8 N → idx 4 四腿 314 N 冲击）。
+⇒ 该瞬态**不是**本轮引入的；它也解释了 §15 里"生产路径翻倒前 231 个摆动采样"的早期读数口径。
+（顺带：重建脚本的"正例对照"因此在首采样拿不到 4/4 —— 首采样接触力全 0 是**探针读数事实**，
+本处如实登记为本轮未闭合的缺口，不用它反推因果。）
+
+### 18.5 证据缺口（本轮暴露，未修）：步态验收报告不含 `balance` 段
+
+`grep -c balance build/acceptance/go2-gait-in-place/wave-b1-dc/report.json` = **0**，
+`scripts/verify_go2_gait_in_place.py` 里也没有任何 `balance` 引用 ⇒ **从步态正式验收读不到
+"分类口径 / fallback 率 / 看门狗 / 力控周期数"**，"B1 到底有没有生效"目前只能靠序列重建。
+建议：在步态报告里并入 `_balance_summary`（适配器侧一行 + 报告 schema 同文），由 03 步或收尾步落地；
+本轮**未改验收脚本**（超出 02b 的「涉及文件」边界）。
+
+### 18.6 决策包（代理**不选路**；判据与阈值一字未改）
+
+- **D1（推荐）支撑集改为「声明支撑集的计划位置」**：平衡器按相位表给**声明的支撑腿**分力（足端位置取
+  步态计划位形），实测接触只作安全门（离地腿的法向力置 0 并记 `clamped`，而不是让整个平衡器退出）。
+  直接消掉 §18.3 的"抬腿 ⇒ 无姿态权限"，不改任何阈值，是"让 B1 生效"的最短路径。
+- **D2 分配器加「投影到可达子空间 + 如实记残差」**：去掉 `rank < 6` 硬失败（改为投影并登记不可兑现
+  分量）⇒ 解锁 trot(2 足)，但绕两足连线的力矩**物理上不可由足端力产生**，需接受该方向自由或靠摆动腿
+  角动量 ⇒ 属新架构决策。
+- **D3 落足点规划（B2 迈步）**：抬腿前先把支撑腿落点外移/重心进三角形（§17 已量：每相位 ~80 mm、
+  方向两两相反）⇒ 成本最高，但它是唯一把「静态余量≈0」真正解决的路子。
+- **D4 先交付「最小移动形态」打通链路**（原 B3）：不等步态稳定性，先把 `locomote`/`navigate_to` 的
+  链路与 S1 交互跑通（例如四足不离地的定速直行 + 到点闭环），稳定性与真实步态后置。
+
+### 18.7 诚实边界
+
+① 全部结论 `simulation=true`；真机/目标端 `DEFERRED`（板卡不在场）。
+② 生产声明**未启用** `declared_and_contact`（仍 `contact_only`）、`balance.enabled` 仍 `false`；
+   `locomote` **未回填**；ADR 未由代理改动。
+③ trot 的 `min_stance_legs: 2` 只出现在**证据区副本**里（生产仍是 3）。
+④ §18.3 的 fallback 率是**重建**而非生产计数（原因见 §18.5），只用于定位机制，不作为验收数字。
+⑤ 本轮**未**改任何验收判据/阈值，**未**实现 D1~D4 任何机制。
+
+

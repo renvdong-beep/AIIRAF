@@ -3,7 +3,8 @@
 覆盖（每条负向用例都配正向对照，否则分不清「门禁严格」与「门禁恒失败」）：
 
 1. `load_balance_declaration`：真实声明可加载（**正向对照**，且逐项与 YAML 对齐）；缺段、
-   缺任一必需键（逐键遍历）、权重同时为 0、`min_stance_legs > 4`、`normal_force_floor_n` 为正
+   缺任一必需键（逐键遍历）、权重同时为 0、`stance_classification` 取值不在白名单（决策 1e：
+   `contact_only` / `declared_and_contact`）、`min_stance_legs > 4`、`normal_force_floor_n` 为正
    或超出法向力上限、`axes` 非法、`amplitudes_m` 空/含负值/不含 `no_fall_amplitude_m`、
    倾角上限写成 45° 以上 —— 全部必须被拒；
 2. `desired_wrench`（纯函数，不需要仿真）：直立且达标高度 + 零速度 ⇒ 零纠正量；
@@ -90,6 +91,31 @@ class BalanceDeclarationTests(unittest.TestCase):
             params["verification"]["static_disturbance"]["axes"],
             [str(item) for item in section["verification"]["static_disturbance"]["axes"]],
         )
+
+    def test_stance_classification_declared_and_validated(self):
+        """决策 1e：支撑集判定口径必须显式声明，且只允许白名单取值。
+
+        缺键由 `test_every_required_key_rejected_when_missing` 逐键覆盖（该键已进
+        `REQUIRED_BALANCE_KEYS`）；本用例补的是「**拼错/自造模式必须被拒**」与「另一个合法
+        模式必须能加载」这对正/负对照 —— 否则分不清「门禁严格」与「门禁恒失败」。
+        """
+        document = _declaration()
+        params = _params(document)
+        self.assertEqual(
+            params["stance_classification"],
+            str(document["balance"]["stance_classification"]),
+        )
+        self.assertIn(params["stance_classification"], balance.STANCE_CLASSIFICATION_MODES)
+        for bad in ("declared", "contact", "declared_and_measured", "", 1, None):
+            with self.assertRaises(DeclarationError):
+                _params(_mutate("balance.stance_classification", bad))
+        with self.assertRaises(DeclarationError) as ctx:
+            _params(_mutate("balance.stance_classification", "declared"))
+        self.assertIn("stance_classification", str(ctx.exception))
+        # 正例对照：两个已定义模式都必须能加载（含"声明相位 ∧ 实测接触"）。
+        for mode in balance.STANCE_CLASSIFICATION_MODES:
+            loaded = _params(_mutate("balance.stance_classification", mode))
+            self.assertEqual(loaded["stance_classification"], mode)
 
     def test_missing_section_rejected(self):
         with self.assertRaises(DeclarationError) as ctx:
