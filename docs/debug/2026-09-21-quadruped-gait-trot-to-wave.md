@@ -1464,6 +1464,125 @@ wave+B1(dc) 的生产统计（**新字段，授权要求 ② 的实测证据**�
 注：E 与 §21.7 的 D1~D4 **不重叠**：D1~D4 决定「步态怎么站住」，E 决定「静态保持该按哪套支撑集语义」。
 两个都需要人工一句话；本轮已把两者的数字都落到可复跑的证据里。
 
+## 23 2026-09-21（第十九轮 tick，E 归因实测轮 —— **不选路**）：静态保持失败的第一因是**看门狗 latch**（dc 下支撑集余量为 0），不只是分类口径的适用范围
+
+授权背景：主窗口尚未答复 E（§22.7）与 D1~D4（§21.7）。本轮不改任何机制、判据、阈值与生产声明，
+只做两件**只读**的事：① 翻键后的**全入口回归普查**（§22 只重跑了 4 个入口）；② 把 §22.4 的根因
+（原文是**推论**：「三足力控 + 一足位置伺服同时作用、法向力分配被自己的位置环顶住」）变成**实测**。
+
+### 23.1 交付与证据
+
+| 产物 | 路径（`build/` 为 gitignore 证据区） |
+|---|---|
+| 全入口回归普查（7 入口，退码逐个收） | `build/iraf-24h-2/02b/r19-census/{*.txt}`、`r19-census-summary.txt` |
+| E 的逐周期取证（启动窗口 / 全窗口游程） | `r19-static-trace.py` 输出、`r19_trace_runs.py`、`r19-diag-nowd/report.json` |
+| 单键诊断夹具（**只**改看门狗上限） | `r19_make_diag_config.py` → `r19-diag-nowd.yaml`；比对 `r19-diag-config.txt` |
+| 归因链交叉校验 | `r19_trace_overlap.py` → `r19-trace-overlap.txt` |
+| 生产档复跑（恢复规范证据路径） | `r19-prod-balance.txt`、`build/acceptance/go2-balance/report.json` |
+
+### 23.2 实测 1：翻键后的爆炸半径 = **恰好一个入口**（普查）
+
+生产声明（`stance_classification: declared_and_contact`，`balance.enabled: false`）下逐个跑：
+
+| 入口 | exit | 说明 |
+|---|---|---|
+| `profile_check.py --quadruped` | **0** | 技能租约 TTL 门禁未回退 |
+| `verify_go2_loopback.py` | **0** | stand/stop 逐位不变（既有基准） |
+| `verify_quadruped_skills.py` | **0** | 技能层成功/拒绝路径不变 |
+| `scenario.py list` | **0** | S2 场景清单可解析 |
+| `tests.unit.test_balance_contract` | **0**（OK） | 49 例 |
+| `verify_go2_gait_in_place.py` | 5 | **已知**（步态未通过，D 决策点） |
+| `verify_go2_balance.py` | **5** | **E 回归**（§22.4） |
+
+⇒ 台账 E 条目的「affects 03、04、05（若后续以该入口做回归门禁）」由**未量化**变为**已量化**：
+若 03/04/05 以 loopback / skills / scenario / profile_check 做回归门禁，**不受本键影响**；
+受影响面**只有** `verify_go2_balance.py`，且**只**在平衡器开启的实验组（对照组 `enabled: false` 逐位不变）。
+
+### 23.3 实测 2：把根因从推论变成实测 —— 单键诊断档（**只**改看门狗上限 10 → 1000）
+
+为什么这样测：`startup_trace` 的条数是**声明派生量**（看门狗上限 + 1），上限 10 时只能看到前 11 个周期，
+而失败发生在周期 51；把上限抬到 1000 是**只读取证**（与 §20.4「单键正例对照」同一先例），
+**不是**提议放宽安全阈值（该键取值一字未改，仍是 10）。
+
+单键性已用逐键比对证明：`逐键差异数 = 1 新增键 = 0`（`balance.watchdog.max_consecutive_no_stance_cycles: 10 → 1000`）。
+
+| 项 | 生产档（上限 10） | 诊断档（上限 1000，其余同） |
+|---|---|---|
+| 验收入口 exit / 失败判据 | 5 / **3 项** | 5 / **1 项** |
+| 恢复窗口 `max_tilt_deg` | **116.0440876799953**（判据 ≤15） | **7.883272174700346**（判据内） |
+| 恢复窗口 `max_drift_m` | **1.1044264000056412**（判据 ≤0.15） | 0.17704250501817634（**仍超 18%**） |
+| 全程 `min_base_height_m` | −0.08798844894154116（**翻倒**） | 0.2673849212842271（**不翻倒**） |
+| `watchdog_trigger_cycle` | **51** | `None`（不 latch） |
+| `fall_cycle` | 370 | `None` |
+| 力控 / 退化（翻倒前） | **31 / 338** | **325 / 75**（81.25% 力控） |
+| 全周期支撑集直方图 | `{'0': 61, '3': 120, '2': 121, '1': 98}` | `{'0': 12, '3': 325, '2': 47, '1': 16}` |
+| `ctrl_saturated_samples` | 0 | 0 |
+
+### 23.4 实测 3：归因链（逐周期取证 + 交叉校验，两处都通过）
+
+- **自洽性**（诊断档 trace 覆盖 1..400 = 全窗口）：重算峰值 `max_consecutive_no_stance` = **15** == 报告值 15；
+  trace 内 `stance_legs < 3` 的周期数 = **75** == 报告 `no_stance_cycles` 75 ⇒ §21 新增的两个游程字段
+  **可由逐周期取证复算**（不是恒真字段）。
+- **游程清单**（诊断档，dc 口径）：周期 **71..85 长度 15**、**41..54 长度 14**、61..68 长度 8、13..16 长度 4、
+  96..99 长度 4、158..160 长度 3 —— 即「**单腿卸载会连续十几个周期**」，而生产上限是 **10**。
+- **交叉校验**（`r19-trace-overlap.txt`，exit=0）：两档 trace 在重叠窗口（周期 1..11）**逐行相同（0 处差异）**；
+  诊断档里「首次连续 >10 个周期支撑不足」= 周期 **(41, 51)** ⇒ 越限周期 **51 == 生产档 `watchdog_trigger_cycle` 51**。
+  ⇒ 诊断档可用于解释生产档的 latch 归因（latch 生效前两档动力学同一条轨迹）。
+- **启动窗口的读数事实**（生产档 trace，11 行）：周期 1 四腿接触力全部不足阈值（`M=[]`，冲击式接触）；
+  周期 2/3/4、6/7/8、10/11 四腿接触、支撑集 3、进入力控；**周期 5 与 9 实测只有 3 条腿接触**
+  （`M=['FL','RL','RR']`，`FR` 卸载）⇒ 支撑集 2 < `min_stance_legs` 3 ⇒ 退化。
+- **口径证据**：`declared_swing_in_contact_cycles 220`、`swing_max_contact_n 496.6094084793974`、
+  `declared_stance_without_contact_cycles 280`、`max_declared_stance_gap_run 51`、
+  `stance_integrity_error` 非 `None`（1f 的兜底**确实在读这条故障**，不是装饰）。
+
+**结论（实测，取代 §22.4 的推论）**：`declared_and_contact` 把名义支撑集由 4（四腿实测）压到 **3**，
+而 `allocation.min_stance_legs` 也是 **3** ⇒ **余量为 0**。于是**任何**单腿短暂卸载（实测连续 14~15 个周期，
+非启动瞬态）都会越过年上限 10 ⇒ 看门狗 latch ⇒ 平衡器**永久退出**（生产档 `disabled_cycles 150`）⇒
+40 N×0.2 s 冲量下翻倒。**力分配本身没有饱和**（两档 `sat=0`），所以 §22.4 的「法向力分配被位置环顶住」
+不是第一因；第一因是 **latch**。
+
+### 23.5 对决策的影响（**代理不选路**，两条都交人工）
+
+1. **E 的最强修法候选应加一条（E4，声明层自洽）**：`watchdog.max_consecutive_no_stance_cycles = 10` 与
+   dc 口径下「实测连续缺支撑游程 14~15」**不自洽**。**但本诊断不能当作「抬上限就好」的依据**：上限是安全机制，
+   抬高它等于允许在真正不可支撑的状态下继续施加力矩（诊断档残余 `max_drift_m 0.177` 仍超判据 18%，
+   且诊断档**未**跑隔离实验 5 mm 与步态判据）。⇒ 请人工在 E1/E2/E3 之外考虑 E4，或明确否决。
+2. **E 与 D1 的耦合（台账原文写「不重叠」，本轮实测提出修正）**：D1 = 支撑集改为「声明支撑集的**计划位置**」，
+   实测接触只作安全门 ⇒ 支撑集**不再随接触塌陷**（恒为声明的 3）⇒ 机制上**同时**消掉步态 fallback 与静态 latch。
+   ⚠ 这是**机制推论，不是实测**（D1 未实现，无法量）；因此若选 D1，落地后必须**同轮**复核
+   `verify_go2_balance.py` 与隔离实验，而不是默认它一定绿。
+
+### 23.6 复跑命令
+
+```
+# 全入口普查（本轮的爆炸半径表）
+/usr/bin/python3 build/iraf-24h-2/02b/r19_census.py
+# 单键诊断（只改看门狗上限；逐键比对证明只有 1 处差异）
+/usr/bin/python3 build/iraf-24h-2/02b/r19_make_diag_config.py
+PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_balance.py \
+  --config build/iraf-24h-2/02b/r19-diag-nowd.yaml --only static \
+  --report build/iraf-24h-2/02b/r19-diag-nowd/report.json
+# 归因链：全窗口游程重算 + 自洽性 + 两档重叠窗口交叉校验
+/usr/bin/python3 build/iraf-24h-2/02b/r19_trace_runs.py build/iraf-24h-2/02b/r19-diag-nowd/report.json
+/usr/bin/python3 build/iraf-24h-2/02b/r19_trace_overlap.py \
+  build/acceptance/go2-balance/report.json build/iraf-24h-2/02b/r19-diag-nowd/report.json
+```
+
+### 23.7 诚实边界
+
+① 全部结论 `simulation=true`（`/usr/bin/python3` 3.10.12，单次确定性仿真，**未**做多种子/扰动扫描）；
+   目标端与真机 `DEFERRED`（板卡不在场）。
+② **未改**任何生产声明、判据、阈值、`checks` 条数、`balance.enabled`（仍 `false`）、`stance_classification`
+   （`verify_go2_balance.py` 之前已被授权翻为 dc）、`min_stance_legs`（仍 3）、`locomote`（未回填）、
+   `src/iraf_core/**` 与 `examples/demo3_arm/**`（另一窗口）、ADR（未由代理改动）。
+③ 诊断档是**证据区副本**（`build/`，gitignore），**不入库、不被任何门禁消费**；生产档已复跑恢复
+   `build/acceptance/go2-balance/report.json` 与组声明副本（该批副本被本轮两次运行按设计重写，
+   第十八轮那份另存为 `balance-group-static-bal1.round18-bak.yaml`）。
+④ `r19-diag-nowd.yaml` 只作诊断输入；**不得**被当作候选声明提交（§4.3 硬规则：阈值只来自声明，
+   改动即需人工决策）。
+⑤ 23.3 的 81.25% / 7.883° 是**诊断档**的数字（不是生产数字，也不是验收数字），引用时必须带档位标注 ——
+   与 §21 的「分母窗口」同一纪律。
+
 
 
 
