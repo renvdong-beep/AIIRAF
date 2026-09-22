@@ -794,25 +794,6 @@ iter   P50 60.0 ｜ max 60                                          （与 §13 
 「等价缩放（含 7 项单测）+ 原生 OSQP 入口（含 8 项单测，且已在真实 QP 上验证）」两块。
 下一块：`traj_amortize`（保值摊销；判据 = 14 个被消费数组 × 200 样本逐位一致、`generate_traj` P50 ≤ 3.0 ms）。
 
-## 29. `damped_hold` 落地 + loopback 回归（2026-09-22）
-
-- 实现：`src/iraf_adapters/unitree/unitree_go2.py` —— `stop()` 改为模式分派（原实现**原样搬家**为
-  `_stop_torque_zero_release`，既有行为逐位不变）；新增 `damped_hold()`（保持站立、阈值全部来自
-  `config/go2_loopback.yaml` 的 `stop` 段、连续 `static_hold_s` 达标判据、三终态 `STOPPED`/`FAILED`/`SAFETY_STOP`）。
-  提交：`8cbaafa`（分派骨架）、`40f161b`（本体 + 7 项单测，退出码 0）。契约：`docs/debug/2026-09-22-damped-hold-spec.md`。
-- **治理要求的 loopback 回归已复跑**（`config/go2_loopback.yaml:233` 明确要求"须另立步骤并重跑 loopback 验收"）：
-  `PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_loopback.py --config config/go2_loopback.yaml`
-  ⇒ **退出码 0、`checks: 10`、`failed_checks: []`**，且站立态基准**逐位一致**：
-
-```
-height_mean_m    = 0.279953602548388          （基准值，未变）
-height_std_m     = 3.302184116303541e-05      （基准值，未变）
-final_speed_mps  = 0.0038248382123762478      （基准值，未变）
-```
-
-- 仍未做（下一批）：全仿真级用例（移动中停止成功 / 超时 `FAILED` / 安全事件 `SAFETY_STOP` / 租约竞争 N6）。
-
-
 ## 28. 第 3 块 `traj_amortize` 收尾验收：达标（2026-09-22）
 
 脚本：`build/research/mpc-repo/verify_traj_amortize.py` —— 原版 `ComTraj` 与"只去掉 `_continuousDynamics`
@@ -838,6 +819,24 @@ final_speed_mps  = 0.0038248382123762478      （基准值，未变）
 `traj_parity` 7 单测 = **22 项全过**），且三块都用**真实数据**验证过
 （200 个真实 QP：`solve` P50 1.9972 ms 全 solved；200 个真实参考轨迹：13 数组逐位一致）。
 剩余第 4 块：`provider`（独立进程外壳 + 新鲜度门禁 + QP 失败/超时显式失败路径 + 负向用例）。
+
+## 29. `damped_hold` 落地 + loopback 回归（2026-09-22）
+
+- 实现：`src/iraf_adapters/unitree/unitree_go2.py` —— `stop()` 改为模式分派（原实现**原样搬家**为
+  `_stop_torque_zero_release`，既有行为逐位不变）；新增 `damped_hold()`（保持站立、阈值全部来自
+  `config/go2_loopback.yaml` 的 `stop` 段、连续 `static_hold_s` 达标判据、三终态 `STOPPED`/`FAILED`/`SAFETY_STOP`）。
+  提交：`8cbaafa`（分派骨架）、`40f161b`（本体 + 7 项单测）、`dcdb5b9`（倾角上限改由调用方传入 +
+  惰性解析 + 仿真负路径用例）、`a42da74`（基类返回类型 + 夹具去冲突）、`1fb4d0c`（真实场景验收入口）。
+  契约：`docs/debug/2026-09-22-damped-hold-spec.md`。
+- **三层证据**：单元 7 项；仿真负路径 4 项（超时 `FAILED` / 安全事件 `SAFETY_STOP` / 不得伪造成功 /
+  未知模式拒绝）；**真实场景 9 条判据全过**（`scripts/verify_go2_damped_hold.py`：
+  正路径 `final_speed_mps 8.969041977042024e-05`、`max_tilt_deg 0.32191154615220985`、终态 `STOPPED`；
+  超时档终态 `FAILED` 且带实测量），报告 `build/acceptance/go2-damped-hold/report.json`。
+- **治理要求的 loopback 回归已复跑**（`config/go2_loopback.yaml:233` 明确要求"须另立步骤并重跑 loopback 验收"）：
+  ⇒ **退出码 0、`checks: 10`、`failed_checks: []`**，站立态基准**逐位一致**：
+  `height_mean_m = 0.279953602548388`、`height_std_m = 3.302184116303541e-05`、
+  `final_speed_mps = 0.0038248382123762478`。
+- "移动中停止"（spec N1 的真实场景版）依赖 locomotion 控制器接入（队列 A6）⇒ 已在计划里登记为下游。
 
 
 
