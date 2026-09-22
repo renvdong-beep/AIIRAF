@@ -794,6 +794,25 @@ iter   P50 60.0 ｜ max 60                                          （与 §13 
 「等价缩放（含 7 项单测）+ 原生 OSQP 入口（含 8 项单测，且已在真实 QP 上验证）」两块。
 下一块：`traj_amortize`（保值摊销；判据 = 14 个被消费数组 × 200 样本逐位一致、`generate_traj` P50 ≤ 3.0 ms）。
 
+## 29. `damped_hold` 落地 + loopback 回归（2026-09-22）
+
+- 实现：`src/iraf_adapters/unitree/unitree_go2.py` —— `stop()` 改为模式分派（原实现**原样搬家**为
+  `_stop_torque_zero_release`，既有行为逐位不变）；新增 `damped_hold()`（保持站立、阈值全部来自
+  `config/go2_loopback.yaml` 的 `stop` 段、连续 `static_hold_s` 达标判据、三终态 `STOPPED`/`FAILED`/`SAFETY_STOP`）。
+  提交：`8cbaafa`（分派骨架）、`40f161b`（本体 + 7 项单测，退出码 0）。契约：`docs/debug/2026-09-22-damped-hold-spec.md`。
+- **治理要求的 loopback 回归已复跑**（`config/go2_loopback.yaml:233` 明确要求"须另立步骤并重跑 loopback 验收"）：
+  `PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_loopback.py --config config/go2_loopback.yaml`
+  ⇒ **退出码 0、`checks: 10`、`failed_checks: []`**，且站立态基准**逐位一致**：
+
+```
+height_mean_m    = 0.279953602548388          （基准值，未变）
+height_std_m     = 3.302184116303541e-05      （基准值，未变）
+final_speed_mps  = 0.0038248382123762478      （基准值，未变）
+```
+
+- 仍未做（下一批）：全仿真级用例（移动中停止成功 / 超时 `FAILED` / 安全事件 `SAFETY_STOP` / 租约竞争 N6）。
+
+
 ## 28. 第 3 块 `traj_amortize` 收尾验收：达标（2026-09-22）
 
 脚本：`build/research/mpc-repo/verify_traj_amortize.py` —— 原版 `ComTraj` 与"只去掉 `_continuousDynamics`
