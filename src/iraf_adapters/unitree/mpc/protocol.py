@@ -103,6 +103,22 @@ def validate_request(msg, version=PROTOCOL_VERSION):
     return out
 
 
+def _num_or_none(x):
+    """边界上的数值规约：`None` 与**非有限值**（NaN/±Inf）一律记为 `None`。
+
+    为什么必须在边界做：协议用 `json.dumps(allow_nan=False)`（不许 NaN 上线），
+    而失败路径的时间量天然是 NaN ⇒ 若不规约，worker 会在**序列化**时抛错、进程直接崩，
+    父侧只能看到 EOF（本项目的单测正是这样抓到的）。
+    """
+    if x is None:
+        return None
+    try:
+        f = float(x)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
+
+
 def build_response(decision, reason, z=None, status_class="unknown", iter_=None,
                    solve_ms=None, age_ms=None, flags=None, version=PROTOCOL_VERSION):
     """构造响应。**契约**：`decision != "ok"` 时 `z` 必须为 None（不得带解）。"""
@@ -114,9 +130,9 @@ def build_response(decision, reason, z=None, status_class="unknown", iter_=None,
         "version": version, "decision": decision, "reason": str(reason),
         "z": None if z is None else [float(v) for v in z],
         "status_class": str(status_class),
-        "iter": None if iter_ is None else float(iter_),
-        "solve_ms": None if solve_ms is None else float(solve_ms),
-        "age_ms": None if age_ms is None else float(age_ms),
+        "iter": _num_or_none(iter_),
+        "solve_ms": _num_or_none(solve_ms),
+        "age_ms": _num_or_none(age_ms),
         "flags": {str(k): bool(v) for k, v in dict(flags or {}).items()},
     }
 
