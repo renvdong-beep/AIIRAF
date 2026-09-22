@@ -117,6 +117,28 @@ FOOTHOLD_MODE_KEYS = {
 #: `gait.foothold` 段的公共必需键（各模式都要有）。
 REQUIRED_FOOTHOLD_KEYS = ("mode",)
 
+#: `gait.foothold.verification` 必需键（**落足点规划专项验收**的判据与阈值）。
+#:
+#: 为什么单独一套而不是复用 `gait.verification`：后者是「**原地踏步**」的口径
+#: （`max_displacement_m: 0.05` 量的是全程机身位移峰值，注释写明「位移目标恒为 0，本判据证明
+#: 没有偷偷走出去」）。迈步式 crawl **必然**在周期内真实平移（实测重心需移 0.079~0.081 m），
+#: 留在原地口径下该路线永远不可能通过 —— 那不是严，是把判据套在错量上。因此 crawl 用**新增**判据集，
+#: 既有 20 项判据与阈值一字不动（继续由 `verify_go2_gait_in_place.py` 强制执行）。
+#:
+#: - `report` / `duration_s`：报告路径与验收时长；
+#: - `landing_error_max_m`：落点误差上限（实测足端躯干系位置差 vs 声明 `2·stride_m·方向`）；
+#: - `min_stance_contact_rate`：稳态支撑相帧的接触达标率下限（∈ [0, 1]）；
+#: - `net_drift_per_cycle_m`：**周期净漂移**上限（"原地"语义：足迹闭环 ⇒ 每周期漂移 → 0）；
+#: - `peak_body_excursion_m`：稳态窗内机身水平位移**峰值**上限（周期内真实平移的上界）。
+REQUIRED_FOOTHOLD_VERIFICATION_KEYS = (
+    "report",
+    "duration_s",
+    "landing_error_max_m",
+    "min_stance_contact_rate",
+    "net_drift_per_cycle_m",
+    "peak_body_excursion_m",
+)
+
 #: 每条腿必需键。
 REQUIRED_LEG_KEYS = ("hip_joint", "thigh_joint", "calf_joint", "contact_geom", "phase_offset")
 
@@ -310,7 +332,9 @@ def _load_foothold(section, legs, groups, reference, kind, sway_amplitude_m):
 
     # 必需键**按模式**判定：公共键 + 该模式的专属键。缺任一即显式失败（`DeclarationError`），
     # 不能等到下面按下标取值时抛 `KeyError` —— 那会以「崩溃」形式泄漏，而不是声明层失败。
-    allowed = set(REQUIRED_FOOTHOLD_KEYS) | set(FOOTHOLD_MODE_KEYS[mode])
+    # 必需键**按模式**判定：公共键 + 该模式的专属键 + 验收判据段（两种模式都必须声明：
+    # 判据描述的是「crawl 要达到什么」，与当前生效的模式无关，生产 static 也要如实登记）。
+    allowed = set(REQUIRED_FOOTHOLD_KEYS) | set(FOOTHOLD_MODE_KEYS[mode]) | {"verification"}
     missing = sorted(key for key in allowed if key not in foothold)
     if missing:
         raise DeclarationError(
@@ -324,9 +348,36 @@ def _load_foothold(section, legs, groups, reference, kind, sway_amplitude_m):
             % (mode, extra, sorted(allowed))
         )
 
+    section_verification = foothold["verification"]
+    if not isinstance(section_verification, dict):
+        raise DeclarationError("gait.foothold.verification 必须是映射（验收判据只能来自声明）")
+    v_missing = [key for key in REQUIRED_FOOTHOLD_VERIFICATION_KEYS
+                 if key not in section_verification]
+    if v_missing:
+        raise DeclarationError("gait.foothold.verification 缺少必需键: %s" % v_missing)
+    contact_rate = float(section_verification["min_stance_contact_rate"])
+    if not (0.0 <= contact_rate <= 1.0):
+        raise DeclarationError(
+            "gait.foothold.verification.min_stance_contact_rate 必须落在 [0, 1]"
+            "（它是接触帧的**比例**下限，不是接触力阈值），实际: %r"
+            % (section_verification["min_stance_contact_rate"],)
+        )
+    verification = {
+        "report": str(section_verification["report"]),
+        "duration_s": _positive(section_verification["duration_s"],
+                                "gait.foothold.verification.duration_s"),
+        "landing_error_max_m": _positive(section_verification["landing_error_max_m"],
+                                         "gait.foothold.verification.landing_error_max_m"),
+        "min_stance_contact_rate": contact_rate,
+        "net_drift_per_cycle_m": _positive(section_verification["net_drift_per_cycle_m"],
+                                           "gait.foothold.verification.net_drift_per_cycle_m"),
+        "peak_body_excursion_m": _positive(section_verification["peak_body_excursion_m"],
+                                           "gait.foothold.verification.peak_body_excursion_m"),
+    }
+
     if mode == "static":
         # static = 落点恒为中立位，即现行「原地踏步」行为：没有任何水平落点参数可声明。
-        return {"mode": "static"}
+        return {"mode": "static", "verification": verification}
 
     # ---- mode == per_phase：逐相位落点规划 ----
     if kind != "wave":
@@ -417,6 +468,7 @@ def _load_foothold(section, legs, groups, reference, kind, sway_amplitude_m):
         "smooth_s": smooth_s,
         "phase_order": order,
         "directions": directions,
+        "verification": verification,
     }
 
 
@@ -1579,6 +1631,187 @@ def assess_gait(samples, params, tilt_limit_deg):
         "support_legs": {"min": float(min(support_profile)), "max": float(max(support_profile))},
     }
     return {"checks": checks.items, "failed_checks": failed, "metrics": metrics}
+
+
+def assess_crawl(samples, params, tilt_limit_deg):
+    """落足点规划（迈步式 crawl）**专项**验收：声明判据 + 逐腿落点误差与接触达标率。
+
+    与 `assess_gait` 的关系：共用同一套采样字段与**同一套相位约定**，但判据集合与阈值独立声明在
+    `gait.foothold.verification`（理由见 `REQUIRED_FOOTHOLD_VERIFICATION_KEYS` 的注释：
+    「原地」口径的 `max_displacement_m` 对 crawl 是不适用的量，既有判据与阈值**一字不动**，
+    继续由 `verify_go2_gait_in_place.py` 强制执行）。
+
+    缺依据一律**显式失败**，不得判为通过：模式不是 `per_phase`、采样为空、采样缺 `foot_trunk_m`、
+    稳态窗为空、某腿在稳态窗内只有一个落点等级（无法比较相邻周期落点）。
+
+    判据口径与一条**已知盲区**（诚实登记，不用叙述掩盖）
+    ----------------------------------------------------
+    `leg_*_landing_error_m` 测的是「落点**位移**是否兑现」：稳态窗内相邻两个落点等级的足端
+    躯干系位置差 vs 声明 `(高等级−低等级)·stride_m·方向`。因为落足点规划**只通过位移**
+    改变支撑三角形，这个差分口径才是与机制对应的量。
+    盲区：**共模**偏移（所有帧同加一个常量，例如中立足端整体偏 10 mm）在差分里抵消 ⇒ 本判据看不见；
+    因此它不校验「中立位是否与几何一致」。后者当前**没有任何判据覆盖**（既有原地验收量的是
+    机身高度/位移/倾角，stand 验较量的是位形与高度）—— 登记为缺口，不在本函数里伪造一条弱判据。
+    """
+    foothold = params.get("foothold")
+    if not foothold or foothold.get("mode") != "per_phase":
+        raise CommandRejectedError(
+            "crawl 验收只对 foothold.mode=per_phase 有效：static 模式下没有可验收的落点内容，"
+            "不得判为通过（否则会退化成「零位移 ⇒ 落点误差 0 ⇒ 恒真通过」）"
+        )
+    verification = foothold["verification"]
+    if not samples:
+        raise CommandRejectedError("采样为空：验收无依据，不得判为通过")
+    if "foot_trunk_m" not in samples[0]:
+        raise CommandRejectedError(
+            "采样缺少 foot_trunk_m（足端在躯干系的位置）：落点误差无依据，不得判为通过"
+        )
+
+    checks = _Checks()
+    period = float(params["period_s"])
+    duty = float(params["duty_factor"])
+    contact_threshold = float(params["verification"]["contact_force_threshold_n"])
+    fall_height = float(params["verification"]["fall_base_height_m"])
+    onset = float(samples[0]["time_s"])
+    # 稳态窗：跳过声明斜坡，且至少 2 个整周期（「相邻周期落点差」要跨周期比较才有定义）。
+    settle_s = max(float(params["ramp_s"]), 2.0 * period)
+    steady = [sample for sample in samples if float(sample["time_s"]) - onset >= settle_s]
+    if not steady:
+        raise CommandRejectedError("稳态窗口为空（ramp_s 与 2 个周期覆盖了全部采样）：验收无依据")
+
+    heights = [float(sample["base_height_m"]) for sample in samples]
+    min_height = float(min(heights))
+    checks.add(
+        "min_base_height_m",
+        min_height,
+        ">= gait.verification.fall_base_height_m = %r" % fall_height,
+        min_height >= fall_height,
+        "全称量最小机身高度 %.6f m（低于阈值即判为跌倒）" % min_height,
+    )
+    max_tilt = float(max(float(sample["tilt_deg"]) for sample in steady))
+    checks.add(
+        "max_tilt_deg",
+        max_tilt,
+        "<= 安全策略 max_tilt_moving_deg = %r" % tilt_limit_deg,
+        max_tilt <= float(tilt_limit_deg),
+        "稳态窗最大倾角 %.6f°（阈值来自 profiles/safety，不在此处写第二份数字）" % max_tilt,
+    )
+    saturated = int(sum(int(sample["ctrl_saturated"]) for sample in samples))
+    checks.add(
+        "ctrl_saturated_samples",
+        saturated,
+        "== 0（目标不得被执行器限幅截断）",
+        saturated == 0,
+        "饱和采样数 %d（截断意味着目标越出模型能力，判据不成立）" % saturated,
+    )
+
+    # 机身水平位移：**周期净漂移**（足迹闭环 ⇒ → 0）与**峰值**（周期内真实平移的上界）。
+    origin = [float(value) for value in steady[0]["base_position_xy_m"]]
+    peak = 0.0
+    for sample in steady:
+        position = [float(value) for value in sample["base_position_xy_m"]]
+        peak = max(peak, math.hypot(position[0] - origin[0], position[1] - origin[1]))
+    span_s = float(steady[-1]["time_s"]) - float(steady[0]["time_s"])
+    cycles = span_s / period
+    tail = [float(value) for value in steady[-1]["base_position_xy_m"]]
+    net = math.hypot(tail[0] - origin[0], tail[1] - origin[1])
+    per_cycle = (net / cycles) if cycles > 0.0 else float("inf")
+    checks.add(
+        "net_drift_per_cycle_m",
+        per_cycle,
+        "<= gait.foothold.verification.net_drift_per_cycle_m = %r"
+        % verification["net_drift_per_cycle_m"],
+        per_cycle <= float(verification["net_drift_per_cycle_m"]),
+        "稳态窗 %.6f s = %.6f 个周期，首末机身位置差 %.6f m ⇒ 每周期净漂移 %.6f m"
+        % (span_s, cycles, net, per_cycle),
+    )
+    checks.add(
+        "peak_body_excursion_m",
+        peak,
+        "<= gait.foothold.verification.peak_body_excursion_m = %r"
+        % verification["peak_body_excursion_m"],
+        peak <= float(verification["peak_body_excursion_m"]),
+        "稳态窗内机身水平位移峰值 %.6f m（相对窗口首帧）" % peak,
+    )
+
+    metrics: dict = {"per_leg": {}}
+    for code in sorted(params["legs"]):
+        offset = float(params["legs"][code]["phase_offset"])
+        stride = float(foothold["stride_m"])
+        direction = foothold["directions"][code]
+        levels = {}
+        stance_frames = 0
+        contact_ok = 0
+        for sample in steady:
+            elapsed = float(sample["time_s"]) - onset
+            if ((elapsed / period) + offset) % 1.0 >= duty:
+                continue
+            stance_frames += 1
+            if float(sample["contact_n"][code]) >= contact_threshold:
+                contact_ok += 1
+            plan = foothold_offset_m(params, code, elapsed)
+            level = int(round((plan[0] * direction[0] + plan[1] * direction[1]) / stride))
+            levels.setdefault(level, []).append([float(value) for value in sample["foot_trunk_m"][code][:2]])
+
+        rate = (contact_ok / stance_frames) if stance_frames else 0.0
+        checks.add(
+            "leg_%s_stance_contact_rate" % code,
+            rate,
+            ">= gait.foothold.verification.min_stance_contact_rate = %r"
+            % verification["min_stance_contact_rate"],
+            rate >= float(verification["min_stance_contact_rate"]),
+            "稳态支撑相帧 %d，其中接触 ≥ %.3f N 的 %d 帧 ⇒ 达标率 %.6f"
+            % (stance_frames, contact_threshold, contact_ok, rate),
+        )
+
+        leg_metrics = {"stance_frames": stance_frames, "contact_ok": contact_ok,
+                       "stance_contact_rate": rate}
+        if len(levels) >= 2:
+            low, high = min(levels), max(levels)
+            low_mean = [sum(item[0] for item in levels[low]) / len(levels[low]),
+                        sum(item[1] for item in levels[low]) / len(levels[low])]
+            high_mean = [sum(item[0] for item in levels[high]) / len(levels[high]),
+                         sum(item[1] for item in levels[high]) / len(levels[high])]
+            observed = (high_mean[0] - low_mean[0], high_mean[1] - low_mean[1])
+            # 等级 L 的落点 = 中立位 + L·stride·方向 ⇒ 两个等级的差 = (high−low)·stride·方向。
+            # 用 `high − low` 而不是假定 ±1：等级分组可能包含过渡中出现的 0 级。
+            span = float(high - low)
+            planned = (stride * direction[0] * span, stride * direction[1] * span)
+            error = math.hypot(observed[0] - planned[0], observed[1] - planned[1])
+            checks.add(
+                "leg_%s_landing_error_m" % code,
+                error,
+                "<= gait.foothold.verification.landing_error_max_m = %r"
+                % verification["landing_error_max_m"],
+                error <= float(verification["landing_error_max_m"]),
+                "等级 %d→%d（跨度 %g）：实测落点差 (%+.6f, %+.6f) vs 声明 (%+.6f, %+.6f) ⇒ 误差 %.6f m"
+                % (low, high, span, observed[0], observed[1], planned[0], planned[1], error),
+            )
+            leg_metrics.update({"landing_observed_m": list(observed),
+                                "landing_planned_m": list(planned),
+                                "landing_error_m": error,
+                                "levels": sorted(levels)})
+        else:
+            checks.add(
+                "leg_%s_landing_error_m" % code,
+                None,
+                "稳态窗内需要 ≥2 个落点等级可比",
+                False,
+                "稳态窗内该腿的落点等级只有 %s ⇒ 无法比较相邻周期落点"
+                "（判据不成立即失败，不是跳过）" % sorted(levels),
+            )
+            leg_metrics["levels"] = sorted(levels)
+        metrics["per_leg"][code] = leg_metrics
+
+    metrics.update({"min_base_height_m": min_height, "max_tilt_deg": max_tilt,
+                    "ctrl_saturated_samples": saturated,
+                    "net_drift_per_cycle_m": per_cycle, "peak_body_excursion_m": peak,
+                    "steady_span_s": span_s, "steady_cycles": cycles})
+    return {
+        "checks": checks.items,
+        "failed_checks": [item["name"] for item in checks.items if not item["passed"]],
+        "metrics": metrics,
+    }
 
 
 def assess_trot(*args, **kwargs):

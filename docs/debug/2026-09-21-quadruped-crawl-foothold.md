@@ -370,5 +370,105 @@ PYTHONPATH=src /usr/bin/python3 -m unittest discover -s tests/unit -t tests/unit
 - 本步**零实现改动**（只改证据区的声明副本），判据与阈值一字未改。
 - 接触率、落点误差、冲击峰值都在**有效窗（≤1.18 s 或 tilt ≤ 15°）**内成立，不构成稳定性结论。
 
+---
+
+## 5. 步骤 05（专项验收入口 `verify_go2_crawl.py` + 声明化判据）：判据先于调参
+
+人工指令：**「c」** —— 先补专项验收入口，把落点误差 / 接触达标率 / 周期净漂移 / 峰位移
+落成**声明化判据**（含负向对照），让后续每一步按声明判据判，而不是靠探针数字。
+
+### 5.1 交付
+
+| 层 | 位置 | 内容 |
+|---|---|---|
+| 声明 | `config/go2_loopback.yaml` → `gait.foothold.verification` | 6 个必需键：`report` / `duration_s` / `landing_error_max_m` / `min_stance_contact_rate` / `net_drift_per_cycle_m` / `peak_body_excursion_m`。**两种 mode 都必须声明**（判据描述「crawl 要达到什么」，与当前生效模式无关，生产 static 也如实登记） |
+| 判据 | `src/iraf_adapters/unitree/gait.py::assess_crawl` | 13 项判据：`min_base_height_m` / `max_tilt_deg` / `ctrl_saturated_samples` / `net_drift_per_cycle_m` / `peak_body_excursion_m` + 逐腿 `leg_*_landing_error_m`（4）+ 逐腿 `leg_*_stance_contact_rate`（4） |
+| 入口 | `scripts/verify_go2_crawl.py` | 与原地入口**同一套采样与生产控制路径**，退出码沿用 0/1/2/3/4/5；含 `--self-check`（合成样本，不跑仿真） |
+| 契约测试 | `tests/unit/test_foothold_contract.py` | `Ran 45 / OK`（新增 `FootholdVerificationDeclarationTest` 与 `AssessCrawlFailClosedTest`） |
+
+### 5.2 阈值取值依据（每条都在声明里写明，**没有**为通过而设）
+
+| 键 | 值 | 依据 |
+|---|---|---|
+| `landing_error_max_m` | 0.000227 | 静态支撑余量实测 **−0.000227483 m** 的量级：落点误差大于它，「把重心移进支撑三角形」的计划就被误差本身吞掉 |
+| `min_stance_contact_rate` | 1.0 | 静态可稳要求任意时刻 ≥3 条腿承载（`min_stance_legs = 3`）⇒ 声明为支撑相的帧必须真的接触 |
+| `net_drift_per_cycle_m` | 0.005 | 落点位移量 `2·stride_m` 的 1/4；漂移超过它即说明足迹没有闭环（定标条件：首次稳定 crawl 时按实测复核） |
+| `peak_body_excursion_m` | 0.10 | 与 ADR-0008 §3 的到点判据（S4 位置误差 0.10 m）同量级，便于二期接力口径一致 |
+| `duration_s` | 10.0 | 与原地验收同量级（12.5 个步态周期） |
+
+### 5.3 判据自检（`--self-check`，合成样本，不跑仿真）：**8 / 8 通过，退 0**
+
+好样本必须全过；落点误差超限 / 接触率不足 / 净漂移超限 / 倾角超限 必须各自挂掉对应判据；
+缺 `foot_trunk_m`、稳态窗内只有一个落点等级、`static` 模式 必须显式失败（不写半份报告）。
+
+自检里我踩到的三个缺陷（都是"判据看起来有效其实无效/无效其实有效"的同类问题）：
+1. **相位浮点边界**：合成样本用构造时的 `elapsed` 算相位，判据用 `time_s − 首帧 time_s` ⇒
+   恰落在 `duty` 边界上的帧被两边判成不同相位，好样本也挂在 `leg_*_stance_contact_rate` 上（3 例 FAIL）。
+   修法：合成样本改成**两遍构造**，第二遍用与判据完全相同的表达式算相位。
+2. **共模偏移不可见**（判据的真实盲区）：注入「所有帧同加常量」时落点判据看不见 ——
+   因为该判据测的是**位移兑现**（两等级之差），常量在差分里抵消。
+   这条**不是 bug 而是口径**：落足点规划只通过位移改变支撑三角形，差分口径才是与机制对应的量。
+   已写进 `assess_crawl` docstring 与声明注释，并登记「中立位绝对一致性当前无判据覆盖」的缺口。
+3. **双轴注入**：沿两个轴都加误差时 `hypot(0.0002, 0.0002) = 0.000283 > 0.000227` ⇒ 好样本被判挂。
+   修法：误差按**方向**缩放注入（单轴、量级清晰）。
+
+### 5.4 真实验收基线（`build/iraf-24h-3/step05/`，`per_phase` stride 0.01、sway 0）
+
+13 项判据 **13 项失败**，`GO2_CRAWL_ACCEPTANCE_FAILED`，退 5（诚实基线，未放宽任何阈值）：
+
+| 判据 | 实测 | 阈值 |
+|---|---|---|
+| `min_base_height_m` | −259.880329 m | ≥ 0.15 |
+| `max_tilt_deg` | 161.468582° | ≤ 15.0 |
+| `ctrl_saturated_samples` | 7842 | = 0 |
+| `net_drift_per_cycle_m` | 0.3444890117772212 m/周期 | ≤ 0.005 |
+| `peak_body_excursion_m` | 3.6128285110136105 m | ≤ 0.10 |
+| `leg_FL_landing_error_m` | 0.013265 m | ≤ 0.000227 |
+| `leg_FR_landing_error_m` | 0.006960 m | ≤ 0.000227 |
+| `leg_RR_landing_error_m` | 0.012416 m | ≤ 0.000227 |
+| `leg_RL_landing_error_m` | 0.007054 m | ≤ 0.000227 |
+| `leg_FL_stance_contact_rate` | 0.037500 | ≥ 1.0 |
+| `leg_FR_stance_contact_rate` | 0.043818 | ≥ 1.0 |
+| `leg_RR_stance_contact_rate` | 0.027375 | ≥ 1.0 |
+| `leg_RL_stance_contact_rate` | 0.037097 | ≥ 1.0 |
+
+**与 §3.2 探针数字的差异必须说清（不是矛盾）**：§3.2 的 1.8~4.9 mm 与 43.7~56.6% 是
+**tilt ≤ 15° 有效窗**内的数字（用于定位机制），本表的 0.0070~0.0133 m 与 2.7~4.4% 是
+**整个稳态窗**（10 s，含翻倒后段）的数字。判据**不给任何豁免**：机器已经翻了，其它判据一起挂是
+fail-closed 的正确行为；诊断用的有效窗数字另记，不作为判据口径。
+
+### 5.5 负向对照（入口层）
+
+```
+PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_crawl.py --config config/go2_loopback.yaml
+# ⇒ 退 2：「本入口只验收 foothold.mode=per_phase；当前 mode='static'。static 模式下落点恒为
+#        中立足端、没有可验收的落点内容，不得判为通过。」
+```
+即生产 `static` 声明**不能被**本入口判为通过 —— 防的是「零位移 ⇒ 落点误差 0 ⇒ 恒真通过」这条退化路径。
+
+### 5.6 复跑命令
+
+```
+PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_crawl.py --self-check          # 判据自检，退 0
+/usr/bin/python3 build/iraf-24h-3/step05/make_declaration.py                       # 生成 per_phase 声明副本
+PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_crawl.py \
+    --config build/iraf-24h-3/step05/per-phase-crawl.yaml \
+    --report build/iraf-24h-3/step05/report.json                                  # 真实验收，当前退 5
+PYTHONPATH=src /usr/bin/python3 -m unittest tests.unit.test_foothold_contract       # 45 例
+```
+
+### 5.7 诚实边界（本步）
+
+- 专项验收**当前不通过**（13/13 失败），本步只交付判据与入口，**没有**改善任何数字。
+- 既有「原地」20 项判据与全部阈值**一字未改**，两条入口并存、互不放宽；
+  生产 `foothold.mode` 仍为 `static`，`locomote` / `navigate_to` 未声明。
+- 判据口径是**全稳态窗**（不给 tilt 豁免）；`landing_error` 只测位移兑现，**共模偏移不可见**
+  （已在 5.3 第 2 条与声明注释里登记为已知盲区与缺口）。
+- 回归：全量单测 `Ran 1096 / failures=1 / errors=4 / skipped=4`（与战役基线同批 5 条：
+  4 项 loader ERROR + `test_vision_processing.test_depth_projection_and_invalid_filter`，新增 0 / 消失 0）；
+  判据自检 8/8 退 0；入口负向对照退 2。既有「原地」20 项判据与全部阈值一字未改。
+- 全部结论 `simulation=true`；真机/目标端 `DEFERRED`。
+
+
 
 

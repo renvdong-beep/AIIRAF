@@ -26,7 +26,10 @@ sys.path.insert(0, str(ROOT / "src"))
 import yaml  # noqa: E402
 
 from iraf_adapters.unitree import gait  # noqa: E402
-from iraf_adapters.unitree.quadruped import DeclarationError  # noqa: E402
+from iraf_adapters.unitree.quadruped import (  # noqa: E402
+    CommandRejectedError,
+    DeclarationError,
+)
 
 CONFIG = ROOT / "config/go2_loopback.yaml"
 PROFILE = ROOT / "profiles/unitree_go2_mujoco.yaml"
@@ -64,6 +67,7 @@ def _per_phase_document(sway_amplitude_m=0.0):
         "phase_order": list(EXPECTED_PHASE_ORDER),
         "ramp_s": 0.0,
         "smooth_s": 0.2,
+        "verification": copy.deepcopy(document["gait"]["foothold"]["verification"]),
     }
     return document
 
@@ -73,10 +77,13 @@ class LoadFootholdStaticTest(unittest.TestCase):
 
     def test_production_declaration_is_static(self):
         params = gait.load_gait_declaration(_document(), _joints())
-        self.assertEqual({"mode": "static"}, params["foothold"])
+        self.assertEqual("static", params["foothold"]["mode"])
         # static 模式下不得出现落点参数（否则是「假声明」：声明了不生效的值）。
         self.assertNotIn("stride_m", params["foothold"])
         self.assertNotIn("directions", params["foothold"])
+        # 但**验收判据**必须存在（描述「crawl 要达到什么」，与当前生效模式无关）。
+        self.assertIn("verification", params["foothold"])
+        self.assertIn("landing_error_max_m", params["foothold"]["verification"])
 
     def test_missing_section_fails_for_wave(self):
         document = _document()
@@ -116,10 +123,22 @@ class LoadFootholdStaticTest(unittest.TestCase):
         ):
             with self.subTest(key=key):
                 document = _document()
-                document["gait"]["foothold"] = {"mode": "static", key: value}
+                # 注意：static 允许 `mode` + `verification`（验收判据与生效模式无关），
+                # 因此这里必须带上 verification，否则先撞「缺必需键」而不是「无定义的键」。
+                document["gait"]["foothold"] = {
+                    "mode": "static",
+                    "verification": copy.deepcopy(document["gait"]["foothold"]["verification"]),
+                    key: value,
+                }
                 with self.assertRaises(DeclarationError) as ctx:
                     gait.load_gait_declaration(document, _joints())
                 self.assertIn("无定义的键", str(ctx.exception))
+
+    def test_static_allows_verification(self):
+        """正向对照：static **允许**声明验收判据（判据描述能力目标，与当前生效模式无关）。"""
+        params = gait.load_gait_declaration(_document(), _joints())
+        self.assertEqual("static", params["foothold"]["mode"])
+        self.assertTrue(params["foothold"]["verification"])
 
 
 class LoadFootholdPerPhaseTest(unittest.TestCase):
@@ -232,6 +251,87 @@ class LoadFootholdPerPhaseTest(unittest.TestCase):
         with self.assertRaises(DeclarationError) as ctx:
             gait.load_gait_declaration(document, _joints())
         self.assertIn("per_phase", str(ctx.exception))
+
+
+class FootholdVerificationDeclarationTest(unittest.TestCase):
+    """`gait.foothold.verification`（专项验收判据）：必需键与取值范围。"""
+
+    def test_verification_is_required(self):
+        for document in (_document(), _per_phase_document()):
+            with self.subTest(mode=document["gait"]["foothold"]["mode"]):
+                document["gait"]["foothold"].pop("verification")
+                with self.assertRaises(DeclarationError) as ctx:
+                    gait.load_gait_declaration(document, _joints())
+                self.assertIn("verification", str(ctx.exception))
+
+    def test_verification_keys_are_required(self):
+        for key in gait.REQUIRED_FOOTHOLD_VERIFICATION_KEYS:
+            with self.subTest(key=key):
+                document = _per_phase_document()
+                document["gait"]["foothold"]["verification"].pop(key)
+                with self.assertRaises(DeclarationError) as ctx:
+                    gait.load_gait_declaration(document, _joints())
+                self.assertIn(key, str(ctx.exception))
+
+    def test_contact_rate_must_be_fraction(self):
+        for value in (-0.1, 1.5):
+            with self.subTest(value=value):
+                document = _per_phase_document()
+                document["gait"]["foothold"]["verification"]["min_stance_contact_rate"] = value
+                with self.assertRaises(DeclarationError) as ctx:
+                    gait.load_gait_declaration(document, _joints())
+                self.assertIn("min_stance_contact_rate", str(ctx.exception))
+
+    def test_thresholds_must_be_positive(self):
+        for key in ("duration_s", "landing_error_max_m", "net_drift_per_cycle_m",
+                    "peak_body_excursion_m"):
+            with self.subTest(key=key):
+                document = _per_phase_document()
+                document["gait"]["foothold"]["verification"][key] = 0.0
+                with self.assertRaises(DeclarationError):
+                    gait.load_gait_declaration(document, _joints())
+
+    def test_verification_is_mapping(self):
+        document = _per_phase_document()
+        document["gait"]["foothold"]["verification"] = ["landing_error_max_m"]
+        with self.assertRaises(DeclarationError) as ctx:
+            gait.load_gait_declaration(document, _joints())
+        self.assertIn("必须是映射", str(ctx.exception))
+
+
+class AssessCrawlFailClosedTest(unittest.TestCase):
+    """`assess_crawl` 的 fail-closed：缺依据不得判通过（判据自检见 `verify_go2_crawl.py --self-check`）。"""
+
+    def _params(self, per_phase=True):
+        document = _per_phase_document() if per_phase else _document()
+        return gait.load_gait_declaration(document, _joints())
+
+    def test_static_mode_is_rejected(self):
+        """static 下若放行，会退化成「零位移 ⇒ 落点误差 0 ⇒ 恒真通过」。"""
+        with self.assertRaises(CommandRejectedError) as ctx:
+            gait.assess_crawl([{"time_s": 0.0}], self._params(per_phase=False), 15.0)
+        self.assertIn("per_phase", str(ctx.exception))
+
+    def test_empty_samples_are_rejected(self):
+        with self.assertRaises(CommandRejectedError) as ctx:
+            gait.assess_crawl([], self._params(), 15.0)
+        self.assertIn("采样为空", str(ctx.exception))
+
+    def test_missing_foot_positions_are_rejected(self):
+        sample = {"time_s": 0.01, "base_height_m": 0.28, "base_position_xy_m": [0.0, 0.0],
+                  "tilt_deg": 0.1, "ctrl_saturated": 0,
+                  "contact_n": {"FL": 0.0, "FR": 0.0, "RR": 0.0, "RL": 0.0}}
+        with self.assertRaises(CommandRejectedError) as ctx:
+            gait.assess_crawl([sample], self._params(), 15.0)
+        self.assertIn("foot_trunk_m", str(ctx.exception))
+
+    def test_empty_steady_window_is_rejected(self):
+        sample = {"time_s": 0.01, "base_height_m": 0.28, "base_position_xy_m": [0.0, 0.0],
+                  "tilt_deg": 0.1, "ctrl_saturated": 0, "foot_trunk_m": {},
+                  "contact_n": {"FL": 0.0, "FR": 0.0, "RR": 0.0, "RL": 0.0}}
+        with self.assertRaises(CommandRejectedError) as ctx:
+            gait.assess_crawl([sample], self._params(), 15.0)
+        self.assertIn("稳态窗", str(ctx.exception))
 
 
 class NarrowFootholdEntryTest(unittest.TestCase):
@@ -513,7 +613,7 @@ class TrotRegressionTest(unittest.TestCase):
             document["gait"]["legs"][code]["phase_offset"] = offset
         params = gait.load_gait_declaration(document, _joints())
         self.assertEqual("trot", params["kind"])
-        self.assertEqual({"mode": "static"}, params["foothold"])
+        self.assertEqual("static", params["foothold"]["mode"])
 
     def test_trot_without_foothold_is_allowed(self):
         document = _document()
