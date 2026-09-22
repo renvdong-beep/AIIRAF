@@ -392,7 +392,12 @@ class QuadrupedAdapter:
     def stand(self, lease, targets=None, duration_ms=None, execution_id=None):
         raise UnsupportedCapabilityError(self._unsupported("stand"))
 
-    def stop(self, lease, execution_id=None):
+    def stop(self, lease, execution_id=None) -> dict:
+        """停机（能力契约：子类必须返回**报告字典**；基类为"未支持"占位）。
+
+        返回类型显式标注为 `dict`：子类实现（如 `UnitreeGo2Adapter.stop`）会返回停机报告，
+        原先不标注时类型检查器把"只 raise"的基类推断为 `NoReturn`，导致子类覆盖被误报为不兼容。
+        """
         raise UnsupportedCapabilityError(self._unsupported("stop"))
 
     def locomote(self, velocity, duration_ms, lease, execution_id=None):

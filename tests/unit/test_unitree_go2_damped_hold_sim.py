@@ -10,12 +10,25 @@
   · 报告不得伪造成功：任何非达标路径 `succeeded` 必须为 False、且 `failure_reason` 非空。
 """
 
+import tempfile
 import unittest
+from pathlib import Path
 
+import yaml
+
+from iraf_core.authority import ControlAuthorityManager
 from iraf_adapters.unitree.quadruped import CommandRejectedError
 from iraf_adapters.unitree.unitree_go2 import UnitreeGo2Adapter
 
-from test_quadruped_adapter import QuadrupedAdapterCases
+# 复用既有测试的**模块级**部件（模型 XML / Profile / 声明构造 / Profile 加载），
+# 但**不继承**它的夹具类：继承会让两个类共用类级临时目录，实测导致
+# `variant_NN.yaml` / `fixture_declaration.yaml` 被另一方提前清理（FileNotFoundError）。
+from test_quadruped_adapter import (
+    KIT_XML,
+    _fixture_declaration,
+    _fixture_profile,
+    _load_profile,
+)
 
 
 def _ledger_state(adapter, execution_id):
@@ -25,8 +38,44 @@ def _ledger_state(adapter, execution_id):
     return None
 
 
-class DampedHoldSimulationTest(QuadrupedAdapterCases):
-    """继承既有夹具（模型/Profile/声明/租约），只加 `damped_hold` 的仿真级用例。"""
+class DampedHoldSimulationTest(unittest.TestCase):
+    """自建夹具（模型/Profile/声明/租约全在本类的临时目录里），只加 `damped_hold` 的仿真级用例。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._temp = tempfile.TemporaryDirectory()
+        cls.tmp = Path(cls._temp.name)
+        cls.model_path = cls.tmp / "fixture.xml"
+        cls.model_path.write_text(KIT_XML, encoding="utf-8")
+        cls.profile_path = cls.tmp / "fixture_profile.yaml"
+        cls.profile_path.write_text(yaml.safe_dump(_fixture_profile(), allow_unicode=True),
+                                    encoding="utf-8")
+        cls.declaration_path = cls.tmp / "fixture_declaration.yaml"
+        cls._write_declaration(cls.declaration_path, _fixture_declaration(cls.tmp))
+        cls.profile = _load_profile(cls.profile_path)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._temp.cleanup()
+
+    @staticmethod
+    def _write_declaration(path, declaration):
+        Path(path).write_text(yaml.safe_dump(declaration, allow_unicode=True), encoding="utf-8")
+        return Path(path)
+
+    def make_adapter(self, declaration_path=None):
+        authority = ControlAuthorityManager()
+        lease = authority.acquire("robot:fixture_quadruped", "test-owner", ttl_seconds=60.0)
+        adapter = UnitreeGo2Adapter.from_config(
+            declaration_path or self.declaration_path, self.profile, authority)
+        return adapter, authority, lease
+
+    def declaration_variant(self, mutate):
+        declaration = _fixture_declaration(self.tmp)
+        mutate(declaration)
+        self.__class__._variant_seq = getattr(self.__class__, "_variant_seq", 0) + 1
+        path = self.tmp / ("variant_%02d.yaml" % self.__class__._variant_seq)
+        return self._write_declaration(path, declaration)
 
     @unittest.skip("夹具（最小 kit 模型）无支撑面：基座持续平移、倾角恒为 0，无法表达"
                    "'保持到静止'；该项属**真实场景**验收（见 .hermes/plans/ 的 A1 脚本）")
