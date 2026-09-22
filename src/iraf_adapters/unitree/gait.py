@@ -335,7 +335,7 @@ def _load_foothold(section, legs, groups, reference, kind, sway_amplitude_m):
             "逐相位落点无定义" % kind
         )
 
-    stride = _positive(foothold["stride_m"], "gait.foothold.stride_m")
+    stride = _positive(foothold["stride_m"], "gait.foothold.stride_m", allow_zero=True)
     ramp_s = _positive(foothold["ramp_s"], "gait.foothold.ramp_s", allow_zero=True)
     smooth_s = _positive(foothold["smooth_s"], "gait.foothold.smooth_s", allow_zero=True)
 
@@ -1068,8 +1068,13 @@ def foothold_offset_m(params, code, elapsed_s):
     smooth = float(foothold["smooth_s"])
     ramp = float(foothold["ramp_s"])
 
-    # 以**该腿自身**的周期为坐标（周期内含相位偏移前的局部相位）：cycle_index 每过一个周期 +1。
-    raw = float(elapsed_s) / period - offset
+    # 以**该腿自身**的周期为坐标：周期边界取「相位回绕」处，即**摆动结束（落地）时刻**。
+    # ⚠ 相位约定必须与 `leg_phase` 一致（`phase = (elapsed/period) + offset`，摆动相 = phase ∈ [duty, 1)）。
+    # 首版误写成 `− offset`：等价于把落点交替窗口相对抬腿窗口整体错开 2·offset（FL 0 与 RR 0.5
+    # 恰好对齐，FR 0.25 与 RL 0.75 错半个周期）⇒ 腿在支撑相里改落点、在摆动相里保持。
+    # 实测签名（`build/iraf-24h-3/step03/reachability.txt`）：只有 FR/RL 的支撑相里出现
+    # 未达等级的过渡帧，且落点误差 0.046597/0.045710 m，明显高于 FL/RR 的 0.041839/0.042217 m。
+    raw = float(elapsed_s) / period + offset
     cycle_index = int(math.floor(raw))
     u = raw - cycle_index
 

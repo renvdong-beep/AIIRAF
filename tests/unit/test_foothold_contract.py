@@ -174,13 +174,17 @@ class LoadFootholdPerPhaseTest(unittest.TestCase):
             gait.load_gait_declaration(document, _joints())
         self.assertIn("无定义的键", str(ctx.exception))
 
-    def test_stride_must_be_positive(self):
-        for value in (0.0, -0.08):
-            with self.subTest(value=value):
-                document = _per_phase_document()
-                document["gait"]["foothold"]["stride_m"] = value
-                with self.assertRaises(DeclarationError):
-                    gait.load_gait_declaration(document, _joints())
+    def test_stride_must_not_be_negative_and_zero_is_isolation_control(self):
+        """`stride_m = 0` 合法：它是**隔离对照**（per_phase 通路但零位移 ⇒ 应与 static 逐位一致），
+        与 `sway.amplitude_m` 允许 0 的取向一致；负值仍然失败。"""
+        document = _per_phase_document()
+        document["gait"]["foothold"]["stride_m"] = 0.0
+        params = gait.load_gait_declaration(document, _joints())
+        self.assertAlmostEqual(0.0, params["foothold"]["stride_m"], places=12)
+        document = _per_phase_document()
+        document["gait"]["foothold"]["stride_m"] = -0.08
+        with self.assertRaises(DeclarationError):
+            gait.load_gait_declaration(document, _joints())
 
     def test_direction_map_legs_must_match(self):
         document = _per_phase_document()
@@ -319,6 +323,16 @@ class FootholdTrajectoryTest(unittest.TestCase):
         document = _per_phase_document() if per_phase else _document()
         return gait.load_gait_declaration(document, _joints())
 
+    def _time_for(self, params, code, cycle, u_local):
+        """`cycle` 周期内**局部相位** `u_local` 对应的时刻（严格按 `leg_phase` 的相位约定）。
+
+        为什么不让各用例自己拼时间：相位约定是 `phase = elapsed/period + offset`，
+        自己拼 `(cycle + u + offset)` 会在 offset ≠ 0 的腿上算错半个周期 —— 首版落点实现
+        就是在这个约定上写反了符号（实测见 build/iraf-24h-3/step03/reachability.txt）。
+        """
+        offset = params["legs"][code]["phase_offset"]
+        return (cycle + u_local - offset) * params["period_s"]
+
     # ---- static：精确 0 与「无落足点规划」逐位一致 ----
 
     def test_static_offset_is_exact_zero(self):
@@ -377,7 +391,7 @@ class FootholdTrajectoryTest(unittest.TestCase):
             samples = []
             for cycle in (1, 2):
                 u = 0.5 * duty
-                elapsed = (cycle + u + offset) * period
+                elapsed = self._time_for(params, code, cycle, u)
                 samples.append(gait.foothold_offset_m(params, code, elapsed))
             first, second = samples
             # 落点等级逐周期交替 ⇒ 两个相邻周期的落点向量**互为相反数**
@@ -396,8 +410,8 @@ class FootholdTrajectoryTest(unittest.TestCase):
         for code in ("FL", "FR", "RR", "RL"):
             offset = params["legs"][code]["phase_offset"]
             for cycle in (1, 2, 3):
-                end_of_swing = (cycle + 1.0 - 1.0e-9 + offset) * period
-                start_of_stance = (cycle + 1.0 + 0.0 + offset) * period
+                end_of_swing = self._time_for(params, code, cycle, 1.0 - 1.0e-9)
+                start_of_stance = self._time_for(params, code, cycle + 1, 0.0)
                 a = gait.foothold_offset_m(params, code, end_of_swing)
                 b = gait.foothold_offset_m(params, code, start_of_stance)
                 for axis in (0, 1):
@@ -415,7 +429,7 @@ class FootholdTrajectoryTest(unittest.TestCase):
         values = []
         for step in range(0, 21):
             u = duty + (1.0 - duty) * step / 20.0
-            values.append(gait.foothold_offset_m(params, code, (1 + u + offset) * period)[1])
+            values.append(gait.foothold_offset_m(params, code, self._time_for(params, code, 1, u))[1])
         # 单调（相邻差**同号**，允许浮点噪声）——不是"近似不变"：余弦过渡的相邻差可达 0.0125
         deltas = [values[index + 1] - values[index] for index in range(len(values) - 1)]
         self.assertTrue(
@@ -437,8 +451,10 @@ class FootholdTrajectoryTest(unittest.TestCase):
         document["gait"]["foothold"]["ramp_s"] = 1.0
         params = gait.load_gait_declaration(document, _joints())
         stride = params["foothold"]["stride_m"]
-        ramped = gait.foothold_offset_m(params, "FL", 0.5)
-        full = gait.foothold_offset_m(params, "FL", 5.0 * params["period_s"])
+        # 取 FL 第 0 周期**支撑相**内 u_local = 0.625 的时刻（= 0.5 s）：幅度只由 ramp 决定，
+        # `ramp_s = 1.0` ⇒ 该时刻建立到 0.5 倍满幅。
+        ramped = gait.foothold_offset_m(params, "FL", self._time_for(params, "FL", 0, 0.625))
+        full = gait.foothold_offset_m(params, "FL", self._time_for(params, "FL", 5, 0.0))
         self.assertAlmostEqual(stride, math.hypot(*full), places=12)
         self.assertAlmostEqual(0.5 * stride, math.hypot(*ramped), places=12)
 
@@ -449,8 +465,8 @@ class FootholdTrajectoryTest(unittest.TestCase):
         for code in ("FL", "FR", "RR", "RL"):
             offset = params["legs"][code]["phase_offset"]
             for u in (0.0, 0.25, 0.5, 0.9):
-                a = gait.foothold_offset_m(params, code, (2 + u + offset) * period)
-                b = gait.foothold_offset_m(params, code, (4 + u + offset) * period)
+                a = gait.foothold_offset_m(params, code, self._time_for(params, code, 2, u))
+                b = gait.foothold_offset_m(params, code, self._time_for(params, code, 4, u))
                 for axis in (0, 1):
                     self.assertAlmostEqual(a[axis], b[axis], places=12, msg=code)
 
@@ -469,7 +485,8 @@ class FootholdTrajectoryTest(unittest.TestCase):
         document["gait"]["foothold"]["phase_direction_map"]["FL"] = {"x": 1.0, "y": 0.0}
         params = gait.load_gait_declaration(document, _joints())
         period = params["period_s"]
-        t_moved = period * (1.0 + params["duty_factor"] * 0.5)
+        u_stance = params["duty_factor"] * 0.5
+        t_moved = self._time_for(params, "FL", 1, u_stance)
         base = gait.gait_joint_targets(params, geometry, home, limits, 0.0)
         moved = gait.gait_joint_targets(params, geometry, home, limits, t_moved)
         self.assertNotAlmostEqual(base["FL_thigh_joint"], moved["FL_thigh_joint"], places=9)
@@ -479,7 +496,7 @@ class FootholdTrajectoryTest(unittest.TestCase):
         params = gait.load_gait_declaration(document, _joints())
         base = gait.gait_joint_targets(params, geometry, home, limits, 0.0)
         moved = gait.gait_joint_targets(
-            params, geometry, home, limits, params["period_s"] * (1.0 + params["duty_factor"] * 0.5)
+            params, geometry, home, limits, self._time_for(params, "FL", 1, u_stance)
         )
         self.assertNotAlmostEqual(base["FL_hip_joint"], moved["FL_hip_joint"], places=9)
 

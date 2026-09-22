@@ -446,6 +446,27 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             for code, item in geometry.items()
         }
 
+    def _feet_trunk_positions(self, geometry, trunk_body):
+        """各腿**足端接触几何**在**躯干系**的位置 `{腿: [x, y, z]}`（证据用）。
+
+        落足点规划的验收需要「足端实际落在哪」这个量（步骤 03/04）：计划落点在 `gait` 模块里
+        是躯干系坐标 ⇒ 实测也必须换到躯干系才可比（世界系坐标会随机身漂移，量不出落点误差）。
+        用接触几何（与接触力判定同一几何）而不是 foot body：两者的位置差是固定偏移，
+        接触判定用的就是这个球心。
+        """
+        rotation = np.asarray(self.data.xmat[int(trunk_body)], dtype=float).reshape(3, 3)
+        origin = np.asarray(self.data.xpos[int(trunk_body)], dtype=float)
+        return {
+            code: [
+                float(item)
+                for item in rotation.T.dot(
+                    np.asarray(self.data.geom_xpos[int(geom["contact_geom"])], dtype=float)
+                    - origin
+                )
+            ]
+            for code, geom in geometry.items()
+        }
+
     def _balance_parameters(self):
         """惰性解析并缓存 `balance` 段（步骤 02b）。
 
@@ -1202,6 +1223,9 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                     "roll_deg": float(np.degrees(np.arctan2(r21, r22))),
                     "pitch_deg": float(np.degrees(np.arcsin(max(-1.0, min(1.0, -r20))))),
                     "stab_offset_m": self._stabilization_offsets(params, geometry, trunk_body),
+                    # 足端（接触几何）在躯干系的位置：落足点验收用它量「实际落到哪」，
+                    # 与计划落点（躯干系）同坐标系可比（步骤 03/04 的判据来源）。
+                    "foot_trunk_m": self._feet_trunk_positions(geometry, trunk_body),
                     "contact_n": self._leg_contact_forces(params, geometry),
                     "ctrl_saturated": int(np.count_nonzero(info["saturated"])),
                     "tracking_error_rad": float(np.max(np.abs(info["desired"] - q))),
