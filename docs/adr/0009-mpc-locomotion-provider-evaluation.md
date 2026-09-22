@@ -78,6 +78,41 @@
 3. 若不接受：维持准静态路线，则下一步仍是 §13 结论所指的"机身位移 + 落点协同规划"
    （需新的架构级设计，不在专项 C 内继续试参数）。
 
+## 8. 已核实的实现事实（2026-09-21 补充：源码已取回并读过）
+
+取源路线（本机实测）：`github.com` 的 git 协议与镜像、`raw.githubusercontent`、`codeload`、`ghproxy.net` 的
+tar.gz **全部不可用**；`api.github.com` 可达但未认证限流 60/小时且仓库 155 MB（jsDelivr 清单被 50 MB 限制拒绝）；
+**可用路线 = `cdn.jsdelivr.net` 单文件取**（实测 HTTP 200、0.66 s）。已取回并读过：
+
+| 文件 | 大小 | 已读到的事实 |
+|---|---|---|
+| `src/convex_mpc/gait.py` | 6.4 KB | `HEIGHT_SWING = 0.1`（摆动顶点 0.1 m）；`Gait(frequency_hz, duty)`：`period=1/f`、`stance_time=duty·period`；`compute_contact_table`：`phases = mod(PHASE_OFFSET + t/period, 1)`、**`contact = phases < duty`** —— 与我们的 `is_stance(phase) = phase < duty` **同构**；`compute_swing_traj_and_touchdown`：**Raibert 式落足点**（`hip_pos_world = body_pos + R_z @ hip_offset` + 速度项），`make_swing_trajectory(p0, pf, t_swing, h_sw)` |
+| `src/convex_mpc/centroidal_mpc.py` | 13.0 KB | `COST_MATRIX_Q = diag([1,1,50,10,20,1,2,2,1,1,1,1])`、`COST_MATRIX_R = diag([1e-5]*12)`（12 输入 = 4 足 × 3 维接触力）；求解器 **CasADi `ca.conic('S','osqp',...)`** + **对偶预热启动**（`lam_a_prev`）；`_precompute_friction_matrix`（摩擦锥不等式，静态）；`_build/_update_sparse_matrix`（提速关键）；`_compute_bounds` 用**接触表**（`contact = phases < duty`）决定哪些腿出力；自带 `solve_time` 统计打印 |
+| `src/convex_mpc/go2_robot_data.py` | 13.7 KB | **`pinocchio.robot_wrapper.RobotWrapper.BuildFromURDF`**，模型来自 `models/URDF/go2_description/urdf/go2_description.urdf`（**不是 MJCF**）；足端 frame 名 `FL_foot_joint` / `FR_foot_joint` / `RL_foot_joint` / `RR_foot_joint`；`get_hip_offset(leg)`、`compute_com_x_vec()`、`update_model(q, dq)` |
+| `examples/ex00_demo.py` … `ex04_*.py` | ~10.5 KB × 5 | 五个自包含例程（原地 trot / 直行 / 侧行 / 转向 + 综合 demo），各含完整控制回路与绘图 |
+| `models/MJCF/go2/go2.xml` / `scene.xml` | 14.9 / 1.5 KB | 它自带的 Go2 MJCF 与场景（**可用于与厂商 MJCF 的对照**，尚未开始） |
+| `pyproject.toml` / `environment.yml` | 364 / 446 B | 包在 **`src/`** 布局；项目名 `convex-mpc-unitree-go2` v1.0.0；**`requires-python >=3.10,<3.11`**；conda-forge 依赖：`python=3.10`、**`numpy<2`**、**`pinocchio`**、`casadi`、`scipy`、`matplotlib>=3.7,<3.9`、`eigenpy`/`hpp-fcl`/`boost-cpp`/`assimp`/`urdfdom`/`eigen`/`cmake`/`ninja` 等；pip 侧 **`mujoco==3.1.6`** |
+
+### 8.1 由此得到的三条硬结论
+
+1. **必须独立环境/独立进程**：它要求 **`numpy<2`**（我们是 `numpy 2.2.6`）与 **`mujoco==3.1.6`**（我们是 `3.3.3`）
+   ⇒ 直接装进我们现有环境会**改坏**现有仿真栈。这与我们的铁律（跨发行版/第三方 Provider **默认独立进程**）
+   正好一致 —— 把 MPC 作为独立 Provider 进程、独立 venv，依赖冲突被隔离，也不会污染 `src/iraf_core/`。
+2. **建模路线不同，必须做对照**：它用 **URDF + Pinocchio**，我们用**厂商 MJCF**（编译进场景）。
+   对照项至少：整机质量与惯量、关节限位、足端 frame 定义（`*_foot_joint`）、接触几何、摩擦系数。
+   在对照完成前，**不得**把它的性能数字或稳定性结论迁移过来。
+3. **相位约定与我们同构（好消息）**：它的接触判定 `phases < duty` 与我们的 `is_stance` 完全同形，
+   `PHASE_OFFSET` 与我们的 `gait.legs.*.phase_offset` 是同一族表达 ⇒ 我们的声明模型可以直接承载
+   它的步态参数（频率、duty、相位偏移），不需要为它造第二套相位语义。
+
+### 8.2 新增的落地风险（由 8.1 得出）
+
+| 风险 | 说明 |
+|---|---|
+| 环境隔离成本 | 需要独立 venv（conda-forge 依赖链很长：pinocchio/eigenpy/hpp-fcl/boost/assimp/urdfdom…）；aarch64 目标板上 **conda-forge 依赖是否可得未核实**（本轮只核实了 pypi 侧 `pinocchio`/`casadi`/`osqp` 的 aarch64 wheel 可下载） |
+| 版本分叉 | 我们的 `mujoco 3.3.3` 与它的 `3.1.6`、我们的 `numpy 2.x` 与它的 `numpy<2` 长期并存 ⇒ 两套仿真栈要各自锁定版本并在 BoardProfile/发布清单里登记 |
+| 对照工作量 | MJCF ↔ URDF 的模型对照是**前置必做项**，不是可选优化 |
+
 ## 7. 诚实边界
 
 - 本 ADR 为**草案**：所有外部工程的能力描述来自其 README 与源码结构阅读，
