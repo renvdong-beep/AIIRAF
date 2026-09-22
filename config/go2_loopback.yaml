@@ -419,6 +419,20 @@ gait:
     # 方向门禁容差（度）：声明方向与实测内法线的夹角上限（上界 45° 由实现层强制，
     # 防止把容差写成 180° 让门禁恒真）。
     direction_tolerance_deg: 5.0
+  # ---- 落足点规划（迈步式 crawl，专项 C / ADR-0008 决策 1j）----
+  # 语义：相位 → **足端水平落点**。`static` = 落点恒为中立足端（现行「原地踏步」行为）；
+  # `per_phase` = 逐相位把摆动腿的落点挪到计划位置，让支撑三角形**跟着移动**，而不是平移机身。
+  # 为什么需要它（实测）：对称矩形足迹下，抬起任意一条腿后的三腿支撑三角形与「对角腿连线」
+  # 只交于中心一点 ⇒ 静态支撑余量 -0.000227483 m（≈0），机身常量平移的可行域是空集；
+  # 重心移到支撑三角形形心需平移 0.079~0.081 m（此时最小法向力 47.325754 N = 30.9317 % mg）。
+  # 因此「落点不变 + 移机身」的 wave 没有静态稳定前提，必须逐相位重新构造支撑多边形。
+  # 证据：docs/progress/2026-09-21-quadruped-walk-special-design.md §3、ADR-0008 决策 1j。
+  # 消费点：src/iraf_adapters/unitree/gait.py 的 `_load_foothold`（解析与门禁）与
+  # `gait_joint_targets`（目标生成，per_phase 分支）。缺本段即显式失败（wave 必需键）。
+  # ⚠ 当前值为 `static`：`per_phase` 的落地点（目标生成 + 摆动相落到计划落点）**尚未实现**，
+  #   按铁律 2「未实现的能力不得声明」保持 static；实现并通过 L1 验收后再翻转本键。
+  foothold:
+    mode: static
   verification:
     report: build/acceptance/go2-trot-in-place/report.json
     # 验收持续时长：10 s ⇒ 16 个完整步态周期（扣掉 1 s 斜坡后仍有 14 个稳态周期）。

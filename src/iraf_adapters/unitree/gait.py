@@ -6,7 +6,8 @@
 本模块只做三件事，全部**声明驱动**：
 
 1. **解析并校验 `gait` 段**（`load_gait_declaration`）：步态类型、步频、步高、占空比、
-   摆动轨迹形状、幅度斜坡、每条腿的关节绑定与接触几何、相位偏移，以及验收判据。
+   摆动轨迹形状、幅度斜坡、每条腿的关节绑定与接触几何、相位偏移，以及验收判据；
+   逐相位重心转移（`gait.sway`）与落足点规划（`gait.foothold`）也在同一处解析校验。
    缺键、越界、相位不自洽（对角配对不成立）一律显式失败（`DeclarationError`），
    不做任何默认值兜底（铁律 1.3 / 5.3）。
 2. **几何实测**（`measure_leg_geometry`）：大腿/小腿长度、中立足端位置、关节轴方向
@@ -96,6 +97,25 @@ SWAY_AXES = ("x", "y")
 #: 重心转移方向的实测校验容差允许区间（度）。上界防止把容差写成 180°
 #: 从而让「方向门禁」退化成恒真门禁（门禁绿、计数 0 的同族缺陷）。
 SWAY_DIRECTION_TOLERANCE_DEG_RANGE = (0.0, 45.0)
+
+#: `gait.foothold.mode` 的允许取值（落足点规划，专项 C / ADR-0008 决策 1j）：
+#:
+#: - `static`：落点恒为中立位 = 现行「原地踏步」行为（既有两个入口的行为逐位不变）；
+#: - `per_phase`：逐相位把**摆动腿的水平落点**挪到计划位置，让支撑三角形跟着移动，
+#:   而不是平移机身（这是「静态支撑余量 ≈ 0」的正面解法：对称矩形足迹下四相位可行域交集
+#:   为 0 点、机身常量平移不可行、重心到支撑三角形形心需平移 0.079~0.081 m，
+#:   实测见 `docs/progress/2026-09-21-quadruped-walk-special-design.md` §3）。
+FOOTHOLD_MODES = ("static", "per_phase")
+
+#: `gait.foothold` 各模式的必需键。模式不同、语义不同；**多余键同样失败** ——
+#: 对某模式无定义的键写进声明等于「假声明」，必须显式拒绝而不是静默忽略（同 `sway` 的取向）。
+FOOTHOLD_MODE_KEYS = {
+    "static": (),
+    "per_phase": ("stride_m", "phase_direction_map", "phase_order", "ramp_s", "smooth_s"),
+}
+
+#: `gait.foothold` 段的公共必需键（各模式都要有）。
+REQUIRED_FOOTHOLD_KEYS = ("mode",)
 
 #: 每条腿必需键。
 REQUIRED_LEG_KEYS = ("hip_joint", "thigh_joint", "calf_joint", "contact_geom", "phase_offset")
@@ -241,6 +261,210 @@ def _load_sway(section, legs, kind):
     }
 
 
+def phase_groups_of(legs):
+    """按 `phase_offset` 把腿分组（升序）：返回 `(groups, reference)`。
+
+    只消费「腿 → `phase_offset`」，**不依赖 Profile / 模型的关节清单** ——
+    因此落足点校验（`load_foothold_declaration`）与完整声明校验（`load_gait_declaration`）
+    可以共用同一份相位结构，不必各自实现一遍分组规则。
+    """
+    groups = {}
+    for code, leg in legs.items():
+        groups.setdefault(round(float(leg["phase_offset"]), 9), []).append(str(code))
+    return groups, sorted(groups)
+
+
+def _load_foothold(section, legs, groups, reference, kind, sway_amplitude_m):
+    """解析 `gait.foothold`（落足点规划 / 迈步式 crawl）；返回规范化字典或 `None`。
+
+    - `wave`：**必须**声明本段（理由与 `sway` 同源：对称矩形足迹下「抬起任意一条腿后
+      三腿支撑三角形」的静态余量实测 `-0.000227483 m`（≈0），静态可稳只能靠逐相位
+      重新构造支撑多边形）；
+    - 其它步态类型：`static`（落点不变 = 现行为）可声明；`per_phase` **不得**声明 ——
+      同一摆动窗口内有两条对角腿，逐相位落点无定义 ⇒ 声明即失败，而不是静默忽略。
+
+    `sway_amplitude_m`：`gait.sway.amplitude_m`（无 `sway` 段时为 0.0），只用于「两个水平
+    位移源互斥」门禁；传数值而不是整段，避免本函数依赖 `sway` 的解析结果。
+    """
+    foothold = section.get("foothold")
+    if foothold is None:
+        if kind == "wave":
+            raise DeclarationError(
+                "wave 必须声明 gait.foothold（落足点规划）：对称足迹下三腿支撑三角形的静态余量"
+                "实测 -0.000227483 m（≈0）、机身常量平移的可行域为空集 ⇒ 「落点不变」的 wave "
+                "没有静态稳定前提，显式失败而不是照跑（见 ADR-0008 决策 1j）"
+            )
+        return None
+    if not isinstance(foothold, dict):
+        raise DeclarationError("gait.foothold 必须是映射（缺段即失败，不允许默认值兜底）")
+
+    missing = [key for key in REQUIRED_FOOTHOLD_KEYS if key not in foothold]
+    if missing:
+        raise DeclarationError("gait.foothold 缺少必需键: %s" % missing)
+
+    mode = str(foothold["mode"])
+    if mode not in FOOTHOLD_MODES:
+        raise DeclarationError(
+            "gait.foothold.mode 只支持 %s，实际: %r" % (list(FOOTHOLD_MODES), foothold["mode"])
+        )
+
+    # 必需键**按模式**判定：公共键 + 该模式的专属键。缺任一即显式失败（`DeclarationError`），
+    # 不能等到下面按下标取值时抛 `KeyError` —— 那会以「崩溃」形式泄漏，而不是声明层失败。
+    allowed = set(REQUIRED_FOOTHOLD_KEYS) | set(FOOTHOLD_MODE_KEYS[mode])
+    missing = sorted(key for key in allowed if key not in foothold)
+    if missing:
+        raise DeclarationError(
+            "gait.foothold（mode=%s）缺少必需键: %s" % (mode, missing)
+        )
+    extra = sorted(str(key) for key in foothold if str(key) not in allowed)
+    if extra:
+        raise DeclarationError(
+            "gait.foothold（mode=%s）出现无定义的键: %s（该模式下这些键无定义，"
+            "写进声明等于假声明；允许的键: %s）"
+            % (mode, extra, sorted(allowed))
+        )
+
+    if mode == "static":
+        # static = 落点恒为中立位，即现行「原地踏步」行为：没有任何水平落点参数可声明。
+        return {"mode": "static"}
+
+    # ---- mode == per_phase：逐相位落点规划 ----
+    if kind != "wave":
+        raise DeclarationError(
+            "gait.foothold.mode=per_phase 只对 wave 生效：%s 的同一摆动窗口内有两条腿，"
+            "逐相位落点无定义" % kind
+        )
+
+    stride = _positive(foothold["stride_m"], "gait.foothold.stride_m")
+    ramp_s = _positive(foothold["ramp_s"], "gait.foothold.ramp_s", allow_zero=True)
+    smooth_s = _positive(foothold["smooth_s"], "gait.foothold.smooth_s", allow_zero=True)
+
+    # 环形顺序门禁：落点的更新顺序必须与相位偏移升序一致。写错顺序会让落点方向在相邻窗口之间
+    # 翻转（对称相位环上 x 分量正负交替），表现为「门禁全绿但机身朝反方向走」——静默失效，
+    # 因此在此显式失败（该缺陷族已在 sway 的隔离实验里踩过一次，见调试记录 §9）。
+    raw_order = foothold["phase_order"]
+    if not isinstance(raw_order, (list, tuple)) or not raw_order:
+        raise DeclarationError(
+            "gait.foothold.phase_order 必须是腿名序列（落点更新的环形顺序），实际: %r"
+            % (foothold["phase_order"],)
+        )
+    order = [str(item) for item in raw_order]
+    unknown = [code for code in order if code not in legs]
+    if unknown:
+        raise DeclarationError("gait.foothold.phase_order 含未声明的腿: %s" % unknown)
+    if len(order) != len(legs) or len(set(order)) != len(order):
+        raise DeclarationError(
+            "gait.foothold.phase_order 必须恰好包含 %d 条腿各一次（环形顺序），实际: %r"
+            % (len(legs), order)
+        )
+    expected = [sorted(groups[offset])[0] for offset in reference]
+    if order != expected:
+        raise DeclarationError(
+            "gait.foothold.phase_order 必须与相位偏移升序一致，期望 %r，实际: %r"
+            "（顺序错会让落点方向逐窗口翻转，属静默失效缺陷）" % (expected, order)
+        )
+
+    phase_map = foothold["phase_direction_map"]
+    if not isinstance(phase_map, dict):
+        raise DeclarationError(
+            "gait.foothold.phase_direction_map 必须是映射（腿 → 该腿摆动相落点的行进方向，"
+            "腿名来自声明）"
+        )
+    if set(str(item) for item in phase_map) != set(legs):
+        raise DeclarationError(
+            "gait.foothold.phase_direction_map 的腿集合必须与 gait.legs 完全一致，实际: %r vs %r"
+            % (sorted(str(item) for item in phase_map), sorted(legs))
+        )
+    directions = {}
+    for code, value in phase_map.items():
+        code = str(code)
+        if isinstance(value, dict):
+            if any(key not in value for key in ("x", "y")):
+                raise DeclarationError(
+                    "gait.foothold.phase_direction_map.%s 必须是 {x, y} 数字" % code
+                )
+            vector = (float(value["x"]), float(value["y"]))
+        elif isinstance(value, (list, tuple)) and len(value) == 2:
+            vector = (float(value[0]), float(value[1]))
+        else:
+            raise DeclarationError(
+                "gait.foothold.phase_direction_map.%s 必须是 {x, y} 映射或 [x, y] 两元序列" % code
+            )
+        norm = math.hypot(vector[0], vector[1])
+        if norm <= 1.0e-12:
+            raise DeclarationError(
+                "gait.foothold.phase_direction_map.%s 的方向向量是零矢量：落点行进方向无定义"
+                % code
+            )
+        directions[code] = (vector[0] / norm, vector[1] / norm)
+
+    # 互斥门禁：`sway`（平移机身）与 `per_phase`（移动落点）是**两种**重心处理手段。
+    # 同时启用 = 两个水平位移源叠加，失稳时无法归因（实测里 sway 已被隔离实验证明不是可用
+    # 执行器：幅度 5 mm 即翻、幅度 0 稳），因此 per_phase 要求 sway 幅度为 0，显式失败而不是
+    # 让两套机制互相掩盖。
+    amplitude = float(sway_amplitude_m or 0.0)
+    if amplitude > 0.0:
+        raise DeclarationError(
+            "gait.foothold.mode=per_phase 与 gait.sway.amplitude_m=%r 互斥：平移机身与移动落点"
+            "是两个水平位移源，叠加后失稳无法归因；per_phase 要求 sway 幅度为 0（可保留 sway 段，"
+            "把 amplitude_m 置 0）" % (amplitude,)
+        )
+
+    return {
+        "mode": "per_phase",
+        "stride_m": stride,
+        "ramp_s": ramp_s,
+        "smooth_s": smooth_s,
+        "phase_order": order,
+        "directions": directions,
+    }
+
+
+def load_foothold_declaration(declaration):
+    """**只**解析校验 `gait.foothold` 段；不依赖 Profile / 模型的关节清单。
+
+    用途：门禁要能独立复核落足点声明（`scripts/profile_check.py` 门禁 9），而完整解析
+    `load_gait_declaration` 还需要 Profile 关节清单去校验**关节绑定** —— 那是另一件事的职责；
+    让落足点门禁连带依赖关节清单，会在「模型/Profile 与生产不同」的夹具与板卡上误报
+    （实测踩到：夹具 Profile 的关节名与真实 Go2 不同 ⇒ 门禁 9 误判整份声明非法）。
+    因此本入口只消费 `gait` 段自身的腿标识与相位偏移。
+    """
+    section = (declaration or {}).get("gait")
+    if not isinstance(section, dict):
+        raise DeclarationError("声明缺少 gait 段（落足点声明的唯一来源）")
+    kind = str(section.get("kind"))
+    if kind not in GAIT_KINDS:
+        raise DeclarationError(
+            "gait.kind 只支持 %s，实际: %r" % (list(GAIT_KINDS), section.get("kind"))
+        )
+    legs_section = section.get("legs")
+    if not isinstance(legs_section, dict) or not legs_section:
+        raise DeclarationError("gait.legs 必须是非空映射（相位结构与落点环形顺序只能来自声明）")
+    legs = {}
+    for code, leg in legs_section.items():
+        code = str(code)
+        if not isinstance(leg, dict) or "phase_offset" not in leg:
+            raise DeclarationError("gait.legs.%s 缺少 phase_offset（落点环形顺序需要它）" % code)
+        try:
+            offset = float(leg["phase_offset"])
+        except (TypeError, ValueError):
+            raise DeclarationError(
+                "gait.legs.%s.phase_offset 必须是数字，实际: %r" % (code, leg["phase_offset"])
+            )
+        legs[code] = {"phase_offset": offset}
+    groups, reference = phase_groups_of(legs)
+    amplitude = 0.0
+    sway = section.get("sway")
+    if isinstance(sway, dict) and sway.get("amplitude_m") is not None:
+        try:
+            amplitude = float(sway["amplitude_m"])
+        except (TypeError, ValueError):
+            raise DeclarationError(
+                "gait.sway.amplitude_m 必须是数字，实际: %r" % (sway["amplitude_m"],)
+            )
+    return _load_foothold(section, legs, groups, reference, kind, amplitude)
+
+
 def load_gait_declaration(declaration, profile_joints):
     """解析并校验 `gait` 段；返回规范化后的参数字典。缺键/越界/不自洽即显式失败。"""
     section = (declaration or {}).get("gait")
@@ -357,10 +581,7 @@ def load_gait_declaration(declaration, profile_joints):
     # 相位结构自洽门禁（按步态类型分派，都是**声明不可违反**的几何约束）：
     # - trot：恰好两组、每组两条腿、组间相位差半个周期（对角配对）；
     # - wave：每条腿一个独立相位、四相位等间隔 0.25 ⇒ 任意时刻恰好一条腿处于摆动相。
-    groups = {}
-    for code, leg in legs.items():
-        groups.setdefault(round(leg["phase_offset"], 9), []).append(code)
-    reference = sorted(groups)
+    groups, reference = phase_groups_of(legs)
     if kind == "trot":
         if len(reference) != 2:
             raise DeclarationError(
@@ -400,6 +621,16 @@ def load_gait_declaration(declaration, profile_joints):
             )
 
     sway = _load_sway(section, legs, kind)
+    # 落足点规划（wave 必需）：`static` = 落点不变（现行为），`per_phase` = 逐相位落点规划。
+    # 在 sway 之后解析：两者是互斥的重心处理手段，门禁需要 sway 的幅度（见 `_load_foothold`）。
+    foothold = _load_foothold(
+        section,
+        legs,
+        groups,
+        reference,
+        kind,
+        0.0 if sway is None else sway["amplitude_m"],
+    )
 
     verification = section["verification"]
     if not isinstance(verification, dict):
@@ -445,6 +676,9 @@ def load_gait_declaration(declaration, profile_joints):
         "legs": legs,
         # 逐相位重心转移（wave 必需，其它步态类型为 None）：幅度/方向/平滑/斜坡全部来自声明。
         "sway": sway,
+        # 落足点规划（wave 必需，其它步态类型可为 None）：`static` = 落点恒定（现行为），
+        # `per_phase` = 逐相位摆动落点。Step 02 的落地点在 `gait_joint_targets` 消费本项。
+        "foothold": foothold,
         # 相位组（按相位偏移升序）：trot 得到 2 组、每组 2 条腿，wave 得到 4 组、每组 1 条腿。
         # 判据（`assess_gait`）按该结构逐组比较，不再假定「只有两组」。
         "phase_groups": [

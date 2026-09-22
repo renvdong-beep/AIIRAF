@@ -463,6 +463,11 @@ def check_quadruped(declaration_path, root=ROOT):
        —— TTL 直接决定 `ControlAuthorityManager.acquire(ttl_seconds=…)`，覆盖不了一次完整动作
        就会在执行中途报 `LeaseConflict: lease expired`（实测踩到：stop 声明 2 s 而 stop.duration_s=3.0 s，
        快路径墙钟仅约 0.5 s 所以长期未暴露，挂上显示窗口后被拖长才暴露）。
+    9. **`gait.foothold`（落足点规划）声明合法性**：**独立**解析一遍 `gait` 段（不依赖装配路径是否
+       已解析），把声明层缺陷（缺段/缺键/非法 `mode`/该模式无定义的键/相位环顺序错/`per_phase`
+       与 `sway` 幅度互斥违规）判为失败，并如实登记 `mode`/`stride_m`/`sway.amplitude_m` 供人工对表。
+       `wave` 必须声明本段（缺少即失败）：对称足迹下三腿支撑三角形的静态余量实测 −0.000227483 m，
+       落点不变的 wave 没有静态稳定前提。
     """
     from iraf_adapters.unitree import quadruped as quadruped_contract
     from iraf_adapters.unitree import unitree_go2
@@ -664,6 +669,53 @@ def check_quadruped(declaration_path, root=ROOT):
             )
         skill_ttl_records.append(record)
     report["skill_ttl_gate"] = skill_ttl_records
+
+    # 门禁 9：`gait.foothold`（落足点规划）声明合法性 —— 见函数 docstring 第 9 条。
+    # 用**窄入口** `load_foothold_declaration`：只消费 `gait` 段自身（腿标识 + 相位偏移），
+    # 不依赖 Profile/模型的关节清单 —— 关节绑定是另一件事的职责，混进来会在
+    # 「模型/Profile 与生产不同」的夹具与板卡上误报（实测踩到）。
+    foothold_gate: dict = {
+        "declared": None,
+        "mode": None,
+        "stride_m": None,
+        "phase_order": None,
+        "sway_amplitude_m": None,
+    }
+    gait_section = declaration.get("gait")
+    if isinstance(gait_section, dict):
+        from iraf_adapters.unitree import gait as gait_module
+
+        try:
+            foothold_params = gait_module.load_foothold_declaration(declaration)
+        except quadruped_contract.QuadrupedError as exc:
+            failures.append(
+                "gait.foothold 门禁 9：声明层拒绝 [%s] %s" % (exc.code, exc)
+            )
+        else:
+            foothold = foothold_params or {}
+            sway_section = gait_section.get("sway")
+            sway_amplitude = (
+                float(sway_section["amplitude_m"])
+                if isinstance(sway_section, dict) and sway_section.get("amplitude_m") is not None
+                else None
+            )
+            foothold_gate.update(
+                {
+                    "declared": foothold_params is not None,
+                    "mode": foothold.get("mode"),
+                    "stride_m": foothold.get("stride_m"),
+                    "phase_order": foothold.get("phase_order"),
+                    "sway_amplitude_m": sway_amplitude,
+                }
+            )
+            if str(gait_section.get("kind")) == "wave" and foothold.get("mode") != "per_phase":
+                notes.append(
+                    "gait.foothold.mode=%r：落点恒为中立足端（现行「原地踏步」行为，"
+                    "`per_phase` 迈步式 crawl 的落地点尚未实现）—— 这是**事实**，"
+                    "不是漏写；实现并通过 L1 验收后再翻转本键（铁律 2）。"
+                    % (foothold.get("mode"),)
+                )
+    report["foothold_gate"] = foothold_gate
 
     report["passed"] = not failures
     return report
