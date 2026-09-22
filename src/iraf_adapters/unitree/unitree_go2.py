@@ -374,7 +374,25 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         self.ledger.finish(active_id, "SUCCEEDED")
         return report
 
-    def stop(self, lease, execution_id=None):
+    def stop(self, lease, execution_id=None, *, mode=None):
+        """停机分派：`mode=None` / `torque_zero_release` ⇒ 既有失能停机（行为逐位不变）；
+        `damped_hold` ⇒ 受控停止（**尚未实现**，见 `.hermes/plans/2026-09-23-damped-hold-code.md`）。
+
+        `mode` 由上层 `iraf_skills.quadruped.resolve_stop_mode` 决定，**调用方不得自选**
+        （`profiles/safety/quadruped_lab.yaml` 的 `stop_modes.*.applies_to` 已规定适用路径）。
+        `damped_hold` 落地前不得进入 `SUPPORTED_STOP_MODES`（声明 ⊆ 实现，不虚报能力）。
+        """
+        if mode is None or mode == "torque_zero_release":
+            return self._stop_torque_zero_release(lease, execution_id)
+        if mode == "damped_hold":
+            raise CommandRejectedError(
+                "damped_hold 尚未实现（契约见 docs/debug/2026-09-22-damped-hold-spec.md，"
+                "代码备于 .hermes/plans/2026-09-23-damped-hold-code.md）：实现落地前该路径必须"
+                "显式失败，不得退回失能停机冒充成功")
+        raise CommandRejectedError(
+            "不支持的 stop 模式 %r（支持：%s）" % (mode, SUPPORTED_STOP_MODES))
+
+    def _stop_torque_zero_release(self, lease, execution_id=None):
         """松力停机：控制量归零并推进 `stop.duration_s`。
 
         停机是**安全方向**的动作，因此不被安全闭锁阻塞（闭锁只拦重新调度运动），
