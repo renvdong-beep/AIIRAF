@@ -775,6 +775,26 @@ m·g                         ：149.1749 N（我们模型 15.206408 kg）
 **前馈+反馈分工的正常结果，不是它的 MPC 缺陷**，也不影响此前用 `M_z` 得出的转弯结论
 （`M_z` 与 `Σf_z` 同源同口径，偏差为系统性比例，不改变"计划 3.6 N·m vs 实测 α_z≈0"的定性）。
 
+## 27. 第 2 块 `osqp_native` 收尾验收：达标（2026-09-22）
+
+脚本：`build/research/mpc-repo/verify_osqp_native.py` —— 用代理截获上游 `solve_QP` 的**真实 QP 入参**
+（200 个），交给**仓库模块** `iraf_adapters.unitree.mpc.{qp_scaling, osqp_native}` 重放：
+先做等价变量缩放（`D = diag(√H_ii)`），再用原生 OSQP 求解，回代后在**原问题单位**下比较目标值。
+
+```
+solve  P50 1.9972 ｜ P90 2.1621 ｜ P99 2.3211 ｜ max 2.4303 ms      （纯 solve，setup 另计）
+iter   P50 60.0 ｜ max 60                                          （与 §13 的 unit-H 缩放一致）
+状态分类 {'ok': 200}                                               （全部 solved）
+目标值相对差 |f_native − f_upstream| / |f_upstream|：P50 3.585e-04 ｜ max 9.656e-04
+上游对照（CasADi 包装）solve_time P50 10.3201 ms ⇒ 本路径快 5.2 倍
+```
+
+**收尾判据**：(1) `solve P50 1.9972 ≤ 4.000 ms` **PASS**｜(2) 状态全 solved **PASS** ⇒ **第 2 块达标**。
+原始样本：`verify_osqp_native.json`。⇒ 仓库 `src/iraf_adapters/unitree/mpc/` 现已具备
+「等价缩放（含 7 项单测）+ 原生 OSQP 入口（含 8 项单测，且已在真实 QP 上验证）」两块。
+下一块：`traj_amortize`（保值摊销；判据 = 14 个被消费数组 × 200 样本逐位一致、`generate_traj` P50 ≤ 3.0 ms）。
+
+
 
 
 
