@@ -168,13 +168,23 @@ def validate_state(state):
     return True
 
 
+def pd_torque_raw(q, dq, q_des, kp, kd, tau_ff):
+    """力矩型 PD + 前馈的**未截断**命令（纯函数）。
+
+    抽出来是为了让「命令力矩 vs 模型 ctrlrange 的缺口」可被测到：`pd_torque` 返回的是**已截断**
+    的值，采样拿到它就只能知道"饱和了"，不知道"缺多少"。两处必须用同一段算术 ——
+    `pd_torque` 调用本函数后再截断，任何一处改动都会同时生效（不存在第二份公式）。
+    """
+    return kp * (q_des - q) - kd * dq + tau_ff
+
+
 def pd_torque(q, dq, q_des, kp, kd, tau_ff, lower, upper):
     """力矩型 PD + 前馈，并按模型 ctrlrange 截断。纯函数，便于逐项断言。
 
     语义与验收路径 `loopback.compute_ctrl` 必须逐位一致（单测交叉比对）；重复出现
     在这里是因为验收 harness 与运行期后端是两条调用链，靠测试钉住一致性而不是复制注释。
     """
-    ctrl = kp * (q_des - q) - kd * dq + tau_ff
+    ctrl = pd_torque_raw(q, dq, q_des, kp, kd, tau_ff)
     saturated = np.logical_or(ctrl < lower, ctrl > upper)
     return np.clip(ctrl, lower, upper), saturated
 

@@ -42,6 +42,7 @@ from iraf_adapters.unitree.quadruped import (
     UnsupportedCapabilityError,
     gravity_bias_torque,
     pd_torque,
+    pd_torque_raw,
     substeps_per_control,
     validate_state,
 )
@@ -466,6 +467,29 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             ]
             for code, geom in geometry.items()
         }
+
+    def _torque_diagnostics(self, q, dq, info, mode):
+        """逐关节的**命令（未截断）**或**实际（截断后）**力矩（证据用，步骤 08）。
+
+        为什么必须能取到"未截断"这一档：采样只拿到 `info["ctrl"]`（已按模型 ctrlrange 截断），
+        它只能说明"饱和了"，说不出"缺多少" —— 而缺口大小正是判断「目标是否超出执行器能力」与
+        「PD 增益/重力前馈是否失配」的关键量。未截断值由与 `_run_control` **同一个**
+        `pd_torque_raw` 算出（不存在第二份公式）。
+        """
+        if mode == "applied":
+            return [float(value) for value in np.asarray(info["ctrl"], dtype=float)]
+        if mode != "raw":
+            raise DeclarationError("力矩诊断模式只支持 raw / applied，实际: %r" % (mode,))
+        tau_ff = (
+            gravity_bias_torque(self.model, self.data, self.mujoco, self.dof_adr)
+            if self.gravity_feedforward
+            else np.zeros_like(np.asarray(q, dtype=float))
+        )
+        raw = pd_torque_raw(
+            np.asarray(q, dtype=float), np.asarray(dq, dtype=float),
+            np.asarray(info["desired"], dtype=float), self.kp, self.kd, tau_ff,
+        )
+        return [float(value) for value in np.asarray(raw, dtype=float)]
 
     def _balance_parameters(self):
         """惰性解析并缓存 `balance` 段（步骤 02b）。
@@ -1207,6 +1231,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
 
         def sample_callback(cycle_index, info):
             q = np.asarray(self.data.qpos[self.qpos_adr], dtype=float)
+            dq = np.asarray(self.data.qvel[self.dof_adr], dtype=float)
             quat = np.asarray(self.data.qpos[3:7], dtype=float)
             w, x, y, z = (float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3]))
             # 姿态分解用旋转矩阵的第三行（偏航不计入 tilt；roll/pitch 分开量，便于定位失稳方向）。
@@ -1226,6 +1251,14 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                     # 足端（接触几何）在躯干系的位置：落足点验收用它量「实际落到哪」，
                     # 与计划落点（躯干系）同坐标系可比（步骤 03/04 的判据来源）。
                     "foot_trunk_m": self._feet_trunk_positions(geometry, trunk_body),
+                    # 力矩诊断（步骤 08）：命令（**未截断**）/ 实际（截断后）/ 逐关节误差。
+                    # 采样只能拿到截断后的 `info["ctrl"]`，只它无法回答"缺多少"。
+                    "torque_raw_nm": self._torque_diagnostics(q, dq, info, "raw"),
+                    "torque_applied_nm": self._torque_diagnostics(q, dq, info, "applied"),
+                    "joint_error_rad": [
+                        float(value) for value in
+                        (np.asarray(info["desired"], dtype=float) - q)
+                    ],
                     "contact_n": self._leg_contact_forces(params, geometry),
                     "ctrl_saturated": int(np.count_nonzero(info["saturated"])),
                     "tracking_error_rad": float(np.max(np.abs(info["desired"] - q))),
