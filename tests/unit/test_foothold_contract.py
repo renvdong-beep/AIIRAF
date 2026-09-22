@@ -172,10 +172,15 @@ class LoadFootholdPerPhaseTest(unittest.TestCase):
         self.assertAlmostEqual(0.0, params["sway"]["amplitude_m"], places=12)
         self.assertEqual("per_phase", params["foothold"]["mode"])
 
-    def test_sway_amplitude_must_be_zero(self):
-        with self.assertRaises(DeclarationError) as ctx:
-            gait.load_gait_declaration(_per_phase_document(sway_amplitude_m=0.06), _joints())
-        self.assertIn("互斥", str(ctx.exception))
+    def test_sway_nonzero_is_allowed_after_semantics_change(self):
+        """【语义变更，2026-09-21】原本 `per_phase` 与 `sway.amplitude_m > 0` 互斥（"两个水平
+        位移源叠加无法归因"）；该门禁已按实测解除 —— 机身位移与落点必须协同（证据：只改落点时
+        机身被拖 23.69 mm，超过一个周期的落点位移 20 mm，见调试记录 §10.3）。
+        本用例锁死"两键可同时声明"，防止门禁被无声恢复。"""
+        document = _per_phase_document(sway_amplitude_m=0.06)
+        params = gait.load_gait_declaration(document, _joints())
+        self.assertEqual("per_phase", params["foothold"]["mode"])
+        self.assertAlmostEqual(0.06, params["sway"]["amplitude_m"], places=12)
 
     def test_missing_required_keys(self):
         for key in gait.FOOTHOLD_MODE_KEYS["per_phase"]:
@@ -367,13 +372,20 @@ class NarrowFootholdEntryTest(unittest.TestCase):
         self.assertEqual(EXPECTED_PHASE_ORDER, narrow.get("phase_order"))
 
     def test_rejects_invalid_foothold_like_full_parse(self):
-        document = _per_phase_document(sway_amplitude_m=0.06)
+        """宽/窄入口对同一条非法声明必须**都**拒绝。
+
+        注：本用例原本用「`per_phase` 与 `sway.amplitude_m > 0` 互斥」来构造非法声明；
+        该门禁已按实测解除（语义变更，见 §10.3），故改用仍然非法的形态 ——
+        验收判据缺键（`gait.foothold.verification` 少一个必需键）。
+        """
+        document = _per_phase_document()
+        document["gait"]["foothold"]["verification"].pop("net_drift_per_cycle_m")
         with self.assertRaises(DeclarationError) as narrow_ctx:
             gait.load_foothold_declaration(document)
         with self.assertRaises(DeclarationError) as full_ctx:
             gait.load_gait_declaration(document, _joints())
-        self.assertIn("互斥", str(narrow_ctx.exception))
-        self.assertIn("互斥", str(full_ctx.exception))
+        self.assertIn("net_drift_per_cycle_m", str(narrow_ctx.exception))
+        self.assertIn("net_drift_per_cycle_m", str(full_ctx.exception))
 
     def test_missing_gait_section_fails(self):
         with self.assertRaises(DeclarationError):

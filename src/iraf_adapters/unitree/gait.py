@@ -296,7 +296,7 @@ def phase_groups_of(legs):
     return groups, sorted(groups)
 
 
-def _load_foothold(section, legs, groups, reference, kind, sway_amplitude_m):
+def _load_foothold(section, legs, groups, reference, kind):
     """解析 `gait.foothold`（落足点规划 / 迈步式 crawl）；返回规范化字典或 `None`。
 
     - `wave`：**必须**声明本段（理由与 `sway` 同源：对称矩形足迹下「抬起任意一条腿后
@@ -304,9 +304,6 @@ def _load_foothold(section, legs, groups, reference, kind, sway_amplitude_m):
       重新构造支撑多边形）；
     - 其它步态类型：`static`（落点不变 = 现行为）可声明；`per_phase` **不得**声明 ——
       同一摆动窗口内有两条对角腿，逐相位落点无定义 ⇒ 声明即失败，而不是静默忽略。
-
-    `sway_amplitude_m`：`gait.sway.amplitude_m`（无 `sway` 段时为 0.0），只用于「两个水平
-    位移源互斥」门禁；传数值而不是整段，避免本函数依赖 `sway` 的解析结果。
     """
     foothold = section.get("foothold")
     if foothold is None:
@@ -449,17 +446,17 @@ def _load_foothold(section, legs, groups, reference, kind, sway_amplitude_m):
             )
         directions[code] = (vector[0] / norm, vector[1] / norm)
 
-    # 互斥门禁：`sway`（平移机身）与 `per_phase`（移动落点）是**两种**重心处理手段。
-    # 同时启用 = 两个水平位移源叠加，失稳时无法归因（实测里 sway 已被隔离实验证明不是可用
-    # 执行器：幅度 5 mm 即翻、幅度 0 稳），因此 per_phase 要求 sway 幅度为 0，显式失败而不是
-    # 让两套机制互相掩盖。
-    amplitude = float(sway_amplitude_m or 0.0)
-    if amplitude > 0.0:
-        raise DeclarationError(
-            "gait.foothold.mode=per_phase 与 gait.sway.amplitude_m=%r 互斥：平移机身与移动落点"
-            "是两个水平位移源，叠加后失稳无法归因；per_phase 要求 sway 幅度为 0（可保留 sway 段，"
-            "把 amplitude_m 置 0）" % (amplitude,)
-        )
+    # 【语义变更，2026-09-21（专项 C 步骤 10）】此处原有一条**互斥门禁**：
+    # `per_phase`（移动落点）与 `sway.amplitude_m > 0`（平移机身）不得同时启用，理由是
+    # "两个水平位移源叠加，失稳时无法归因"。该门禁已**解除**，动机是实测：
+    # 只改落点、不动机身时，四条腿的水平目标各自独立按落点等级变化，而机身位置由**四条腿的
+    # 约束共同决定** ⇒ 过约束、机身被拽着走：0.40 s 时机身水平位移已达 **23.69 mm**
+    # （0.63 s 回落 15.65 mm，来回拖），**超过**一个完整周期的落点位移（10 mm/相位、20 mm/周期）。
+    # 证据：`build/iraf-24h-3/step09/pivot-ordering.txt`（明细表）、
+    #       `docs/debug/2026-09-21-quadruped-crawl-foothold.md` §10.3。
+    # ⇒ 结论：机身位移与落点**本来就是同一件事的两半**（必须协同），不是两个互相掩盖的位移源；
+    #    把它们判成互斥反而挡住了正确的机制。两键同时声明现在是**允许**的（不设门禁、不设默认值：
+    #    是否启用由声明里的 `amplitude_m` 数值决定，语义仍是"逐相位重心转移"）。
 
     return {
         "mode": "per_phase",
@@ -505,16 +502,7 @@ def load_foothold_declaration(declaration):
             )
         legs[code] = {"phase_offset": offset}
     groups, reference = phase_groups_of(legs)
-    amplitude = 0.0
-    sway = section.get("sway")
-    if isinstance(sway, dict) and sway.get("amplitude_m") is not None:
-        try:
-            amplitude = float(sway["amplitude_m"])
-        except (TypeError, ValueError):
-            raise DeclarationError(
-                "gait.sway.amplitude_m 必须是数字，实际: %r" % (sway["amplitude_m"],)
-            )
-    return _load_foothold(section, legs, groups, reference, kind, amplitude)
+    return _load_foothold(section, legs, groups, reference, kind)
 
 
 def load_gait_declaration(declaration, profile_joints):
@@ -674,15 +662,7 @@ def load_gait_declaration(declaration, profile_joints):
 
     sway = _load_sway(section, legs, kind)
     # 落足点规划（wave 必需）：`static` = 落点不变（现行为），`per_phase` = 逐相位落点规划。
-    # 在 sway 之后解析：两者是互斥的重心处理手段，门禁需要 sway 的幅度（见 `_load_foothold`）。
-    foothold = _load_foothold(
-        section,
-        legs,
-        groups,
-        reference,
-        kind,
-        0.0 if sway is None else sway["amplitude_m"],
-    )
+    foothold = _load_foothold(section, legs, groups, reference, kind)
 
     verification = section["verification"]
     if not isinstance(verification, dict):
