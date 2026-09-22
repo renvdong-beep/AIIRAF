@@ -103,3 +103,97 @@ PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_gait_in_place.py --config con
   最大未知仍是**黏滑**（前序设计包 P4：失稳驱动可能是位置级目标本身）——要到步骤 05 的 L1 实跑才有数字。
 - 步骤 01 的 `per_phase` 声明值（`stride_m` 等）**尚无实测标定**：`0.079~0.081 m` 来自几何/分配器推导，
   实际取值由步骤 05 的扫描实测确定，届时在声明里写明取值依据（同 `sway.amplitude_m` 的做法）。
+
+---
+
+## 2. 步骤 02（相位相关落点插值）：落点真正进入目标角，且 `static` 逐位不变
+
+### 2.1 目标与范围
+
+把落点从「声明里的字段」变成**目标生成的实际输入**（否则声明是死声明），同时保证
+`mode=static` 的目标角与改动前**逐位一致**（既有原地踏步路径零回归）。
+
+### 2.2 交付
+
+| 层 | 位置 | 内容 |
+|---|---|---|
+| 机制 | `src/iraf_adapters/unitree/gait.py::foothold_offset_m(params, code, elapsed_s)` | 返回该腿水平落点偏移 `(dx, dy)`（躯干系）。`static` ⇒ **精确的** `(0.0, 0.0)`；`per_phase` ⇒ 支撑相保持「上一周期摆动结束时落下的等级」，摆动相按升余弦过渡到「本周期等级」，等级逐周期 `±1` 交替 |
+| 接线 | `gait_joint_targets`（x 目标 `... - sway[0] + foothold_x`、y 目标 `damping[1] - sway[1] + foothold_y`） | 把落点接到 `leg_solve` 的 `(px, py)`；`foot_offset` 仍只负责抬脚 z |
+
+### 2.3 机制的两个设计点（为什么这样定义）
+
+1. **周期边界必须连续**：支撑相保持的是「上一周期摆动结束落下的等级」（= `−sign(cycle)`），
+   摆动相从该等级过渡到本周期等级（= `+sign(cycle)`）。这样在 `u = duty`（摆动起点）与
+   `u → 1`（摆动终点）两处都与相邻窗口衔接，不产生阶跃。首版写成「支撑相 = 本周期等级」，
+   在周期边界会跳变一个步幅（2·stride = 0.16 m），属会直接甩翻机身的缺陷。
+2. **两周期闭环**：等级逐周期交替 ⇒ 落点在 2 个周期后回到同一位置，足迹闭环、净漂移 0
+   （"原地"语义），而支撑三角形的**形状**逐相位改变 —— 这正是要测的东西。
+3. **过渡时长可声明**：`smooth_s` 超过摆动窗口长度时按窗口长度计（**不越窗**）；幅度按 `ramp_s`
+   线性建立（`0` = 首次抬腿前满幅）。摆动窗口定义与 `sway` 共用 `sway_windows`（窗口只由
+   `duty_factor` 与相位偏移决定）。
+
+### 2.4 验收与证据（`build/iraf-24h-3/step02/`）
+
+| 项 | 结果 |
+|---|---|
+| 契约测试 | `Ran 35 / OK`（含 `test_static_offset_is_exact_zero`、`test_static_joint_targets_are_bit_identical_to_previous_formula`） |
+| 数学级逐位一致 | `static` 下 4 条腿 × 40 个时刻，目标角与「改动前表达式」**逐位相等**（`assertEqual`，非近似） |
+| **实测逐位一致** | 同一条生产验收（`verify_go2_gait_in_place.py`）改动前 19:34 快照 vs 改动后：assessment **41 个字段差异 0 条**，20 项判据与 13 条失败清单逐项相同 |
+| **存活性（分支真被执行）** | 把声明换成 `per_phase`（`build/iraf-24h-3/step02/per-phase-probe.yaml`）后同一条验收：**41 个字段中 27 个变化** ⇒ 落点确实进入了控制回路，不是死代码 |
+| 全量单测 | `Ran 1086 / failures=1 / errors=4 / skipped=4`（基线同批 5 条，新增 0 / 消失 0） |
+| 生产报告恢复 | `build/acceptance/go2-trot-in-place/report.json` 已按生产命令重跑（`report_path` 指回生产路径），未留 `--report` 覆盖痕迹 |
+
+`static` → `per_phase` 的关键数字对比（同一条验收、同一场景）：
+
+| 指标 | `static` | `per_phase`（首轮，未调参） |
+|---|---|---|
+| `height_mean_m` | −52.96097353575173 | 0.0778459128507211 |
+| `height_std_m` | 63.78010487892247 | 0.0311160555974537 |
+| `min_base_height_m` | −215.6303346878428 | 0.06700140292746969 |
+| `max_displacement_m` | 6.6266884683075515 | 0.41062571823587596 |
+| `max_tilt_deg` | 176.44460017100423 | 179.97546530052387 |
+| `max_pitch_deg` | 86.10174714239811 | 14.043828174104641 |
+| `ctrl_saturated_samples` | 7486 | 8449 |
+| `per_leg.FL.steady_stance_fraction` | 0.09 | 0.0 |
+
+**读法（诚实）**：`per_phase` 首轮**仍翻倒**（`max_tilt_deg` 179.97546530052387°），
+且 `FL` 的稳态支撑相比例掉到 `0.0` ⇒ 该腿在整段里没有形成有效接触（侧向落点把足端带离地面）。
+本步只交付机制；`support_legs` 耦合与摆动落点的接地是步骤 03，L1 静态可稳的判定与调参是步骤 05。
+**不得**用本步数字宣称任何稳定性改善。
+
+### 2.5 本步踩到的缺陷
+
+1. **周期边界跳变**（见 2.3 第 1 点）：支撑相等级取错，边界处跳 2·stride。
+2. **测试自身的两个断言错误**（记账，避免下次误判为"实现回归"）：
+   ① `static` 逐位一致用例里把 `sway_offset_m` 在循环外只算了一次，而它与相位相关 ⇒ 出现
+   `0.2229... vs 0.1806...` 的假差异；② 「摆动窗内单调」写成 `all(delta <= 1e-12) and all(delta >= -1e-12)`
+   （实为「近似不变」），且把落点方向的符号写反。两处都先用**只读探针**
+   （`build/iraf-24h-3/step02/probe_foothold_trajectory.py`）量出真实轨迹后才改断言，
+   没有为了通过测试放宽任何门禁。
+
+### 2.6 复跑命令
+
+```
+# 契约测试（含逐位一致与存活性的单元层）
+PYTHONPATH=src /usr/bin/python3 -m unittest tests.unit.test_foothold_contract
+
+# 落点轨迹只读探针（打印 FL 腿一个周期的落点）
+/usr/bin/python3 build/iraf-24h-3/step02/probe_foothold_trajectory.py
+
+# 实测逐位一致（static）：应与 build/iraf-24h-3/step01/pre-change-report.json 逐字段相同
+PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_gait_in_place.py --config config/go2_loopback.yaml
+
+# 存活性（per_phase）：应与上一条数字**不同**
+PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_gait_in_place.py \
+    --config build/iraf-24h-3/step02/per-phase-probe.yaml \
+    --report build/iraf-24h-3/step02/report-per-phase.json
+```
+
+### 2.7 诚实边界（本步）
+
+- `foothold.mode` 生产值仍为 `static`（`per_phase` 只在证据区的声明副本里启用）⇒
+  生产路径**无行为变化**，`locomote` / `navigate_to` 仍未声明。
+- `per_phase` 的落点方向与 `stride_m = 0.08` 是**待标定的初值**（方向为契约测试用的占位，
+  几何依据只有「重心到支撑三角形形心需平移 0.079~0.081 m」这一条推导），必须由步骤 05 的
+  扫描实测确定；本步没有声称该取值可用。
+

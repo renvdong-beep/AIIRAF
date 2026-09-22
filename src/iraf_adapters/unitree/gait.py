@@ -1045,6 +1045,53 @@ def sway_offset_m(params, elapsed_s):
     )
 
 
+def foothold_offset_m(params, code, elapsed_s):
+    """相位 → 该腿**水平落点**偏移 `(dx_m, dy_m)`（躯干系，相对中立足端）。
+
+    - `static`：恒返回**精确的** `(0.0, 0.0)` —— 既有「原地踏步」路径的数值逐位不变；
+    - `per_phase`：摆动相从「上一周期的落点」平滑过渡到「本周期的落点」，支撑相保持本周期落点。
+      落点逐周期在 `±stride_m · directions[腿]` 之间交替 ⇒ 足迹闭环、机身净漂移为 0（"原地"语义），
+      而支撑三角形随相位改变形状（这是「静态余量 ≈ 0」的正面解法：机身常量平移已证不可行）。
+
+    过渡时长由 `smooth_s` 给出（超过摆动窗口长度时按窗口长度计，**不越窗**）；幅度按 `ramp_s`
+    线性建立（`0` = 首次抬腿前就满幅，与 `sway.ramp_s` 同取向）。摆动窗口的定义与 `sway` 共用
+    `sway_windows`（窗口只由 `duty_factor` 与相位偏移决定，与重心处理方式无关）。
+    """
+    foothold = params.get("foothold")
+    if not foothold or foothold.get("mode") != "per_phase":
+        return (0.0, 0.0)
+    period = float(params["period_s"])
+    duty = float(params["duty_factor"])
+    offset = float(params["legs"][code]["phase_offset"])
+    stride = float(foothold["stride_m"])
+    direction = foothold["directions"][code]
+    smooth = float(foothold["smooth_s"])
+    ramp = float(foothold["ramp_s"])
+
+    # 以**该腿自身**的周期为坐标（周期内含相位偏移前的局部相位）：cycle_index 每过一个周期 +1。
+    raw = float(elapsed_s) / period - offset
+    cycle_index = int(math.floor(raw))
+    u = raw - cycle_index
+
+    # 逐周期交替的落点等级（±1）。支撑相保持的是**上一周期摆动结束时**落下的等级
+    # （= −sign），摆动相从该等级过渡到本周期等级（= +sign）—— 这样周期边界处连续。
+    sign = 1.0 if (cycle_index % 2 == 0) else -1.0
+    previous = -sign
+    if u < duty:
+        level = previous
+    else:
+        window_s = (1.0 - duty) * period
+        span = window_s if smooth <= 0.0 else min(smooth, window_s)
+        progress = 0.0 if span <= 0.0 else (u - duty) * period / span
+        progress = min(1.0, max(0.0, progress))
+        blend = 0.5 - 0.5 * math.cos(math.pi * progress)
+        level = previous + (sign - previous) * blend
+
+    gain = 1.0 if ramp <= 0.0 else min(1.0, max(float(elapsed_s), 0.0) / ramp)
+    amount = gain * level * stride
+    return (amount * float(direction[0]), amount * float(direction[1]))
+
+
 def sway_direction_report(params, geometry):
     """按**实测**足迹校验声明的重心转移方向；不规则/方向相反即显式失败。
 
@@ -1162,19 +1209,22 @@ def gait_joint_targets(params, geometry, home, joint_limits, elapsed_s, amplitud
     # 四条腿**同向**接受该偏移（支撑腿把机身推过去；摆动腿的落点随机身一起走，保持站姿形状），
     # 偏移由声明给出（幅度/方向/平滑/斜坡），实现层不含任何数字默认值。
     sway = sway_offset_m(params, elapsed_s)
+    # 落足点规划（步骤 02）：该腿**水平落点**偏移。`static` 时精确为 (0.0, 0.0)，
+    # 因此下面的表达式与「无落足点规划」逐位一致（加 0.0 不改变浮点值）。
     # 中立目标的离地间隙（步骤 02 A′ ②）：实测中立足端 z（躯干系，`measure_leg_geometry`）
     # 再抬高本值 ⇒ 目标位形的足端球最低点在支撑面**之上**，而不是压进面下。
-    # 只抬高 z，不动 x/y（不与 sway 的横向转移混叠）。
+    # 只抬高 z，不动 x/y（不与 sway / 落点偏移混叠）。
     clearance = float(params["stance_clearance_m"])
     for code, geom in geometry.items():
         phase = leg_phase(params, code, elapsed_s)
         dx, dz = foot_offset(phase, params, amplitude)
+        foothold_x, foothold_y = foothold_offset_m(params, code, elapsed_s)
         damping = stabilization_offset(
             params, body_velocity_mps, body_omega_rad_s, geom["trunk_rel_m"]
         )
         q_hip, q1, q2 = leg_solve(
-            geom["neutral_x_m"] + dx + damping[0] - float(sway[0]),
-            damping[1] - float(sway[1]),
+            geom["neutral_x_m"] + dx + damping[0] - float(sway[0]) + foothold_x,
+            damping[1] - float(sway[1]) + foothold_y,
             geom["neutral_z_m"] + clearance + dz,
             geom["l1_m"],
             geom["l2_m"],
