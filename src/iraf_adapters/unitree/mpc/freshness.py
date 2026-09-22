@@ -88,6 +88,8 @@ def decide(age_ms, qp_status_class, solve_ms=None, emergency=False):
                 "reason": "QP 未给出可用解（状态分类 %r）⇒ 显式失败" % cls, "flags": flags}
     if not _USABLE_STATUS[cls]:
         flags["inaccurate"] = True
+    if cls == "ok_inaccurate":          # 修正：首版写成 `not _USABLE_STATUS[cls]`（恒为 False）
+        flags["inaccurate"] = True      # ⇒ 标志永不置位，被 test_inaccurate_is_usable_but_flagged 抓出
 
     # 5) 超预算只记标志（解仍然可用；是否可接受由验收判据决定，不在此放宽）
     if solve_ms is not None:
