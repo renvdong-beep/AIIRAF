@@ -1,0 +1,68 @@
+# 四足 locomotion 验收判据声明（② 速度跟踪）—— 契约先于实现（铁律 1.2）
+#
+# 为什么单独一份文件、而不是塞进 config/go2_loopback.yaml：
+#   · loopback 声明（schema iraf.quadruped-loopback/v1）管的是 **stand / stop** 两条既有验收路径；
+#   · 本文件管的是 **locomote 的速度跟踪**（②），属另一条验收路径 ⇒ 独立声明，互不影响，
+#     也不改写任何既有声明（避免动到既有验收门禁）。
+#
+# 现状（诚实标注）：locomote 的**实现尚未接入框架**（待 A6：MPC Provider → 技能层）；
+#   本声明是"先写契约与验收场景"的产物，用来把判据写死，防止事后按实测反填阈值。
+#
+# 阈值来源与"不反填"说明：
+#   · 硬判据 `max_mean_rel_error: 0.10`（相对误差均值 ≤ 10%）在**测量之前**已确定
+#     （见 .hermes/plans/2026-09-23-continuous-execution-queue.md 的 A3）；
+#   · 实测（本机、仿真、我们的厂商 MJCF + 摩擦配对 0.4）：
+#       直行 vx +0.5 m/s ⇒ 误差均值 +6.95%（1099 样本）/ +7.94%（699 样本）
+#       倒退 vx −0.3 m/s ⇒ 误差均值 +6.39%（699 样本）
+#     ⇒ 硬判据**通过**；`|误差|` 均值 0.0455~0.0478、P95 0.1022~0.1036、max 0.1248 m/s 仅**记录**，
+#       **不设阈**（等工况足够再定，避免用单点数据定阈值）。
+#   · 转弯（yaw）与侧行（vy）工况的 `vx` 指令为 0 ⇒ **本判据不适用**；它们各自的口径属 A4/A5。
+#
+# 复算方式（任何人可复跑，铁律 5.2）：
+#   PYTHONPATH=src python3 scripts/recompute_locomote_tracking.py --all
+#   只读 build/research/mpc-repo/eval_trot_23-*.json（证据区），不产生新仿真。
+
+schema_version: iraf.quadruped-locomote-acceptance/v1
+simulation: true
+
+robot:
+  id: unitree_go2
+  profile: profiles/unitree_go2_mujoco.yaml
+# 安全边界不在这里（唯一事实来源是安全策略；本文件只写"验收判据"）
+safety_policy: profiles/safety/quadruped_lab.yaml
+
+# 速度跟踪验收（②）
+velocity_tracking:
+  # 稳态窗口：从运动开始后第 N 秒起，直到本次运行结束（去掉起步瞬态）
+  steady_window_start_s: 2.5
+  # 硬判据：相对指令速度的**误差均值**上限（无量纲，0.10 = 10%）
+  max_mean_rel_error: 0.10
+  # 仅记录、不设阈的指标（先用数据积累，再定阈值）
+  record_only:
+    - abs_err_mean_mps
+    - abs_err_p95_mps
+    - abs_err_max_mps
+  # 适用性：本判据只适用于"直行/倒退"（指令 vx ≠ 0）；vx = 0 的工况记 NA，不判不通过
+  applies_when: "abs(vx_cmd) > 0"
+
+# 前置与失败路径（与铁律一致，写死）
+preconditions:
+  # 被控对象不得从"足端穿透支撑面"的初始条件起跑（实测沉入 18.372 mm 会使仿真处于
+  # 浮点舍入级敏感，见 docs/debug/2026-09-22-mpc-qp-latency.md §25）
+  require_initial_alignment: true
+  # 执行必须经 TaskFlow → SkillRuntime → PolicyGateway（不得旁路）
+  require_policy_gateway: true
+failure_paths:
+  # QP 无解/超时/解过期 ⇒ damped_hold（移动中），不得继续跑旧解
+  on_stale_or_failed_solver: damped_hold
+  on_emergency_or_safety_event: torque_zero_release
+
+# 证据要求
+evidence:
+  report_dir: build/acceptance/go2-locomote
+  must_record:
+    - profile_sha256
+    - safety_policy_sha256
+    - control_frequency_hz
+    - friction_pairing            # 同摩擦配对：(我们 0.4 / 它 0.4)、(我们 0.8 / 它 0.8)
+    - qp_overrun_count            # 移动中 QP 越界次数（记录项）
