@@ -374,7 +374,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         self.ledger.finish(active_id, "SUCCEEDED")
         return report
 
-    def stop(self, lease, execution_id=None, *, mode=None):
+    def stop(self, lease, execution_id=None, *, mode=None, tilt_limit_deg=None):
         """停机分派：`mode=None` / `torque_zero_release` ⇒ 既有失能停机（行为逐位不变）；
         `damped_hold` ⇒ 受控停止（**尚未实现**，见 `.hermes/plans/2026-09-23-damped-hold-code.md`）。
 
@@ -385,7 +385,8 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         if mode is None or mode == "torque_zero_release":
             return self._stop_torque_zero_release(lease, execution_id)
         if mode == "damped_hold":
-            return self.damped_hold(lease, execution_id=execution_id)
+            return self.damped_hold(lease, execution_id=execution_id,
+                                    tilt_limit_deg=tilt_limit_deg)
         raise CommandRejectedError(
             "不支持的 stop 模式 %r（支持：%s）" % (mode, SUPPORTED_STOP_MODES))
 
@@ -423,11 +424,16 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         return report
 
     # ---- 受控停止（damped_hold：ADR-0008 决策 1；契约见 docs/debug/2026-09-22-damped-hold-spec.md）----
-    def damped_hold(self, lease, execution_id=None):
+    def damped_hold(self, lease, execution_id=None, *, tilt_limit_deg=None):
         """受控停止：减速到零并**保持站立**（不松力、不退出控制）。
 
-        判定与阈值**全部来自声明**（`config/go2_loopback.yaml` 的 `stop` 段 +
-        `quadruped_limits.max_tilt_moving_deg`），本方法不写任何数字。
+        判定与阈值**全部来自声明**：`stop.duration_s` / `stop.speed_tolerance_mps` /
+        `stop.static_hold_s` / `stop.final_window_s`（本适配器的 declaration，即 `config/go2_loopback.yaml`）。
+
+        ⚠ **倾角上限不在这里读**：`config/go2_loopback.yaml` 明写"`quadruped_limits` 只在
+        `profiles/safety/quadruped_lab.yaml` 声明一次（避免同一事实两处）" ⇒ 倾角上限由**调用方**
+        （技能/策略层，经 `iraf_skills.quadruped.load_movement_limits`）以 `tilt_limit_deg` 传入；
+        不传时适配器**只测量并上报** `max_tilt_deg`，不自行判定（不得偷偷内置一个数字）。
         终态（ledger 只允许写一次，见 quadruped.TERMINAL_STATES）：
           · 达标 ⇒ `STOPPED`；超时未达标 ⇒ `FAILED`（带实测量，不得回写成功）；
           · 运行中出现安全事件 ⇒ 松力并写 `SAFETY_STOP`。
@@ -444,19 +450,22 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         tol_speed = float(_dig(self.declaration, "stop.speed_tolerance_mps", "声明"))
         hold_need_s = float(_dig(self.declaration, "stop.static_hold_s", "声明"))
         final_win_s = float(_dig(self.declaration, "stop.final_window_s", "声明"))
-        tilt_limit = float(_dig(self.declaration,
-                                "quadruped_limits.max_tilt_moving_deg", "声明"))
+        # 倾角上限**由调用方传入**（`profiles/safety/quadruped_lab.yaml` 是唯一事实来源；
+        # `config/go2_loopback.yaml` 明写避免同一事实两处）⇒ 不传则只测量上报、不自行判定。
+        tilt_limit = None if tilt_limit_deg is None else float(tilt_limit_deg)
         ramp_s = float(_dig(self.declaration, "stand.ramp_s", "声明"))
 
         home = {joint: float(self.profile.home[joint]) for joint in self.joint_order}
         balance_params = self._balance_parameters()
-        params = self._gait_parameters()
-        geometry = self._leg_geometry(params)
-        trunk_body = gait.trunk_body_id(self.model, self.mujoco, params)
-        torque_provider = (
-            self._balance_provider(params, geometry, trunk_body, balance_params)
-            if balance_params["enabled"] else None
-        )
+        # 步态/几何只在**平衡器启用时**才需要解析（避免对无步态声明的本体提要求；
+        # 也是"惰性解析"的既有风格：缺段的本体不该因未用到的通路失败）。
+        torque_provider = None
+        if balance_params["enabled"]:
+            params = self._gait_parameters()
+            geometry = self._leg_geometry(params)
+            trunk_body = gait.trunk_body_id(self.model, self.mujoco, params)
+            torque_provider = self._balance_provider(params, geometry, trunk_body,
+                                                     balance_params)
 
         samples = []
 
@@ -475,7 +484,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         final_speed = float(np.mean(speeds[-n_final:])) if speeds else float("nan")
         max_tilt = float(max(tilts)) if tilts else float("inf")
         hold_ok = self._continuous_below(speeds, tol_speed, hold_need_s)
-        tilt_ok = max_tilt <= tilt_limit
+        tilt_ok = True if tilt_limit is None else bool(max_tilt <= tilt_limit)
         safety_event = self._safety_event_active(lease)
         ok = bool(hold_ok and tilt_ok)
 
@@ -496,13 +505,15 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             "static_hold_s": hold_need_s,
             "final_window_s": final_win_s,
             "tilt_limit_deg": tilt_limit,
+            "tilt_limit_source": ("caller" if tilt_limit is not None else "not_provided"),
             "height_start_m": float(samples[0]["base_height_m"]) if samples else None,
             "height_end_m": float(samples[-1]["base_height_m"]) if samples else None,
             "failure_reason": (
                 "safety_event" if safety_event else
                 "" if ok else
-                "超时未达标：末速 %.6f m/s（限 %.6f）｜倾角 %.4f°（限 %.1f°）"
-                % (final_speed, tol_speed, max_tilt, tilt_limit)
+                "超时未达标：末速 %.6f m/s（限 %.6f）｜倾角 %.4f°（限 %s）"
+                % (final_speed, tol_speed, max_tilt,
+                   "未提供" if tilt_limit is None else "%.1f°" % tilt_limit)
             ),
             "samples": samples,
             "final_state": self.read_state(),

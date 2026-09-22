@@ -25,9 +25,9 @@ class _Stub:
     def __init__(self):
         self.routed = []
 
-    def damped_hold(self, lease, execution_id=None):
+    def damped_hold(self, lease, execution_id=None, **kwargs):
         self.routed.append(("damped_hold", lease, execution_id))
-        return {"stop_mode": "damped_hold"}
+        return {"stop_mode": "damped_hold", "kwargs": kwargs}
 
     def _stop_torque_zero_release(self, lease, execution_id=None):
         self.routed.append(("torque_zero_release", lease, execution_id))
