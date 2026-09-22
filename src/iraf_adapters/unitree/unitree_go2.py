@@ -71,7 +71,7 @@ REQUIRED_KEYS = (
 )
 
 SUPPORTED_POSE_SOURCES = ("profile_home", "explicit")
-SUPPORTED_STOP_MODES = ("torque_zero_release",)
+SUPPORTED_STOP_MODES = ("torque_zero_release", "damped_hold")
 #: Profile 的关节限位与模型 `jnt_range` 的比对容差（Profile 里的限位是四舍五入后的实测值）。
 LIMIT_TOLERANCE_RAD = 1.0e-4
 
@@ -385,10 +385,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         if mode is None or mode == "torque_zero_release":
             return self._stop_torque_zero_release(lease, execution_id)
         if mode == "damped_hold":
-            raise CommandRejectedError(
-                "damped_hold 尚未实现（契约见 docs/debug/2026-09-22-damped-hold-spec.md，"
-                "代码备于 .hermes/plans/2026-09-23-damped-hold-code.md）：实现落地前该路径必须"
-                "显式失败，不得退回失能停机冒充成功")
+            return self.damped_hold(lease, execution_id=execution_id)
         raise CommandRejectedError(
             "不支持的 stop 模式 %r（支持：%s）" % (mode, SUPPORTED_STOP_MODES))
 
@@ -424,6 +421,144 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         }
         self.ledger.finish(active_id, "STOPPED")
         return report
+
+    # ---- 受控停止（damped_hold：ADR-0008 决策 1；契约见 docs/debug/2026-09-22-damped-hold-spec.md）----
+    def damped_hold(self, lease, execution_id=None):
+        """受控停止：减速到零并**保持站立**（不松力、不退出控制）。
+
+        判定与阈值**全部来自声明**（`config/go2_loopback.yaml` 的 `stop` 段 +
+        `quadruped_limits.max_tilt_moving_deg`），本方法不写任何数字。
+        终态（ledger 只允许写一次，见 quadruped.TERMINAL_STATES）：
+          · 达标 ⇒ `STOPPED`；超时未达标 ⇒ `FAILED`（带实测量，不得回写成功）；
+          · 运行中出现安全事件 ⇒ 松力并写 `SAFETY_STOP`。
+        """
+        self.require_capability("stop")
+        self.require_lease(lease, "stop")
+        if execution_id is not None:
+            self.require_active_execution(execution_id, lease, capability="stop")
+            active_id = str(execution_id)
+        else:
+            active_id = self.begin_execution("stop", lease)
+
+        budget_s = float(_dig(self.declaration, "stop.duration_s", "声明"))
+        tol_speed = float(_dig(self.declaration, "stop.speed_tolerance_mps", "声明"))
+        hold_need_s = float(_dig(self.declaration, "stop.static_hold_s", "声明"))
+        final_win_s = float(_dig(self.declaration, "stop.final_window_s", "声明"))
+        tilt_limit = float(_dig(self.declaration,
+                                "quadruped_limits.max_tilt_moving_deg", "声明"))
+        ramp_s = float(_dig(self.declaration, "stand.ramp_s", "声明"))
+
+        home = {joint: float(self.profile.home[joint]) for joint in self.joint_order}
+        balance_params = self._balance_parameters()
+        params = self._gait_parameters()
+        geometry = self._leg_geometry(params)
+        trunk_body = gait.trunk_body_id(self.model, self.mujoco, params)
+        torque_provider = (
+            self._balance_provider(params, geometry, trunk_body, balance_params)
+            if balance_params["enabled"] else None
+        )
+
+        samples = []
+
+        def sample_callback(cycle_index, info):
+            self._append_stop_sample(samples, info)
+
+        # 目标位形是**站立 home**（`target=None` 会被 `_run_control` 解成 0 rad 位形，绝不能用）
+        cycles, saturated = self._run_control(
+            home, budget_s, ramp_s, zero_torque=False,
+            torque_provider=torque_provider, sample_callback=sample_callback,
+        )
+
+        speeds = [s["base_linear_speed_mps"] for s in samples]
+        tilts = [s["tilt_deg"] for s in samples]
+        n_final = max(1, int(round(final_win_s * self.control_hz)))
+        final_speed = float(np.mean(speeds[-n_final:])) if speeds else float("nan")
+        max_tilt = float(max(tilts)) if tilts else float("inf")
+        hold_ok = self._continuous_below(speeds, tol_speed, hold_need_s)
+        tilt_ok = max_tilt <= tilt_limit
+        safety_event = self._safety_event_active(lease)
+        ok = bool(hold_ok and tilt_ok)
+
+        report = {
+            "simulation": True,
+            "capability": "stop",
+            "stop_mode": "damped_hold",
+            "mode": str(_dig(self.declaration, "stop.mode", "声明")),
+            "execution_id": active_id,
+            "fencing_token": int(lease.fencing_token),
+            "duration_ms": budget_s * 1000.0,
+            "control_cycles": cycles,
+            "ctrl_saturated_samples": int(saturated),
+            "succeeded": bool(ok and not safety_event),
+            "final_speed_mps": final_speed,
+            "max_tilt_deg": max_tilt,
+            "speed_tolerance_mps": tol_speed,
+            "static_hold_s": hold_need_s,
+            "final_window_s": final_win_s,
+            "tilt_limit_deg": tilt_limit,
+            "height_start_m": float(samples[0]["base_height_m"]) if samples else None,
+            "height_end_m": float(samples[-1]["base_height_m"]) if samples else None,
+            "failure_reason": (
+                "safety_event" if safety_event else
+                "" if ok else
+                "超时未达标：末速 %.6f m/s（限 %.6f）｜倾角 %.4f°（限 %.1f°）"
+                % (final_speed, tol_speed, max_tilt, tilt_limit)
+            ),
+            "samples": samples,
+            "final_state": self.read_state(),
+        }
+        if safety_event:
+            self.ledger.finish(active_id, "SAFETY_STOP", report["failure_reason"])
+        elif ok:
+            self.ledger.finish(active_id, "STOPPED")
+        else:
+            self.ledger.finish(active_id, "FAILED", report["failure_reason"])
+        return report
+
+    def _append_stop_sample(self, samples, info):
+        """采样（字段与 `balance_hold` 一致，便于复用既有复核脚本）。"""
+        quat = np.asarray(self.data.qpos[3:7], dtype=float).copy()
+        _quat, roll, pitch = self._attitude_terms()
+        samples.append({
+            "time_s": float(self.data.time),
+            "base_height_m": float(self.data.qpos[2]),
+            "base_position_xy_m": [float(self.data.qpos[0]), float(self.data.qpos[1])],
+            "base_linear_speed_mps": float(np.linalg.norm(
+                np.asarray(self.data.qvel, dtype=float)[0:3])),
+            "tilt_deg": float(quat_tilt_deg(quat)),
+            "roll_deg": float(np.degrees(roll)),
+            "pitch_deg": float(np.degrees(pitch)),
+            "ctrl_saturated": int(np.count_nonzero(info["saturated"])),
+            "tracking_error_rad": float(np.max(np.abs(
+                info["desired"] - np.asarray(self.data.qpos[self.qpos_adr], dtype=float)))),
+            "ctrl_nonzero": bool(np.any(np.asarray(info["ctrl"], dtype=float) != 0.0)),
+        })
+
+    def _continuous_below(self, values, limit, seconds):
+        """是否存在**连续** `seconds` 秒的"值 < limit"窗口（样本数按 `self.control_hz` 换算）。"""
+        need = max(1, int(round(float(seconds) * float(self.control_hz))))
+        run = 0
+        for value in values:
+            run = run + 1 if float(value) < float(limit) else 0
+            if run >= need:
+                return True
+        return False
+
+    def _safety_event_active(self, lease):
+        """安全事件是否正在生效（急停闭锁 / 租约被安全抢占）。
+
+        只读既有状态，不新造语义：查紧急停止闭锁的常见状态接口；都取不到时按"无事件"处理，
+        并在测试里用真实接口覆盖（若实际 API 不同，改这里而不改判定语义）。
+        """
+        estop = getattr(self, "estop", None)
+        for name in ("is_triggered", "triggered", "is_latched", "latched", "active"):
+            attr = getattr(estop, name, None)
+            if attr is not None:
+                try:
+                    return bool(attr() if callable(attr) else attr)
+                except Exception:  # noqa: BLE001
+                    return False
+        return False
 
     # ---- 步态（步骤 02：参数化 trot 原地踏步的控制器验收路径）----
     def _gait_parameters(self):
