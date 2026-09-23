@@ -20,7 +20,8 @@ from __future__ import annotations
 import numpy as np
 
 __all__ = ["REQUIRED_MODEL_KEYS", "REQUIRED_BOUNDS_KEYS", "REQUIRED_FRICTION_KEYS",
-           "cost_diagonal", "state_cost_weights", "box_bounds", "linear_cost", "friction_rows"]
+           "cost_diagonal", "state_cost_weights", "box_bounds", "linear_cost", "friction_rows",
+           "dynamics_equality"]
 
 #: `mpc_model` 中本模块消费的键。
 REQUIRED_MODEL_KEYS = ("q_diag", "r_diag", "horizon")
@@ -180,6 +181,50 @@ def friction_rows(contact_table, mpc_model):
                 r0 += 1
     return {"rows": rows, "cols": cols, "vals": vals, "n_rows": r0,
             "upper_bound": upper, "lower_bound": np.full(r0, -np.inf, dtype=float)}
+
+
+def dynamics_equality(ad, bd, x0, gd, mpc_model):
+    """动力学等式块 `A_eq` 与右端 `beq`（上游 `_assemble_A_matrix` + `_update_sparse_matrix`）。
+
+    上游事实（逐行读到）：
+      · `big_minus_Ad = diagcat([−Ad] × N)`、`big_Bd = diagcat([−Bd_k])`，`S_block` 把 `Ad` 移到
+        **下一次对角** ⇒ `A_eq = horzcat(I + S_block@big_minus_Ad, big_Bd)`；
+      · `beq_first = Ad@x0 + gd`（用初始状态作为"x₋₁"）、`beq_rest = repmat(gd, N−1, 1)`；
+      · `lb = vertcat(beq, l_ineq)`、`ub = vertcat(beq, u_ineq)` ⇒ 等式段两侧同为 `beq`。
+
+    结构记账（与实测 `a` nnz 精确吻合，见 docs/debug/2026-09-23-qp-builder-port-plan.md）：
+    `I` 192 + `Ad` 次对角 15×144 + `Bd` 对角 16×144 = 4656（等式段）+ 摩擦 512 = **5168**。
+    返回 `(A_eq, beq)`：`A_eq` 形状 `(N·12, N·24)`，`beq` 长度 `N·12`。
+    """
+    if not isinstance(mpc_model, dict) or "horizon" not in mpc_model:
+        raise ValueError("mpc_model 缺 horizon")
+    horizon = int(mpc_model["horizon"])
+    if horizon < 1:
+        raise ValueError("mpc_model.horizon 必须 ≥1，实际 %r" % (mpc_model["horizon"],))
+    Ad = np.asarray(ad, dtype=float)
+    if Ad.shape != (STATE_DIM, STATE_DIM):
+        raise ValueError("Ad 形状必须为 (12, 12)，实际 %r" % (Ad.shape,))
+    Bd = np.asarray(bd, dtype=float)
+    if Bd.shape == (horizon * STATE_DIM, INPUT_DIM):
+        Bd = Bd.reshape(horizon, STATE_DIM, INPUT_DIM)
+    if Bd.shape != (horizon, STATE_DIM, INPUT_DIM):
+        raise ValueError("Bd 形状必须为 (N, 12, 12) 或 (N·12, 12)，实际 %r" % (Bd.shape,))
+    x0 = np.asarray(x0, dtype=float).reshape(-1)
+    gd = np.asarray(gd, dtype=float).reshape(-1)
+    if x0.size != STATE_DIM or gd.size != STATE_DIM:
+        raise ValueError("x0/gd 长度必须为 12，实际 %r/%r" % (x0.size, gd.size))
+
+    n = horizon * STATE_DIM
+    shift = np.zeros((n, n))                     # S_block @ diag(−Ad)：−Ad 落在下一次对角
+    for k in range(1, horizon):
+        shift[k * STATE_DIM:(k + 1) * STATE_DIM, (k - 1) * STATE_DIM:k * STATE_DIM] = -Ad
+    bd_block = np.zeros((n, n))
+    for k in range(horizon):
+        bd_block[k * STATE_DIM:(k + 1) * STATE_DIM, k * STATE_DIM:(k + 1) * STATE_DIM] = -Bd[k]
+    A_eq = np.hstack([np.eye(n) + shift, bd_block])
+    beq = np.concatenate([Ad @ x0 + gd, np.tile(gd, horizon - 1)] if horizon > 1
+                         else [Ad @ x0 + gd])
+    return A_eq, beq
 
 
 def linear_cost(x_ref, mpc_model):

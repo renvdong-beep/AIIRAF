@@ -310,3 +310,90 @@ def test_friction_rows_match_captured_upstream_bitwise():
         assert out["upper_bound"].tobytes() == np.asarray(qp["uba"], dtype=float)[base:].tobytes()
         checked += 1
     assert checked >= 20
+
+
+# ---- 动力学等式块 ----
+
+from iraf_adapters.unitree.mpc.qp_builder import dynamics_equality  # noqa: E402
+
+
+def _dyn_inputs(n):
+    # 稠密 Ad（真实上游 Ad 是稠密的 ⇒ 每个次对角块贡献 12×12 = 144 个非零）
+    Ad = (np.arange(144, dtype=float).reshape(12, 12) + 1.0) * 0.01
+    Bd = np.zeros((n, 12, 12))
+    for k in range(n):
+        Bd[k, k % 12, k % 12] = 1.0
+    return Ad, Bd, np.arange(12, dtype=float), np.ones(12) * 0.1
+
+
+def test_dynamics_equality_shapes_and_nnz_accounting():
+    m = _model()
+    n = int(m["horizon"])
+    Ad, Bd, x0, gd = _dyn_inputs(n)
+    A_eq, beq = dynamics_equality(Ad, Bd, x0, gd, m)
+    assert A_eq.shape == (192, 384) and beq.shape == (192,)
+    assert np.count_nonzero(A_eq) == 192 + 15 * 144 + 16 * 1     # 对角 I + 次对角 Ad 块 + Bd 1 项/块
+
+
+def test_dynamics_equality_shift_lands_on_next_block():
+    m = _model()
+    Ad, Bd, x0, gd = _dyn_inputs(int(m["horizon"]))
+    A_eq, _ = dynamics_equality(Ad, Bd, x0, gd, m)
+    # 第 0 行块：只有 I（无 shift）
+    assert np.allclose(A_eq[0:12, 0:12], np.eye(12))
+    assert np.allclose(A_eq[0:12, 12:24], 0.0)
+    # 第 1 行块：col 0..12 处 = −Ad；col 12..24 处 = I
+    assert np.allclose(A_eq[12:24, 0:12], -Ad)
+    assert np.allclose(A_eq[12:24, 12:24], np.eye(12))
+    # Bd 段在列 192 起
+    assert np.count_nonzero(A_eq[:, :192]) == 192 + 15 * 144
+
+
+def test_dynamics_equality_beq_uses_initial_state_then_gravity_only():
+    m = _model()
+    n = int(m["horizon"])
+    Ad, Bd, x0, gd = _dyn_inputs(n)
+    _, beq = dynamics_equality(Ad, Bd, x0, gd, m)
+    assert np.allclose(beq[0:12], Ad @ x0 + gd)
+    for k in range(1, n):
+        assert np.allclose(beq[12 * k:12 * (k + 1)], gd)
+
+
+@pytest.mark.parametrize("bad", [
+    {"ad": np.eye(11)},
+    {"bd": np.zeros((16, 12, 11))},
+    {"x0": np.zeros(11)},
+    {"gd": np.zeros(13)},
+])
+def test_dynamics_equality_invalid_inputs(bad):
+    m = _model()
+    Ad, Bd, x0, gd = _dyn_inputs(int(m["horizon"]))
+    kw = {"ad": Ad, "bd": Bd, "x0": x0, "gd": gd}
+    kw.update(bad)
+    with pytest.raises(ValueError):
+        dynamics_equality(kw["ad"], kw["bd"], kw["x0"], kw["gd"], m)
+
+
+def test_dynamics_equality_matches_captured_upstream_bitwise():
+    import json
+    path = ROOT / "build" / "research" / "mpc-repo" / "qp_inputs.json"
+    if not path.is_file():
+        pytest.skip("缺少截获证据 %s" % path)
+    captured = json.loads(path.read_text(encoding="utf-8"))
+    m = _model()
+    checked = 0
+    for qp in captured["qps"]:
+        for key in ("Ad", "Bd", "x0", "gd"):
+            if key not in qp:
+                pytest.skip("证据文件未含 %s（需重跑探针）" % key)
+        A_eq, beq = dynamics_equality(np.asarray(qp["Ad"]), np.asarray(qp["Bd"]),
+                                      np.asarray(qp["x0"]), np.asarray(qp["gd"]), m)
+        nz = np.nonzero(A_eq)
+        mine = dict(zip(zip(nz[0].tolist(), nz[1].tolist()), A_eq[nz].tolist()))
+        up = {(r, c): v for r, c, v in zip(qp["a_rows"], qp["a_cols"], qp["a_vals"]) if r < 192}
+        assert set(mine) <= set(up)
+        assert all(mine.get(k, 0.0) == up[k] for k in up)
+        assert beq.tobytes() == np.asarray(qp["lba"], dtype=float)[:192].tobytes()
+        assert beq.tobytes() == np.asarray(qp["uba"], dtype=float)[:192].tobytes()
+        checked += 1
+    assert checked >= 20
