@@ -1578,7 +1578,8 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         if not isinstance(section, dict):
             raise DeclarationError("声明缺少 locomote 段（Provider 配置与默认时长必须来自声明）")
         missing = [key for key in ("provider_config", "duration_seconds",
-                                   "stance_position_weight", "swing_position_weight")
+                                   "stance_position_weight", "swing_position_weight",
+                                   "velocity_ramp_s")
                    if key not in section]
         if missing:
             raise DeclarationError("声明缺少 locomote 的键: %s" % missing)
@@ -1612,6 +1613,11 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         # 2026-09-21 调试记录 §15/§22 的实测：只按声明会把「该抬未抬」的腿当支撑腿 ⇒ 给它零位置权重
         # 又不给它力控 ⇒ 被压在地面/翻倒）。阈值同样来自步态声明的 verification 段，不写数字。
         contact_threshold = float(trot["verification"]["contact_force_threshold_n"])
+        # 速度指令斜坡（见 config 里 `locomote.velocity_ramp_s` 的实测依据）：阶跃指令会在第一拍
+        # 让 QP 产生巨大的反向水平力（实测 Σfx=+74.803 N vs 匀速态 +0.495 N），故按斜坡给进。
+        velocity_ramp_s = float(section["velocity_ramp_s"])
+        if velocity_ramp_s < 0.0:
+            raise DeclarationError("locomote.velocity_ramp_s 必须 ≥ 0，实际 %r" % velocity_ramp_s)
         # `resolve_duration_ms(duration_ms, declared_seconds)` **返回秒**，且缺省值也是秒
         # （quadruped.py:608）；因此这里不再换算、声明键也用 `duration_seconds`。
         seconds = self.resolve_duration_ms(duration_ms, float(section["duration_seconds"]))
@@ -1657,6 +1663,9 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         def plan_fn():
             """本拍 QP 请求（只在更新拍被调用；同一份接触表用于 QP 与 B1 权重口径）。"""
             state_now = state_vector_now()
+            elapsed = float(self.data.time) - onset
+            ramp = (1.0 if velocity_ramp_s <= 0.0
+                    else min(1.0, max(elapsed, 0.0) / velocity_ramp_s))
             if state_holder["pos_des_world"] is None:
                 state_holder["pos_des_world"] = np.array([state_now[0], state_now[1], z_des])
             mass_now, _c, inertia_now, _b = mpc_state.subtree_mass_inertia(
@@ -1667,8 +1676,9 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 inertia_com_world=inertia_now, hip_offsets=hip_offsets,
                 body_velocity_body=self._body_frame_velocity(trunk_body),
                 pos_des_world=state_holder["pos_des_world"],
-                command={"vx_body": resolved["vx_mps"], "vy_body": resolved["vy_mps"],
-                         "yaw_rate": resolved["wz_rad_s"], "z_des": z_des},
+                command={"vx_body": ramp * resolved["vx_mps"],
+                         "vy_body": ramp * resolved["vy_mps"],
+                         "yaw_rate": ramp * resolved["wz_rad_s"], "z_des": z_des},
                 t0=float(self.data.time) - onset, return_context=True,
             )
             # 参考位置的**钳位结果**必须跨拍保留（上游既有语义：`pos_des_world` 是有状态量）

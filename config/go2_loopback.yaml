@@ -566,6 +566,11 @@ locomote:
   # 故这里取 1.0/1.0：PD 守构型，MPC 的接触力矩叠加在上面。
   stance_position_weight: 1.0
   swing_position_weight: 1.0
+  # 速度指令**斜坡**时长（秒）：指令不是阶跃给进 QP，而是按 `min(1, elapsed/ramp)` 缩放。
+  # 依据（2026-09-23 实测）：从静止直接给 vx=+0.2 阶跃时，QP 第 0 拍给出 Σfx=+74.803 N
+  # （而匀速态只需 +0.495 N），这段反向冲量把机身推成 −0.224 m/s 的恒定后漂、指令增益只有 0.335。
+  # 上游闭环 `eval_trot_23.py` 同样是斜坡起速（其 `--settle` 默认 1.0 s），此处取同口径。
+  velocity_ramp_s: 1.0
 
 state:
   # 传感器按名字解析（关节名 ≠ 执行器名：go2.xml 关节 FL_hip_joint / 执行器 FL_hip）。
