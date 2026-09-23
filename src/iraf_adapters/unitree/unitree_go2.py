@@ -1771,11 +1771,40 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 warmup["warm"] = True
                 break
 
+        # 世界系锚定（`gait.walk.anchor: measured_pose`）所需的**每腿触地世界位**：
+        # 触地那一拍记下「当前机身位姿下的中立足端」的世界坐标，支撑相内保持不变
+        # （足端在世界系不动 ⇒ 不打滑；摆动相把目标插值回当前机身位姿下的中立位）。
+        walk_anchors = {code: {"stance": None, "foot_world": None} for code in geometry}
+        walk_duty = float(trot["duty_factor"])
+
+        def walk_pose_measured(elapsed):
+            """实测机身位姿 + 各腿触地世界位（仅 `measured_pose` 档需要）。"""
+            state_now = state_vector_now()
+            body_x = float(state_now[0])
+            body_y = float(state_now[1])
+            yaw = float(state_now[5])
+            cos_yaw, sin_yaw = math.cos(yaw), math.sin(yaw)
+            pose = {}
+            for code in geometry:
+                rx = float(geometry[code]["trunk_rel_m"][0])
+                ry = float(geometry[code]["trunk_rel_m"][1])
+                neutral_x = body_x + cos_yaw * rx - sin_yaw * ry
+                neutral_y = body_y + sin_yaw * rx + cos_yaw * ry
+                entry = walk_anchors[code]
+                stance = (gait.leg_phase(trot, code, elapsed) % 1.0) < walk_duty
+                if stance and entry["stance"] is not True:
+                    # 触地：锚点 = 这一拍的中立足端世界位（此后支撑相内不再动）。
+                    entry["foot_world"] = (neutral_x, neutral_y)
+                entry["stance"] = stance
+                pose[code] = {"body_xy_m": (body_x, body_y), "body_yaw_rad": yaw,
+                              "stance_foot_world_m": entry["foot_world"]}
+            return pose
+
         def target_provider(cycle_index, now):
             """摆动/支撑的关节形状目标（MPC 只提供接触力矩；形状仍由既有目标生成给出）。
 
-            `walk_command_mps_rad_s` 是与 QP **同一份**斜坡指令：支撑足目标按指令速度反向退让
-            （世界系钉住足端），否则位置环会把机身钉在站立点上（`gait.walk_foot_offset_m` docstring）。
+            `walk_command_mps_rad_s` 是与 QP **同一份**斜坡指令；`walk_pose` 是实测机身位姿
+            （`anchor: measured_pose` 档用：漂移/速度指令都由它换算，见 `gait.walk_foot_offset_m`）。
             """
             elapsed = now - onset
             vx_cmd, vy_cmd, wz_cmd = ramped_command(elapsed)
@@ -1783,6 +1812,8 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 trot, geometry, home, limits, elapsed, gait.amplitude_at(trot, elapsed),
                 self._body_frame_velocity(trunk_body), self._body_frame_omega(trunk_body),
                 walk_command_mps_rad_s=(vx_cmd, vy_cmd, wz_cmd),
+                walk_pose=(walk_pose_measured(elapsed)
+                           if (trot.get("walk") or {}).get("anchor") == "measured_pose" else None),
             )
             return np.array([targets[joint] for joint in self.joint_order], dtype=float)
 

@@ -192,6 +192,10 @@ mpc_gait:
       enabled: true
       # 摆动相把退让位移按 1−cos 归零（两端速度为零 ⇒ 落足无冲击）
       return_profile: cosine
+      # 锚定方式（见 `gait.walk_foot_offset_m` 与 docs/debug/2026-09-23-go2-walk-foot-retraction.md）：
+      #   `command_ramp`  = 按指令速度在机身系里开环退让；
+      #   `measured_pose` = 足端目标的世界系位置钉住 + 实测机身位姿换算（不再自己产生推进量）。
+      anchor: command_ramp
     # 相位偏移：上游 `PHASE_OFFSET = [0.5, 0.0, 0.0, 0.5]`，**其索引顺序是 [FL, FR, RL, RR]
     # （RL 在 RR 之前）** ⇒ FL 0.5 / FR 0.0 / RL 0.0 / RR 0.5。
     # 对角配对由门禁强制：恰好两组、每组 2 条腿、两组相差 0.5。

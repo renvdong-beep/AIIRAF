@@ -116,7 +116,13 @@ SWAY_DIRECTION_TOLERANCE_DEG_RANGE = (0.0, 45.0)
 #: 机身以指令速度前进，位置环权重可以保持 1.0 继续守构型。
 #:
 #: 符号约定与 `sway_offset_m` 同源（本函数给出「足端该往哪退」，调用点直接加到足端目标上）。
-REQUIRED_WALK_KEYS = ("enabled", "return_profile")
+REQUIRED_WALK_KEYS = ("enabled", "return_profile", "anchor")
+
+#: `gait.walk.anchor` 的允许取值（两种锚定方式；见 `walk_foot_offset_m` 的 docstring）：
+#:   `command_ramp`  = 按指令速度在机身系里开环退让（第一档；保留用于 A/B 对照）；
+#:   `measured_pose` = 足端目标的**世界系**位置钉住 + 实测机身位姿换算（第二档，闭环，
+#:                     上游 `leg_controller` 的等价形式）。
+WALK_ANCHORS = ("command_ramp", "measured_pose")
 
 #: `gait.walk.return_profile` 的允许取值：摆动相把退让位移（从支撑末值）归零的插值形状。
 #: `cosine` = 1−cos 型（两端速度为零，落足无冲击，代价是峰值速度更高，与 `swing_profile` 同取向）。
@@ -308,33 +314,17 @@ def _load_sway(section, legs, kind):
 
 
 def _load_walk(section):
-    """解析 `gait.walk`（支撑足按指令速度退让）；返回规范化字典或 `None`。
+    """解析 `gait.walk`（支撑足退让）；返回规范化字典或 `None`。
 
     `None` = 未声明 ⇒ 调用点（`walk_foot_offset_m`）返回精确的 `(0.0, 0.0)`，即「原地踏步」语义。
-    形状错（缺键 / 未知键 / 非法 `return_profile`）一律显式失败 —— 与 `sway` / `foothold` 同取向：
-    `load_gait_declaration` 返回的是**规范化白名单字典**，未在此登记的段会被静默丢弃，
-    于是「声明了但没人消费」会伪装成成功（本函数的存在就是为堵这个洞）。
+    形状错（缺键 / 未知键 / 非法 `return_profile` / 非法 `anchor`）一律显式失败 —— 与
+    `sway` / `foothold` 同取向：`load_gait_declaration` 返回的是**规范化白名单字典**，
+    未在此登记的段会被静默丢弃，于是「声明了但没人消费」会伪装成成功（本函数的存在就是为堵这个洞）。
+    校验逻辑与每拍消费方共用 `_validated_walk_block`（两处同一套门禁）。
     """
-    block = section.get("walk")
-    if block is None:
+    if section.get("walk") is None:
         return None
-    if not isinstance(block, dict):
-        raise DeclarationError("gait.walk 必须是映射，实际: %r" % (block,))
-    missing = [key for key in REQUIRED_WALK_KEYS if key not in block]
-    if missing:
-        raise DeclarationError("gait.walk 缺少必需键: %s" % missing)
-    unknown = [key for key in sorted(block) if key not in REQUIRED_WALK_KEYS]
-    if unknown:
-        raise DeclarationError(
-            "gait.walk 含未知键 %s（白名单: %s）" % (unknown, list(REQUIRED_WALK_KEYS))
-        )
-    profile = str(block["return_profile"])
-    if profile not in WALK_RETURN_PROFILES:
-        raise DeclarationError(
-            "gait.walk.return_profile 只支持 %s，实际: %r"
-            % (list(WALK_RETURN_PROFILES), block["return_profile"])
-        )
-    return {"enabled": bool(block["enabled"]), "return_profile": profile}
+    return _validated_walk_block(section)
 
 
 def phase_groups_of(legs):
@@ -1210,30 +1200,15 @@ def foothold_offset_m(params, code, elapsed_s):
     return (amount * float(direction[0]), amount * float(direction[1]))
 
 
-def walk_foot_offset_m(params, code, elapsed_s, command_mps_rad_s, foot_xy_m):
-    """相位 → 该腿因**机身指令运动**产生的足端退让偏移 `(dx_m, dy_m)`（躯干系）。
+def _validated_walk_block(params):
+    """取出并校验 `gait.walk` 声明；未声明返回 `None`，非法一律显式失败。
 
-    物理含义（本函数就是「走路」这一步的全部内容）：机身要以指令速度 `(vx, vy, wz)` 运动，
-    而支撑足在**世界系里必须静止**（不打滑）。⇒ 在机身系里，足端必须以
-    `−(v + ω×r)` 的速度退让（`r` = 该腿中立足端在躯干系的位置）。支撑相内退让量与时间成正比，
-    摆动相再把位移按声明的形状归零（足端在空中摆回中立位置 ⇒ 相对机身前移一个步幅）。
-
-    为什么必须要它：`foot_offset` 是「原地踏步」语义（`dx ≡ 0`），支撑足目标在机身系里恒定 ⇒
-    机身一前进，位置环就把机身拉回站立点。实测（`vx=+0.2`、4 s，每次只改一处声明）：基线
-    （摆动 1.0 / 支撑 1.0）位移 −0.9642 m；只降摆动腿权重到 0.3 ⇒ −0.4604 m（仍反向）；
-    只降支撑腿权重到 0.2 ⇒ +0.6090 m（方向对）但倾角 179.29°（腿构型失守翻倒）。
-    本项让「世界系足端静止」与「位置环守构型」同时成立。
-
-    `command_mps_rad_s`：指令（机身系，**已含斜坡缩放**，与 QP 用同一份值 ⇒ 单一来源）。
-    `foot_xy_m`：该腿中立足端在**躯干系**的水平位置（`geometry[code]["trunk_rel_m"][:2]`），
-    转向项 `ω×r` 必须用它 —— 机身绕 z 转时，前后腿的横退让方向相反。
-
-    缺省（未声明 `gait.walk` 或 `enabled: false` 或零指令）返回精确的 `(0.0, 0.0)` ⇒ 既有
-    「原地踏步」路径逐位不变（`x + 0.0` 不改变浮点值）。
+    单独成函数的原因：`load_gait_declaration`（声明期）与 `walk_foot_offset_m`（每拍消费）
+    都要跑同一套门禁 —— 后者的入参可能是**手写参数字典**（单测/探针），声明期校验到不了那里。
     """
     block = params.get("walk")
     if block is None:
-        return (0.0, 0.0)
+        return None
     if not isinstance(block, dict):
         raise DeclarationError("gait.walk 必须是映射，实际: %r" % (block,))
     missing = [key for key in REQUIRED_WALK_KEYS if key not in block]
@@ -1252,21 +1227,77 @@ def walk_foot_offset_m(params, code, elapsed_s, command_mps_rad_s, foot_xy_m):
             "gait.walk.return_profile 只支持 %s，实际: %r"
             % (list(WALK_RETURN_PROFILES), block["return_profile"])
         )
-    if not bool(block["enabled"]):
-        return (0.0, 0.0)
+    anchor = str(block["anchor"])
+    if anchor not in WALK_ANCHORS:
+        raise DeclarationError(
+            "gait.walk.anchor 只支持 %s，实际: %r" % (list(WALK_ANCHORS), block["anchor"])
+        )
+    return {"enabled": bool(block["enabled"]), "return_profile": profile, "anchor": anchor}
+
+
+def _finite_walk_command(command_mps_rad_s):
+    """校验指令有限性并返回 `(vx, vy, wz)`（NaN/±inf 一律显式拒绝）。"""
     vx, vy, wz = (float(value) for value in command_mps_rad_s)
     for label, value in (("vx", vx), ("vy", vy), ("wz", wz)):
         if not math.isfinite(value):
             raise CommandRejectedError("指令 %s 非有限值: %r" % (label, value))
+    return vx, vy, wz
+
+
+def _walk_blend(profile, progress):
+    """摆动相插值形状：`cosine` = 1−cos（两端速度为零 ⇒ 落足无冲击）；`linear` = 线性。"""
+    progress = min(1.0, max(0.0, float(progress)))
+    if profile == "cosine":
+        return 0.5 - 0.5 * math.cos(math.pi * progress)
+    return progress
+
+
+def walk_foot_offset_m(params, code, elapsed_s, command_mps_rad_s, foot_xy_m, pose=None):
+    """相位 → 该腿因**机身运动**产生的足端退让偏移 `(dx_m, dy_m)`（躯干系）。
+
+    两种锚定方式由 `gait.walk.anchor` 声明（见各自专用函数的 docstring）：
+
+    - `command_ramp`（第一档，开环）：按**指令速度**在机身系里线性退让；
+    - `measured_pose`（第二档，闭环）：把足端目标的**世界系**位置钉住，再用**实测**机身位姿
+      换算回机身系 —— 上游 `leg_controller` 的等价形式（足端轨迹在世界系规划、机身位姿取实测）。
+
+    实测依据（2026-09-23，同一 `vx=+0.2` / 4 s 工况）：`command_ramp` 与 QP 的水平参考**重复计数**
+    同一份速度（等效增益≈2）⇒ 前进只有指令的 16%、后退发散（Σfz 3630.53 N = 23.8×mg、3.0 s 摔倒）；
+    把 QP 参考放开给实测后发散消失但跟踪只有 ~50%，支撑腿位置权重扫描 0.2→1.0 单调但仍无一档达标。
+    ⇒ `measured_pose` 不再自己产生推进量：推进交给 QP，本项只负责「足端在世界系里不动」。
+
+    `command_mps_rad_s`：指令（机身系，**已含斜坡缩放**，与 QP 用同一份值 ⇒ 单一来源）。
+    `foot_xy_m`：该腿中立足端在**躯干系**的水平位置（`geometry[code]["trunk_rel_m"][:2]`）。
+    `pose`：实测机身位姿，`measured_pose` 档必需；缺省 `None` 在 `command_ramp` 档下被忽略。
+
+    缺省（未声明 `gait.walk` 或 `enabled: false`）返回精确的 `(0.0, 0.0)` ⇒ 既有「原地踏步」
+    路径逐位不变（`x + 0.0` 不改变浮点值）。`command_ramp` 档另有「零指令 ⇒ `(0.0, 0.0)`」；
+    `measured_pose` 档**没有**这一条：它是世界系锚定修正而非推进量，机身被推动时即使指令为零
+    也必须修正（否则足端跟着机身走 = 打滑）。
+    """
+    block = _validated_walk_block(params)
+    if block is None or not block["enabled"]:
+        return (0.0, 0.0)
+    vx, vy, wz = _finite_walk_command(command_mps_rad_s)
+    if block["anchor"] == "measured_pose":
+        return _walk_measured_pose_offset_m(params, block, code, elapsed_s, (vx, vy, wz),
+                                           foot_xy_m, pose)
     if vx == 0.0 and vy == 0.0 and wz == 0.0:
         return (0.0, 0.0)
+    return _walk_command_ramp_offset_m(params, block, code, elapsed_s, (vx, vy, wz), foot_xy_m)
 
+
+def _walk_command_ramp_offset_m(params, block, code, elapsed_s, command, foot_xy_m):
+    """`anchor: command_ramp`：按**指令速度**开环给进（第一档，保留用于 A/B 对照）。
+
+    机身系里「世界静止的足端」相对机身的速度 `−(v + ω ẑ × r)`，`r` = 该腿中立足端位置；
+    支撑相 `amount = u·period`，摆动相按声明形状归零。
+    """
+    vx, vy, wz = command
     rx = float(foot_xy_m[0])
     ry = float(foot_xy_m[1])
-    # 机身系里「世界静止的足端」相对机身的速度： −(v + ω ẑ × r)，其中 ω ẑ × r = ω(−ry, +rx)。
     rate_x = -(vx - wz * ry)
     rate_y = -(vy + wz * rx)
-
     period = float(params["period_s"])
     duty = float(params["duty_factor"])
     u = leg_phase(params, code, elapsed_s) % 1.0
@@ -1276,13 +1307,67 @@ def walk_foot_offset_m(params, code, elapsed_s, command_mps_rad_s, foot_xy_m):
     else:
         # 摆动相：位移从支撑末值（u=duty ⇒ duty·period）按声明形状归零。
         progress = (u - duty) / (1.0 - duty) if (1.0 - duty) > 0.0 else 1.0
-        progress = min(1.0, max(0.0, progress))
-        if profile == "cosine":
-            blend = 0.5 - 0.5 * math.cos(math.pi * progress)
-        else:
-            blend = progress
-        amount = duty * period * (1.0 - blend)
+        amount = duty * period * (1.0 - _walk_blend(block["return_profile"], progress))
     return (amount * rate_x, amount * rate_y)
+
+
+def _walk_measured_pose_offset_m(params, block, code, elapsed_s, command, foot_xy_m, pose):
+    """`anchor: measured_pose`：世界系锚定（第二档）。
+
+    语义（每条腿独立）：
+      · 触地时刻记下该足端的**世界系**位置 `w_stance = p_body(t_s) + R(θ(t_s))·nominal`，
+        支撑相目标恒为 `w_stance`（世界系不动 ⇒ 不打滑、不跟随机身 ⇒ 不再把机身钉在站立点）；
+      · 摆动相目标从 `w_stance` 按声明形状插值到「相对**当前**机身位姿的中立位」
+        `p_body(t) + R(θ(t))·nominal`；
+      · 换算回机身系：`p_target_body = R(θ(t))ᵀ (w_target − p_body(t))`，偏移 = 目标 − nominal。
+
+    该式**不含任何推进量**：机身不动 ⇒ 目标恒等于 nominal ⇒ 偏移精确为零（不会像开环档那样
+    自走）；机身被 QP 推动 ⇒ 支撑腿保持在原世界位置，足端因此相对机身后退（这正是「腿在走路」
+    的形态）。指令 `(vx, vy, wz)` 只用于校验（非有限指令必须显式失败），不参与几何计算。
+    """
+    del command  # 只做有限性校验（在调用点已完成），不参与几何计算
+    if not isinstance(pose, dict):
+        raise DeclarationError(
+            "gait.walk.anchor=measured_pose 需要实测机身位姿（pose 必须是映射，实际: %r）" % (pose,))
+    missing = [key for key in ("body_xy_m", "body_yaw_rad", "stance_foot_world_m")
+               if key not in pose]
+    if missing:
+        raise DeclarationError("实测机身位姿缺少键: %s" % missing)
+    body_x, body_y = (float(pose["body_xy_m"][0]), float(pose["body_xy_m"][1]))
+    yaw = float(pose["body_yaw_rad"])
+    for label, value in (("body_xy_m[0]", body_x), ("body_xy_m[1]", body_y),
+                         ("body_yaw_rad", yaw)):
+        if not math.isfinite(value):
+            raise CommandRejectedError("实测机身位姿 %s 非有限值: %r" % (label, value))
+    origin = pose["stance_foot_world_m"]
+    if origin is None:
+        # 尚未记录触地世界位（本腿第一次进入支撑前）：以「当前机身位姿下的中立位」为锚点。
+        origin_x = body_x + math.cos(yaw) * float(foot_xy_m[0]) - math.sin(yaw) * float(foot_xy_m[1])
+        origin_y = body_y + math.sin(yaw) * float(foot_xy_m[0]) + math.cos(yaw) * float(foot_xy_m[1])
+    else:
+        origin_x, origin_y = float(origin[0]), float(origin[1])
+        if not (math.isfinite(origin_x) and math.isfinite(origin_y)):
+            raise CommandRejectedError("触地世界位非有限值: %r" % (origin,))
+
+    duty = float(params["duty_factor"])
+    u = leg_phase(params, code, elapsed_s) % 1.0
+    # 当前机身位姿下的中立足端（世界系）——摆动相的目标端点。
+    neutral_x = body_x + math.cos(yaw) * float(foot_xy_m[0]) - math.sin(yaw) * float(foot_xy_m[1])
+    neutral_y = body_y + math.sin(yaw) * float(foot_xy_m[0]) + math.cos(yaw) * float(foot_xy_m[1])
+    if u < duty:
+        target_x, target_y = origin_x, origin_y
+    else:
+        progress = (u - duty) / (1.0 - duty) if (1.0 - duty) > 0.0 else 1.0
+        blend = _walk_blend(block["return_profile"], progress)
+        target_x = origin_x + blend * (neutral_x - origin_x)
+        target_y = origin_y + blend * (neutral_y - origin_y)
+    # 世界 → 机身系（R(θ)ᵀ）
+    delta_x = target_x - body_x
+    delta_y = target_y - body_y
+    cos_yaw, sin_yaw = math.cos(yaw), math.sin(yaw)
+    body_target_x = cos_yaw * delta_x + sin_yaw * delta_y
+    body_target_y = -sin_yaw * delta_x + cos_yaw * delta_y
+    return (body_target_x - float(foot_xy_m[0]), body_target_y - float(foot_xy_m[1]))
 
 
 def sway_direction_report(params, geometry):
@@ -1422,7 +1507,8 @@ def stabilization_offset(params, body_velocity_mps, body_omega_rad_s, trunk_rel_
 
 def gait_joint_targets(params, geometry, home, joint_limits, elapsed_s, amplitude=1.0,
                        body_velocity_mps=(0.0, 0.0, 0.0), body_omega_rad_s=(0.0, 0.0, 0.0),
-                       body_mean_drift_xy=(0.0, 0.0), walk_command_mps_rad_s=(0.0, 0.0, 0.0)):
+                       body_mean_drift_xy=(0.0, 0.0), walk_command_mps_rad_s=(0.0, 0.0, 0.0),
+                       walk_pose=None):
     """步态相位 → 12 个关节的目标角；目标越出 Profile 限位即显式失败。
 
     与 `gait.kind` 无关：相位→足端偏移（`foot_offset`）与支撑/摆动判定（`is_stance`）
@@ -1463,7 +1549,8 @@ def gait_joint_targets(params, geometry, home, joint_limits, elapsed_s, amplitud
         # 支撑足退让项（`gait.walk` 声明 + 非零指令才生效）：世界系钉住足端 ⇒ 机身以指令速度前进。
         # 未声明/零指令时该项精确为 (0.0, 0.0)，加法不改变浮点值（逐位不变）。
         walk_x, walk_y = walk_foot_offset_m(
-            params, code, elapsed_s, walk_command_mps_rad_s, geom["trunk_rel_m"]
+            params, code, elapsed_s, walk_command_mps_rad_s, geom["trunk_rel_m"],
+            None if walk_pose is None else walk_pose.get(code),
         )
         q_hip, q1, q2 = leg_solve(
             geom["neutral_x_m"] + dx + damping[0] + position[0] - float(sway[0]) + foothold_x

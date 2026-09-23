@@ -58,7 +58,7 @@ def _document():
     return copy.deepcopy(yaml.safe_load(CONFIG.read_text(encoding="utf-8")))
 
 
-def _walk_params(enabled=True, return_profile="cosine"):
+def _walk_params(enabled=True, return_profile="cosine", anchor="command_ramp"):
     """生产链路：`config/go2_locomote.yaml` 的 mpc_gait（含 walk 覆盖）合并出的 trot 声明。
 
     用生产链路而不是手写参数字典 —— 这样「白名单是否接受 walk」「声明的值是否被真正消费」
@@ -67,10 +67,12 @@ def _walk_params(enabled=True, return_profile="cosine"):
     document = yaml.safe_load(LOCOMOTE_CONFIG.read_text(encoding="utf-8")) or {}
     fragment = copy.deepcopy(document["mpc_gait"])
     if not enabled:
-        fragment["overrides"]["walk"] = {"enabled": False,
-                                        "return_profile": return_profile}
+        fragment["overrides"]["walk"] = {"enabled": False, "return_profile": return_profile,
+                                         "anchor": anchor}
     if return_profile != "cosine":
         fragment["overrides"]["walk"]["return_profile"] = return_profile
+    if anchor != "command_ramp":
+        fragment["overrides"]["walk"]["anchor"] = anchor
     base = yaml.safe_load((ROOT / fragment["base_declaration"]).read_text(encoding="utf-8"))
     return gait_trot.load_trot_gait(base, fragment, _profile_joints(),
                                     mpc_model=document["mpc_model"])
@@ -130,7 +132,8 @@ class WalkDeclarationTest(unittest.TestCase):
 
     def test_production_declaration_is_accepted_and_parsed(self):
         params = _walk_params()
-        self.assertEqual(params["walk"], {"enabled": True, "return_profile": "cosine"})
+        self.assertEqual(params["walk"], {"enabled": True, "return_profile": "cosine",
+                                          "anchor": "command_ramp"})
         # 与 mpc_model 的自洽门禁同时成立（period = 1/gait_hz）
         self.assertAlmostEqual(params["period_s"], 1.0 / 3.0, places=15)
 
@@ -377,7 +380,7 @@ class WalkGateTest(unittest.TestCase):
                 "FR", 0.1, (0.2, 0.0, 0.0), FOOT_XY["FR"])
 
     def test_non_finite_command_fails(self):
-        block = {"enabled": True, "return_profile": "cosine"}
+        block = {"enabled": True, "return_profile": "cosine", "anchor": "command_ramp"}
         for command in ((float("inf"), 0.0, 0.0), (0.0, float("nan"), 0.0),
                         (0.0, 0.0, float("-inf"))):
             with self.assertRaises(CommandRejectedError):
@@ -390,6 +393,112 @@ class WalkGateTest(unittest.TestCase):
             gait.walk_foot_offset_m(
                 self._params_with({"enabled": False, "return_profile": "sine"}), "FR", 0.1,
                 (0.2, 0.0, 0.0), FOOT_XY["FR"])
+
+
+class WalkMeasuredPoseTest(unittest.TestCase):
+    """`anchor: measured_pose`（世界系锚定）：不产生推进量、按实测位姿换算、缺位姿显式失败。"""
+
+    def setUp(self):
+        self.params = _walk_params(anchor="measured_pose")
+        self.period = float(self.params["period_s"])
+        self.duty = float(self.params["duty_factor"])
+        self.foot = FOOT_XY["FR"]
+        # u = 0.1 < duty ⇒ FR 处于支撑相（phase_offset = 0.0 ⇒ u 随 elapsed 线性）
+        self.stance_elapsed = 0.1 * self.period
+        self.swing_elapsed = 0.95 * self.period
+
+    def _pose(self, body_xy, yaw, origin):
+        return {"body_xy_m": body_xy, "body_yaw_rad": yaw, "stance_foot_world_m": origin}
+
+    def test_body_at_rest_yields_exact_zero(self):
+        """机身不动 + 零指令 ⇒ 精确 (0.0, 0.0)（锚点 = 当前中立位）。"""
+        pose = self._pose((0.0, 0.0), 0.0, None)
+        offset = gait.walk_foot_offset_m(self.params, "FR", self.stance_elapsed,
+                                         (0.0, 0.0, 0.0), self.foot, pose)
+        self.assertEqual(offset, (0.0, 0.0))
+
+    def test_no_self_drive_when_body_does_not_move(self):
+        """指令非零但机身实测未动 ⇒ 支撑相偏移仍为 0（**不产生开环推进量**，与 command_ramp 档的本质区别）。"""
+        pose = self._pose((0.0, 0.0), 0.0, (self.foot[0], self.foot[1]))
+        offset = gait.walk_foot_offset_m(self.params, "FR", self.stance_elapsed,
+                                         (0.2, 0.0, 0.0), self.foot, pose)
+        self.assertEqual(offset, (0.0, 0.0))
+
+    def test_body_displacement_keeps_foot_in_world(self):
+        """机身被推动 Δ ⇒ 支撑腿偏移 = −Δ（足端世界系不动，不再把机身钉回站立点）。"""
+        origin = (self.foot[0], self.foot[1])
+        for delta in ((0.5, 0.0), (0.0, -0.3), (0.2, 0.25)):
+            pose = self._pose(delta, 0.0, origin)
+            offset = gait.walk_foot_offset_m(self.params, "FR", self.stance_elapsed,
+                                             (0.0, 0.0, 0.0), self.foot, pose)
+            self.assertAlmostEqual(offset[0], -delta[0], places=15)
+            self.assertAlmostEqual(offset[1], -delta[1], places=15)
+
+    def test_world_to_body_rotation_uses_measured_yaw(self):
+        """机身偏航 θ ⇒ 偏移按 R(θ)ᵀ 换算（含转向时的前后腿方向差异）。"""
+        theta = math.pi / 2.0
+        body = (0.1, 0.05)
+        origin = (0.3, 0.4)
+        pose = self._pose(body, theta, origin)
+        offset = gait.walk_foot_offset_m(self.params, "FR", self.stance_elapsed,
+                                         (0.0, 0.0, 0.0), self.foot, pose)
+        dx, dy = origin[0] - body[0], origin[1] - body[1]
+        expected = (math.cos(theta) * dx + math.sin(theta) * dy - self.foot[0],
+                    -math.sin(theta) * dx + math.cos(theta) * dy - self.foot[1])
+        self.assertAlmostEqual(offset[0], expected[0], places=15)
+        self.assertAlmostEqual(offset[1], expected[1], places=15)
+
+    def test_swing_returns_to_neutral(self):
+        """摆动相末端目标回到「当前机身位姿下的中立位」⇒ 偏移 → 0，且中途单调收敛。"""
+        origin = (self.foot[0] - 0.1, self.foot[1] + 0.05)
+        previous = None
+        for step in range(0, 21):
+            u = self.duty + (1.0 - self.duty) * step / 20.0
+            if u >= 1.0:
+                continue
+            pose = self._pose((0.0, 0.0), 0.0, origin)
+            offset = gait.walk_foot_offset_m(self.params, "FR", u * self.period,
+                                             (0.0, 0.0, 0.0), self.foot, pose)
+            norm = math.hypot(offset[0], offset[1])
+            if previous is not None:
+                self.assertLessEqual(norm, previous + 1.0e-12)
+            previous = norm
+        pose = self._pose((0.0, 0.0), 0.0, origin)
+        offset = gait.walk_foot_offset_m(self.params, "FR", (1.0 - 1.0e-12) * self.period,
+                                         (0.0, 0.0, 0.0), self.foot, pose)
+        self.assertAlmostEqual(offset[0], 0.0, places=10)
+        self.assertAlmostEqual(offset[1], 0.0, places=10)
+
+    def test_zero_impact_when_body_at_rest_via_joint_targets(self):
+        """锚定档在「机身不动 + 零指令」下与「不带 walk 声明」**逐位相同**。"""
+        without = _no_walk_params()
+        geometry = _geometry()
+        pose = {code: self._pose((0.0, 0.0), 0.0, None) for code in LEG_CODES}
+        for elapsed in (0.0, 0.11, 0.2, 0.31, 0.3333333333333333, 0.75, 1.4):
+            base = gait.gait_joint_targets(without, geometry, _home(), _limits(), elapsed, 1.0,
+                                           (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+            anchored = gait.gait_joint_targets(
+                self.params, geometry, _home(), _limits(), elapsed, 1.0,
+                (0.0, 0.0, 0.0), (0.0, 0.0, 0.0),
+                walk_command_mps_rad_s=(0.0, 0.0, 0.0), walk_pose=pose)
+            self.assertEqual(base, anchored, "elapsed=%r 处两路径目标角不同" % elapsed)
+
+    def test_missing_pose_is_explicit(self):
+        """`measured_pose` 档缺实测位姿 ⇒ 显式失败（不允许默默退回开环或零）。"""
+        with self.assertRaises(DeclarationError):
+            gait.walk_foot_offset_m(self.params, "FR", self.stance_elapsed, (0.2, 0.0, 0.0),
+                                    self.foot, None)
+        with self.assertRaises(DeclarationError):
+            gait.walk_foot_offset_m(self.params, "FR", self.stance_elapsed, (0.2, 0.0, 0.0),
+                                    self.foot, {"body_xy_m": (0.0, 0.0)})
+
+    def test_bad_anchor_value_fails(self):
+        """`anchor` 只允许白名单两值（写错名字必须失败，不许静默当成某一档）。"""
+        params = copy.deepcopy(self.params)
+        params["walk"]["anchor"] = "world_frame"
+        with self.assertRaises(DeclarationError):
+            gait.walk_foot_offset_m(params, "FR", self.stance_elapsed, (0.2, 0.0, 0.0),
+                                    self.foot, self._pose((0.0, 0.0), 0.0, None))
 
 
 if __name__ == "__main__":
