@@ -598,6 +598,11 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             self._gait_params = gait.load_gait_declaration(self.declaration, self.joint_order)
         return self._gait_params
 
+    def _body_name(self, body_id):
+        """body id → 名字（只用于报告与报错信息；取不到时返回 `<unnamed#id>`，不静默给空串）。"""
+        name = self.mujoco.mj_id2name(self.model, self.mujoco.mjtObj.mjOBJ_BODY, int(body_id))
+        return str(name) if name else "<unnamed#%d>" % int(body_id)
+
     def _leg_geometry(self, params):
         """惰性实测腿部几何（大腿/小腿长、中立足端位置）；实测值来自被测模型，不写死约定。
 
@@ -1656,6 +1661,23 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
 
         trunk_body = gait.trunk_body_id(self.model, self.mujoco, self._gait_parameters())
 
+        # 目标帧必须**世界固定**（门禁在纯函数层，可单测）：挂在机器人自己身上的帧与机身是
+        # 同一刚体 ⇒ 误差恒为自指量、第 0 拍即"在位"（实测 3.632386e-05 m = 帧本地偏置的投影，
+        # 见 `dock.assert_target_is_world_fixed` 的 docstring 与
+        # build/iraf-a6a14/dock_frame_probe.py）。这类目标必须**执行前**显式失败，
+        # 不能让一个好看的数字冒充停靠能力。
+        from iraf_adapters.unitree.mpc.state_bridge import trunk_subtree_bodies
+
+        frame_body = int(self.model.site_bodyid[frame_id]) if frame_kind == "site" else int(frame_id)
+        dock_module.assert_target_is_world_fixed(
+            frame_label=target_frame,
+            frame_kind=frame_kind,
+            frame_body_id=frame_body,
+            frame_body_label=self._body_name(frame_body),
+            robot_body_ids=trunk_subtree_bodies(self.model, trunk_body),
+            robot_root_label=self._body_name(trunk_body),
+        )
+
         def body_pose():
             pos = np.asarray(self.data.xpos[int(trunk_body)], dtype=float)
             mat = np.asarray(self.data.xmat[int(trunk_body)], dtype=float).reshape(3, 3)
@@ -1664,7 +1686,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         from iraf_adapters.unitree.mpc.torque_hook import (DECISION_DAMPED_HOLD,
                                                           MpcUnavailableError)
 
-        progress = {"reached_s": None, "settled_s": None}
+        progress = {"reached_s": None}
 
         def provider(elapsed):
             """接近阶段的逐拍指令 + **超时的唯一判定处**。
@@ -1762,6 +1784,10 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             "fencing_token": report.get("fencing_token"),
             "target_frame": target_frame,
             "target_frame_kind": frame_kind,
+            # 目标帧的所属 body 与「是否世界固定」进报告：自指帧会让误差恒为偏置投影
+            # （实测 3.632386e-05 m），必须能一眼看出目标帧挂在谁身上（见 dock 门禁）。
+            "target_frame_body": self._body_name(frame_body),
+            "target_frame_world_fixed": True,
             "approach": {"speed_mps": approach_speed, "gain_s_inv": gain_s_inv,
                          "settle_s": settle_s, "timeout_s": timeout_s},
             "criteria": {"position_tolerance_m": position_tolerance_m,
@@ -1771,7 +1797,6 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             "final_yaw_error_deg": math.degrees(yaw_error),
             "final_speed_mps": None if final_speed == float("inf") else final_speed,
             "settled_at_s": progress["reached_s"],
-            "settle_completed_at_s": progress["settled_s"],
             "control_cycles": report.get("control_cycles"),
             "settle": {"final_speed_mps": None if settle_report is None else final_speed,
                        "failure_reason": settle_error,

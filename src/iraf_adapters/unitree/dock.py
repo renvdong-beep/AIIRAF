@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import math
 
-__all__ = ["pose_error", "approach_command", "DOCK_DEFAULTS_FORBIDDEN"]
+__all__ = ["pose_error", "approach_command", "assert_target_is_world_fixed",
+           "DOCK_DEFAULTS_FORBIDDEN"]
 
 
 class DockDeclarationError(ValueError):
@@ -98,3 +99,37 @@ def approach_command(dx_m, dy_m, yaw_error_rad, *, gain_s_inv, max_speed_mps, ma
         vx *= scale
         vy *= scale
     return (vx, vy, wz)
+
+
+def assert_target_is_world_fixed(*, frame_label, frame_kind, frame_body_id, frame_body_label,
+                                 robot_body_ids, robot_root_label):
+    r"""停靠目标帧必须**世界固定** —— 不得与机器人本体刚性相连。
+
+    为什么必须是硬门禁（2026-09-24 实测，`build/iraf-a6a14/dock_frame_probe.py` 可复跑）：
+    本场景 `scene.yaml` 的 `props.tray_01.pose.mount` 把托盘**挂在四足背上**
+    （`entity: unitree_go2` / `frame: tray_frame`），于是 `dock_for_handoff` 的
+    `target_frame: tray_frame` 与机身是**同一刚体**，停靠量到的是**自指量**：
+      · 偏航误差恒为 `0.0`（同一个 `xmat`，`atan2` 差逐位为 0）——判据「偏航 ≤ 2.0°」永远"通过"；
+      · 平移误差恒为「帧的本地偏置在机身姿态下的**xy 投影**」：实测 `3.632386e-05 m`
+        = \|R·(0, 0, 0.057)\|_{xy}（探针复算 3.634612751e-05，两者相对差 6.129e-04，
+        差异只来自探针用的是保持段末态、不是测量那一拍）；
+      · 第 0 拍就已经"在位"（报告 `settled_at_s = 0.0`）⇒ 接近过程**从未被执行**，
+        61.5 s 的指令恒为零。
+    即：这类目标会产出**看起来完美、实际什么都没做**的停靠验收 —— 等价于伪造成功
+    （AGENTS.md 1.5/1.6），因此必须在**执行前**显式失败，而不是留下一个好看的数字。
+
+    判定：目标帧的所属 body 落在机器人子树内 ⇒ 失败。世界固定的台面对象（静态 props）
+    与自由物体（有自由关节的 props）都不在子树内，正常通过。
+    """
+    on_robot = {int(item) for item in robot_body_ids}
+    body_id = int(frame_body_id)
+    if body_id in on_robot:
+        raise DockDeclarationError(
+            "停靠目标帧 %s（%s，所属 body id=%d %s）**刚性挂在机器人 %s 上**："
+            "目标帧与机身同一刚体 ⇒ 位姿误差恒为自指量（偏航恒 0、平移 = 帧本地偏置的投影），"
+            "接近过程不会被执行，验收数字无意义。"
+            "目标帧必须来自**世界固定**的交接站位（例：台面上的 station frame —— "
+            "四足要到得了、机械臂够得着的位置），而不是本体自带的挂载帧。"
+            % (frame_label, frame_kind, body_id, frame_body_label, robot_root_label)
+        )
+    return None

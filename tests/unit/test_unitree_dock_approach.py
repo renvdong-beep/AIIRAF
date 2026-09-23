@@ -15,6 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
+from iraf_adapters.unitree import dock  # noqa: E402
 from iraf_adapters.unitree.dock import (  # noqa: E402
     DockDeclarationError,
     approach_command,
@@ -96,6 +97,54 @@ class ApproachCommandTest(unittest.TestCase):
                 _cmd(0.1, 0.0, 0.0, gain_s_inv=bad)
             with self.assertRaises(DockDeclarationError):
                 _cmd(0.1, 0.0, 0.0, max_speed_mps=bad)
+
+
+class TestTargetIsWorldFixed(unittest.TestCase):
+    """停靠目标帧必须世界固定（自指帧会让停靠**看起来完美**却什么都没做）。
+
+    实测背景（build/iraf-a6a14/dock_frame_probe.py）：本场景 `tray_frame` 挂在四足躯干 body 上，
+    ⇒ 偏航误差恒为 0.0（同一 xmat）、平移误差恒为帧本地偏置的 xy 投影（3.632386e-05 m）、
+    第 0 拍即"在位"（`settled_at_s = 0.0`），接近过程从未执行。
+    """
+
+    def _call(self, body_id, robot_bodies):
+        return dock.assert_target_is_world_fixed(
+            frame_label="tray_frame", frame_kind="site", frame_body_id=body_id,
+            frame_body_label="base_link", robot_body_ids=robot_bodies,
+            robot_root_label="base_link",
+        )
+
+    def test_frame_on_robot_trunk_fails(self):
+        # 实测的正是这一情形：tray_frame 的所属 body = 躯干（id 1）⇒ 必须显式失败
+        with self.assertRaises(DockDeclarationError) as ctx:
+            self._call(1, [1, 2, 3, 4])
+        message = str(ctx.exception)
+        self.assertIn("tray_frame", message)
+        self.assertIn("刚性挂在机器人 base_link 上", message)
+        # 报错必须给出可操作方向（换世界固定的交接站位），不能只说"非法"
+        self.assertIn("世界固定", message)
+
+    def test_frame_on_robot_leg_fails(self):
+        # 子树成员（腿/足端）同样不行：任何与本体刚性相连的帧都是自指量
+        with self.assertRaises(DockDeclarationError):
+            self._call(7, [1, 2, 3, 7])
+
+    def test_world_fixed_prop_passes(self):
+        self.assertIsNone(self._call(20, [1, 2, 3, 4]))
+
+    def test_free_prop_passes(self):
+        # 有自由关节的场景物（box_01 之类）不是"世界固定"但也不是本体的自指量 ⇒ 由调用方
+        # 另行决定语义；本门禁只负责挡住"挂在机器人自己身上"这一类。
+        self.assertIsNone(self._call(21, [1, 2, 3, 4]))
+
+    def test_empty_robot_subtree_still_accepts_world_body(self):
+        self.assertIsNone(self._call(5, []))
+
+    def test_body_ids_are_coerced_not_compared_as_strings(self):
+        # 实测踩点：模型给的是 int、声明给的是字符串时若直接比对会漏判 ⇒ 统一强制成 int
+        self.assertIsNone(self._call(1, ["11", "12"]))
+        with self.assertRaises(DockDeclarationError):
+            self._call("11", ["11", "12"])
 
 
 if __name__ == "__main__":
