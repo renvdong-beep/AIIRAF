@@ -603,6 +603,42 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         rotation = np.asarray(self.data.xmat[int(trunk_body)], dtype=float).reshape(3, 3)
         return rotation.T.dot(np.asarray(self.data.qvel[3:6], dtype=float))
 
+    def _mean_drift_tracker(self, position_window_s):
+        """返回 `update(trunk_body) -> (dx_body, dy_body)`：机身相对**起点**的水平位移滑动平均（机身系）。
+
+        低频位置项（契约 `docs/debug/2026-09-23-go2-gait-drift.md` §9）的**唯一实现**：
+        wave/loopback 路径与 MPC 路径共用（同一事实一处来源，禁止各写一份）。窗口来自声明
+        `gait.stabilization.position_window_s`（必须 > 1 个步态周期 ⇒ 不含逐相位 sway）；
+        增益为 0 时 `gait.position_offset` 内部判 0 ⇒ 关闭档与既有实现逐位一致。
+
+        ⚠ 2026-09-23 实测：MPC 路径此前**没有**调用本项（`target_provider` 漏传 `body_mean_drift_xy`）
+        ⇒ 声明的 `position_gain_s_per_m` 在该路径上是死声明（改与不改**逐位相同**：0.1131 m）。
+        """
+        from collections import deque
+
+        window = float(position_window_s)
+        samples = deque()
+        origin = {"xy": None}
+
+        def update(trunk):
+            xy = np.asarray(self.data.qpos[0:2], dtype=float).copy()
+            if origin["xy"] is None:
+                origin["xy"] = xy          # 起点即"原点"（首次调用时确定，不写数字）
+            rotation = np.asarray(self.data.xmat[int(trunk)], dtype=float).reshape(3, 3)
+            delta_world = xy - origin["xy"]
+            delta_body = rotation.T.dot(np.array([delta_world[0], delta_world[1], 0.0]))
+            now = float(self.data.time)
+            samples.append((now, float(delta_body[0]), float(delta_body[1])))
+            while samples and (now - samples[0][0]) > window:
+                samples.popleft()
+            if not samples:
+                return (0.0, 0.0)
+            count = float(len(samples))
+            return (sum(item[1] for item in samples) / count,
+                    sum(item[2] for item in samples) / count)
+
+        return update
+
     def _stabilization_offsets(self, params, geometry, trunk_body):
         """各腿当前的阻尼足端偏移（证据用；实现与 target_provider 调用同一个函数）。"""
         velocity = self._body_frame_velocity(trunk_body)
@@ -1388,28 +1424,9 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         # 水平位移的滑动平均（窗口来自声明 `gait.stabilization.position_window_s`，必须 > 1 个
         # 步态周期 ⇒ 不含逐相位 sway）。仅当声明开启且增益 > 0 时该项才实际生效
         # （`gait.position_offset` 内判 0），因此关闭档与既有实现**逐位一致**。
-        from collections import deque
-
+        # 实现放在 `_mean_drift_tracker`（MPC 路径共用同一份，避免两处实现漂移）。
         position_window_s = float(params["stabilization"]["position_window_s"])
-        drift_samples = deque()
-        drift_origin = {"xy": None}
-
-        def mean_drift_body(trunk):
-            xy = np.asarray(self.data.qpos[0:2], dtype=float).copy()
-            if drift_origin["xy"] is None:
-                drift_origin["xy"] = xy          # 起点即"原点"（首次调用时确定，不写数字）
-            rotation = np.asarray(self.data.xmat[int(trunk)], dtype=float).reshape(3, 3)
-            delta_world = xy - drift_origin["xy"]
-            delta_body = rotation.T.dot(np.array([delta_world[0], delta_world[1], 0.0]))
-            now = float(self.data.time)
-            drift_samples.append((now, float(delta_body[0]), float(delta_body[1])))
-            while drift_samples and (now - drift_samples[0][0]) > position_window_s:
-                drift_samples.popleft()
-            if not drift_samples:
-                return (0.0, 0.0)
-            count = float(len(drift_samples))
-            return (sum(item[1] for item in drift_samples) / count,
-                    sum(item[2] for item in drift_samples) / count)
+        mean_drift_body = self._mean_drift_tracker(position_window_s)
 
         def target_provider(cycle_index, now):
             elapsed = now - onset
@@ -1622,6 +1639,13 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         )
 
         geometry = self._leg_geometry(trot)
+        # 低频位置项用的机身位移滑动平均（与 wave/loopback 路径**同一实现** `_mean_drift_tracker`）：
+        # 窗口来自声明 `gait.stabilization.position_window_s`。
+        # ⚠ 2026-09-23 实测：本路径此前**漏接**该项 ⇒ `position_gain_s_per_m` 在 MPC 路径上是死声明
+        # （改与不改逐位相同 0.1131 m）。接上后必须用同一 hold 判据重新取证，不许把"接上"当"修好"。
+        mean_drift_body = self._mean_drift_tracker(
+            float(trot["stabilization"]["position_window_s"])
+        )
         trunk_body = gait.trunk_body_id(self.model, self.mujoco, trot)
         home = {joint: float(self.profile.home[joint]) for joint in self.joint_order}
         limits = {joint: self.profile.joint_limits[joint] for joint in self.joint_order}
@@ -1843,6 +1867,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             targets = gait.gait_joint_targets(
                 trot, geometry, home, limits, elapsed, gait.amplitude_at(trot, elapsed),
                 self._body_frame_velocity(trunk_body), self._body_frame_omega(trunk_body),
+                body_mean_drift_xy=mean_drift_body(trunk_body),
                 walk_command_mps_rad_s=(walk_scale * vx_cmd, walk_scale * vy_cmd,
                                         walk_scale * wz_cmd),
                 walk_pose=(walk_pose_measured(elapsed)
