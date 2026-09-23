@@ -19,8 +19,8 @@ from __future__ import annotations
 
 import numpy as np
 
-__all__ = ["REQUIRED_MODEL_KEYS", "REQUIRED_BOUNDS_KEYS", "cost_diagonal", "state_cost_weights",
-           "box_bounds", "linear_cost"]
+__all__ = ["REQUIRED_MODEL_KEYS", "REQUIRED_BOUNDS_KEYS", "REQUIRED_FRICTION_KEYS",
+           "cost_diagonal", "state_cost_weights", "box_bounds", "linear_cost", "friction_rows"]
 
 #: `mpc_model` 中本模块消费的键。
 REQUIRED_MODEL_KEYS = ("q_diag", "r_diag", "horizon")
@@ -125,6 +125,61 @@ def cost_diagonal(mpc_model):
         "q_diag": q_diag,
         "r_diag": r_diag,
     }
+
+
+#: 摩擦锥块需要的声明键。
+REQUIRED_FRICTION_KEYS = ("horizon", "mu")
+
+
+def friction_rows(contact_table, mpc_model):
+    """摩擦锥（金字塔）不等式块：行三元组 + 上界（上游 `_precompute_friction_matrix` +
+    `_update_sparse_matrix` 的摩擦部分）。
+
+    上游事实（`centroidal_mpc.py:263-279, 324-359`，逐行读到）：
+      · 行数 `n_ineq = 4 腿 × 4 面 × N = 16·N`（N=16 ⇒ 256），位于 `A` 的**后** 256 行；
+      · 行序 = 外层**拍** `k`、内层**腿**（0=FL,1=FR,2=RL,3=RR，同 `LEG_ORDER`）、每腿 4 面；
+      · 列 = `baseU + k·NU + 3·leg + {0,1,2}`，`baseU = N·NX`；
+      · 系数：`+fx − MU·fz`、`−fx − MU·fz`、`+fy − MU·fz`、`−fy − MU·fz`（即 4 面金字塔 ≤ 0）；
+      · 上界：**支撑腿** 4 行 = `0.0`、**摆动腿** 4 行 = `+inf`（不受约束）；`lba` 侧统一 `−inf`。
+
+    返回 `{"rows","cols","vals","n_rows","upper_bound","lower_bound"}`（`upper/lower_bound` 长度
+    均为 `n_rows`；`lba` 的 −inf 与等式段拼接由调用方做）。
+    """
+    if not isinstance(mpc_model, dict):
+        raise ValueError("mpc_model 必须是映射")
+    missing = [key for key in REQUIRED_FRICTION_KEYS if key not in mpc_model]
+    if missing:
+        raise ValueError("mpc_model 缺少必需键: %s" % missing)
+    horizon = int(mpc_model["horizon"])
+    if horizon < 1:
+        raise ValueError("mpc_model.horizon 必须 ≥1，实际 %r" % (mpc_model["horizon"],))
+    mu = float(mpc_model["mu"])
+    if not mu > 0:
+        raise ValueError("mpc_model.mu 必须为正，实际 %r" % (mu,))
+    mask = np.asarray(contact_table)
+    if mask.ndim != 2 or mask.shape[0] != 4 or mask.shape[1] != horizon:
+        raise ValueError("contact_table 形状必须为 (4, horizon)=(4, %d)，实际 %r"
+                         % (horizon, mask.shape))
+    if not np.all(np.isin(mask, (0, 1))):
+        raise ValueError("contact_table 只能含 0/1，实际取值 %r" % (np.unique(mask).tolist(),))
+
+    base_u = horizon * STATE_DIM
+    rows, cols, vals = [], [], []
+    upper = np.full(horizon * 4 * 4, np.inf, dtype=float)
+    r0 = 0
+    for k in range(horizon):
+        uk0 = base_u + k * INPUT_DIM
+        for leg in range(4):
+            fx, fy, fz = 3 * leg, 3 * leg + 1, 3 * leg + 2
+            for col_a, sign_a in ((fx, 1.0), (fx, -1.0), (fy, 1.0), (fy, -1.0)):
+                rows.extend([r0, r0])
+                cols.extend([uk0 + col_a, uk0 + fz])
+                vals.extend([sign_a, -mu])
+                if int(mask[leg, k]) == 1:
+                    upper[r0] = 0.0
+                r0 += 1
+    return {"rows": rows, "cols": cols, "vals": vals, "n_rows": r0,
+            "upper_bound": upper, "lower_bound": np.full(r0, -np.inf, dtype=float)}
 
 
 def linear_cost(x_ref, mpc_model):

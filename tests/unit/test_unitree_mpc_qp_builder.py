@@ -225,3 +225,88 @@ def test_linear_cost_matches_captured_upstream_bitwise():
         assert g.tobytes() == np.asarray(qp["g"], dtype=float).tobytes()
         checked += 1
     assert checked >= 20
+
+
+# ---- 摩擦锥块 ----
+
+from iraf_adapters.unitree.mpc.qp_builder import friction_rows  # noqa: E402
+
+#: 上游模块常量 MU（与其 MJCF 足端 0.8 配对）；我们声明的是 0.4（与厂商 MJCF 0.4 配对）。
+UPSTREAM_MU = 0.8
+
+
+def test_friction_rows_count_layout_and_coefficients():
+    m = _model()
+    out = friction_rows(_mask(1), m)
+    assert out["n_rows"] == 16 * 4 * int(m["horizon"]) == 256
+    trip = list(zip(out["rows"], out["cols"], out["vals"]))
+    # 第一拍第一条腿的 4 个面：+fx−μfz、−fx−μfz、+fy−μfz、−fy−μfz（列基准 baseU = 192）
+    mu = float(m["mu"])
+    assert trip[0:2] == [(0, 192 + 0, 1.0), (0, 192 + 2, -mu)]
+    assert trip[2:4] == [(1, 192 + 0, -1.0), (1, 192 + 2, -mu)]
+    assert trip[4:6] == [(2, 192 + 1, 1.0), (2, 192 + 2, -mu)]
+    assert trip[6:8] == [(3, 192 + 1, -1.0), (3, 192 + 2, -mu)]
+    # 第二条腿从列 192+3 起、行 4 起
+    assert trip[8][0] == 4 and trip[8][1] == 192 + 3
+
+
+def test_friction_upper_bound_zero_only_for_stance():
+    m = _model()
+    n = int(m["horizon"])
+    out = friction_rows(_mask(1), m)
+    assert np.all(out["upper_bound"] == 0.0) and np.all(np.isneginf(out["lower_bound"]))
+    swing_all = friction_rows(_mask(0), m)
+    assert np.all(np.isposinf(swing_all["upper_bound"]))
+    mask = _mask(1, n)
+    mask[3, 0] = 0                                     # 第 0 拍 RR 摆动
+    out2 = friction_rows(mask, m)
+    assert out2["upper_bound"][((0 * 4) + 3) * 4:((0 * 4) + 3) * 4 + 4].tolist() == [np.inf] * 4
+    assert out2["upper_bound"][0] == 0.0               # FL 同拍仍支撑
+
+
+@pytest.mark.parametrize("bad", [
+    np.zeros((3, 16), dtype=int), np.zeros((4, 5), dtype=int),
+])
+def test_friction_rows_bad_contact_table(bad):
+    with pytest.raises(ValueError):
+        friction_rows(bad, _model())
+
+
+def test_friction_rows_bad_model():
+    with pytest.raises(ValueError):
+        friction_rows(_mask(1), {"horizon": 16})
+    with pytest.raises(ValueError):
+        friction_rows(_mask(1), {"horizon": 16, "mu": 0.0})
+    bad = _mask(1)
+    bad[1, 1] = 3
+    with pytest.raises(ValueError):
+        friction_rows(bad, _model())
+
+
+def test_friction_rows_match_captured_upstream_bitwise():
+    """判据用**上游 MU=0.8**（探针跑的是上游代码，其 mu 是模块常量）。
+
+    这恰好固化一条 ADR §6.5 的事实：摩擦系数按"同侧配对"——我们声明 0.4（配厂商 MJCF 足端 0.4），
+    上游 0.8（配它自己的 MJCF）。所以"同语义"比对必须把 mu 换成 0.8；本函数在 0.4 下产出
+    的 fz 系数是 −0.4，已由上一用例固定。
+    """
+    import json
+    path = ROOT / "build" / "research" / "mpc-repo" / "qp_inputs.json"
+    if not path.is_file():
+        pytest.skip("缺少截获证据 %s" % path)
+    captured = json.loads(path.read_text(encoding="utf-8"))
+    model = dict(_model())
+    model["mu"] = UPSTREAM_MU
+    base = int(model["horizon"]) * 12
+    checked = 0
+    for qp in captured["qps"]:
+        if "contact_table" not in qp:
+            pytest.skip("证据文件未含 contact_table（需重跑探针）")
+        out = friction_rows(np.asarray(qp["contact_table"], dtype=int), model)
+        mine = {(r + base, c): v for r, c, v in zip(out["rows"], out["cols"], out["vals"])}
+        up = {(r, c): v for r, c, v in zip(qp["a_rows"], qp["a_cols"], qp["a_vals"]) if r >= base}
+        assert set(mine) == set(up)
+        assert all(mine[k] == up[k] for k in up)
+        assert out["upper_bound"].tobytes() == np.asarray(qp["uba"], dtype=float)[base:].tobytes()
+        checked += 1
+    assert checked >= 20
