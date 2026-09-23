@@ -36,6 +36,12 @@ acceptance:
   pose_tolerance_m: 0.005
   min_lift_delta_m: 0.02
   # 停靠与交接判据（设计 §4：平移 ≤30mm、偏航 ≤2deg、速度为零）
+  # ⚠ 本段是**场景级默认值**，运行期判据的**实际消费者是 `scenario.yaml` 各步骤的 `criteria`**
+  #   （实测：`scripts/scenario.py` 不读本段；本段只有 schema 与 schema 测试引用 ⇒ 若不写明覆盖关系，
+  #    就会出现"两处不一致时听谁的"）。覆盖关系：**步骤级 criteria 优先**，本段只作默认与自洽校验。
+  #   已知差异一处并已定案：`max_speed_m_s` 本段写 0.0（设计 §4 的"速度为零"），
+  #   而 `scenario.yaml` 的 `s02_dock` 写 0.05 —— 实测上不可测量"精确零速"，
+  #   故**以步骤级 0.05 m/s 为准**（可测余量），本段保留 0.0 仅作设计意图登记。
   dock_translation_error_max_m: 0.03
   dock_yaw_error_max_deg: 2.0
   min_stable_hold_s: 3.0
