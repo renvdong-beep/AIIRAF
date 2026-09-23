@@ -145,6 +145,26 @@ theirs `0` / ours `1`、`min_phase_distance_to_boundary = 0.0`。成因：两侧
 `max/min = 100.0 / 2.0e-5 = 5.0e6`（病态来源，与 §1 的 `r_diag = 1e-5` 一致）；11 项单测
 （含 7 项非法声明门禁）。**尚未**与上游 QP 入参比对 ⇒ 该模块**不得**接进 `provider_runtime`。
 
+## 1.2 接入契约（A6a-④ 的实现依据，2026-09-23 读定）
+
+`src/iraf_adapters/unitree/unitree_go2.py` 的事实（行号为读代码当时的实测）：
+
+| 事实 | 位置 |
+|---|---|
+| 钩子签名 `torque_provider(cycle_index, info)`，`info = {"desired","ctrl","saturated"}` | `:1671-1675`（调用点） |
+| 返回 `ndarray`（旧契约）⇒ `τ = w_pos·τ_pd + w_bal·τ_bal` | `:1620-1621` |
+| 返回 `{"balance_torque_nm", "position_weight"}`（B1 契约）⇒ `τ = position_weight ⊙ τ_pd + w_bal·τ_bal` | `:1622-1623` |
+| 两种形式都**先按声明权重混合、再按模型 `ctrlrange` 截断并重算饱和**（力矩上限只来自模型） | `:1624-1625` |
+| 既有 provider：平衡器（`:785`）、两条步态路径（`:1244`、`:1379`） | — |
+| `_run_control(target, seconds, ramp_s, zero_torque, target_provider, torque_provider, sample_callback)` | `:1613` |
+
+⇒ **MPC Provider 适配器形状定死**：返回 `{"balance_torque_nm": τ_mpc, "position_weight": <逐关节>}`，
+`τ_mpc` 由 12 维足端力经**既有** `Jᵀ·f` 映射（`_run_control` **不改**）；
+`position_weight` 的取值**必须来自声明**（不得在此写数字，铁律 5.3）。
+新鲜度门禁走 `freshness.decide(age_ms, qp_status_class, solve_ms, emergency)`；
+求解状态词表用 `qp_builder.USABLE_SOLVER_STATUSES`（派生自 `freshness`，**不得再写第二份**，
+也不得再出现 `"solved"` 这种不属于本仓库的词表——该错误在本战役出现过一次）。
+
 ## 2. 逐位校验点（用已提交的 `traj_parity` 门禁）
 
 对**同一批状态/时间序列**（研究侧已存的 200 样本）比较下列数组的 `tobytes()`：
