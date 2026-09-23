@@ -141,6 +141,20 @@ backward.steady_signed_displacement_m 0.090520845117540827  两侧逐位相同 �
   28.361466°、−27.223412° vs −27.757224°）是**同一条工况链上的传递效应**（§6 已论证：
   两工况全程 `halted=False` ⇒ 转向路径未被改动），不是转向逻辑回归。
 
+### 6.2 证据易失性处理（同一轮自查）
+
+`build/iraf-a6a13/dock-measure.json`（18 MB，含 6150 条逐拍样本）**每跑一次覆盖一次**，而 §2 的复算
+（3.634612751e-05 / 偏航恰好 0.0）正是从它的 `settle.report.final_state` 推出的 ⇒ 结论的**可复现性**
+依赖一个会被覆盖的产物。处理：
+
+* 已落**最小证据快照** `build/iraf-a6a14/dock-self-frame-evidence-summary.json`
+  （仅保留复算必需的字段：目标帧与其所属 body、三项终态误差、`settle` 末态 qpos、末拍样本），
+  与源文件的 mtime/size 一并记录 ⇒ 源被覆盖后仍可核对"当时用的是哪一份"；
+* 复现步骤不变：`PYTHONPATH=src MUJOCO_GL=glfw python3 build/iraf-a6a14/dock_frame_probe.py`
+  （读全量报告；若它已被覆盖，则改用上面的快照核对结论所需的字段）。
+* 教训（写入本文件以免重犯）：**引用 build/ 下会被重跑覆盖的产物时，先落一份最小快照**，
+  否则"数字可复现"会在下一次跑批后悄悄失效。
+
 ## 7. 下一步：世界固定的交接站位帧（跨界，需授权）
 
 * **路径**：`scenes/handoff_lab/scene.yaml` 新增一个**世界固定**的站位帧
