@@ -111,6 +111,9 @@ mpc_model:
   #   lookahead_factor：`pred_time = lookahead_factor · T`（上游 `T/2`）
   #   其中 t_swing / t_stance **不在这里声明**：它们由 trot 步态声明的 `duty_factor` 与
   #   `period_s` 派生（`t_swing = (1−duty)·period`、`t_stance = duty·period`），避免同一事实两处。
+  # 支撑腿法向力下限（N）：上游 `_compute_bounds` 里硬编码 `fz_min = 10`（注释 "Prevent slipping"），
+  # 按铁律 5.3 落声明；语义 = 支撑相足端法向力的下界（lbx 的 z 行），上界仍为 +inf。
+  min_normal_force_n: 10.0
   touchdown:
     nominal_z_m: 0.02
     swing_factor: 1.0

@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import numpy as np
 
-__all__ = ["REQUIRED_MODEL_KEYS", "cost_diagonal", "state_cost_weights"]
+__all__ = ["REQUIRED_MODEL_KEYS", "REQUIRED_BOUNDS_KEYS", "cost_diagonal", "state_cost_weights",
+           "box_bounds"]
 
 #: `mpc_model` 中本模块消费的键。
 REQUIRED_MODEL_KEYS = ("q_diag", "r_diag", "horizon")
@@ -27,6 +28,58 @@ REQUIRED_MODEL_KEYS = ("q_diag", "r_diag", "horizon")
 #: 状态维 / 输入维（12 = 质心 6 自由度状态；4 足 × 3 维接触力）。
 STATE_DIM = 12
 INPUT_DIM = 12
+
+#: 盒约束需要的声明键。
+REQUIRED_BOUNDS_KEYS = ("horizon", "min_normal_force_n")
+
+
+def box_bounds(contact_table, mpc_model):
+    """盒约束 `(lbx, ubx)`（上游 `_compute_bounds` 的语义移植）。
+
+    上游事实（`centroidal_mpc.py:122-163` 及其后）：
+      · `nvars = horizon × (12 + 12)`、`start_u = horizon × 12`（状态段之后才是力段）；
+      · 力段布局**按拍**：`[FLx, FLy, FLz, FRx, FRy, FRz, RLx, RLy, RLz, RRx, RRy, RRz]`
+        （腿序 FL, FR, RL, RR —— 与 `contact.LEG_ORDER` 同一事实）；
+      · 初始 `lbx = −inf`、`ubx = +inf`；
+      · **摆动腿**（contact = 0）：三相 `lbx = ubx = 0`（不发力）；
+      · **支撑腿**（contact = 1）：法向（每腿第 3 个分量）`lbx = min_normal_force_n`（上游硬编码
+        `fz_min = 10`，"Prevent slipping"），上界保持 `+inf`。
+
+    ⚠ 上游 `_compute_bounds` 的**尾部尚未逐行读完**（第 164 行之后）；因此本函数标为
+    **未对上游逐位比对**（比对方式：用截获探针落盘的 `contact_table` + `lbx/ubx` 直接比，
+    见 `build/research/mpc-repo/verify_qp_inputs.py`），比对通过前不得接 `provider_runtime`。
+    """
+    if not isinstance(mpc_model, dict):
+        raise ValueError("mpc_model 必须是映射")
+    missing = [key for key in REQUIRED_BOUNDS_KEYS if key not in mpc_model]
+    if missing:
+        raise ValueError("mpc_model 缺少必需键: %s" % missing)
+    horizon = int(mpc_model["horizon"])
+    if horizon < 1:
+        raise ValueError("mpc_model.horizon 必须 ≥1，实际 %r" % (mpc_model["horizon"],))
+    fz_min = float(mpc_model["min_normal_force_n"])
+    if not fz_min >= 0:
+        raise ValueError("mpc_model.min_normal_force_n 必须非负，实际 %r" % (fz_min,))
+    mask = np.asarray(contact_table)
+    if mask.ndim != 2 or mask.shape[0] != 4 or mask.shape[1] != horizon:
+        raise ValueError("contact_table 形状必须为 (4, horizon)=(4, %d)，实际 %r"
+                         % (horizon, mask.shape))
+    if not np.all(np.isin(mask, (0, 1))):
+        raise ValueError("contact_table 只能含 0/1，实际取值 %r" % (np.unique(mask).tolist(),))
+
+    nvars = horizon * (STATE_DIM + INPUT_DIM)
+    start_u = horizon * STATE_DIM
+    lbx = np.full(nvars, -np.inf, dtype=float)
+    ubx = np.full(nvars, np.inf, dtype=float)
+    for k in range(horizon):
+        for leg in range(4):
+            base = start_u + 12 * k + 3 * leg
+            if int(mask[leg, k]) == 0:                 # 摆动腿：三相恒零
+                lbx[base:base + 3] = 0.0
+                ubx[base:base + 3] = 0.0
+            else:                                      # 支撑腿：法向下界
+                lbx[base + 2] = fz_min
+    return lbx, ubx
 
 
 def _vector(declaration, key, length):
