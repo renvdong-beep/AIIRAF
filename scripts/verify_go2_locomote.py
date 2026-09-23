@@ -44,6 +44,10 @@ SCENARIOS = {
     "backward": {"vx_mps": -0.2, "vy_mps": 0.0, "wz_rad_s": 0.0},
     "turn_left": {"vx_mps": 0.0, "vy_mps": 0.0, "wz_rad_s": 0.5},
     "turn_right": {"vx_mps": 0.0, "vy_mps": 0.0, "wz_rad_s": -0.5},
+    # 诊断工况（不参与「四工况」验收）：零指令原地站。用于回答「MPC 力矩通道单独能不能撑住机身」
+    # —— 把 `locomote.stance_position_weight` 置 0 时，支撑腿完全走力矩级力控；若此时站不住，
+    # 说明力矩通道本身不成立，笛卡尔足端阻抗的方案必须先修通道（而不是先修轨迹）。
+    "hold": {"vx_mps": 0.0, "vy_mps": 0.0, "wz_rad_s": 0.0},
 }
 
 
