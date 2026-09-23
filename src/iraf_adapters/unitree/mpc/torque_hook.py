@@ -269,6 +269,16 @@ class MpcTorqueHook:
         self.stats["last_payload_max_nm"] = float(
             np.max(np.abs(np.asarray(payload["balance_torque_nm"], dtype=float)))
         )
+        # 逐关节载荷向量与逐腿**世界系**接触力（诊断用，只留最后一拍）：
+        # 零指令 hold 工况下必须能一眼看出「注入的力矩到底长什么样」——
+        # 实测零指令 + 腿冻结仍漂 1.6740 m/3 s（docs/debug/2026-09-23-go2-locomote-zero-command-drift.md），
+        # 没有这一项就只能看到峰值、看不到**方向与对称性**（漂移是 (−x,+y) 对角 ⇒ 需要逐腿符号）。
+        self.stats["last_payload_nm"] = [float(v) for v in
+                                         np.asarray(payload["balance_torque_nm"], dtype=float)]
+        self.stats["last_position_weight"] = [float(v) for v in
+                                              np.asarray(payload["position_weight"], dtype=float)]
+        self.stats["last_forces_n"] = [[float(v) for v in row]
+                                       for row in np.asarray(forces, dtype=float).reshape(-1, 3)]
         self.stats["last_forces_max_n"] = float(np.max(np.abs(forces)))
         self.stats["last_forces_sum_z_n"] = float(np.sum(np.asarray(forces, dtype=float)[:, 2]))
         # 最近一次求解的耗时与迭代数（诊断：用于看清"哪一拍开始变慢"——
@@ -288,6 +298,10 @@ class MpcTorqueHook:
             "horizon": self._horizon,
             "stance_weight": self._stance_weight,
             "swing_weight": self._swing_weight,
+            # 载荷槽 → Profile 关节序的映射（诊断用：逐关节载荷必须能对上真实关节名，
+            # 否则「映射错位」这类缺陷在报告里表现成"数值怪"而不是"接错了"）。
+            "joint_index_map": {str(code): [int(v) for v in triple]
+                                for code, triple in sorted(self._joint_index_map.items())},
             "stats": dict(self.stats),
             "mask": None if self._mask is None else [int(v) for v in self._mask],
             "runtime": dict(self._runtime.stats),
