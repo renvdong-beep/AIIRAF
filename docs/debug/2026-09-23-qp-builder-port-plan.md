@@ -75,6 +75,28 @@ theirs `0` / ours `1`、`min_phase_distance_to_boundary = 0.0`。成因：两侧
 2. 判定边界有**两处**：`phase == duty` 与 `phase == 0/1`（wrap）。只查前者会把 wrap 边界
    的 1 ulp 翻转误判成真差异（首版即如此）。
 
+### 2.1 足端参考轨迹移植（已落实现，待逐位校验）
+
+`src/iraf_adapters/unitree/mpc/reference.py::foot_reference_trajectory`（上游 `com_trajectory.py:113-207`
+的逐拍状态机语义移植）。三处**必须原样复刻**的上游事实（顺手"修正"就会与它的解不一致）：
+
+1. **参考足端是"机身相对"量**：上游变量名带 `_world`，但每拍都减去了 `p_base_traj_world =
+   current_config.base_pos`（= 轨迹第 i 列的机身位置）⇒ 我们对外的量是 `td − base_pos`。
+2. **落足点里的 z 是常量 `0.02 m`**，不是机身高度；`T = swing + 0.5·stance`、`pred_time = T/2`。
+3. **上游混用坐标系**：`drift` 直接用 `dq[0:3]`（它在 `com_trajectory` 里传的是 `R_world_to_body @ v_world`
+   ⇒ **体坐标系**速度）当世界系位移项；`yaw_rate_des_world` 实际赋的也是**体坐标系**角速度。
+   偏航非零时这与"世界系"语义不自洽，但它是上游既有事实 ⇒ 逐位复刻并如实登记，不改写。
+
+逐拍状态机（每条腿独立，`mask_previous` 初值 **2**）：跳变到 0（离地）⇒ 记录落足点、当拍参考置零；
+跳变到 1（触地）⇒ 取被记录的落足点；掩码未变 ⇒ 递推上一拍值（初值 2 保证第 0 拍不取 `[-1]`）。
+⚠ 落足点在**离地拍**的状态下算出并保存 ⇒ 触地拍即使机身位置已变，参考值不随之改变（单测覆盖）。
+
+腿序来源 = `contact.LEG_ORDER`（与接触表行序同一事实，不靠字典迭代顺序）。
+
+**尚缺（下一步）**：`nominal_z_m`（0.02）与 `pred_time` 的两个系数目前由调用方传入，
+须落进声明（`mpc_model` 的 touchdown 组）后才能接 `provider_runtime`；本模块自身的逐位校验
+（对上游客体在同一批状态上比较四足 `r_*_foot_world`）也尚未做。
+
 ## 2. 逐位校验点（用已提交的 `traj_parity` 门禁）
 
 对**同一批状态/时间序列**（研究侧已存的 200 样本）比较下列数组的 `tobytes()`：
