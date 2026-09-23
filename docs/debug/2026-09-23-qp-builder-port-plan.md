@@ -131,7 +131,21 @@ theirs `0` / ours `1`、`min_phase_distance_to_boundary = 0.0`。成因：两侧
 ⚠ 三处上游口径在此再次确认（移植时未做任何"顺手修正"）：`pos_des_world` 是**就地钳位并跨调用保留**的状态量；
 参考相位里 `z` 由 `z_pos_des_body` 直接覆盖；`vel/omega` 视界内常量。
 
-### 2. 逐位校验点（用已提交的 `traj_parity` 门禁）
+#### 2.3 第③步 `qp_builder.py` 的校验判据更正（2026-09-23，重要）
+
+计划里原先写的「按 `r2_*` 探针**已存 JSON** 对照 `h_diag/g/a` 三元组与边界」**不成立**：
+`ls build/research/mpc-repo/*.json` 后 `grep -l h_diag *.json` **为空** —— 研究侧存下的是
+`eval_trot_23-*.json`（闭环时序）与 `r2_*.json`（**只含计时/迭代数/目标值**），
+**从未存过 QP 入参**。⇒ 第③步的逐位校验必须先**新写一个用代理截获上游 QP 入参的探针**
+（做法可照 `verify_osqp_native.py`：包住上游 `solve_QP` 截获 `h/g/a/lba/uba/lbx/ubx`），
+不能指望"已经有证据"。
+
+**已落地的部分（本地校验，未对上游）**：`src/iraf_adapters/unitree/mpc/qp_builder.py::cost_diagonal`
+—— `H = 2·tile([q_diag, r_diag], horizon)`，实测 **尺寸 384、nnz 384**（纯对角）、对角跨度
+`max/min = 100.0 / 2.0e-5 = 5.0e6`（病态来源，与 §1 的 `r_diag = 1e-5` 一致）；11 项单测
+（含 7 项非法声明门禁）。**尚未**与上游 QP 入参比对 ⇒ 该模块**不得**接进 `provider_runtime`。
+
+## 2. 逐位校验点（用已提交的 `traj_parity` 门禁）
 
 对**同一批状态/时间序列**（研究侧已存的 200 样本）比较下列数组的 `tobytes()`：
 `Ad`、`Bd`、`gd`、`contact_table`、`pos_traj_world`、`vel_traj_world`、`rpy_traj_world`、
