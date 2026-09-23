@@ -1874,6 +1874,9 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                                 in self._leg_contact_forces(trot, geometry).items()},
                 "gait_elapsed_s": float(state_holder.get("elapsed_s") or -1.0),
                 "mpc_ref_rpy_deg": state_holder.get("ref_rpy_deg"),
+                # QP **下令**的逐腿世界系力（(4,3)，行序 LEG_ORDER；50 Hz 更新 ⇒ 每两拍重复一次）：
+                # 与 `leg_force_n`（实测法向力）同拍对照，才能看清姿态/载荷修正在哪条腿不足。
+                "mpc_forces_per_leg_n": hook.stats.get("last_forces_n"),
                 # 诊断量：本拍 MPC 载荷经 ctrlrange 截断后的执行力矩峰值 + 本拍支撑集
                 # （用于定位"从第几拍开始失控"，不参与任何判据）
                 "max_abs_ctrl_nm": float(np.max(np.abs(np.asarray(info["ctrl"], dtype=float)))),
