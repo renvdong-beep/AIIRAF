@@ -97,9 +97,17 @@ scenarios:
         robot: piper
         params:
           target: box_01
-        # S2 执行器本战役**未接入 piper**：其机型基线（config/piper_simulation_baseline.yaml）
-        # 属另一编辑窗口且未声明 robot.backend 绑定，因此直接跑 `run --scenario nominal`
-        # 会在预检阶段以退出码 3 显式失败（不静默跳过该步）。可执行子集见 stand_stop。
+        # ⚠ 失败口径更正（2026-09-24 实测）：本文原先写"未声明 robot.backend 绑定 ⇒ 退出码 3"，
+        # 但机型运行时绑定 `config/machines/piper.yaml` 已经存在 ⇒ **绑定普查通过**，
+        # 预检真正卡在**判据**：本步的三项判据在本执行器里没有评测依据（下面的 criteria 段），
+        # 实测 `scenario.py run --scenario nominal` ⇒ **退出码 2**（SCENARIO_DECLARATION_ERROR），
+        # 报 `步骤 s03_pick 声明了本执行器没有评测依据的判据 ['pose_tolerance_m', 'min_lift_delta_m',
+        # 'require_bilateral_contact']`。
+        # 这三项的量测口径依赖"机械臂已接入同一个仿真模型"——而当前场景构建产物里**没有臂**
+        # （`build/scenes/handoff_lab/handoff_lab.xml` 是 `<mujoco model="go2">`、19 个 body；
+        # `scripts/build_scene.py` 每次只装配一个本体）⇒ 与四足侧"世界固定站位帧"是同一根因，
+        # 见 `.hermes/plans/2026-09-23-dock-for-handoff.md` §11（A/B/C 三方案待人工决策）。
+        # 可执行子集见 stand_stop。
         criteria:
           pose_tolerance_m: 0.005
           min_lift_delta_m: 0.02
