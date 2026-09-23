@@ -6,10 +6,13 @@
   ② **接触/动力学约束**：`A = [I; A_contact]`、`lba/uba`、`lbx/ubx`（含摩擦锥、力上界）——待做。
   ③ 变量缩放接入（`qp_scaling`）与原生 solver 调用（`osqp_native`）——待做。
 
-⚠ **当前状态（勿误读）**：`cost_diagonal` 只有"由声明算出 `H` 对角 + nnz 计数 + 与声明自洽"的
-本地校验；**尚未**与上游实际 QP 入参逐位比对（`build/research/mpc-repo/*.json` 里**没有**存过
-`h_diag/g/a` 这类入参 ⇒ 需要先写一个用代理截获上游 QP 入参的探针，见
-`docs/debug/2026-09-23-qp-builder-port-plan.md` §3 的更正）。**在完成该比对前不得接进 `provider_runtime`。**
+⚠ **当前状态（勿误读）**：**代价部分已对上上游**——2026-09-23 新写探针
+`build/research/mpc-repo/verify_qp_inputs.py` 截获上游 20 个真实 QP 入参
+（`build/research/mpc-repo/qp_inputs.json`：`a` 形状 `[448, 384]`、`a` nnz 5168/拍），
+`cost_diagonal` 的 `h_diag` 与上游 `h` 对角 **20 拍全部逐位一致（max|Δ| = 0.0）**，
+且当场抓出我首版的布局错误（按"每拍 [Q,R]"实现 ⇒ max|Δ| 99.99998）。
+② 约束块（`A`/`lba`/`uba`/`lbx`/`ubx`）与 ③ 缩放+solver 接入**仍未做** ⇒
+**整模块在 ②③ 完成前不得接进 `provider_runtime`。**
 """
 
 from __future__ import annotations
@@ -42,8 +45,9 @@ def _vector(declaration, key, length):
 def cost_diagonal(mpc_model):
     """`H` 的对角（`2·tile([q_diag, r_diag], horizon)`）与配套元信息。
 
-    上游形态：`H = 2·diag(Q_bar)`，其中每拍的块是 `[Q(12), R(12)]` ⇒ 对角长度
-    `horizon × (STATE_DIM + INPUT_DIM)` = `16 × 24` = **384**，且**非零元个数 = 384**（纯对角）。
+    上游形态：`H = 2·diag(Q_bar)`，对角长度 = `horizon × (12 + 12)` = `16 × 24` = **384**、
+    非零元 **384**（纯对角）；**布局 = 先 192 个状态项（`tile(q_diag, N)`）、后 192 个输入项
+    （`tile(r_diag, N)`）**——该布局不是猜的，是对上游真实 QP 入参逐位比对确认的（见上）。
     """
     if not isinstance(mpc_model, dict):
         raise ValueError("mpc_model 必须是映射，实际: %r" % (type(mpc_model).__name__,))
@@ -55,8 +59,11 @@ def cost_diagonal(mpc_model):
         raise ValueError("mpc_model.horizon 必须 ≥1，实际 %r" % (mpc_model["horizon"],))
     q_diag = _vector(mpc_model, "q_diag", STATE_DIM)
     r_diag = _vector(mpc_model, "r_diag", INPUT_DIM)
-    per_step = np.concatenate([q_diag, r_diag])
-    diagonal = 2.0 * np.tile(per_step, horizon)
+    # **布局经上游实测确认（2026-09-23，`build/research/mpc-repo/verify_qp_inputs.py`）**：
+    # 决策向量是「先全部状态、后全部输入」⇒ 对角 = 2·[tile(q, N) ‖ tile(r, N)]，
+    # 状态段 = N×12 = 192、输入段从下标 192 起（实测上游 h[12] = 2.0 = 2·q₀、h[192] = 2e-05）。
+    # 我最初按「每拍 [Q,R] 交替」实现 ⇒ 与上游 max|Δ| = 99.99998（被截获探针当场抓出）。
+    diagonal = 2.0 * np.concatenate([np.tile(q_diag, horizon), np.tile(r_diag, horizon)])
     return {
         "h_diag": diagonal,
         "size": int(diagonal.size),
