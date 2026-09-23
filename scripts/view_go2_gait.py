@@ -249,7 +249,11 @@ def main(argv=None):
                 snapshot.refresh(backend)
                 viewer.sync()
                 frames += 1
-                if not thread.is_alive() and time.monotonic() - started >= float(args.seconds):
+                # 自限时：到点就关窗（**不看线程是否还活着**）。
+                # 实测踩过：`not thread.is_alive() and elapsed >= seconds` 在"连续循环"的步态下
+                # 永不成立（线程只在 `stop` 置位时退出，而 `stop` 只在跳出本循环后才置位）⇒
+                # 演示窗口永不自动关闭（18:09 启动、`--seconds 150`，到 18:18 仍在跑）。
+                if time.monotonic() - started >= float(args.seconds):
                     break
                 time.sleep(period)
     stop.set()                       # 窗口关闭 ⇒ 停掉连续步态，不留空转线程
@@ -346,8 +350,11 @@ def _run_gait_loop(backend, lease, holder, stop, walk_sequence=None, walk_second
                     "delta_xy_m": entries,
                 })
                 qpos = np.asarray(backend.data.qpos, dtype=float)
-                if not np.all(np.isfinite(qpos)):
-                    holder["error"] = ("仿真发散（qpos 含 NaN/Inf）⇒ 显式停止；"
+                qvel = np.asarray(backend.data.qvel, dtype=float)
+                if not (np.all(np.isfinite(qpos)) and np.all(np.isfinite(qvel))):
+                    # 实测：发散先出现在 **QACC/QVEL**（`Nan, Inf or huge value in QACC at DOF 1`，
+                    # 仿真时刻 101.0020），此时 `qpos` 仍有限 ⇒ 只查 qpos 会漏掉，继续跑下去。
+                    holder["error"] = ("仿真发散（qpos/qvel 含 NaN/Inf）⇒ 显式停止；"
                                        "最常见原因：走出支撑台面边缘")
                     break
             holder["cycles"] = int(holder.get("cycles") or 0) + 1
