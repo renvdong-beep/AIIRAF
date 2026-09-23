@@ -45,6 +45,23 @@ def test_zero_forces_give_zero_torques():
     assert np.all(tau == 0.0)
 
 
+def test_payload_is_negative_of_jacobian_product():
+    """载荷里的 `balance_torque_nm` 必须是**执行器支撑力矩** = −Jᵀ·f（地面反力 f 取 +z 向上）。
+
+    符号依据（实测，探针 `build/iraf-a6a4/jt_sign_probe.py`）：τ=−Jᵀf 撑住机身
+    （Δh=+0.001714 m、四腿法向合力 116.025 N）；τ=+Jᵀf 把足端卸掉（Δh=−0.000563 m、合力 0.0）。
+    本用例把该符号钉成回归：`joint_torques` 保持 +Jᵀf 的纯映射，载荷构造取负。
+    """
+    forces = {code: np.zeros(3) for code in LEG_ORDER}
+    forces["FL"] = np.array([1.0, 2.0, 3.0])
+    forces["RR"] = np.array([0.0, 0.0, 38.250191])
+    payload = torque_provider_payload(forces, _eye_jt(), np.zeros(12))
+    direct = joint_torques(forces, _eye_jt())
+    assert np.allclose(payload["balance_torque_nm"], -direct)
+    assert np.allclose(payload["balance_torque_nm"][0:3], [-1.0, -2.0, -3.0])
+    assert payload["balance_torque_nm"][11] == pytest.approx(-38.250191)
+
+
 def test_payload_shape_and_keys():
     payload = torque_provider_payload({code: np.zeros(3) for code in LEG_ORDER}, _eye_jt(),
                                       np.zeros(12))

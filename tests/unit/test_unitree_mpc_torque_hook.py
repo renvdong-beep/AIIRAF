@@ -93,8 +93,9 @@ def test_ok_payload_uses_first_step_forces_and_declared_weights():
     hook = _hook(FakeClient())
     payload = hook(0)
     assert set(payload) == {"balance_torque_nm", "position_weight"}
-    # 单位 Jᵀ ⇒ τ = f（逐腿 3 分量按 LEG_ORDER 落位）
-    assert np.allclose(payload["balance_torque_nm"], FORCES0)
+    # 单位 Jᵀ ⇒ τ = −f（载荷是**执行器支撑力矩** = −Jᵀ·f；符号实测见
+    # build/iraf-a6a4/jt_sign_probe.py：τ=−Jᵀf 撑住机身、τ=+Jᵀf 把足端卸掉）
+    assert np.allclose(payload["balance_torque_nm"], -np.asarray(FORCES0))
     # 支撑腿（FL/FR）取声明 stance_weight=0.0、摆动腿（RL/RR）取 swing_weight=1.0
     assert np.allclose(payload["position_weight"],
                        [0.0] * 6 + [1.0] * 6)
@@ -106,8 +107,8 @@ def test_payload_matches_hand_computed_jacobian_product():
     jt["FL"] = np.array([[2.0, 0.0, 0.0], [0.0, 0.5, 0.0], [0.0, 0.0, -1.0]])
     hook = _hook(FakeClient(), jt=jt)
     tau = hook(0)["balance_torque_nm"]
-    assert np.allclose(tau[0:3], [2.0, 1.0, -3.0])       # diag(2, 0.5, -1) · [1,2,3]
-    assert np.allclose(tau[3:], FORCES0[3:])             # 其余腿单位阵 ⇒ 原样
+    assert np.allclose(tau[0:3], [-2.0, -1.0, 3.0])      # −diag(2, 0.5, −1) · [1,2,3]
+    assert np.allclose(tau[3:], -np.asarray(FORCES0[3:]))  # 其余腿单位阵 ⇒ 取负
 
 
 def test_plan_fn_only_called_on_update_ticks():
@@ -127,7 +128,8 @@ def test_consumer_tick_reuses_same_solution_not_a_new_solve():
     hook = _hook(client, ticks_per_update=2, counter=counter)
     first = hook(0)["balance_torque_nm"]
     second = hook(1)["balance_torque_nm"]
-    assert np.allclose(first, FORCES0) and np.allclose(second, FORCES0)   # 同一个解的第 0 拍
+    # 载荷 = −Jᵀ·f（地面反力 f 取 +z 向上；符号实测见 build/iraf-a6a4/jt_sign_probe.py）
+    assert np.allclose(first, -np.asarray(FORCES0)) and np.allclose(second, -np.asarray(FORCES0))
     assert client.calls == 1 and counter["count"] == 1
 
 

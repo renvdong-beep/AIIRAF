@@ -167,9 +167,11 @@ def case_a_ok(deployment, balance):
         expected = np.asarray(DESIGNED_FORCES, dtype=float)
         numbers["torques"] = [float(v) for v in torques]
         numbers["weights"] = [float(v) for v in weights]
-        numbers["max_abs_diff_vs_hand_computed"] = float(np.max(np.abs(torques - expected)))
-        _check(checks, "载荷 = 设计的 Jᵀ·f（逐位手算对照）",
-               np.max(np.abs(torques - expected)) <= TOL,
+        # 载荷是**执行器支撑力矩** = −Jᵀ·f（符号实测见 build/iraf-a6a4/jt_sign_probe.py：
+        # τ=−Jᵀf 撑住机身 Δh=+0.001714 m、四腿法向合力 116.025 N；τ=+Jᵀf 把足端卸掉）。
+        numbers["max_abs_diff_vs_hand_computed"] = float(np.max(np.abs(torques + expected)))
+        _check(checks, "载荷 = −Jᵀ·f（逐位手算对照，单位 Jᵀ ⇒ 取负）",
+               np.max(np.abs(torques + expected)) <= TOL,
                "max|Δ| = %.3e" % numbers["max_abs_diff_vs_hand_computed"])
         _check(checks, "权重 = 支撑腿 0.0 / 摆动腿 1.0（来自声明）",
                np.allclose(weights, [0.0] * 6 + [1.0] * 6),
@@ -181,7 +183,7 @@ def case_a_ok(deployment, balance):
         # 且不再调子进程。（"消费拍复用新鲜解"本身是正确行为；失败用例因此要显式设 ticks_per_update=1。）
         second = h.hook(1)
         _check(checks, "消费拍复用新鲜解且不再调子进程（更新率解耦）",
-               np.allclose(np.asarray(second["balance_torque_nm"], dtype=float), expected)
+               np.allclose(np.asarray(second["balance_torque_nm"], dtype=float), -expected)
                and h.client.stats["calls"] == 1 and h.runtime.stats["skips"] == 1,
                "calls=%d skips=%d" % (h.client.stats["calls"], h.runtime.stats["skips"]))
         numbers["harness"] = h.summary()

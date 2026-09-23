@@ -57,6 +57,15 @@ def joint_torques(foot_forces, jacobian_transpose):
 
     `jacobian_transpose`：`{腿码: (3, 3)}`（该腿足端力 → 该腿 3 个关节力矩）或 `(4, 3, 3)`。
     每个腿码都必须给出、形状必须为 3×3（缺项即显式失败，不用零矩阵兜底）。
+
+    ⚠ **符号语义（2026-09-23 实测判定，勿凭直觉）**：本函数是"力 → 力矩"的**纯映射**：
+    输入 `foot_forces` 是**地面作用在足端的力**（世界系，+z 向上支撑）时，本函数给出的
+    是 `+Jᵀf`；而**执行器需要输出的支撑力矩是它的相反数**（`−Jᵀf`）。
+    依据（`build/iraf-a6a4/jt_sign_probe.py`，同一关键帧 + 每腿 mg/4 世界系 +z，推进 0.02 s）：
+      · `τ = −Jᵀf` ⇒ 机身高度 Δh = **+0.001714 m**、四腿法向合力 **116.025 N**（撑住）；
+      · `τ = +Jᵀf` ⇒ Δh = −0.000563 m、法向合力 **0.0 N**（把足端卸掉、机身下沉）。
+    这也与已验证的平衡路径一致：`balance.leg_joint_torques` 实现的是 `-jacobian.T.dot(force)`
+    （`src/iraf_adapters/unitree/balance.py:734`）。⇒ 本模块的**载荷构造函数**取负号（见下）。
     """
     forces = foot_forces_matrix(foot_forces)
     if isinstance(jacobian_transpose, dict):
@@ -85,6 +94,11 @@ def torque_provider_payload(foot_forces, jacobian_transpose, position_weight):
     """构造 `torque_provider` 的 B1 返回值（契约 §1.2）：`{balance_torque_nm, position_weight}`。
 
     `position_weight` 由调用方从**声明**给出（长度 12，取值 [0, 1]；本模块不给默认值）。
+
+    `balance_torque_nm` = **执行器支撑力矩** = `−Jᵀ·f`（f 为地面作用在足端的力，世界系 +z 向上）；
+    符号依据见 `joint_torques` 的实测说明（探针 `build/iraf-a6a4/jt_sign_probe.py`）。
+    写成 `−joint_torques(...)` 而不是改 `joint_torques` 本身：纯映射保持"力→力矩"的单一语义，
+    执行器符号只在**构造载荷**这一处显式翻转（便于单测分别钉住两侧）。
     """
     if position_weight is None:
         raise ValueError("position_weight 必须显式给出（取值只能来自声明，本模块不给默认值）")
@@ -96,5 +110,5 @@ def torque_provider_payload(foot_forces, jacobian_transpose, position_weight):
     if np.any(weight < 0.0) or np.any(weight > 1.0):
         raise ValueError("position_weight 必须落在 [0, 1]，实际 min=%r max=%r"
                          % (float(weight.min()), float(weight.max())))
-    torques = joint_torques(foot_forces, jacobian_transpose)
+    torques = -joint_torques(foot_forces, jacobian_transpose)
     return {"balance_torque_nm": torques, "position_weight": weight.copy()}
