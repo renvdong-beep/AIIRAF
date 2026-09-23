@@ -37,6 +37,7 @@ from iraf_adapters.factory import KNOWN_BACKENDS, load_backend  # noqa: E402
 from iraf_adapters.mujoco.viewer_runner import (  # noqa: E402
     DISPLAY_INTERACTIVE,
     SnapshotMirror,
+    camera_settings,
     display_environment,
     resolve_display_mode,
 )
@@ -142,29 +143,37 @@ def main(argv=None):
     mode = resolved[0] if isinstance(resolved, tuple) else str(resolved)
     env = display_environment()
     frames = 0
+    view = None            # 交互窗口的自由相机初值（来自 profile 的 camera 段；非交互时为 None）
     if mode == DISPLAY_INTERACTIVE:
         import mujoco.viewer
 
         render_hz = float(args.render_hz or render_hz_declared)
         snapshot = SnapshotMirror(backend.model)
+        if not getattr(profile, "camera", None):
+            # 铁律 6.2：不靠隐藏默认值。缺声明 ⇒ 显式失败并告诉用户该声明什么。
+            print("声明非法：profile %s 缺 `camera` 段（交互窗口的自由相机初值必须来自声明；"
+                  "所需键：lookat_m / distance_m / azimuth_deg / elevation_deg）" % profile_path,
+                  file=sys.stderr)
+            return EXIT_DECLARATION
+        view = camera_settings(profile)
         with mujoco.viewer.launch_passive(backend.model, snapshot.refresh(backend)) as viewer:
-            camera_id = None
-            if camera:
-                import mujoco as mj
-
-                camera_id = mj.mj_name2id(backend.model, mj.mjtObj.mjOBJ_CAMERA, camera)
-                if camera_id < 0:
-                    print("声明非法：render.camera=%r 在模型里不存在" % camera, file=sys.stderr)
-                    return EXIT_DECLARATION
+            # 自由相机（**可鼠标旋转/缩放**）：只**初始化**一次，之后不再每帧覆盖 —— 原实现每帧
+            # 设 `cam.type = mjCAMERA_FIXED` 指向声明相机，按 MuJoCo 语义固定相机禁用鼠标旋转，
+            # 用户反馈"视角不能旋转"即此（2026-09-23）。
+            viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+            viewer.cam.lookat[:] = view["lookat_m"]
+            viewer.cam.distance = view["distance_m"]
+            viewer.cam.azimuth = view["azimuth_deg"]
+            viewer.cam.elevation = view["elevation_deg"]
             if env.get("warning"):
                 print("[viewer] 注意：" + env["warning"], flush=True)
+            print("VIEWER_CAMERA free lookat=%s distance=%.3f azimuth=%.1f elevation=%.1f"
+                  % (view["lookat_m"], view["distance_m"], view["azimuth_deg"],
+                     view["elevation_deg"]), flush=True)
             started = time.monotonic()
             period = 1.0 / max(1.0, render_hz)
             while viewer.is_running():
                 snapshot.refresh(backend)
-                if camera_id is not None:
-                    viewer.cam.type = 2  # mjCAMERA_FIXED：看声明的那台相机
-                    viewer.cam.fixedcamid = camera_id
                 viewer.sync()
                 frames += 1
                 if not thread.is_alive() and time.monotonic() - started >= float(args.seconds):
@@ -185,7 +194,8 @@ def main(argv=None):
             "duty_factor": params["duty_factor"], "duration_s": duration_s,
         },
         "display": {"mode": mode, "env": env, "frames": frames,
-                    "camera": camera, "resolution_px": [width, height]},
+                    "camera": camera, "resolution_px": [width, height],
+                    "free_camera": view},
         "trot": {
             "finished": not thread.is_alive(),
             "error": holder["error"],

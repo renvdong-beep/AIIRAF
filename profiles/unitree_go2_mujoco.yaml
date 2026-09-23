@@ -104,3 +104,19 @@ spec:
       geometry_scope: collision
       # 对齐容差（m）：抬升后 |最低点 − 支撑面| ≤ 本值视为完成（数值容差，不是物理阈值）。
       tolerance_m: 1.0e-4
+
+  # 交互窗口的**自由相机**初始视角（S1/显示入口用；`scripts/view_go2_gait.py` 消费）。
+  # 为什么必须声明（2026-09-23 实测的显示缺陷）：本段缺失时 viewer 回退到臂侧默认
+  #   `lookat=[0,0,0.1]`/`distance=1.0`/`azimuth=180`/`elevation=-8`（那是 UR5e/Piper 的取景，
+  #   对四足不是"看不见"而是取景与朝向都不对）；且显示入口原先每帧强制**固定相机**
+  #   （`viewer.cam.type = mjCAMERA_FIXED`），按 MuJoCo 语义固定相机**禁用鼠标旋转**。
+  # 取值依据 = 分割渲染扫描（`build/iraf-a6a4/`）实测机器人占画面比例与 bbox 居中程度：
+  #   lookat=[0,0,0.27]（关键帧 home 的四足质心 z = 0.268730095598）、dist=1.0、az=90、el=-35
+  #   ⇒ 机器人占 **16.37%** 像素、bbox 438×248 px、中心 (0.47, 0.60)（640×480 画面）。
+  #   对照：dist=1.3 降到 9.25%、1.6 降到 6.09%（同样居中但过小，肉眼难辨细节）。
+  # 注意：本段只影响**交互窗口的自由相机初值**；离屏渲染仍用 `render.camera`（overhead_camera）。
+  camera:
+    lookat_m: [0.0, 0.0, 0.27]
+    distance_m: 1.0
+    azimuth_deg: 90.0
+    elevation_deg: -35.0
