@@ -102,4 +102,46 @@ mpc_model:
   swing_height_m: 0.1
   stand_height_m: 0.27
 
+# MPC 的 **trot 步态来源**（A6a-3b 第②步下半；接触表要的 period/duty/相位偏移必须来自声明）
+#
+# 为什么不是「再写一份 trot 声明」：
+#   `config/go2_loopback.yaml` 的 `gait:` 段**本来就是 trot 原地踏步的声明**（其
+#   `gait.verification.report` = `build/acceptance/go2-trot-in-place/report.json`，line 471；
+#   kind 后被改成 wave），14 个验收阈值、关节绑定、接触几何、机身阻尼已全部在那一处声明。
+#   再抄一份 = 制造第二份事实来源（违反移植清单 §1.1）。因此这里**只声明 trot 与 wave 不同的项**，
+#   其余键从基准声明**继承**，合并结果再交给既有 `gait.load_gait_declaration` 跑全部门禁。
+mpc_gait:
+  base_declaration: config/go2_loopback.yaml
+  # 必须移除的段（键不存在即显式失败，防止 drop 名字写错后静默失效）：
+  #   sway = 逐相位重心转移（wave 的静态稳定项，trot 不得声明）；
+  #   foothold = 落足点规划（同上）。
+  drop: [sway, foothold]
+  # 只允许 kind / duty_factor / frequency_hz / legs 四类覆盖键（多余键即显式失败）
+  overrides:
+    kind: trot
+    # 占空比：上游 `DUTY = 0.6`（trot 门禁要求 ∈ [0.5, 1.0)）
+    duty_factor: 0.6
+    # 步频：上游 `GAIT_HZ = 3.0` ⇒ period_s = 0.333333…；
+    # 与 `mpc_model.horizon = 16` 的整除关系由 mpc.gait_trot 的自洽门禁强制
+    # （period_s 必须 = 1 / mpc_model.gait_hz）
+    frequency_hz: 3.0
+    # 相位偏移：上游 `PHASE_OFFSET = [0.5, 0.0, 0.0, 0.5]`，**其索引顺序是 [FL, FR, RL, RR]
+    # （RL 在 RR 之前）** ⇒ FL 0.5 / FR 0.0 / RL 0.0 / RR 0.5。
+    # 对角配对由门禁强制：恰好两组、每组 2 条腿、两组相差 0.5。
+    legs:
+      FL: {phase_offset: 0.5}
+      FR: {phase_offset: 0.0}
+      RL: {phase_offset: 0.0}
+      RR: {phase_offset: 0.5}
+  # 注意（不覆盖 base 的 `step_height_m: 0.08`）：那一项是**原地踏步**的摆动腿步高，
+  # MPC 路径不消费它；MPC 的摆动抬升高度是 `mpc_model.swing_height_m`。两处不是同一事实，
+  # 故不强行对齐（避免再造一次重复声明）。
+  #
+  # ⚠ 继承项的适用边界（如实登记，勿误用）：`verification` 段是从 wave 声明继承来的
+  #   （`duration_s: 10.0`、`min_clear_swing_cycles_per_leg: 8`、`profile_bins: 20` 等是按
+  #   1.25 Hz / 0.8 s 周期标定的）。本 trot 声明**只服务 MPC 路径**（消费 period/duty/相位偏移，
+  #   不消费 verification）；若哪天要用它跑原地踏步验收，那些阈值必须按 3.0 Hz 重新推导后
+  #   在**基准声明**里改（不得在本文件里另立一套）。
+
+
 
