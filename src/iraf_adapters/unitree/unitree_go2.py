@@ -1573,6 +1573,184 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         """
         return self.gait_in_place(lease, duration_ms=duration_ms, execution_id=execution_id)
 
+    def dock_for_handoff(self, *, lease, position_tolerance_m, yaw_tolerance_rad,
+                         max_final_speed_mps, execution_id=None):
+        """闭环停靠：走到声明的**停靠目标帧**并停住。
+
+        判据**由调用方传入**（场景步骤的 `criteria`；本方法不设默认值）：
+        `position_tolerance_m` / `yaw_tolerance_rad` / `max_final_speed_mps`。
+        接近参数来自声明 `dock_for_handoff`：target_frame / approach_speed_mps / gain_s_inv /
+        settle_s / timeout_s。
+
+        实现要点（为什么这样分层）：**一次 `locomote` 调用**跑完整段，逐拍指令由
+        `command_provider` 按**实测位姿误差**生成（`dock.pose_error` + `dock.approach_command`）——
+        不用"短调用循环"，因为每次 `locomote` 都会新建 MPC 子进程（冷启实测 ~0.29 s）。
+        到位判据满足时 provider 返回**精确零** ⇒ 原地保持 `settle_s`，再由调用方按保持窗验收末速。
+
+        失败路径（一律显式，绝不返回"近似成功"）：
+          · 目标帧不在模型里 ⇒ `ModelUnavailableError`（报出可用 site/body 数，便于定位）；
+          · 超时未进容差 / 到位后未停稳 ⇒ 在 `command_provider` 里抛
+            `MpcUnavailableError(DECISION_DAMPED_HOLD, …)` ⇒ 由 `locomote` 按契约 §4 转成
+            `damped_hold` + FAILED（**执行终态由 `locomote` 的 ledger 记账**；框架明确禁止
+            "终态回写"，实测在外层再 `finish` 一次会被 `TerminalExecutionError` 拦下）。
+
+        ⚠ 记账口径：本方法**经 `locomote` 执行**，因此 ledger 里的 execution 是那次 locomote 执行；
+        本报告的 `capability` 仍为 `dock_for_handoff`，两者不可混淆（报告里都带上，便于追溯）。
+        """
+        from iraf_adapters.unitree import dock as dock_module
+
+        self.estop.assert_clear()
+        self.require_lease(lease, "dock_for_handoff")
+
+        section = self.declaration.get("dock_for_handoff")
+        if not isinstance(section, dict):
+            raise DeclarationError("声明缺少 dock_for_handoff 段（接近参数必须来自声明）")
+        missing = [key for key in ("target_frame", "approach_speed_mps", "gain_s_inv",
+                                  "settle_s", "timeout_s") if key not in section]
+        if missing:
+            raise DeclarationError("声明缺少 dock_for_handoff 的键: %s" % missing)
+        approach_speed = float(section["approach_speed_mps"])
+        gain_s_inv = float(section["gain_s_inv"])
+        settle_s = float(section["settle_s"])
+        timeout_s = float(section["timeout_s"])
+        for label, value in (("approach_speed_mps", approach_speed), ("gain_s_inv", gain_s_inv),
+                             ("settle_s", settle_s), ("timeout_s", timeout_s)):
+            if not math.isfinite(value) or value <= 0.0:
+                raise DeclarationError(
+                    "dock_for_handoff.%s 必须是正有限数，实际 %r" % (label, value))
+        position_tolerance_m = float(position_tolerance_m)
+        yaw_tolerance_rad = float(yaw_tolerance_rad)
+        max_final_speed_mps = float(max_final_speed_mps)
+        for label, value in (("position_tolerance_m", position_tolerance_m),
+                             ("yaw_tolerance_rad", yaw_tolerance_rad),
+                             ("max_final_speed_mps", max_final_speed_mps)):
+            if not math.isfinite(value) or value <= 0.0:
+                raise CommandRejectedError(
+                    "停靠判据 %s 必须是正有限数（由调用方按声明传入），实际 %r" % (label, value))
+        # 只允许收紧：接近速度不得超过本机声明的上限（安全策略上限由技能层强制）
+        if approach_speed > float(section["approach_speed_mps"]):
+            raise CommandRejectedError("接近速度 %r 超过声明上限 %r" % (approach_speed,
+                                                                      section["approach_speed_mps"]))
+
+        target_frame = str(section["target_frame"])
+        frame_id = self.mujoco.mj_name2id(self.model, self.mujoco.mjtObj.mjOBJ_SITE, target_frame)
+        frame_kind = "site"
+        if frame_id < 0:
+            frame_id = self.mujoco.mj_name2id(self.model, self.mujoco.mjtObj.mjOBJ_BODY,
+                                              target_frame)
+            frame_kind = "body"
+        if frame_id < 0:
+            raise ModelUnavailableError(
+                "停靠目标帧 %r 既不是 site 也不是 body（模型里 site=%d、body=%d；"
+                "帧名必须与场景构建产物一致）"
+                % (target_frame, int(self.model.nsite), int(self.model.nbody)))
+
+        def frame_pose():
+            if frame_kind == "site":
+                pos = np.asarray(self.data.site_xpos[int(frame_id)], dtype=float)
+                mat = np.asarray(self.data.site_xmat[int(frame_id)], dtype=float).reshape(3, 3)
+            else:
+                pos = np.asarray(self.data.xpos[int(frame_id)], dtype=float)
+                mat = np.asarray(self.data.xmat[int(frame_id)], dtype=float).reshape(3, 3)
+            return (float(pos[0]), float(pos[1]), math.atan2(float(mat[1, 0]), float(mat[0, 0])))
+
+        trunk_body = gait.trunk_body_id(self.model, self.mujoco, self._gait_parameters())
+
+        def body_pose():
+            pos = np.asarray(self.data.xpos[int(trunk_body)], dtype=float)
+            mat = np.asarray(self.data.xmat[int(trunk_body)], dtype=float).reshape(3, 3)
+            return (float(pos[0]), float(pos[1]), math.atan2(float(mat[1, 0]), float(mat[0, 0])))
+
+        from iraf_adapters.unitree.mpc.torque_hook import (DECISION_DAMPED_HOLD,
+                                                          MpcUnavailableError)
+
+        progress = {"reached_s": None, "settled_s": None}
+
+        def provider(elapsed):
+            """逐拍指令 + **失败判定的唯一处**（超时/未停稳都走 MPC 的 `damped_hold` 路径）。
+
+            为什么把失败判定放在这里：`locomote` 已经拥有这次执行的**终态**
+            （`ledger.finish` 由它调用，且框架明确"终态不可回写"—— 实测：我在外面再 finish 一次
+            会被 `TerminalExecutionError` 拦下）。因此"停靠失败"必须**在跑的过程中**表达为
+            `MpcUnavailableError` ⇒ 由 `locomote` 按契约 §4 转成 `damped_hold` + FAILED，
+            而不是跑完再回写状态（那会伪造成功，铁律 1.6）。
+            """
+            if progress["reached_s"] is not None:
+                held = float(elapsed) - progress["reached_s"]
+                if held >= settle_s:
+                    speed = float(np.linalg.norm(np.asarray(self.data.qvel[0:3], dtype=float)))
+                    if speed > max_final_speed_mps:
+                        raise MpcUnavailableError(
+                            DECISION_DAMPED_HOLD,
+                            "停靠保持窗 %.3f s 内末速 %.6f m/s > 判据 %.6f m/s（未停稳）"
+                            % (held, speed, max_final_speed_mps))
+                    if progress["settled_s"] is None:
+                        progress["settled_s"] = float(elapsed)
+                return (0.0, 0.0, 0.0)
+            if float(elapsed) > timeout_s:
+                target = frame_pose()
+                body = body_pose()
+                dx, dy, yaw_err = dock_module.pose_error((target[0], target[1]), target[2],
+                                                         (body[0], body[1]), body[2])
+                raise MpcUnavailableError(
+                    DECISION_DAMPED_HOLD,
+                    "停靠超时 %.3f s 未进入容差：平移 %.6f m（判据 %.6f）/ 偏航 %.6f°（判据 %.6f）"
+                    % (timeout_s, math.hypot(dx, dy), position_tolerance_m,
+                       math.degrees(abs(yaw_err)), math.degrees(yaw_tolerance_rad)))
+            target = frame_pose()
+            body = body_pose()
+            dx, dy, yaw_err = dock_module.pose_error((target[0], target[1]), target[2],
+                                                     (body[0], body[1]), body[2])
+            command = dock_module.approach_command(
+                dx, dy, yaw_err, gain_s_inv=gain_s_inv, max_speed_mps=approach_speed,
+                max_yaw_rate_rad_s=max(1.0e-3, min(1.0, gain_s_inv * abs(yaw_err))),
+                position_tolerance_m=position_tolerance_m, yaw_tolerance_rad=yaw_tolerance_rad,
+                body_yaw_rad=body[2],
+            )
+            if command == (0.0, 0.0, 0.0):
+                progress["reached_s"] = float(elapsed)
+            return command
+
+        # 时长必须覆盖"接近超时 + 保持窗"（到达后 provider 返回精确零 ⇒ 原地保持）
+        total_s = timeout_s + settle_s + 0.5
+        # 走同一段 locomote（含 MPC 契约 §4 的失败路径），逐拍指令由上面的 provider 给。
+        report = self.locomote(
+            {"vx_mps": approach_speed, "vy_mps": 0.0, "wz_rad_s": 0.0},
+            total_s * 1000.0, lease, execution_id=execution_id, command_provider=provider,
+        )
+        samples = report.get("samples") or []
+        final = frame_pose(), body_pose()
+        translation_error, _dy, yaw_error = dock_module.pose_error(
+            (final[0][0], final[0][1]), final[0][2], (final[1][0], final[1][1]), final[1][2])
+        translation_error_m = math.hypot(translation_error, _dy)
+        tail = [s for s in samples if s["time_s"] >= samples[-1]["time_s"] - settle_s] if samples else []
+        final_speed = max((float(s["base_linear_speed_mps"]) for s in tail), default=float("inf"))
+        # 终态由 `locomote` 拥有（它调用 `ledger.finish`）；本方法**不再回写**（框架禁止终态回写）。
+        failure = report.get("failure")   # 超时/未停稳都在 provider 里转成了 damped_hold
+        return {
+            "simulation": True,
+            "capability": "dock_for_handoff",
+            "execution_id": report.get("execution_id"),
+            "fencing_token": report.get("fencing_token"),
+            "target_frame": target_frame,
+            "target_frame_kind": frame_kind,
+            "approach": {"speed_mps": approach_speed, "gain_s_inv": gain_s_inv,
+                         "settle_s": settle_s, "timeout_s": timeout_s},
+            "criteria": {"position_tolerance_m": position_tolerance_m,
+                         "yaw_tolerance_rad": yaw_tolerance_rad,
+                         "max_final_speed_mps": max_final_speed_mps},
+            "final_translation_error_m": translation_error_m,
+            "final_yaw_error_deg": math.degrees(yaw_error),
+            "final_speed_mps": None if final_speed == float("inf") else final_speed,
+            "settled_at_s": progress["reached_s"],
+            "settle_completed_at_s": progress["settled_s"],
+            "control_cycles": report.get("control_cycles"),
+            "failure": failure,
+            "provider": report.get("provider"),
+            "client": report.get("client"),
+            "samples": samples,
+        }
+
     def locomote(self, velocity, duration_ms, lease, execution_id=None, command_provider=None):
         """速度指令 → MPC Provider（独立进程）→ 足端力 → 关节支撑力矩（A6a-④ ⑤）。
 

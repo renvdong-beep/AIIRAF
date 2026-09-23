@@ -589,6 +589,23 @@ locomote:
   # 且 MPC 载荷峰值（8.2）> 位置环峰值（4.1）⇒ 命令不再被截断（判据见 docs/debug/2026-09-23-go2-locomote-zero-command-drift.md §1.8）。
   # 0.25/0.2 漂移更小但姿态变差、后退误差分化 ⇒ 不做单点过拟合；生产取 0.3，后续按四工况判据再评估。
 
+# 停靠（dock_for_handoff）：闭环走到**声明目标帧**并停住。
+# 判据（平移/偏航容差、末速上限）**由调用方传入**（场景步骤的 criteria）—— 本段只放接近参数，
+# 同一事实不出现两处；实现层不写任何默认值。
+dock_for_handoff:
+  # 目标帧名：来自**场景**（scenes/handoff_lab/scene.yaml 的 props.tray_01 → frame: tray_frame），
+  # 模型里必须是 site 或 body（实测：tray_frame 在构建产物里是 site）。
+  target_frame: tray_frame
+  # 接近速度上限（m/s）：必须 ≤ 安全策略 max_speed_mps=0.5；只允许收紧。
+  # 初始档 0.15 是"慢速接近"的工程选择，**待按停靠判据标定**（标定后在声明里写明扫描范围与依据）。
+  approach_speed_mps: 0.15
+  # 误差 → 速度的比例增益（1/s）：v = gain·误差，再按上面上限限幅。
+  gain_s_inv: 0.8
+  # 到位后保持时长（s）：停靠判据含"末速"，必须有保持窗才能验收。
+  settle_s: 1.0
+  # 总超时（s）：超时未进容差 ⇒ 显式失败（DOCK_TIMEOUT），不返回"近似成功"。
+  timeout_s: 60.0
+
 state:
   # 传感器按名字解析（关节名 ≠ 执行器名：go2.xml 关节 FL_hip_joint / 执行器 FL_hip）。
   sensors:
