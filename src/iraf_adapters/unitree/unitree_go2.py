@@ -1827,6 +1827,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             （`anchor: measured_pose` 档用：漂移/速度指令都由它换算，见 `gait.walk_foot_offset_m`）。
             """
             elapsed = now - onset
+            state_holder["elapsed_s"] = elapsed          # 采样对齐步态相位用（同一拍）
             vx_cmd, vy_cmd, wz_cmd = ramped_command(elapsed)
             # 退让项的步幅增益（`gait.walk.stride_scale`）：只放大**足端退让**的给进速率，
             # QP 的参考仍用未放大的指令（它跟踪的是真实期望速度，不许被放大）。
@@ -1855,9 +1856,19 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 "base_yaw_deg": yaw_deg,
                 "base_yaw_rate_rad_s": float(self._body_frame_omega(trunk_body)[2]),
                 "tilt_deg": float(quat_tilt_deg(quat)),
+                # 俯仰/滚转分开记 + 逐腿实测接触法向力 + 步态已运行时间：
+                # 2026-09-23 整流效应分析用（竖直抬放 + 支撑交替 + 机身姿态 ⇒ 每周期净冲量）。
+                "body_roll_deg": float(np.degrees(np.arctan2(
+                    2.0 * (w * qx + qy * qz), 1.0 - 2.0 * (qx * qx + qy * qy)))),
+                "body_pitch_deg": float(np.degrees(np.arcsin(
+                    max(-1.0, min(1.0, 2.0 * (w * qy - qz * qx)))))),
+                "leg_force_n": {code: float(value) for code, value
+                                in self._leg_contact_forces(trot, geometry).items()},
+                "gait_elapsed_s": float(state_holder.get("elapsed_s") or -1.0),
                 # 诊断量：本拍 MPC 载荷经 ctrlrange 截断后的执行力矩峰值 + 本拍支撑集
                 # （用于定位"从第几拍开始失控"，不参与任何判据）
                 "max_abs_ctrl_nm": float(np.max(np.abs(np.asarray(info["ctrl"], dtype=float)))),
+
                 # 位置环（混合前，含重力前馈）与 MPC 载荷的**拆分**（诊断）：
                 # 只有拿到这两项才能回答「QP 的命令有多少被位置环抵消」（§1.8 的 95% 抵消）。
                 "max_abs_ctrl_position_nm": float(np.max(np.abs(

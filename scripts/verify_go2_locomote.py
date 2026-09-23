@@ -85,6 +85,8 @@ def main(argv=None):
     parser.add_argument("--robot-config", type=Path, default=Path("config/go2_loopback.yaml"))
     parser.add_argument("--only", choices=sorted(SCENARIOS), default=None)
     parser.add_argument("--duration-ms", type=float, default=3000.0)
+    parser.add_argument("--dense-diagnostics", action="store_true",
+                        help="诊断序列逐拍（而不是每 10 拍）：用于按步态周期对齐的相位分析")
     parser.add_argument("--report", type=Path,
                         default=Path("build/acceptance/go2-locomote/report.json"))
     args = parser.parse_args(argv)
@@ -183,9 +185,12 @@ def main(argv=None):
                                                     "track_err_rad", "max_track_err_rad",
                                                     "mpc_payload_max_nm",
                                                     "base_linear_speed_mps",
+                                                    "body_roll_deg", "body_pitch_deg",
+                                                    "leg_force_n", "gait_elapsed_s",
                                                     "base_position_xy_m", "base_yaw_deg",
                                                     "ctrl_saturated")}
-                             for s in samples[::10]] + [s for s in samples[-5:]]),
+                             for s in samples[::(1 if args.dense_diagnostics else 10)]]
+                            + ([s for s in samples[-5:]] if not args.dense_diagnostics else [])),
             "samples_count": len(samples),
             "warmup": report.get("warmup"),
         })
