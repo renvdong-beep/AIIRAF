@@ -73,7 +73,13 @@ REQUIRED_GAIT_KEYS = (
 )
 
 #: `gait.stabilization` 必需键（机身阻尼参数；缺键即失败，不允许实现层默认值）。
-REQUIRED_STABILIZATION_KEYS = ("enabled", "linear_damping_s", "max_linear_offset_m")
+#: `gait.stabilization` 必需键。
+#:
+#: 位置项三键（2026-09-23 新增，契约见 docs/debug/2026-09-23-go2-gait-drift.md §9）：
+#: 纯速度反馈在 v→0 时修正量→0，**无法**压住低速残余漂移（实测 19 档声明内调参最好 0.5959 m，
+#: 判据 0.05 m）⇒ 增加一个作用在**滑动平均位移**上的低频位置项。三键缺一即显式失败。
+REQUIRED_STABILIZATION_KEYS = ("enabled", "linear_damping_s", "max_linear_offset_m",
+                               "position_gain_s_per_m", "position_window_s", "position_limit_m")
 
 #: `gait.sway` 必需键（逐相位重心转移；缺键即失败，不允许实现层默认值）。
 #:
@@ -548,6 +554,23 @@ def load_gait_declaration(declaration, profile_joints):
     s_missing = [key for key in REQUIRED_STABILIZATION_KEYS if key not in stabilization]
     if s_missing:
         raise DeclarationError("gait.stabilization 缺少必需键: %s" % s_missing)
+    # 位置项取值域（语义见 REQUIRED_STABILIZATION_KEYS 上方与契约 §9）：
+    #   · 增益 0 ⇒ 该项关闭（显式声明，不做隐式默认）；负值非法（会变成正反馈）；
+    #   · 窗口必须**严格大于一个步态周期**，否则滑动平均会把逐相位 sway 也当成漂移去对抗；
+    #   · 上限 > 0：与速度项的 max_linear_offset_m 分开，便于分别取证。
+    position_gain = _positive(stabilization["position_gain_s_per_m"],
+                              "gait.stabilization.position_gain_s_per_m", allow_zero=True)
+    position_window = _positive(stabilization["position_window_s"],
+                                "gait.stabilization.position_window_s")
+    position_limit = _positive(stabilization["position_limit_m"],
+                               "gait.stabilization.position_limit_m")
+    period_s = 1.0 / frequency_hz
+    if position_gain > 0.0 and position_window <= period_s:
+        raise DeclarationError(
+            "gait.stabilization.position_window_s=%.6f 必须**严格大于**一个步态周期 %.6f s："
+            "否则滑动平均会把逐相位重心转移当成漂移去对抗（契约 §9 的反例）"
+            % (position_window, period_s)
+        )
 
     legs_section = section["legs"]
     if not isinstance(legs_section, dict) or not legs_section:
@@ -704,6 +727,11 @@ def load_gait_declaration(declaration, profile_joints):
                 stabilization["max_linear_offset_m"],
                 "gait.stabilization.max_linear_offset_m",
             ),
+            # 低频位置项三键（2026-09-23；契约 §9）。语义：作用于**滑动平均**后的机身水平位移，
+            # 与速度项相加后各自限幅。增益 0 ⇒ 该项关闭（显式声明，不隐式生效）。
+            "position_gain_s_per_m": position_gain,
+            "position_window_s": position_window,
+            "position_limit_m": position_limit,
         },
         "legs": legs,
         # 逐相位重心转移（wave 必需，其它步态类型为 None）：幅度/方向/平滑/斜坡全部来自声明。
@@ -1195,6 +1223,42 @@ def sway_direction_report(params, geometry):
     }
 
 
+def position_offset(params, mean_drift_xy):
+    """机身**低频位移**的足端偏移量 `(dx_m, dy_m)`（2026-09-23 新增；契约见
+    `docs/debug/2026-09-23-go2-gait-drift.md` §9）。
+
+    与 `stabilization_offset`（速度项）的分工：
+      · 速度项 `k·(v + ω×r)` 在 v→0 时修正量→0 ⇒ **压不住低速残余漂移**（实测声明内 19 档调参
+        最好 0.5959 m，判据 0.05 m）；
+      · 本函数作用在**滑动平均**后的机身水平位移上（窗口必须 > 1 个步态周期 ⇒ 不含逐相位 sway），
+        因此只对"慢慢走掉"这一低频分量起作用，不与 sway 对抗。
+
+    符号（**实测判定，勿凭直觉改动**）：机身漂 `+d` 时修正项取 **`+k·d`**（与速度项同加法位置）。
+    两种符号都实测过（基线 step 0.01 + 速度项 0.3/0.06）：
+      · `+k·d`：0.5959 m（无位置项）→ 0.5662 m（增益 0.1/上限 0.06，**本组最好**）、
+        0.8262 m（0.01）、0.8653 m（0.3/0.20）；
+      · `−k·d`（翻转后）：**四档全部更差** —— 7.9783 m（0.1）、7.3935 m（0.3）、10.0651 m（1.0）、
+        1.4632 m（0.3/0.20）。
+    ⇒ 取 `+k·d`。⚠ 同时如实登记：本项**不足以**把漂移压到判据（最好仍 0.5662 m vs 0.05 m，差 11 倍），
+    即"残余漂移 = 低频位置偏移"这一假设**未被证实**，参见本项上方的文档 §9 与 §8。
+    实参 `mean_drift_xy` 为**机身系**的平均位移（由适配器的 target_provider 维护）。
+    """
+    stabilization = params["stabilization"]
+    if not stabilization["enabled"]:
+        return 0.0, 0.0
+    gain = float(stabilization["position_gain_s_per_m"])
+    if gain == 0.0:
+        return 0.0, 0.0            # 显式声明为 0 ⇒ 该项关闭（不做隐式默许）
+    limit = float(stabilization["position_limit_m"])
+    drift = np.asarray(mean_drift_xy, dtype=float).reshape(-1)
+    if drift.size != 2:
+        raise ValueError("mean_drift_xy 必须是 2 维（机身系 x/y），实际 %d" % drift.size)
+    if not np.all(np.isfinite(drift)):
+        raise ValueError("mean_drift_xy 含非有限值：不得据此生成足端目标")
+    return (max(-limit, min(limit, gain * float(drift[0]))),
+            max(-limit, min(limit, gain * float(drift[1]))))
+
+
 def stabilization_offset(params, body_velocity_mps, body_omega_rad_s, trunk_rel_m):
     """机身阻尼的足端偏移量 `(dx_m, dy_m)`（步态稳定性的核心，见下）。
 
@@ -1229,7 +1293,8 @@ def stabilization_offset(params, body_velocity_mps, body_omega_rad_s, trunk_rel_
 
 
 def gait_joint_targets(params, geometry, home, joint_limits, elapsed_s, amplitude=1.0,
-                       body_velocity_mps=(0.0, 0.0, 0.0), body_omega_rad_s=(0.0, 0.0, 0.0)):
+                       body_velocity_mps=(0.0, 0.0, 0.0), body_omega_rad_s=(0.0, 0.0, 0.0),
+                       body_mean_drift_xy=(0.0, 0.0)):
     """步态相位 → 12 个关节的目标角；目标越出 Profile 限位即显式失败。
 
     与 `gait.kind` 无关：相位→足端偏移（`foot_offset`）与支撑/摆动判定（`is_stance`）
@@ -1240,6 +1305,8 @@ def gait_joint_targets(params, geometry, home, joint_limits, elapsed_s, amplitud
     `joint_limits`：Profile 的关节限位；只允许在声明范围内活动（调用参数只能收紧，铁律 1.3）。
     `body_velocity_mps` / `body_omega_rad_s`：机身线速度与角速度（**机身坐标系**，
     由适配器从自由关节速度变换而来），仅用于声明化的阻尼偏移；缺省为零 = 无阻尼（不引入隐式行为）。
+    `body_mean_drift_xy`：机身相对原点的**滑动平均位移**（机身系），仅用于声明化的低频位置项
+    （`position_offset`，契约 §9）；缺省为零 = 无位置项（不引入隐式行为）。
     """
     targets = {}
     # 逐相位重心转移（wave 必需）：机身要往 +sway 移动 ⇒ 足端目标在机身系里减 sway。
@@ -1259,9 +1326,11 @@ def gait_joint_targets(params, geometry, home, joint_limits, elapsed_s, amplitud
         damping = stabilization_offset(
             params, body_velocity_mps, body_omega_rad_s, geom["trunk_rel_m"]
         )
+        # 低频位置项（与阻尼项同一加法位置、各自限幅）：压住速度项压不住的残余漂移。
+        position = position_offset(params, body_mean_drift_xy)
         q_hip, q1, q2 = leg_solve(
-            geom["neutral_x_m"] + dx + damping[0] - float(sway[0]) + foothold_x,
-            damping[1] - float(sway[1]) + foothold_y,
+            geom["neutral_x_m"] + dx + damping[0] + position[0] - float(sway[0]) + foothold_x,
+            damping[1] + position[1] - float(sway[1]) + foothold_y,
             geom["neutral_z_m"] + clearance + dz,
             geom["l1_m"],
             geom["l2_m"],

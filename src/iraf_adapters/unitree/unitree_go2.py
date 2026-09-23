@@ -1383,13 +1383,41 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             else None
         )
 
+        # 低频位置项（契约 docs/debug/2026-09-23-go2-gait-drift.md §9）：维护机身相对**起点**的
+        # 水平位移的滑动平均（窗口来自声明 `gait.stabilization.position_window_s`，必须 > 1 个
+        # 步态周期 ⇒ 不含逐相位 sway）。仅当声明开启且增益 > 0 时该项才实际生效
+        # （`gait.position_offset` 内判 0），因此关闭档与既有实现**逐位一致**。
+        from collections import deque
+
+        position_window_s = float(params["stabilization"]["position_window_s"])
+        drift_samples = deque()
+        drift_origin = {"xy": None}
+
+        def mean_drift_body(trunk):
+            xy = np.asarray(self.data.qpos[0:2], dtype=float).copy()
+            if drift_origin["xy"] is None:
+                drift_origin["xy"] = xy          # 起点即"原点"（首次调用时确定，不写数字）
+            rotation = np.asarray(self.data.xmat[int(trunk)], dtype=float).reshape(3, 3)
+            delta_world = xy - drift_origin["xy"]
+            delta_body = rotation.T.dot(np.array([delta_world[0], delta_world[1], 0.0]))
+            now = float(self.data.time)
+            drift_samples.append((now, float(delta_body[0]), float(delta_body[1])))
+            while drift_samples and (now - drift_samples[0][0]) > position_window_s:
+                drift_samples.popleft()
+            if not drift_samples:
+                return (0.0, 0.0)
+            count = float(len(drift_samples))
+            return (sum(item[1] for item in drift_samples) / count,
+                    sum(item[2] for item in drift_samples) / count)
+
         def target_provider(cycle_index, now):
             elapsed = now - onset
             amplitude = gait.amplitude_at(params, elapsed)
             velocity = self._body_frame_velocity(trunk_body)
             omega = self._body_frame_omega(trunk_body)
             targets = gait.gait_joint_targets(
-                params, geometry, home, limits, elapsed, amplitude, velocity, omega
+                params, geometry, home, limits, elapsed, amplitude, velocity, omega,
+                body_mean_drift_xy=mean_drift_body(trunk_body),
             )
             return np.array([targets[joint] for joint in self.joint_order], dtype=float)
 
