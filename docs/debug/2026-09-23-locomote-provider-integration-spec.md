@@ -47,8 +47,14 @@
 |---|---|---|
 | QP 状态分类非可用 / 子进程崩溃 / 超时 / 响应非法 | 走 `stop(mode="damped_hold")` | 移动中停住 ⇒ `STOPPED`；停止未达标 ⇒ `FAILED` |
 | 解龄 > 40.0 ms（含"未求解"） | 同上 | 同上 |
+| 响应非法（`decision=ok` 却带不可用解：长度/数值非法） | 同上 | 同上 |
+| **本拍计划不可用**（`plan_fn` 抛错或缺键 ⇒ 构造不出 QP，2026-09-23 由 `torque_hook` 的实施补齐） | 同上 | 同上 |
 | 急停 / 安全事件 | `torque_zero_release`，作废当前解（`ProviderCore.invalidate`） | `SAFETY_STOP` |
 | 停止未完成时其它控制源申请接管 | 按租约/fencing token **拒绝** | — |
+
+失败**原因**必须可追溯（否则报告里只剩 `freshness` 的判词，看不出是超时/崩溃/响应非法中的哪一类）：
+`ProviderRuntime` 把 `client_error`（客户端判定）与 `response_reason`（子进程原因）一并放进
+`diagnostics`，`MpcUnavailableError.reason` 带上两者（`src/iraf_adapters/unitree/mpc/torque_hook.py`）。
 
 ## 5. 接入要求（硬性）
 

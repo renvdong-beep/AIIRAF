@@ -109,5 +109,39 @@ def test_ticks_per_update_must_be_positive():
 def test_diagnostics_carry_traceable_fields():
     rt = ProviderRuntime(FakeClient(), ticks_per_update=1, now_fn=lambda: 0.0)
     d = rt.step(_req())["diagnostics"]
-    for key in ("age_ms", "status_class", "solve_ms", "source", "tick", "ticks_per_update"):
+    for key in ("age_ms", "status_class", "solve_ms", "source", "tick", "ticks_per_update",
+                "client_error", "response_reason"):
         assert key in d
+
+
+def test_will_update_predicts_next_step_source_without_mutating_state():
+    client = FakeClient()
+    rt = ProviderRuntime(client, ticks_per_update=2, now_fn=lambda: 0.0)
+    for expected in (True, False, True, False):
+        assert rt.will_update() is expected
+        out = rt.step(_req())
+        assert (out["diagnostics"]["source"] == "subprocess") is expected
+    assert client.calls == 2
+
+
+def test_emergency_tick_does_not_call_subprocess():
+    """急停拍不花求解预算：急停优先级高于"拿一个新解"（铁律 6.6）。"""
+    client = FakeClient()
+    rt = ProviderRuntime(client, ticks_per_update=1, now_fn=lambda: 0.0)
+    rt.step(_req())
+    assert rt.will_update(emergency=True) is False
+    out = rt.step(_req(), emergency=True)
+    assert out["decision"] == "torque_zero_release"
+    assert client.calls == 1                     # 急停拍没有调子进程
+    assert rt.has_solution is False
+
+
+def test_failure_cause_is_traceable_in_diagnostics():
+    """契约 §4 的失败分类要能区分：客户端判定（超时/崩溃/响应非法）必须进诊断。"""
+    client = FakeClient()
+    rt = ProviderRuntime(client, ticks_per_update=1, now_fn=lambda: 0.0)
+    rt.step(_req())
+    client.push(decision="damped_hold", err="超时", status="exception")
+    out = rt.step(_req())
+    assert out["diagnostics"]["client_error"] == "超时"
+    assert out["diagnostics"]["status_class"] == "exception"
