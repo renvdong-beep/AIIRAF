@@ -414,13 +414,21 @@ class QuadrupedAdapterCases(unittest.TestCase):
             places=6,
         )
 
-    # ---- 5. 显式拒绝未实现能力 ----
-    def test_locomote_is_explicitly_unsupported(self):
+    # ---- 5. locomote：已接 MPC 路径，接线输入必须来自声明 ----
+    def test_locomote_requires_declared_wiring(self):
+        """`locomote` 不再是"显式拒绝"：它走 MPC Provider 正式路径（A6a-④ ⑤）。
+
+        本 fixture 的声明里**没有** `locomote` 段 ⇒ 必须**显式失败**（Provider 配置与默认时长
+        只能来自声明，缺项不得静默取默认值）。
+        能力面不变：Profile 的 `capabilities` 仍只有 [stand, stop]（能力回填须过本机判据 +
+        aarch64 板复测，铁律 6.8）⇒ "未声明能力却调用"仍由能力契约层拦下。
+        """
         adapter, _authority, lease = self.make_adapter()
-        with self.assertRaises(quadruped.UnsupportedCapabilityError) as context:
+        # 本 fixture 的 Profile 关节名与真实机型不同 ⇒ 接线在 trot 声明合并/校验处**显式失败**
+        # （关节身份只能来自 Profile；这正是"缺声明即失败、不静默兜底"的表现）。
+        with self.assertRaises(quadruped.DeclarationError):
             adapter.locomote({"vx_mps": 0.1, "vy_mps": 0.0, "wz_rad_s": 0.0}, 200, lease)
-        self.assertIn("步态控制器", str(context.exception))
-        # 指令形状非法时按"指令被拒绝"返回：可区分"乱下指令"与"不会做"。
+        # 指令形状非法时按"指令被拒绝"返回：可区分"乱下指令"与"接线未声明"。
         with self.assertRaises(quadruped.CommandRejectedError):
             adapter.locomote({"vx_mps": 0.1}, 200, lease)
 

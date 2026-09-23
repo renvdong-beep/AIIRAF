@@ -28,6 +28,7 @@ from pathlib import Path
 import math
 import yaml
 import threading
+import sys
 
 import numpy as np
 
@@ -1538,18 +1539,219 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         return self.gait_in_place(lease, duration_ms=duration_ms, execution_id=execution_id)
 
     def locomote(self, velocity, duration_ms, lease, execution_id=None):
-        """速度指令：首期无步态控制器，显式拒绝（不伪造「指令已生效」）。
+        """速度指令 → MPC Provider（独立进程）→ 足端力 → 关节支撑力矩（A6a-④ ⑤）。
 
-        顺序刻意分成两步：先按通用契约校验指令**形状**（未知字段/非有限数值），
-        再以"能力未实现"拒绝——这样"乱下指令"与"不会做"在诊断上可区分。
-        契约层（`quadruped.verify_capabilities`）已保证 `locomote` 不会被写进能力声明，
-        这里再做一层运行期拒绝，防止调用方绕过能力声明直接调方法。
+        契约：`docs/debug/2026-09-23-locomote-provider-integration-spec.md` §2/§4/§6。
+        数据流（每拍）：`plan_fn()` 组 QP 请求（状态→参考→接触表→动力学→装配→协议编码）
+        → `ProviderRuntime.step()`（50 Hz 更新、100 Hz 消费，契约 §3）
+          ├─ 可用解 ⇒ 解的第一拍足端力 → `τ = −Jᵀ·f`（**实测符号**：`build/iraf-a6a4/jt_sign_probe.py`
+          │   τ=−Jᵀf ⇒ Δh=+0.001714 m、四腿法向合力 116.025 N；τ=+Jᵀf ⇒ 把足端卸掉）
+          │   → B1 载荷（逐关节 `position_weight`：支撑腿取声明 `stance_weight_position`、
+          │   摆动腿取 `weight_position`）⇒ `_run_control` 按**既有**混合与 ctrlrange 截断执行（本文件不改）
+          └─ 不可用/超时/过期/急停 ⇒ `MpcUnavailableError` ⇒ 按契约 §4：
+             `damped_hold`（移动中停住）或 `torque_zero_release`（急停 ⇒ 松力 + SAFETY_STOP）
+
+        与能力面的关系：本方法**不声明能力**（Profile 的 `capabilities` 仍是 [stand, stop]）；
+        能力回填要等本机判据（`config/go2_locomote.yaml` 的 ② 硬判据）与 aarch64 板复测都过（铁律 6.8）。
+        初始条件：场景构建期已按声明做 `initial_alignment`（关键帧即落在支撑面上，无 18.372 mm 穿透）。
         """
-        resolved = self.resolve_velocity(velocity)
-        raise UnsupportedCapabilityError(
-            "能力 locomote 未在本后端实现（Go2 首期无步态控制器，速度指令须由步态 Provider 提供）："
-            "显式拒绝，不返回伪造成功。已校验的指令: %r" % (resolved,)
+        from iraf_adapters.unitree.mpc import deployment as mpc_deployment
+        from iraf_adapters.unitree.mpc import plan as mpc_plan
+        from iraf_adapters.unitree.mpc import process_client as mpc_client
+        from iraf_adapters.unitree.mpc import state_bridge as mpc_state
+        from iraf_adapters.unitree.mpc import torque_hook as mpc_hook
+        from iraf_adapters.unitree.mpc.gait_trot import merge_trot_declaration
+        from iraf_adapters.unitree.mpc.provider_runtime import ProviderRuntime
+        from iraf_adapters.unitree.mpc.torque_hook import MpcUnavailableError
+
+        self.estop.assert_clear()
+        self.require_lease(lease, "locomote")
+        if execution_id is not None:
+            self.require_active_execution(execution_id, lease, capability="locomote")
+            active_id = str(execution_id)
+        else:
+            active_id = self.begin_execution("locomote", lease)
+        resolved = self.resolve_velocity(velocity)          # 形状/字段/有限性（未知字段一律拒绝）
+
+        section = self.declaration.get("locomote")
+        if not isinstance(section, dict):
+            raise DeclarationError("声明缺少 locomote 段（Provider 配置与默认时长必须来自声明）")
+        missing = [key for key in ("provider_config", "duration_ms") if key not in section]
+        if missing:
+            raise DeclarationError("声明缺少 locomote 的键: %s" % missing)
+        provider_config = Path(str(section["provider_config"]))
+        if not provider_config.is_absolute():
+            provider_config = repo_root() / provider_config
+        if not provider_config.is_file():
+            raise DeclarationError("locomote.provider_config 不存在: %s" % provider_config)
+        provider_doc = yaml.safe_load(provider_config.read_text(encoding="utf-8"))
+        deployment = mpc_deployment.load_deployment(provider_doc["mpc_provider"], self.control_hz)
+        mpc_model = dict(provider_doc["mpc_model"])
+        # trot 步态声明：与定位/接触表/落足点共用同一份（移植清单 §1.1：不得造第二份事实来源）
+        trot = gait.load_gait_declaration(
+            merge_trot_declaration(self.declaration, provider_doc["mpc_gait"]), self.profile.joints
         )
+
+        geometry = self._leg_geometry(trot)
+        trunk_body = gait.trunk_body_id(self.model, self.mujoco, trot)
+        home = {joint: float(self.profile.home[joint]) for joint in self.joint_order}
+        limits = {joint: self.profile.joint_limits[joint] for joint in self.joint_order}
+        balance_params = self._balance_parameters()
+        if not balance_params["enabled"]:
+            raise DeclarationError(
+                "balance.enabled=false：locomote 的支撑腿力矩路径依赖 B1 逐关节位置权重"
+                "（支撑腿 τ_pd 置 0、由 MPC 的接触力矩驱动），关闭档没有可用的混合权重"
+            )
+        stance_weight = float(balance_params["stance_weight_position"])
+        swing_weight = float(balance_params["weight_position"])
+        seconds = self.resolve_duration_ms(duration_ms, float(section["duration_ms"])) / 1000.0
+        horizon = int(mpc_model["horizon"])
+        z_des = float(mpc_model["stand_height_m"])
+
+        mass, _com0, inertia0, _bodies = mpc_state.subtree_mass_inertia(
+            self.model, self.data, self.mujoco, trunk_body
+        )
+        tracker = mpc_state.ComStateTracker()
+        hip_offsets = {}
+        for code in sorted(geometry):
+            joint_id = self.mujoco.mj_name2id(self.model, self.mujoco.mjtObj.mjOBJ_JOINT,
+                                              geometry[code]["joints"]["hip_joint"])
+            hip_body = int(self.model.jnt_bodyid[joint_id])
+            rotation = np.asarray(self.data.xmat[int(trunk_body)], dtype=float).reshape(3, 3)
+            hip_offsets[code] = rotation.T.dot(
+                np.asarray(self.data.xpos[hip_body], dtype=float)
+                - np.asarray(self.data.xpos[int(trunk_body)], dtype=float)
+            )
+
+        state_holder = {"pos_des_world": None, "t0": None}
+        samples = []
+        client = mpc_client.MpcProcessClient(deployment.worker_command(sys.executable),
+                                             timeout_ms=deployment.call_timeout_ms)
+        runtime = ProviderRuntime(client, ticks_per_update=deployment.ticks_per_update)
+        index_map = {
+            code: tuple(self.joint_order.index(geometry[code]["joints"][key])
+                        for key in ("hip_joint", "thigh_joint", "calf_joint"))
+            for code in sorted(geometry)
+        }
+        onset = float(self.data.time)
+
+        def state_vector_now():
+            rotation = np.asarray(self.data.xmat[int(trunk_body)], dtype=float).reshape(3, 3)
+            return mpc_state.com_state_vector(
+                np.asarray(self.data.subtree_com[int(trunk_body)], dtype=float),
+                np.asarray(self.data.qpos[3:7], dtype=float),
+                np.asarray(self.data.qvel[0:3], dtype=float),
+                np.asarray(self.data.qvel[3:6], dtype=float), tracker, rotation=rotation,
+            )
+
+        def plan_fn():
+            """本拍 QP 请求（只在更新拍被调用；同一份接触表用于 QP 与 B1 权重口径）。"""
+            state_now = state_vector_now()
+            if state_holder["pos_des_world"] is None:
+                state_holder["pos_des_world"] = np.array([state_now[0], state_now[1], z_des])
+            mass_now, _c, inertia_now, _b = mpc_state.subtree_mass_inertia(
+                self.model, self.data, self.mujoco, trunk_body
+            )
+            request, context = mpc_plan.build_mpc_request(
+                mpc_model, trot, com_state=state_now, mass=mass_now,
+                inertia_com_world=inertia_now, hip_offsets=hip_offsets,
+                body_velocity_body=self._body_frame_velocity(trunk_body),
+                pos_des_world=state_holder["pos_des_world"],
+                command={"vx_body": resolved["vx_mps"], "vy_body": resolved["vy_mps"],
+                         "yaw_rate": resolved["wz_rad_s"], "z_des": z_des},
+                t0=float(self.data.time) - onset, return_context=True,
+            )
+            # 参考位置的**钳位结果**必须跨拍保留（上游既有语义：`pos_des_world` 是有状态量）
+            state_holder["pos_des_world"] = np.array(context["pos_des_world_out"], dtype=float)
+            # B1 权重的支撑集口径 = 本拍接触表**第一列**（与 QP 用的是同一份表，不另算）
+            return {"request": request, "current_mask": context["contact_table"][:, 0]}
+
+        def jacobians_now():
+            out = {}
+            for code in sorted(geometry):
+                joints = [geometry[code]["joints"][key]
+                          for key in ("hip_joint", "thigh_joint", "calf_joint")]
+                dofs = [self.bindings[joint]["dof_adr"] for joint in joints]
+                foot_world = np.asarray(self.data.xpos[int(geometry[code]["foot_body"])],
+                                        dtype=float)
+                out[code] = self._foot_jacobian(dofs)(foot_world, geometry[code]["foot_body"])
+            return out
+
+        hook = mpc_hook.MpcTorqueHook(
+            runtime, plan_fn, index_map, stance_weight, swing_weight, jacobians_now, horizon,
+            emergency_fn=lambda: bool(self.estop.snapshot().get("latched")),
+            timeout_ms=deployment.call_timeout_ms,
+        )
+
+        def target_provider(cycle_index, now):
+            """摆动/支撑的关节形状目标（MPC 只提供接触力矩；形状仍由既有目标生成给出）。"""
+            elapsed = now - onset
+            targets = gait.gait_joint_targets(
+                trot, geometry, home, limits, elapsed, gait.amplitude_at(trot, elapsed),
+                self._body_frame_velocity(trunk_body), self._body_frame_omega(trunk_body),
+            )
+            return np.array([targets[joint] for joint in self.joint_order], dtype=float)
+
+        def sample_callback(cycle_index, info):
+            quat = np.asarray(self.data.qpos[3:7], dtype=float)
+            samples.append({
+                "time_s": float(self.data.time),
+                "base_position_xy_m": [float(self.data.qpos[0]), float(self.data.qpos[1])],
+                "base_height_m": float(self.data.qpos[2]),
+                "base_linear_speed_mps": float(np.linalg.norm(self.data.qvel[0:3])),
+                "tilt_deg": float(quat_tilt_deg(quat)),
+                "ctrl_saturated": int(np.count_nonzero(info["saturated"])),
+            })
+
+        failure = None
+        terminal = "SUCCEEDED"
+        cycles = 0
+        saturated = 0
+        try:
+            with client:
+                cycles, saturated = self._run_control(
+                    None, seconds, float(trot["ramp_s"]), target_provider=target_provider,
+                    torque_provider=hook, sample_callback=sample_callback,
+                )
+        except MpcUnavailableError as exc:
+            # 契约 §4：不可用/超时/过期 ⇒ 移动中停住（damped_hold）；急停 ⇒ 松力 + SAFETY_STOP
+            failure = {"decision": exc.decision, "reason": exc.reason,
+                       "diagnostics": dict(exc.diagnostics)}
+            if exc.decision == "torque_zero_release":
+                self._apply_zero_torque()
+                terminal = "SAFETY_STOP"
+            else:
+                try:
+                    hold = self.damped_hold(lease, tilt_limit_deg=None)
+                    terminal = "STOPPED" if hold.get("static_entered") else "FAILED"
+                except Exception as hold_exc:  # noqa: BLE001 —— 停机失败必须显式落到 FAILED
+                    failure["damped_hold_error"] = "%s: %s" % (type(hold_exc).__name__, hold_exc)
+                    terminal = "FAILED"
+            self.ledger.finish(active_id, terminal, failure["reason"])
+        else:
+            self.ledger.finish(active_id, terminal)
+
+        report = {
+            "simulation": True,
+            "capability": "locomote",
+            "path": "mpc_provider",
+            "execution_id": active_id,
+            "fencing_token": int(lease.fencing_token),
+            "control_source_owner": str(getattr(lease, "owner", "")),
+            "command": dict(resolved),
+            "duration_ms": seconds * 1000.0,
+            "control_cycles": int(cycles),
+            "ctrl_saturated_samples": int(saturated),
+            "deployment": deployment.as_dict(),
+            "mpc_model": {"horizon": horizon, "gait_hz": mpc_model["gait_hz"],
+                          "z_des_m": z_des},
+            "position_weight": {"stance": stance_weight, "swing": swing_weight},
+            "provider": hook.summary(),
+            "client": dict(client.stats),
+            "failure": failure,
+            "samples": samples,
+        }
+        return report
 
     # ---- 显示面（S1 交互 / 场景观看）：参数一律来自声明的 render 段 ----
     def display_lock(self):

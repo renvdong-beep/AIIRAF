@@ -549,6 +549,15 @@ render:
   # 该开关只影响**交互窗口**（离屏渲染 `render.camera` 走的路径一直正常）；关掉即回到默认 GL。
   software_gl: true
 
+# 速度指令 `locomote` 的接线声明（A6a-④ ⑤；Provider 配置与默认时长必须来自声明，铁律 5.3）。
+# 语义：`locomote` 的能力声明**不在这里** —— Profile 的 `capabilities` 仍只有 [stand, stop]，
+# 本段只提供"怎么做"的参数；能力声明要等本机判据 + aarch64 板复测都过（铁律 6.8）。
+locomote:
+  # MPC Provider 的部署与模型声明文件（含 `mpc_provider` / `mpc_model` / `mpc_gait` 三段）。
+  provider_config: config/go2_locomote.yaml
+  # 未显式给 `duration_ms` 时的默认执行时长（ms）。
+  duration_ms: 3000
+
 state:
   # 传感器按名字解析（关节名 ≠ 执行器名：go2.xml 关节 FL_hip_joint / 执行器 FL_hip）。
   sensors:

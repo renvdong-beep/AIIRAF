@@ -52,7 +52,8 @@ def time_step_s(mpc_model):
 
 
 def build_mpc_request(mpc_model, gait_params, *, com_state, mass, inertia_com_world,
-                      hip_offsets, body_velocity_body, pos_des_world, command, t0=0.0):
+                      hip_offsets, body_velocity_body, pos_des_world, command, t0=0.0,
+                      return_context=False):
     """组装一份 MPC 请求（协议请求字典，可直接交给 `MpcProcessClient.call`）。
 
     参数（全部由调用方给出，本模块不内置任何数字）
@@ -116,9 +117,15 @@ def build_mpc_request(mpc_model, gait_params, *, com_state, mass, inertia_com_wo
     qp = assemble_qp(mpc_model, x_ref, contact, ad, bd, state, gd)
 
     # ⑦ 协议编码（跨进程边界上只有数字列表；meta 只放可追溯标量）
-    return pr.build_request(
+    request = pr.build_request(
         qp["h_diag"], qp["g"], qp["a_rows"], qp["a_cols"], qp["a_vals"],
         qp["lbx"], qp["ubx"], qp["lba"], qp["uba"],
         meta={"t0_s": float(t0), "horizon": horizon, "time_step_s": dt,
               "n_vars": int(qp["n_vars"]), "n_cons": int(qp["n_cons"])},
     )
+    if not return_context:
+        return request
+    # `context` 提供本拍**同一份**中间量（接触表等）：避免调用方为了拿接触表再算一遍
+    # （那就是"同一事实两处来源"）。缺省 `return_context=False` ⇒ 既有调用与单测不受影响。
+    return request, {"contact_table": contact, "x_ref": x_ref, "pos_des_world_out": pos_des_out,
+                     "time_step_s": dt, "horizon": horizon}
