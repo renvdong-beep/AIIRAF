@@ -53,22 +53,36 @@
 0.0038248382123762478 → 0.0032068060511408506；前两项逐位不变、10 项检查全过）。
 ⇒ 台面放大**不是**本问题的解，保留/回退见使用者选择。
 
-## 4. 下一步（A：修漂移）的候选与二分顺序（下一轮执行）
+## 4. 二分结果（本轮已跑，判据统一 `max_displacement_m ≤ 0.05`）
 
-已知可下手的事实（都来自声明/实现，非猜测）：
-- `balance.enabled: false` ⇒ 力矩级平衡器**未安装**，机身水平位置**没有任何位置反馈**；
-  机身阻尼只有速度项（`config/go2_loopback.yaml:125` 注释：位置项会与"有意的重心转移"对抗）。
-- wave 步态含**逐相位重心转移**（`gait.sway`，幅度取自实测"目标余量 0.010 m"那条推导）；
-  若每周期净位移不闭合，1.25 Hz × 0.16 m/步 ⇒ 正好是实测的量级（0.16 m/s ÷ 1.25 Hz ≈ 0.13 m/周期）。
-- 对照物（已存在的判据）：`foothold.verification.net_drift_per_cycle_m = 0.005`（crawl 口径）。
-- 声明里 `foothold.mode: static`（落足点规划未实现）⇒ 摆动腿落地是"按关节轨迹落下"，
-  没有落点闭环 ⇒ 步态没有任何机制把机身拉回原点。
+| 变体（每次只改**一个**声明项，副本在 `build/iraf-gait-drift/`） | max_displacement | fall_base_height | 形态 |
+|---|---|---|---|
+| 生产声明（wave / sway 0.06 / `stabilization.enabled: false`） | **4.9378 m** | −111.6 | 走出台面 → 自由落体 |
+| `sway.amplitude_m = 0` | 5.7111 m | −169.8 | 更差；纯 −x（说明 sway 只贡献 y 分量，不是主因） |
+| `kind = trot`（对角相位、duty 0.6，经 `gait_trot.merge_trot_declaration` 合并） | 6.0784 m | −144.4 | 仍主要 −x ⇒ **不是 wave/sway 特有**，是两波形共用的关节目标在让机身走 |
+| `stabilization.enabled = true`（其余不动；gain 0.12 s、偏移上限 0.04 m） | **0.9313 m**（↓5.3×） | 0.0675 | **掉出台面已消除**（z 稳定在 0.067~0.075），但改为原地**翻倒**（倾角≈178°，height_mean 0.071） |
 
-二分顺序（每条都是"改一个声明副本 → 跑 drift 脚本 → 看 max_displacement_m"）：
-1. **关 sway**（声明副本 `gait.sway` 幅度置 0）⇒ 若漂移基本消失 ⇒ 定位到重心转移的净位移不闭合；
-2. **换 kind**（wave → trot，duty 0.6、相位对角）⇒ 看是否与波形/相位相关（本仓库已有 trot 声明合并机制）；
-3. **开 balance（B1）**⇒ 若装了力矩级平衡器后漂移被压回 0.05 内 ⇒ 说明"没有位置反馈"是主因，
-   应把 balance 从 `enabled: false` 切换到生产档（该通路已有 stand 级验收证据）；
-4. **机身阻尼加位置项**（速度阻尼 + 弱位置保持）⇒ 量化它对 sway 的对抗程度。
-判据统一为 `scripts/verify_go2_gait_drift.py` 的 `max_displacement_m ≤ 0.05`（退出码 0），
-并要求 `max_tracking_error_rad`、四腿 `stance_duty` 不回退（`scripts/verify_go2_gait_in_place.py`）。
+### 机制：仓库里早有实测记录（本轮确认，不是我新推的）
+
+`src/iraf_adapters/unitree/gait.py:1198-1211`（`stabilization_offset` 的 docstring）：
+> 四足只用对角两条腿支撑时，关节空间（机身相对）的足端目标等价于「足端跟着机身走」——
+> 机身一旦有水平速度或角速度，支撑足被一起带走，形成**正反馈**。实测（`build/iraf-24h-2/02/scan2-run1.txt`、
+> `scan4-stepheight.txt`）：抬脚高度 ≤0.01 m（足端未离开台面）时机身纹丝不动（**漂移 0.006 m**、倾角 0.30°），
+> 抬脚 ≥0.02 m（真正两条腿支撑）后 8 s 内沿 −x 漂移 **0.65 m**、速度 0.63 m/s 并失稳倒下。
+
+⇒ 与今日实测同形态（−x 主导、单调走出去、后段翻倒）。该函数的对策（把足端目标跟随该足端处的机身速度
+`k·(v + ω×r)`，按 `max_linear_offset_m` 截断）**默认关闭**：`gait.stabilization.enabled: false`
+（与 `balance.enabled: false` 同一处理方式 —— 实验组由验收入口生成证据区副本、只改开关后开启）。
+
+## 5. 结论与下一步
+
+1. **这不是偶发 bug，而是"演示用了未达标配置"**：`step_height_m 0.08` + `stabilization.enabled: false`
+   ⇒ 按仓库自己的实测，这个组合**必然走出去**。历史验收（2026-09-22 09:50）本就 `passed: false`。
+2. 打开 `stabilization` 是**正确方向**（漂移 4.9378 → 0.9313 m，且不再掉出台面），但当前增益
+   （0.12 s / 上限 0.04 m）不足以稳住：改为原地翻倒（倾角 178°、height_mean 0.071）。
+3. 下一轮（A 的继续）：以本脚本为**唯一判据**做增益/步高扫描并逐档落证据：
+   - `stabilization.linear_damping_s` ∈ {0.12(声明值), 0.2, 0.3, 0.4} × `max_linear_offset_m` ∈ {0.04, 0.06};
+   - 同时扫 `step_height_m` ∈ {0.08(声明值), 0.05, 0.03}（仓库实测 ≤0.01 m 时漂移仅 0.006 m，可作上界参照）；
+   - 判据不变（`max_displacement_m ≤ 0.05` + `fall_base_height_m ≥ 0.15` + `height_mean_m` 在容差内），
+     并要求 `scripts/verify_go2_gait_in_place.py` 的 20 项既有判据不回退；
+   - 通过后把胜出的档写回生产声明（一次只翻一个键），并把 2026-09-22 那份失败验收作废/更新。
