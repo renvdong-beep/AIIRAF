@@ -52,6 +52,29 @@ wave 的环形顺序**（`config/go2_loopback.yaml:368-371`：FL 0.0 / FR 0.25 /
 本轮**未**伪造该声明（伪造即制造第二份事实来源）；下一步先落这份声明并让它过既有校验门禁，
 再把 `contact_table` 接到它上面。
 
+### 2.0 接触表逐位校验（已完成，2026-09-23）
+
+脚本 `build/research/mpc-repo/verify_contact_parity.py`｜报告 `build/research/mpc-repo/contact_parity.json`
+（`all_ok: true`，退出码 0）。基准 = 上游 `convex_mpc.gait.Gait`（不是我们重写的式子）。
+
+| 对照项 | 规模 | 结果 |
+|---|---|---|
+| A 声明侧：上游 `PHASE_OFFSET` vs 我们按 `LEG_ORDER=[FL,FR,RL,RR]` 排开的声明偏移 | 4 项 | 一致：两侧均 `[0.5, 0.0, 0.0, 0.5]` |
+| B `compute_contact_table`（含内部 `+dt/2`）vs `contact_table(half_step=True)` | 400 组 t0 × N=16 | **0 处不一致**（dtype 均为 int32） |
+| C `compute_current_mask` vs `current_mask` | 2 周期 × 480 点 | **0 处不一致** |
+| D 半拍反证：`ours(half_step=False, t0)` vs `theirs(t0 − dt/2)` | 400 组 | 399 组一致；余 1 组为 wrap 边界 1 ulp（见下） |
+
+D 的 1 处差异（**不是**抹平，是分类）：`t0 = 0.12499999999999999`、行 `[FL, RL]`、index `[0, 2]`、
+theirs `0` / ours `1`、`min_phase_distance_to_boundary = 0.0`。成因：两侧在该点分别取到
+`phase == 1.0` 与 `phase == 0.9999999999999999`，`mod 1.0` 后落到 `0.0`（支撑）与 `0.999…`（摆动）
+⇒ 真值同点、1 ulp 取舍。**生产路径是 `half_step=True`（B 项），0 处不一致。**
+
+经验（两次对照式写错，均为我自己的口径错误，非被测代码错误，记下防重复）：
+1. 上游 `compute_contact_table` **内部自己**加 `dt/2` ⇒ 「无半拍」侧必须传 `t0 − dt/2`
+   （首版写成 `+dt/2` ⇒ 400/400 假不一致）；
+2. 判定边界有**两处**：`phase == duty` 与 `phase == 0/1`（wrap）。只查前者会把 wrap 边界
+   的 1 ulp 翻转误判成真差异（首版即如此）。
+
 ## 2. 逐位校验点（用已提交的 `traj_parity` 门禁）
 
 对**同一批状态/时间序列**（研究侧已存的 200 样本）比较下列数组的 `tobytes()`：

@@ -16,8 +16,19 @@
 我们的 `gait.leg_phase` 是 `((elapsed/T) + offset) % 1`、`gait.is_stance` 是 `phase < duty_factor`
 ⇒ 同一 `elapsed` 下两条式子逐位相同（`mod` 与取模顺序不同但实数结果一致，纯浮点加法顺序一致）。
 
-未验证边界：本模块的**逐位校验**（与研究侧同一 `t0/dt/N` 下比较 `contact_table`）在下一步做；
-在此之前不得接进 `provider_runtime`。
+**已完成的逐位校验**（2026-09-23，脚本 `build/research/mpc-repo/verify_contact_parity.py`，
+报告 `build/research/mpc-repo/contact_parity.json` ⇒ `all_ok: true`）：与上游 `convex_mpc.gait.Gait`
+在**同一 `t0/dt/N`** 下 `tobytes()` 比对：
+  · 声明侧：上游 `PHASE_OFFSET` = `[0.5, 0.0, 0.0, 0.5]`，按 `LEG_ORDER` 排开与本模块消费的
+    声明逐项相等（`our_phase_offsets == their_phase_offsets`）；
+  · `compute_contact_table` vs `contact_table(half_step=True)`：**400 组 t0 × N=16 → 0 处不一致**
+    （dtype 两侧均为 int32）；`compute_current_mask` vs `current_mask`：2 周期 480 点 → **0 处不一致**；
+  · 半拍口径反证：`ours(half_step=False, t0) == theirs(t0 − dt/2)` 400 组中 399 组一致，
+    余 1 组（`t0 = 0.12499999999999999`、行 `[FL, RL]`、theirs 0 / ours 1）落在
+    **`phase == 1.0` 的相位环 wrap 边界**上（`min_phase_distance_to_boundary = 0.0`）——
+    两侧真值同点、浮点上分别取到 `1.0` 与 `0.9999999999999999`，属 1 ulp 取舍而非语义差异；
+    该对照式不是生产路径（生产用 `half_step=True`，0 处不一致）。
+⇒ 本模块的封禁已解除：可以接进 `provider_runtime`（真机/板上复测仍是独立关口）。
 
 已实测的相位结构（本模块单测覆盖，**与直觉不同故记下**）：`duty = 0.6 > 0.5` 且两组相位偏移
 相距 0.5 时，两组支撑窗口各长 `duty = 0.6`、在相位环上错开半周期 ⇒ 交集是**两段**

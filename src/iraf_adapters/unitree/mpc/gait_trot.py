@@ -15,8 +15,10 @@
      `profile_bins` 偶数、腿部关节必须在 Profile 关节清单内…），再叠加 MPC 自洽门禁：
      `period_s` 必须等于 `1 / mpc_model.gait_hz`（horizon×dt = 步态周期是接触表相位的前提）。
 
-未验证边界：本模块尚未与研究侧 `convex_mpc.gait` 的 `PHASE_OFFSET`/`GAIT_HZ`/`DUTY` 做逐项对照
-（下一步随接触表逐位校验一起做）；在此之前不得接进 `provider_runtime`。
+**已完成的对照**（2026-09-23，`build/research/mpc-repo/verify_contact_parity.py`）：
+本模块解析出的 `frequency_hz = 3.0`、`duty_factor = 0.6`、按 `LEG_ORDER` 排开的相位偏移
+`[0.5, 0.0, 0.0, 0.5]` 与上游 `GAIT_HZ` / `DUTY` / `PHASE_OFFSET` 逐项相等，且由此喂出的接触表
+在上游同一 `t0/dt/N` 下 **400 组 × N=16 逐位一致（0 处不一致）** ⇒ 本模块的封禁已解除。
 """
 
 from __future__ import annotations
