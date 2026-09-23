@@ -102,3 +102,14 @@
 说明：本轮四个提交都不触碰 stand/stop/步态与平衡路径（新增 `torque_hook`/`state_bridge`、
 `provider_runtime` 的判词与诊断字段），故"逐位不变"是**预期**结果而非巧合；它证明新增代码
 没有污染既有控制路径（`locomote()` 仍是显式拒绝，`capabilities` 仍 `[stand, stop]`）。
+
+同一次运行的其它字段（一并钉住，防误读）：
+- `checks = 10`、`failed_checks = []`；`stand.height_target_m = 0.27`、`height_tolerance_m = 0.02`
+  ⇒ 判据 `|0.279954 − 0.270000| <= 0.02` 通过；`max_attitude_error_deg = 0.11199278558472758`、
+  `max_tracking_error_rad = 0.04646826440572238`、`hold_seconds = 7.499999999999341`（判据 ≥ 6）。
+- `stop.mode = torque_zero_release`（**松力停机**）、`static_entered = true`、
+  `seconds_to_static = 0.2800000000000935`、`final_height_m = 0.07720830847432933`、
+  **`collapsed = true`**。⚠ `collapsed = true` 是**松力停机的预期语义**（力矩型执行器失能 ⇒ 整机躺倒，
+  定义见 `src/iraf_adapters/unitree/loopback.py:663`：`final_height < target − tolerance`），
+  与既有基线一致（`docs/debug/2026-09-21-quadruped-gait-trot-to-wave.md:472` 记 `true / true`、必须不变），
+  **不是**失败信号。移动中停止要求的 `damped_hold`（不躺倒）属 A1b2，依赖本项 locomotion 通路。
