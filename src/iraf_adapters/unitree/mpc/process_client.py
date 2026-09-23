@@ -48,8 +48,12 @@ class MpcProcessClient:
     def start(self):
         if self._proc is not None and self._proc.poll() is None:
             return self
+        # ⚠ `stderr` 必须**不接管道**：worker 会把求解器（osqp）的迭代输出重定向到 stderr
+        # （见 `worker.py` 的协议通道卫生），而本客户端从不读 stderr ⇒ 接 PIPE 会在 stderr
+        # 写满 64 KB 后**永久死锁**子进程（实测：每 45 次求解 ≈ 63 KB，正好在 tick 88 处
+        # `select` 超时收场）。子进程崩溃仍可由 stdout 的 EOF 检出（映射为"子进程提前退出"）。
         self._proc = subprocess.Popen(self._cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                      stderr=subprocess.PIPE, text=True, bufsize=1)
+                                      stderr=subprocess.DEVNULL, text=True, bufsize=1)
         return self
 
     def close(self, timeout_s=2.0):
