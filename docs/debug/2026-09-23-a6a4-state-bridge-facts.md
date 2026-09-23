@@ -76,6 +76,38 @@
 
 ## 6. 下一轮实现清单（本轮已把事实固定，可直接落代码）
 
+### 6.1 逐位验收口径的**结构性更正**（2026-09-23 读上游代码后确认，重要）
+
+原计划"`x0/Ad/Bd/gd/x_ref` 与上游 MuJoCo 路径逐位对照"**不成立**，原因分三层（都是读代码+实测得到）：
+
+1. 上游的 `x0/Ad/Bd/gd` 来自 **pinocchio/URDF**（`go2_robot_data.PinGo2Model`：`data.com[0]`、`data.vcom[0]`、
+   `pin.computeAllTerms`），**不是** MuJoCo。其 `mujoco_model.MuJoCo_GO2_Model` 走的是**它自己的**
+   `models/MJCF/go2/scene.xml`（硬编码 `XML_PATH`），且只被仿真/演示用。
+2. 上游闭环 `eval_trot_23.py` 的**被控对象**才是我们的厂商 MJCF（`--xml` 默认
+   `vendor/unitree_go2/unitree_robots/go2/scene.xml`），而**控制模型**仍是 URDF ⇒ 上游自己就是
+   "模型与被控对象不同源"。
+3. 我们的**场景**（`build/scenes/handoff_lab/handoff_lab.xml`）与厂商原始场景也不同：多一个挂在
+   `base_link` 下的 `tray_01`（0.35 kg）与一个挂在 `world` 下的 `box_01`（0.04 kg）。实测质量：
+   厂商原始场景 **15.206408 kg**（上游 docstring 亦记此值）／我们的 trunk 子树 **15.556408 kg**
+   ／`sum(body_mass)` 15.596408 kg。
+
+⇒ **同模型逐位对照在"上游 vs 我们"之间不可达**（模型文件本身就不同），因此 ②b 的验收改成两条**可达且更有意义**的：
+
+- **口径 A（结构项，已具备）**：把同一批状态/参数喂进两侧，要求**公式级**逐位一致 ——
+  接触表、状态参考轨迹、足端参考（落足点）、`x_ref`、`Ad/Bd/gd`（给定同一 `mass/inertia/foot`）——
+  这些在 A6a-3b 已逐位通过（`build/research/mpc-repo/*_parity.json`，13 数组逐位一致）。
+- **口径 B（模型一致项，本轮新增，生产更关键）**：
+  用**我们自己的** MuJoCo 被控对象验证动力学的**自洽性** —— 在若干状态上用 `Ad/Bd/gd` 前向预测
+  一步（`x_{k+1} = Ad·x_k + Bd·u_k + gd`）与 MuJoCo 实际推进一个 MPC 步后的状态比对，
+  判据 = 残差 ≤ 声明的容差（声明键待落：`mpc_model.dynamics_consistency_tol`）。
+  理由：MPC 要控制的是**我们这个本体**（含托盘），"与上游 URDF 数值差多少"不影响稳定性，
+  而"我们的模型与我们的被控对象是否一致"直接决定闭环能不能收敛。
+
+⇒ 实现顺序更新为：① `plan.py`（已完成，结构级）→ ② **口径 B 探针**（`scripts/verify_mpc_dynamics_consistency.py`）
+→ ③ 口径 A 的复跑（复用既有 parity 脚本，作为"移植未回退"的门禁）→ ④ 接 `locomote()`。
+
+### 6.2 原清单（保留）
+
 1. `src/iraf_adapters/unitree/mpc/state_bridge.py`
    - `ComStateTracker`（有状态：`yaw_prev/yaw_cont`）+ `com_state_vector(...)`
    - `robot_mass_inertia(model, data, mujoco, trunk_body)`（`crb[trunk]` + 手工装，双路线可选）
