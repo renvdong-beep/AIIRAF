@@ -1560,6 +1560,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         from iraf_adapters.unitree.mpc import process_client as mpc_client
         from iraf_adapters.unitree.mpc import state_bridge as mpc_state
         from iraf_adapters.unitree.mpc import torque_hook as mpc_hook
+        from iraf_adapters.unitree.mpc.contact import LEG_ORDER as MPC_LEG_ORDER
         from iraf_adapters.unitree.mpc.gait_trot import merge_trot_declaration
         from iraf_adapters.unitree.mpc.provider_runtime import ProviderRuntime
         from iraf_adapters.unitree.mpc.torque_hook import MpcUnavailableError
@@ -1608,6 +1609,10 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 "PD 顶回（locomote 需要支撑腿放开位置控制）⇒ 显式失败，不静默降级"
                 % stance_weight
             )
+        # B1 权重的支撑集口径 = **声明相位 ∧ 实测接触**（与平衡路径 `declared_and_contact` 同一规则；
+        # 2026-09-21 调试记录 §15/§22 的实测：只按声明会把「该抬未抬」的腿当支撑腿 ⇒ 给它零位置权重
+        # 又不给它力控 ⇒ 被压在地面/翻倒）。阈值同样来自步态声明的 verification 段，不写数字。
+        contact_threshold = float(trot["verification"]["contact_force_threshold_n"])
         # `resolve_duration_ms(duration_ms, declared_seconds)` **返回秒**，且缺省值也是秒
         # （quadruped.py:608）；因此这里不再换算、声明键也用 `duration_seconds`。
         seconds = self.resolve_duration_ms(duration_ms, float(section["duration_seconds"]))
@@ -1669,8 +1674,14 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             )
             # 参考位置的**钳位结果**必须跨拍保留（上游既有语义：`pos_des_world` 是有状态量）
             state_holder["pos_des_world"] = np.array(context["pos_des_world_out"], dtype=float)
-            # B1 权重的支撑集口径 = 本拍接触表**第一列**（与 QP 用的是同一份表，不另算）
-            return {"request": request, "current_mask": context["contact_table"][:, 0]}
+            # B1 权重的支撑集 = 声明相位（QP 接触表第一列，与 QP 同一份表）**∧ 实测接触**
+            declared = {code: bool(context["contact_table"][index, 0])
+                        for index, code in enumerate(MPC_LEG_ORDER)}
+            measured_forces = self._leg_contact_forces(trot, geometry)
+            mask = {code: bool(declared[code] and measured_forces[code] >= contact_threshold)
+                    for code in declared}
+            state_holder["mask"] = mask
+            return {"request": request, "current_mask": mask}
 
         def jacobians_now():
             out = {}
@@ -1688,13 +1699,17 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             emergency_fn=lambda: bool(self.estop.snapshot().get("latched")),
             timeout_ms=deployment.call_timeout_ms,
         )
-        # 热身（实测需要）：OSQP 冷启要付 setup 成本（实测首拍 291.7 ms > 声明的 200 ms ⇒ 被拒），
-        # 热态只要 ~26 ms（solve_ms 0.42~0.52、iter 10）。因此**用声明的超时重试**直到热起来：
-        # 每次尝试都在给求解器加热，超时不代表求解失败（工作子进程仍在算），所以最多次数有限且记录在报告里。
-        warmup = {"attempts": [], "warm": False}
+        # 热身（实测需要）：OSQP 冷启要付 setup 成本（实测首拍 **291.7 ms** > 声明的
+        # `call_timeout_ms=200 ms` ⇒ 被拒且被 kill 重启 ⇒ 新进程又冷 ⇒ 无限超时循环，
+        # 实测 client `calls=4/timeouts=4/restarts=4`）；热态只要 ~26 ms（solve_ms 0.42~0.52、iter 10）。
+        # ⚠ 因此热身**必须用比控制回路更宽的预算**：`call_timeout_ms` 是"控制拍预算"（超了就该停），
+        # 而冷启动 setup 是**一次性运行成本**，不属于控制拍。本预算与显示路径的租约 TTL 余量同性质：
+        # 属**运行时安全余量**（不是声明事实），故写在这里并记录在报告里，而不是塞进控制声明。
+        warmup_timeout_ms = max(float(deployment.call_timeout_ms), 2000.0)
+        warmup = {"attempts": [], "warm": False, "timeout_ms": warmup_timeout_ms}
         for _ in range(3):
             warm_response, warm_error = client.call(plan_fn()["request"],
-                                                    timeout_ms=deployment.call_timeout_ms)
+                                                    timeout_ms=warmup_timeout_ms)
             warmup["attempts"].append({"error": warm_error,
                                        "solve_ms": warm_response.get("solve_ms"),
                                        "status_class": warm_response.get("status_class")})
@@ -1725,6 +1740,11 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 "base_yaw_deg": yaw_deg,
                 "base_yaw_rate_rad_s": float(self._body_frame_omega(trunk_body)[2]),
                 "tilt_deg": float(quat_tilt_deg(quat)),
+                # 诊断量：本拍 MPC 载荷经 ctrlrange 截断后的执行力矩峰值 + 本拍支撑集
+                # （用于定位"从第几拍开始失控"，不参与任何判据）
+                "max_abs_ctrl_nm": float(np.max(np.abs(np.asarray(info["ctrl"], dtype=float)))),
+                "stance_legs": sorted(code for code, flag
+                                      in (state_holder.get("mask") or {}).items() if flag),
                 "declared_velocity": {"vx_mps": resolved["vx_mps"], "vy_mps": resolved["vy_mps"],
                                       "wz_rad_s": resolved["wz_rad_s"]},
                 "ctrl_saturated": int(np.count_nonzero(info["saturated"])),
