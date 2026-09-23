@@ -85,3 +85,20 @@
 3. 单测：① 与上手写数字/上一次实测值对照；② 复刻语义的负向（quat 顺序写反、yaw 不unwrap）
    必须**能被测出来**；③ 两种质量口径的差 = `0.040000` kg（把 §3 的缺陷钉成回归）。
 4. 验收脚本：`scripts/verify_mpc_state_bridge.py` → `build/acceptance/mpc-a6a4-state-bridge/`。
+
+## 7. 回归证据（A6a-④ ④，本轮实测）
+
+`PYTHONPATH=src /usr/bin/python3 scripts/verify_go2_loopback.py --config config/go2_loopback.yaml`
+在 `428a8fe`（本轮四个提交全部应用后）跑：**exit=0 / checks=10 / `failed_checks: []`**，
+三基准**逐位不变**：
+
+| 项 | 本轮实测 | 基准 | 是否逐位 |
+|---|---|---|---|
+| `height_mean_m` | `0.279953602548388` | `0.279953602548388` | ✅ |
+| `height_std_m` | `3.302184116303541e-05` | `3.302184116303541e-05` | ✅ |
+| `final_speed_mps` | `0.0038248382123762478` | `0.0038248382123762478` | ✅ |
+
+报告：`build/acceptance/go2-loopback/report.json`。
+说明：本轮四个提交都不触碰 stand/stop/步态与平衡路径（新增 `torque_hook`/`state_bridge`、
+`provider_runtime` 的判词与诊断字段），故"逐位不变"是**预期**结果而非巧合；它证明新增代码
+没有污染既有控制路径（`locomote()` 仍是显式拒绝，`capabilities` 仍 `[stand, stop]`）。
