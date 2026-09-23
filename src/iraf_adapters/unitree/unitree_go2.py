@@ -1573,7 +1573,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         """
         return self.gait_in_place(lease, duration_ms=duration_ms, execution_id=execution_id)
 
-    def locomote(self, velocity, duration_ms, lease, execution_id=None):
+    def locomote(self, velocity, duration_ms, lease, execution_id=None, command_provider=None):
         """速度指令 → MPC Provider（独立进程）→ 足端力 → 关节支撑力矩（A6a-④ ⑤）。
 
         契约：`docs/debug/2026-09-23-locomote-provider-integration-spec.md` §2/§4/§6。
@@ -1586,8 +1586,9 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
           └─ 不可用/超时/过期/急停 ⇒ `MpcUnavailableError` ⇒ 按契约 §4：
              `damped_hold`（移动中停住）或 `torque_zero_release`（急停 ⇒ 松力 + SAFETY_STOP）
 
-        与能力面的关系：本方法**不声明能力**（Profile 的 `capabilities` 仍是 [stand, stop]）；
-        能力回填要等本机判据（`config/go2_locomote.yaml` 的 ② 硬判据）与 aarch64 板复测都过（铁律 6.8）。
+        与能力面的关系：本方法对应能力 `locomote`，**已于 2026-09-23 三层验收通过并声明**
+        （Profile `capabilities` 含 locomote、`IMPLEMENTED_CAPABILITIES` 同步、场景清单同步；
+        证据 build/acceptance/go2-locomote/report.json 与 build/iraf-a6a12/skill-layer-run.json）。
         初始条件：场景构建期已按声明做 `initial_alignment`（关键帧即落在支撑面上，无 18.372 mm 穿透）。
         """
         from iraf_adapters.unitree.mpc import deployment as mpc_deployment
@@ -1750,11 +1751,28 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             return (ramp * resolved["vx_mps"], ramp * resolved["vy_mps"],
                     ramp * resolved["wz_rad_s"])
 
+        def command_now(elapsed):
+            """本拍指令（**单一来源**，QP 参考与退让项都消费它）。
+
+            · 未给 `command_provider` ⇒ 返回 `ramped_command(elapsed)`（既有行为，**逐位不变**）；
+            · 给了 provider（闭环停靠 / 航点跟踪）⇒ 取其输出，并**只做有限性检查**
+              （速度/角速度**上限**的强制点在技能层 `enforce_velocity_limits` 与安全策略，
+              调用方必须按上限生成指令；这里不静默截断 —— 截断会掩盖调用方的越限）。
+            """
+            if command_provider is None:
+                return ramped_command(elapsed)
+            vx, vy, wz = command_provider(elapsed)
+            for label, value in (("vx", vx), ("vy", vy), ("wz", wz)):
+                if not math.isfinite(float(value)):
+                    raise CommandRejectedError(
+                        "command_provider 返回的 %s 非有限值: %r" % (label, value))
+            return (float(vx), float(vy), float(wz))
+
         def plan_fn():
             """本拍 QP 请求（只在更新拍被调用；同一份接触表用于 QP 与 B1 权重口径）。"""
             state_now = state_vector_now()
             elapsed = float(self.data.time) - onset
-            vx_cmd, vy_cmd, wz_cmd = ramped_command(elapsed)
+            vx_cmd, vy_cmd, wz_cmd = command_now(elapsed)
             if state_holder["pos_des_world"] is None:
                 state_holder["pos_des_world"] = np.array([state_now[0], state_now[1], z_des])
             mass_now, _c, inertia_now, _b = mpc_state.subtree_mass_inertia(
@@ -1878,7 +1896,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             """
             elapsed = now - onset
             state_holder["elapsed_s"] = elapsed          # 采样对齐步态相位用（同一拍）
-            vx_cmd, vy_cmd, wz_cmd = ramped_command(elapsed)
+            vx_cmd, vy_cmd, wz_cmd = command_now(elapsed)
             # 退让项的步幅增益（`gait.walk.stride_scale`）：只放大**足端退让**的给进速率，
             # QP 的参考仍用未放大的指令（它跟踪的是真实期望速度，不许被放大）。
             walk_scale = float((trot.get("walk") or {}).get("stride_scale") or 1.0)
