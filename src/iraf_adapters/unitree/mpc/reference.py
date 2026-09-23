@@ -30,7 +30,7 @@ import numpy as np
 from iraf_adapters.unitree.mpc.contact import LEG_ORDER
 
 __all__ = ["yaw_rotation", "reference_state_trajectory", "foot_reference_trajectory",
-           "REQUIRED_TOUCHDOWN_KEYS", "touchdown_parameters"]
+           "x_ref_vec", "REQUIRED_TOUCHDOWN_KEYS", "touchdown_parameters"]
 
 #: `mpc_model.touchdown` 必需键（缺项即显式失败；多余键同样失败 ⇒ 拒绝"假声明"）。
 REQUIRED_TOUCHDOWN_KEYS = ("nominal_z_m", "swing_factor", "stance_half_factor", "lookahead_factor")
@@ -167,6 +167,32 @@ def foot_reference_trajectory(masks, base_pos_traj, base_vel_body, r_z, yaw_rate
                 out[code][:, i] = out[code][:, i - 1]
         previous = current
     return out
+
+
+def x_ref_vec(pos_traj_world, rpy_traj_world, vel_traj_world, omega_traj_world):
+    """12 维参考状态序列 (12, N)：上游 `ComTraj.compute_x_ref_vec` 的语义移植。
+
+    上游做法：`refs = [pos, rpy, vel, omega]`、`N = min(各自列数)`、`np.vstack([r[:, :N] ...])`
+    ⇒ **行序固定为 p(3) → rpy(3) → v(3) → ω(3)**，列数按**最短**的那个截断。
+    语义上四个数组本应等长（同一视界），截断只是上游的防御式写法；此处**保留该行为**并
+    在截断发生时仍按最短执行（不静默补齐，也不报错——与上游一致）。
+
+    ⚠ 足端参考与接触表**不**在这里装配（上游由 QP 构造器分别消费）。
+    ⚠⚠ **入参顺序是 (pos, rpy, vel, omega)（上游 x_ref 的行序）**，而
+    `reference_state_trajectory` 的**返回顺序是 (pos, vel, rpy, omega)** —— 用位置参数直传会
+    静默错位（本轮单测即被此坑抓到：`ref[6]` 期望 `v_x` 却拿到 rpy 的 0）。调用方按关键字传。
+    """
+    arrays = []
+    for name, arr in (("pos_traj_world", pos_traj_world), ("rpy_traj_world", rpy_traj_world),
+                      ("vel_traj_world", vel_traj_world), ("omega_traj_world", omega_traj_world)):
+        value = np.asarray(arr, dtype=float)
+        if value.ndim != 2 or value.shape[0] != 3:
+            raise ValueError("%s 形状必须为 (3, N)，实际 %r" % (name, value.shape))
+        if value.shape[1] < 1:
+            raise ValueError("%s 的列数必须 ≥1，实际 %r" % (name, value.shape[1]))
+        arrays.append(value)
+    n = min(a.shape[1] for a in arrays)
+    return np.vstack([a[:, :n] for a in arrays])
 
 
 def yaw_rotation(yaw):

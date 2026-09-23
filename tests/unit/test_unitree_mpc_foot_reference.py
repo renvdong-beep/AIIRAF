@@ -193,3 +193,53 @@ def test_touchdown_declaration_from_real_config_matches_upstream_values():
     td = doc["mpc_model"]["touchdown"]
     assert td == {"nominal_z_m": 0.02, "swing_factor": 1.0,
                   "stance_half_factor": 0.5, "lookahead_factor": 0.5}
+
+
+# ---- 12 维参考状态装配（compute_x_ref_vec）----
+
+from iraf_adapters.unitree.mpc.reference import x_ref_vec  # noqa: E402
+
+
+def test_x_ref_vec_row_order_and_values():
+    pos = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])
+    rpy = np.array([[0.1] * 3, [0.2] * 3, [0.3] * 3])
+    vel = np.array([[0.4] * 3, [0.5] * 3, [0.6] * 3])
+    omg = np.array([[0.7] * 3, [0.8] * 3, [0.9] * 3])
+    ref = x_ref_vec(pos, rpy, vel, omg)
+    assert ref.shape == (12, 3)
+    assert np.array_equal(ref[0:3], pos)      # p
+    assert np.array_equal(ref[3:6], rpy)      # rpy
+    assert np.array_equal(ref[6:9], vel)      # v
+    assert np.array_equal(ref[9:12], omg)     # ω
+
+
+def test_x_ref_vec_truncates_to_shortest_like_upstream():
+    pos = np.zeros((3, 4))
+    rpy = np.zeros((3, 4))
+    vel = np.zeros((3, 4))
+    omg = np.zeros((3, 2))                    # 最短 ⇒ 上游取 N = min(...) = 2
+    ref = x_ref_vec(pos, rpy, vel, omg)
+    assert ref.shape == (12, 2)
+
+
+@pytest.mark.parametrize("bad", [
+    (np.zeros((2, 3)), np.zeros((3, 3)), np.zeros((3, 3)), np.zeros((3, 3))),
+    (np.zeros((3, 3)), np.zeros((3, 3, 1)), np.zeros((3, 3)), np.zeros((3, 3))),
+    (np.zeros((3, 3)), np.zeros((3, 3)), np.zeros((3, 3)), np.zeros((3, 0))),
+])
+def test_x_ref_vec_invalid_shapes_raise(bad):
+    with pytest.raises(ValueError):
+        x_ref_vec(*bad)
+
+
+def test_x_ref_vec_matches_state_trajectory_output():
+    """与 `reference_state_trajectory` 直接对接：四个数组喂进去得到 (12, N)。"""
+    from iraf_adapters.unitree.mpc.reference import reference_state_trajectory
+    out = reference_state_trajectory(np.zeros(12), (0.0, 0.0, 0.27), 0.0, 5, 0.02,
+                                     0.5, 0.0, 0.27, 0.1, (0.0, 0.0, 0.27), 0.1)
+    # 按关键字传（位置参数会把 vel/rpy 顺序搞错，见 x_ref_vec docstring 的 ⚠⚠）
+    ref = x_ref_vec(pos_traj_world=out[0], rpy_traj_world=out[2],
+                    vel_traj_world=out[1], omega_traj_world=out[3])
+    assert ref.shape == (12, 5)
+    assert np.allclose(ref[6, :], 0.5)        # v_x 在视界内常量
+    assert np.allclose(ref[11, :], 0.1)       # ω_z
