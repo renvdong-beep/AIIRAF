@@ -728,8 +728,32 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         return self._balance_params
 
     def robot_mass_kg(self):
-        """整机质量（kg）：从被测模型读出（禁止在声明里写第二份质量）。"""
-        return float(np.sum(np.asarray(self.model.body_mass, dtype=float)))
+        """整机质量（kg）= **机器人子树**内 body 的质量和（口径与 MPC 路径一致）。
+
+        ⚠ 口径修正（2026-09-24 实测，nbody=20 的场景模型）：旧实现是
+        `sum(model.body_mass)` ⇒ 把**台面上的自由道具**也算进来：
+            sum(body_mass)       = 15.596408000 kg ⇒ mg = 153.000762 N
+            躯干子树内 body 之和 = 15.556408000 kg ⇒ mg = 152.608362 N
+            差 = 0.040000000 kg（`box_01`）⇒ mg 偏大 0.392400 N（0.2571%）
+        这条质量进 **balance 路径的重力前馈**；MPC 路径用的已是 `subtree_mass_inertia`（同一口径）
+        ⇒ 修完两条路径口径一致。挂在躯干上的物体（本场景托盘 `tray_01` 0.35 kg）本就在子树内，
+        计入是**对的**；漏算的只有"台面上的游离道具"这一类。
+        机器人的根 body 由 **Profile 的首个关节**反推（关节 body 的父节点），不依赖步态声明。
+        """
+        from iraf_adapters.unitree.mpc import state_bridge as mpc_state
+
+        if not self.joint_order:
+            raise ModelUnavailableError("Profile 未声明任何关节：整机质量的子树口径无从确定")
+        first_joint = str(self.joint_order[0])
+        joint_id = self.mujoco.mj_name2id(self.model, self.mujoco.mjtObj.mjOBJ_JOINT, first_joint)
+        if joint_id < 0:
+            raise ModelUnavailableError(
+                "Profile 的首个关节 %r 不在被测模型里：整机质量无法按子树口径计算" % (first_joint,))
+        root = int(self.model.body_parentid[int(self.model.jnt_bodyid[joint_id])])
+        if root < 0:
+            raise ModelUnavailableError(
+                "首个关节 %r 的 body 没有父节点：整机质量无法按子树口径计算" % (first_joint,))
+        return mpc_state.robot_subtree_mass_kg(self.model, root)
 
     def gravity_mps2(self):
         """重力加速度绝对值（m/s²）：从被测模型的 `opt.gravity` 读出（不写第二份数字）。"""

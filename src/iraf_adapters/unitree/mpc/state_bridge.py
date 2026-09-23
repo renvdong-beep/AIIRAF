@@ -21,6 +21,7 @@ import numpy as np
 __all__ = [
     "quat_wxyz_to_xyzw", "quat_to_rotation", "matrix_to_rpy", "ComStateTracker",
     "com_state_vector", "trunk_subtree_bodies", "subtree_mass_inertia", "hand_built_inertia",
+    "robot_subtree_mass_kg",
     "STATE_DIM",
 ]
 
@@ -161,6 +162,27 @@ def trunk_subtree_bodies(model, root_body):
         out.append(node)
         stack.extend(children.get(node, ()))
     return sorted(out)
+
+
+def robot_subtree_mass_kg(model, root_body):
+    """整机质量（kg）= 机器人**子树**内 body 的质量和（`root_body` = 机器人根，如躯干）。
+
+    为什么不能用 `sum(model.body_mass)`（2026-09-24 实测，nbody=20 的场景模型）：
+
+        sum(body_mass)          = 15.596408000 kg  ⇒ mg = 153.000762 N
+        躯干子树内 body 质量     = 15.556408000 kg  ⇒ mg = 152.608362 N
+        差 = 0.040000000 kg（台面上的自由道具 box_01）
+        ⇒ mg 偏大 0.392400 N（0.2571%）
+
+    口径规则（两类都能自洽解释）：
+      · **挂载在机器人上的物体算机器人的质量** —— 本场景的托盘 `tray_01`（0.35 kg）是躯干子节点，
+        就在子树内，应当计入；
+      · **台面上带自由关节的道具不算** —— `box_01` 悬在 `world` 下，不属于机器人。
+    这条质量进 **balance 路径的重力前馈**（`_leg_balance` 的 `mass`），口径错了就整体偏移支撑力；
+    场景里换一个更重的道具时，旧口径的偏差会按道具质量线性放大。
+    """
+    bodies = trunk_subtree_bodies(model, root_body)
+    return float(sum(float(model.body_mass[int(index)]) for index in bodies))
 
 
 def subtree_mass_inertia(model, data, mujoco, root_body):
