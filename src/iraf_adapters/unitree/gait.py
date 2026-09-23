@@ -865,10 +865,15 @@ def trunk_body_id(model, mujoco, params):
     return trunk
 
 
-def measure_leg_geometry(model, data, mujoco, params):
+def measure_leg_geometry(model, data, mujoco, params, home=None):
     """实测每条腿的几何：L1/L2、中立足端位置（躯干系 x-z）、关节轴方向校验。
 
     失败一律显式（模型结构变了就必须重测，不能沿用旧约定）。
+
+    `home`：关节名 → 标称角（Profile `spec.home`）。给了它时，若**当前状态**不合"平面 IK 前提"
+    （足端侧向偏移 > 容差），退回**标称位形**（独立 scratch `MjData`）复测 —— 因为那条前提是
+    **模型结构属性**、不是状态量（实测灵敏度 0.2648 mm/mrad：stand 的 PD 下垂就有 0.33° ≈ 1.52 mm）。
+    当前状态本来就合规时走原路 ⇒ 数值逐位不变。
     """
     geometry = {}
     for code, leg in params["legs"].items():
@@ -918,10 +923,33 @@ def measure_leg_geometry(model, data, mujoco, params):
         foot_pos = np.asarray(data.xpos[foot_body], dtype=float)
         rel = rotation.T.dot(foot_pos - anchor)
         rel_trunk = rotation.T.dot(foot_pos - np.asarray(data.xpos[trunk_body], dtype=float))
+        if abs(float(rel[1])) > LEG_PLANE_TOLERANCE_M and home is not None:
+            # ⚠ 「平面 IK 前提」是**模型结构属性**（髋轴 ±x、膝/踝轴 ±y、足端相对大腿锚点的侧向几何），
+            # 必须在**标称位形**上量；在实时状态上量会把它和控制器下垂混在一起 —— 实测灵敏度
+            # **0.2648 mm / mrad**（每 1 mrad 髋角 ⇒ 足端侧向偏移 0.2648 mm），而容差是 1 µm
+            # ⇒ 任何 ≥0.004 mrad 的髋角都会误判。技能层 stand → locomote 连跑就是这样被拦下的
+            # （报 1.520e-03 m ⇔ 髋角 5.74 mrad ≈ 0.33°）。
+            # 处置：**仅在当前状态不合前提时**退回标称位形（scratch `MjData` + Profile `spec.home`）重测
+            # ⇒ 当前状态本来就合规的路径（含 loopback 三基准）数值**逐位不变**。
+            scratch = mujoco.MjData(model)
+            mujoco.mj_resetData(model, scratch)
+            for joint, value in home.items():
+                joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, str(joint))
+                if joint_id >= 0:
+                    scratch.qpos[int(model.jnt_qposadr[joint_id])] = float(value)
+            mujoco.mj_forward(model, scratch)
+            rotation = np.asarray(scratch.xmat[trunk_body], dtype=float).reshape(3, 3)
+            anchor = np.asarray(scratch.xanchor[ids["thigh_joint"]], dtype=float)
+            foot_pos = np.asarray(scratch.xpos[foot_body], dtype=float)
+            rel = rotation.T.dot(foot_pos - anchor)
+            rel_trunk = rotation.T.dot(
+                foot_pos - np.asarray(scratch.xpos[trunk_body], dtype=float)
+            )
         if abs(float(rel[1])) > LEG_PLANE_TOLERANCE_M:
             raise ModelUnavailableError(
                 "腿 %s 的足端在躯干系内有侧向偏移 %.3e m：平面 IK 前提不成立"
-                % (code, float(rel[1]))
+                "（已按标称位形复测：home=%s）"
+                % (code, float(rel[1]), "已给出" if home is not None else "未给出")
             )
         if float(rel[2]) >= 0.0:
             raise ModelUnavailableError(

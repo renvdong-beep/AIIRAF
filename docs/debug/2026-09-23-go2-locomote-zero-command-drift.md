@@ -426,6 +426,35 @@
       关键帧的关节角就等于 Profile home，实测两者一致）；然后**从技能层**重跑
       `stand` + `locomote`（判据：技能层 SUCCEEDED），再重取四工况证据。
 
+### 1.12.3 平面门禁已修（行为保持）＋技能层还剩两处缺口（2026-09-23 晚）
+
+**已修**：`gait.measure_leg_geometry(..., home=Profile.spec.home)` —— 当前状态不合"平面 IK 前提"时，
+退回**标称位形**（独立 scratch `MjData` + home 角）复测；当前状态本来就合规时走原路。
+`_leg_geometry` 把 `self.profile.home` 传进去。
+
+验证：
+- loopback 三基准**逐位不变**（0.279953602548388 / 3.302184116303541e-05 / 0.0032068060511409）、10/10
+  ⇒ 行为保持的设计成立（合规路径数值不动）；
+- 全量单测只剩既有的 1 项 vision 失败；
+- **技能层复测（临时把 locomote 写进 profile 跑一次，跑完已还原）**：
+  `stand → SUCCEEDED`、`locomote → accepted=true`，报错**已越过平面门禁**，变成下面第 1 条缺口。
+
+**技能层剩余两处缺口（都还没修）**：
+
+1. **时长单位错**（`src/iraf_skills/quadruped.py:644`）：`backend.resolve_duration_ms(...)`
+   **返回秒**（适配器内部语义），却被当作**毫秒**传给 `locomote` ⇒ 我传 `duration_ms=2000`
+   变成 2 ms ⇒ 报「控制周期数不足 1（时长 0.002 s × 100 Hz）」。
+   修法：provider 不该自己转 —— 应把 `inputs["duration_ms"]`（毫秒）**原样**交给 `locomote`，
+   由适配器内部唯一的 `resolve_duration_ms` 解析；缺省值按 1000 ms 给（等价于原来的 1.0 s）。
+2. **provider 语义已过期**：同一处紧接着 `raise SkillContractError("locomote 返回了结果但未提供步态证据：
+   拒绝伪造成功（**首期无步态控制器**）")` —— 那是 locomote **未实现**时代的"契约破裂"守卫；
+   现在 locomote 已实现且能返回报告 ⇒ 它会**把成功判成失败**。修法：按 stand/stop 的样板实现真正的
+   provider（调 `locomote` → 按 `skills/locomote/locomote.output.json` 校验报告 → 返回输出）。
+
+⇒ 顺序：先修 1（一行量级），再实现 2（provider + 输出 schema 对接），然后**从技能层**重跑
+`stand + locomote + stop`（判据：三步全 SUCCEEDED 且输出的 `simulation=true`）；那之后再重取
+四工况证据并回填 `capabilities` 与 `IMPLEMENTED_CAPABILITIES`。
+
 ## 2. 顺带钉住的两个事实（都曾被我误判过）
 
 - **支撑腿位置权重不能压到 0**：`stance_position_weight = 0` ⇒ 倾角 80.28° 翻倒。

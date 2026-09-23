@@ -589,10 +589,15 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         return self._gait_params
 
     def _leg_geometry(self, params):
-        """惰性实测腿部几何（大腿/小腿长、中立足端位置）；实测值来自被测模型，不写死约定。"""
+        """惰性实测腿部几何（大腿/小腿长、中立足端位置）；实测值来自被测模型，不写死约定。
+
+        传入 Profile `spec.home`：当前状态不合"平面 IK 前提"时退回**标称位形**复测
+        （技能层 stand → locomote 连跑时，locomote 是新实例、几何在**下垂后**的状态上被测
+        ⇒ 1.52 mm 侧向偏移被 1 µm 容差误判；见 `gait.measure_leg_geometry` 的 docstring）。
+        """
         if self._leg_geometry_cache is None:
             self._leg_geometry_cache = gait.measure_leg_geometry(
-                self.model, self.data, self.mujoco, params
+                self.model, self.data, self.mujoco, params, home=self.profile.home
             )
         return self._leg_geometry_cache
 
