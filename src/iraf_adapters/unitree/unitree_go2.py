@@ -1849,6 +1849,17 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 # 诊断量：本拍 MPC 载荷经 ctrlrange 截断后的执行力矩峰值 + 本拍支撑集
                 # （用于定位"从第几拍开始失控"，不参与任何判据）
                 "max_abs_ctrl_nm": float(np.max(np.abs(np.asarray(info["ctrl"], dtype=float)))),
+                # 位置环（混合前，含重力前馈）与 MPC 载荷的**拆分**（诊断）：
+                # 只有拿到这两项才能回答「QP 的命令有多少被位置环抵消」（§1.8 的 95% 抵消）。
+                "max_abs_ctrl_position_nm": float(np.max(np.abs(
+                    np.asarray(info.get("ctrl_position_nm", info["ctrl"]), dtype=float)))),
+                "ctrl_position_sum_abs_nm": float(np.sum(np.abs(
+                    np.asarray(info.get("ctrl_position_nm", info["ctrl"]), dtype=float)))),
+                "ctrl_sum_abs_nm": float(np.sum(np.abs(np.asarray(info["ctrl"], dtype=float)))),
+                # 逐关节向量（末拍可读；用于看清**哪个关节**被位置环占满）：
+                "ctrl_nm": [float(v) for v in np.asarray(info["ctrl"], dtype=float)],
+                "ctrl_position_nm": [float(v) for v in np.asarray(
+                    info.get("ctrl_position_nm", info["ctrl"]), dtype=float)],
                 "stance_legs": sorted(code for code, flag
                                       in (state_holder.get("mask") or {}).items() if flag),
                 # 饱和前的 MPC 原始载荷峰值 / 足端力峰值 / 四腿法向力合计（诊断，不参与判据）
@@ -2044,6 +2055,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 ctrl = np.zeros_like(q)
                 saturated = np.zeros_like(q, dtype=bool)
                 desired = np.array(q_des, dtype=float)
+                ctrl_position_nm = ctrl.copy()          # 零力矩档：位置环输出也是零
             else:
                 now = float(self.data.time)
                 if target_provider is not None:
@@ -2059,6 +2071,11 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 ctrl, saturated = pd_torque(
                     q, dq, desired, self.kp, self.kd, tau_ff, self.torque_lower, self.torque_upper
                 )
+                # 混合**前**的位置环输出（含重力前馈）：诊断用。B1 混合是
+                # `ctrl = position_weight ⊙ τ_pd + w_bal ⊙ τ_mpc`，光看混合后的总量无法回答
+                # 「QP 的命令有多少被位置环抵消」（实测零指令下 QP 下令水平合力 +37.2 N，
+                # 机身只得到 1~2 N ⇒ 95% 以上被抵消，见 docs/debug 的 zero-command-drift §1.8）。
+                ctrl_position_nm = ctrl.copy()
                 if torque_provider is not None:
                     returned = torque_provider(
                         cycle_index,
@@ -2111,7 +2128,8 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             if sample_callback is not None:
                 sample_callback(
                     cycle_index,
-                    {"desired": np.asarray(desired, dtype=float), "ctrl": ctrl, "saturated": saturated},
+                    {"desired": np.asarray(desired, dtype=float), "ctrl": ctrl, "saturated": saturated,
+                     "ctrl_position_nm": np.asarray(ctrl_position_nm, dtype=float)},
                 )
         return cycles, saturated_total
 
