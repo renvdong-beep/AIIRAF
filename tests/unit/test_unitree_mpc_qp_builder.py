@@ -170,3 +170,58 @@ def test_box_bounds_match_captured_upstream_bitwise():
         lb, ub = box_bounds(np.asarray(qp["contact_table"], dtype=int), m)
         assert lb.tobytes() == np.asarray(qp["lbx"], dtype=float).tobytes()
         assert ub.tobytes() == np.asarray(qp["ubx"], dtype=float).tobytes()
+
+
+# ---- 线性代价 g ----
+
+from iraf_adapters.unitree.mpc.qp_builder import linear_cost  # noqa: E402
+
+
+def test_linear_cost_shape_and_force_block_zero():
+    m = _model()
+    x_ref = np.ones((12, int(m["horizon"])))
+    g = linear_cost(x_ref, m)
+    assert g.shape == (384,)
+    assert np.all(g[192:] == 0.0)                       # 力段不参与代价
+
+
+def test_linear_cost_is_column_major_and_q_weighted():
+    m = _model()
+    n = int(m["horizon"])
+    x_ref = np.zeros((12, n))
+    x_ref[2, 0] = 1.0                                   # 只激励第 0 拍的 z（q=50）
+    g = linear_cost(x_ref, m)
+    assert g[2] == pytest.approx(-2.0 * 50.0)
+    assert np.count_nonzero(g) == 1
+    # 列优先：第 k 拍的状态放在 k*12 起（不是"按行拍平"）
+    x_ref2 = np.zeros((12, n))
+    x_ref2[0, 1] = 1.0
+    assert np.flatnonzero(linear_cost(x_ref2, m)).tolist() == [12]
+
+
+@pytest.mark.parametrize("bad_x", [np.zeros((12, 5)), np.zeros((11, 16)), np.zeros((13, 16))])
+def test_linear_cost_invalid_x_ref(bad_x):
+    with pytest.raises(ValueError):
+        linear_cost(bad_x, _model())
+
+
+def test_linear_cost_missing_horizon():
+    with pytest.raises(ValueError):
+        linear_cost(np.zeros((12, 16)), {"q_diag": [1.0] * 12})
+
+
+def test_linear_cost_matches_captured_upstream_bitwise():
+    import json
+    path = ROOT / "build" / "research" / "mpc-repo" / "qp_inputs.json"
+    if not path.is_file():
+        pytest.skip("缺少截获证据 %s" % path)
+    captured = json.loads(path.read_text(encoding="utf-8"))
+    m = _model()
+    checked = 0
+    for qp in captured["qps"]:
+        if "x_ref" not in qp:
+            pytest.skip("证据文件未含 x_ref（需重跑探针）")
+        g = linear_cost(np.asarray(qp["x_ref"], dtype=float), m)
+        assert g.tobytes() == np.asarray(qp["g"], dtype=float).tobytes()
+        checked += 1
+    assert checked >= 20

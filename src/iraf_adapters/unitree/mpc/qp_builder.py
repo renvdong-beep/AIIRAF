@@ -20,7 +20,7 @@ from __future__ import annotations
 import numpy as np
 
 __all__ = ["REQUIRED_MODEL_KEYS", "REQUIRED_BOUNDS_KEYS", "cost_diagonal", "state_cost_weights",
-           "box_bounds"]
+           "box_bounds", "linear_cost"]
 
 #: `mpc_model` 中本模块消费的键。
 REQUIRED_MODEL_KEYS = ("q_diag", "r_diag", "horizon")
@@ -125,6 +125,26 @@ def cost_diagonal(mpc_model):
         "q_diag": q_diag,
         "r_diag": r_diag,
     }
+
+
+def linear_cost(x_ref, mpc_model):
+    """线性代价 `g`（上游 `_update_sparse_matrix`：`g = vertcat(vec(−2·Q·x_ref), zeros(N·NU))`）。
+
+    上游事实：`gx_mat = −2·(Q @ x_ref)`（`Q` 为 12×12 对角，`x_ref` 为 (12, N)）⇒ 每列是
+    `−2·q_diag ⊙ x_ref[:,k]`；再用 CasADi 的 `ca.vec` 拍平，而 **`ca.vec` 是列优先** ⇒ 与
+    "状态段按拍排列（`base = k·NX`）"的布局自洽；力段（后 `N·NU` 项）恒为 `0`（上游只对状态加权）。
+    """
+    if not isinstance(mpc_model, dict) or "horizon" not in mpc_model:
+        raise ValueError("mpc_model 缺 horizon")
+    horizon = int(mpc_model["horizon"])
+    if horizon < 1:
+        raise ValueError("mpc_model.horizon 必须 ≥1，实际 %r" % (mpc_model["horizon"],))
+    q_diag = _vector(mpc_model, "q_diag", STATE_DIM)
+    x = np.asarray(x_ref, dtype=float)
+    if x.shape != (STATE_DIM, horizon):
+        raise ValueError("x_ref 形状必须为 (12, horizon)=(12, %d)，实际 %r" % (horizon, x.shape))
+    gx = -2.0 * (q_diag.reshape(STATE_DIM, 1) * x)
+    return np.concatenate([gx.reshape(-1, order="F"), np.zeros(horizon * INPUT_DIM)])
 
 
 def state_cost_weights(mpc_model):
