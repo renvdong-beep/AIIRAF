@@ -33,6 +33,13 @@ REQUEST_KEYS = ("h_diag", "g", "a_rows", "a_cols", "a_vals", "lbx", "ubx", "lba"
 
 _DECISIONS = ("ok", "damped_hold", "torque_zero_release")
 
+#: `±inf` 在 JSON 边界上的**显式记号**（2026-09-23 实测补：QP 的盒约束天然含 ±inf ——
+#: "该项不约束"，而 `json.dumps(allow_nan=False)` 会直接拒收 inf ⇒ 端到端第一次跑就在编码期炸：
+#: `Out of range float values are not JSON compliant`）。语义保持不变：**只有 ±inf 用记号**，
+#: NaN 仍在 `validate_request` 被拒（NaN 会让求解行为未定义）。
+_INF_TO_TOKEN = {float("inf"): "inf", float("-inf"): "-inf"}
+_TOKEN_TO_INF = {token: value for value, token in _INF_TO_TOKEN.items()}
+
 
 class ResponseError(ValueError):
     """响应不合契约（跨边界拒收）。"""
@@ -52,11 +59,23 @@ def _as_list(x, name, where):
                          % (where, name, type(x).__name__)) from None
     out = []
     for v in seq:
+        if isinstance(v, str):
+            token = v.strip().lower()
+            if token in _TOKEN_TO_INF:
+                # **保持记号**（不还原成 float）：`validate_request` 的输出正是要送上线的载荷，
+                # 还原成 inf 会让随后的 `encode`(allow_nan=False) 再炸一次（实测踩过）。
+                # 还原只在 `decode(...)` 里做（本地使用）。
+                out.append(token)
+                continue
+            raise ValueError("%s：%s 含非法字符串 %r（只允许 inf / -inf 记号）"
+                             % (where, name, v))
         try:
             f = float(v)
         except (TypeError, ValueError):
             raise ValueError("%s：%s 含非数值元素（%s）" % (where, name, type(v).__name__)) from None
-        out.append(f)
+        if math.isnan(f):
+            raise ValueError("%s：%s 含 NaN ⇒ 拒收（NaN 会让求解行为未定义）" % (where, name))
+        out.append(_INF_TO_TOKEN.get(f, f))
     return out
 
 
@@ -165,7 +184,11 @@ def decode(text, validate="request"):
     """反序列化并可选校验；`validate ∈ {"request", "response", None}`。"""
     msg = json.loads(text)
     if validate == "request":
-        return validate_request(msg)
+        checked = validate_request(msg)
+        # 记号 → `±inf`（只在本进程内使用；`±inf` 是盒约束"该项不约束"的语义，不能被当成 0）
+        for key in REQUEST_KEYS:
+            checked[key] = [_TOKEN_TO_INF.get(v, v) for v in checked[key]]
+        return checked
     if validate == "response":
         return validate_response(msg)
     if validate is None:

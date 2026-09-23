@@ -178,6 +178,7 @@ class MpcTorqueHook:
         self._swing_weight = float(swing_weight)
         self._mask = None          # 与**当前被消费的解**同一拍的接触表列
         self.stats = {"calls": 0, "plans": 0, "payloads": 0, "unavailable": 0,
+                      "overran_cycles": 0, "inaccurate_cycles": 0,
                       "last_decision": None, "last_reason": None, "last_cycle": None}
 
     # ---- 只读 ----
@@ -219,6 +220,13 @@ class MpcTorqueHook:
             self.stats["plans"] += 1
 
         out = self._runtime.step(request, emergency=emergency, timeout_ms=self._timeout_ms)
+        # 验收证据要的"移动中 QP 越界次数"（config/go2_locomote.yaml 的 must_record）：
+        # 逐拍累计 freshness 的 overran / inaccurate 标志（判词与阈值仍只在 freshness 里）。
+        flags = out.get("flags") or {}
+        if flags.get("overran"):
+            self.stats["overran_cycles"] = int(self.stats.get("overran_cycles", 0)) + 1
+        if flags.get("inaccurate"):
+            self.stats["inaccurate_cycles"] = int(self.stats.get("inaccurate_cycles", 0)) + 1
 
         # 自洽校验：本拍是否真的调了子进程，必须与"本拍是否构造了计划"一致。
         # 不一致 ⇒ tick 计数被别的调用方推进过 ⇒ 显式失败（绝不按"看起来对"的解继续跑）。

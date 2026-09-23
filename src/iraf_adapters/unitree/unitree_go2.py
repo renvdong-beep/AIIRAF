@@ -1576,7 +1576,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         section = self.declaration.get("locomote")
         if not isinstance(section, dict):
             raise DeclarationError("声明缺少 locomote 段（Provider 配置与默认时长必须来自声明）")
-        missing = [key for key in ("provider_config", "duration_ms") if key not in section]
+        missing = [key for key in ("provider_config", "duration_seconds") if key not in section]
         if missing:
             raise DeclarationError("声明缺少 locomote 的键: %s" % missing)
         provider_config = Path(str(section["provider_config"]))
@@ -1597,14 +1597,20 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         home = {joint: float(self.profile.home[joint]) for joint in self.joint_order}
         limits = {joint: self.profile.joint_limits[joint] for joint in self.joint_order}
         balance_params = self._balance_parameters()
-        if not balance_params["enabled"]:
-            raise DeclarationError(
-                "balance.enabled=false：locomote 的支撑腿力矩路径依赖 B1 逐关节位置权重"
-                "（支撑腿 τ_pd 置 0、由 MPC 的接触力矩驱动），关闭档没有可用的混合权重"
-            )
         stance_weight = float(balance_params["stance_weight_position"])
         swing_weight = float(balance_params["weight_position"])
-        seconds = self.resolve_duration_ms(duration_ms, float(section["duration_ms"])) / 1000.0
+        # 前置门禁（**不是** balance.enabled）：`enabled` 控制的是"平衡器 Provider 是否安装"，
+        # 而 locomote 不安装它（力矩由 MPC 的接触力提供）；本路径真正需要的是**逐关节位置权重**：
+        # 支撑腿必须被放开位置环（weight < 1），否则 PD 位置环会把 MPC 给的力矩顶回去 ⇒ 显式失败。
+        if stance_weight >= 1.0:
+            raise DeclarationError(
+                "balance.stance_weight_position=%.6f ≥ 1：支撑腿仍在位置环内，MPC 的接触力矩会被"
+                "PD 顶回（locomote 需要支撑腿放开位置控制）⇒ 显式失败，不静默降级"
+                % stance_weight
+            )
+        # `resolve_duration_ms(duration_ms, declared_seconds)` **返回秒**，且缺省值也是秒
+        # （quadruped.py:608）；因此这里不再换算、声明键也用 `duration_seconds`。
+        seconds = self.resolve_duration_ms(duration_ms, float(section["duration_seconds"]))
         horizon = int(mpc_model["horizon"])
         z_des = float(mpc_model["stand_height_m"])
 
@@ -1682,6 +1688,19 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             emergency_fn=lambda: bool(self.estop.snapshot().get("latched")),
             timeout_ms=deployment.call_timeout_ms,
         )
+        # 热身（实测需要）：OSQP 冷启要付 setup 成本（实测首拍 291.7 ms > 声明的 200 ms ⇒ 被拒），
+        # 热态只要 ~26 ms（solve_ms 0.42~0.52、iter 10）。因此**用声明的超时重试**直到热起来：
+        # 每次尝试都在给求解器加热，超时不代表求解失败（工作子进程仍在算），所以最多次数有限且记录在报告里。
+        warmup = {"attempts": [], "warm": False}
+        for _ in range(3):
+            warm_response, warm_error = client.call(plan_fn()["request"],
+                                                    timeout_ms=deployment.call_timeout_ms)
+            warmup["attempts"].append({"error": warm_error,
+                                       "solve_ms": warm_response.get("solve_ms"),
+                                       "status_class": warm_response.get("status_class")})
+            if warm_error is None and warm_response.get("decision") == "ok":
+                warmup["warm"] = True
+                break
 
         def target_provider(cycle_index, now):
             """摆动/支撑的关节形状目标（MPC 只提供接触力矩；形状仍由既有目标生成给出）。"""
@@ -1694,12 +1713,20 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
 
         def sample_callback(cycle_index, info):
             quat = np.asarray(self.data.qpos[3:7], dtype=float)
+            w, qx, qy, qz = (float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3]))
+            yaw_deg = float(np.degrees(np.arctan2(2.0 * (w * qz + qx * qy),
+                                                  1.0 - 2.0 * (qy * qy + qz * qz))))
             samples.append({
                 "time_s": float(self.data.time),
                 "base_position_xy_m": [float(self.data.qpos[0]), float(self.data.qpos[1])],
                 "base_height_m": float(self.data.qpos[2]),
                 "base_linear_speed_mps": float(np.linalg.norm(self.data.qvel[0:3])),
+                # 偏航与偏航角速度：转向工况的判据量（与位移同一次采样，不另开测量路径）
+                "base_yaw_deg": yaw_deg,
+                "base_yaw_rate_rad_s": float(self._body_frame_omega(trunk_body)[2]),
                 "tilt_deg": float(quat_tilt_deg(quat)),
+                "declared_velocity": {"vx_mps": resolved["vx_mps"], "vy_mps": resolved["vy_mps"],
+                                      "wz_rad_s": resolved["wz_rad_s"]},
                 "ctrl_saturated": int(np.count_nonzero(info["saturated"])),
             })
 
@@ -1746,6 +1773,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             "mpc_model": {"horizon": horizon, "gait_hz": mpc_model["gait_hz"],
                           "z_des_m": z_des},
             "position_weight": {"stance": stance_weight, "swing": swing_weight},
+            "warmup": warmup,
             "provider": hook.summary(),
             "client": dict(client.stats),
             "failure": failure,

@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import importlib
+import contextlib
 import json
 import os
 import sys
@@ -39,6 +40,11 @@ def load_solver(spec):
 def main(argv=None):  # pragma: no cover - 由子进程测试覆盖（tests/unit/test_unitree_mpc_worker.py）
     spec = os.environ.get("IRAF_MPC_SOLVER", DEFAULT_SOLVER)
     core = ProviderCore(load_solver(spec))
+    # **协议通道卫生（实测踩过）**：osqp 的 C 库在构造/求解时把启动横幅与迭代信息打到 **stdout**，
+    # 而本进程的 stdout 就是"一行一条 JSON 响应"的协议通道 ⇒ 父侧读到的第一行变成横幅、被
+    # `validate_response` 判为"响应非法"（实测：`client_error=响应非法`、每次调用 ~1.3 s）。
+    # 因此把**求解器调用期间**的 stdout 重定向到 stderr，协议行只由 `real_stdout` 显式写出。
+    real_stdout = sys.stdout
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -47,11 +53,12 @@ def main(argv=None):  # pragma: no cover - 由子进程测试覆盖（tests/unit
             req = pr.validate_request(json.loads(line))
         except Exception as exc:  # noqa: BLE001
             resp = pr.build_response("damped_hold", "请求非法：%s" % exc, status_class="exception")
-            sys.stdout.write(pr.encode(resp) + "\n")
-            sys.stdout.flush()
+            real_stdout.write(pr.encode(resp) + "\n")
+            real_stdout.flush()
             continue
         try:
-            out = core.step(req)
+            with contextlib.redirect_stdout(sys.stderr):
+                out = core.step(req)
             resp = pr.build_response(out["decision"], out["reason"], z=out["z"],
                                      status_class=out["status_class"], iter_=out["iter"],
                                      solve_ms=out["solve_ms"], age_ms=out["age_ms"],
@@ -63,8 +70,8 @@ def main(argv=None):  # pragma: no cover - 由子进程测试覆盖（tests/unit
         except Exception as exc:  # noqa: BLE001 —— 序列化失败也必须回一条合法失败响应，绝不崩
             line_out = pr.encode(pr.build_response(
                 "damped_hold", "响应序列化失败：%s" % exc, status_class="exception"))
-        sys.stdout.write(line_out + "\n")
-        sys.stdout.flush()
+        real_stdout.write(line_out + "\n")
+        real_stdout.flush()
     return 0
 
 
