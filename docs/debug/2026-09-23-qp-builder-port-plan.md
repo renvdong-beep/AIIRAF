@@ -112,7 +112,26 @@ theirs `0` / ours `1`、`min_phase_distance_to_boundary = 0.0`。成因：两侧
 沿用的纪律：只打印计数会把"我的对照式写错"伪装成"被测代码错" ⇒ 本脚本打印首个样本的
 两侧数值 / 分量级差异 / ulp 判据，并按"语义 vs ulp"两栏分别计数（本轮首版即因对照式差 1 ulp 报 800/800）。
 
-## 2. 逐位校验点（用已提交的 `traj_parity` 门禁）
+### 2.2 状态相关参考轨迹逐位校验（已完成，2026-09-23）
+
+脚本 `build/research/mpc-repo/verify_state_reference_parity.py`｜报告 `build/research/mpc-repo/state_reference_parity.json`
+（`all_ok: true`，退出码 0）。基准 = 上游 `convex_mpc.com_trajectory.ComTraj.generate_traj` 的状态段
+（用它的 `PinGo2Model()` + `update_model_simplified(q, dq)` 设状态，用它的 gait 与 `time_step`）。
+
+| 项 | 规模 | 结果 |
+|---|---|---|
+| `pos_traj_world` / `vel_traj_world` / `rpy_traj_world` / `omega_traj_world` | 200 随机状态 × 4 数组 = 800 次 `tobytes()` 比较 | **全部逐位一致**，ulp 分类 0 处，最大 \|Δ\| = 0.000e+00 |
+| 视界长度 | 上游 `N = int(period/time_step)` | **16**，与 `mpc_model.horizon` 一致；`time_step = 0.020833333333` |
+
+状态域：`pos` x/y ∈ ±1.0 m、z ∈ [0.25, 0.29]、roll/pitch ∈ ±0.05、yaw ∈ ±π、体速度 x/y ∈ ±1.0 m/s、
+`w_body` z ∈ ±1.0 rad/s；入参 `vx/vy ∈ ±1.0`、`z_des ∈ [0.25, 0.29]`、`yaw_rate ∈ ±1.0`、
+`p_des ∈ ±1.5`（含被 ±0.1 m 钳位与未被钳位两种情形）。
+
+结论：`reference.py` 的**两个函数（状态轨迹、足端参考）均通过逐位校验**，可接 `provider_runtime`。
+⚠ 三处上游口径在此再次确认（移植时未做任何"顺手修正"）：`pos_des_world` 是**就地钳位并跨调用保留**的状态量；
+参考相位里 `z` 由 `z_pos_des_body` 直接覆盖；`vel/omega` 视界内常量。
+
+### 2. 逐位校验点（用已提交的 `traj_parity` 门禁）
 
 对**同一批状态/时间序列**（研究侧已存的 200 样本）比较下列数组的 `tobytes()`：
 `Ad`、`Bd`、`gd`、`contact_table`、`pos_traj_world`、`vel_traj_world`、`rpy_traj_world`、
