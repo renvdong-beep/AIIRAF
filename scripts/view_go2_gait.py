@@ -32,7 +32,10 @@ import threading
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+import numpy as np  # noqa: E402
 
 from iraf_adapters.factory import KNOWN_BACKENDS, load_backend  # noqa: E402
 from iraf_adapters.mujoco.viewer_runner import (  # noqa: E402
@@ -163,17 +166,25 @@ def main(argv=None):
     per_cycle_s = duration_s
     if walk_sequence:
         per_cycle_s = max(per_cycle_s, float(args.walk_seconds) * len(walk_sequence))
-    lease = authority.acquire(
-        profile.name + "-mujoco",
-        "gait-view-demo",
-        ttl_seconds=max(LEASE_TTL_FLOOR_S, display_s + per_cycle_s * LEASE_TTL_MARGIN),
-    )
+    # 原地踏步演示：整个显示窗用一份租约。
+    # 行走演示：**不在这里取**（否则会占住资源，循环里按段 `acquire` 会直接 `LeaseConflict`）；
+    # 由 `_run_gait_loop` 按段取/释放（每段一个执行、一个新 fencing token）。
+    lease = None
+    if not walk_sequence:
+        lease = authority.acquire(
+            profile.name + "-mujoco",
+            "gait-view-demo",
+            ttl_seconds=max(LEASE_TTL_FLOOR_S, display_s + per_cycle_s * LEASE_TTL_MARGIN),
+        )
 
     holder = {"result": None, "error": None}
     stop = threading.Event()
     thread = threading.Thread(
         target=_run_gait_loop, args=(backend, lease, holder, stop, walk_sequence,
                                      float(args.walk_seconds)),
+        kwargs={"authority": authority, "resource": profile.name + "-mujoco",
+                "lease_ttl_s": max(LEASE_TTL_FLOOR_S,
+                                   float(args.walk_seconds) * LEASE_TTL_MARGIN)},
         name="gait-view-gait",
         daemon=True,
     )
@@ -265,7 +276,9 @@ def main(argv=None):
             "samples": len((holder["result"] or {}).get("samples") or []),
             "cycles": int(holder.get("cycles") or 0),
         },
-        "note": "显示/演示证据：数字不是验收数字；验收见 scripts/verify_go2_trot_in_place.py",
+        # 演示证据：逐段位移（否则「看不看得见」只能靠肉眼，判断不出走了多少）。
+        "segments": holder.get("segments") or [],
+        "note": "显示/演示证据：数字不是验收数字；验收见 scripts/verify_go2_locomote.py",
     }
     report_path = _resolve(root, args.report or "build/iraf-24h-2/22-gait-view/report.json")
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -273,6 +286,11 @@ def main(argv=None):
 
     print("显示模式：%s；窗口帧数：%d；步态执行完成：%s；采样 %d 条"
           % (mode, frames, report["trot"]["finished"], report["trot"]["samples"]))
+    for item in report["segments"]:
+        print("  段 %d 指令=%s 状态=%s 位移(Δx,Δy)=(%+.4f, %+.4f) m"
+              % (item["segment"], item["command"], item["status"],
+                 item["delta_xy_m"][0] if item["delta_xy_m"] else float("nan"),
+                 item["delta_xy_m"][1] if item["delta_xy_m"] else float("nan")))
     if holder["error"]:
         print("步态执行被拒/失败：%s" % holder["error"], file=sys.stderr)
         return EXIT_REJECTED
@@ -281,12 +299,18 @@ def main(argv=None):
     return EXIT_OK
 
 
-def _run_gait_loop(backend, lease, holder, stop, walk_sequence=None, walk_seconds=1.5):
+def _run_gait_loop(backend, lease, holder, stop, walk_sequence=None, walk_seconds=1.5,
+                   authority=None, resource=None, lease_ttl_s=None):
     """连续跑（原地踏步或 `locomote` 行走）直到 `stop` 置位或显式失败。
 
     行走演示按 `walk_sequence` **循环**给出多段速度（往返演示 = 前进段 + 倒退段），
     并在每段结束检查状态有限性：**仿真发散（NaN/Inf）必须显式停止**，不让它静默传播
     （实测：单向无限行走 33 s 后走出台面 ⇒ `Nan, Inf or huge value in QACC`）。
+
+    每段是**一次独立执行**：`authority` 给定时按段重新取租约（新 fencing token）、段末释放。
+    实测（2026-09-23）：把租约 TTL 按「仿真秒」估算覆盖不了**墙钟** —— 软件 GL + 100 Hz 控制下
+    10 s 仿真约耗 40 s 墙钟（≈4×），6 段后租约过期 ⇒ 演示被 authority **正确**拦下但演示中断
+    （`ControlAuthorityError: invalid fencing token`）。按段取租约同时让执行边界与证据边界对齐。
     """
     try:
         segment = 0
@@ -296,7 +320,31 @@ def _run_gait_loop(backend, lease, holder, stop, walk_sequence=None, walk_second
             else:
                 velocity = walk_sequence[segment % len(walk_sequence)]
                 segment += 1
-                holder["result"] = backend.locomote(velocity, walk_seconds * 1000.0, lease)
+                segment_lease = lease
+                if authority is not None:
+                    segment_lease = authority.acquire(resource, "walk-seg-%d" % segment,
+                                                      ttl_seconds=lease_ttl_s)
+                try:
+                    result = backend.locomote(velocity, walk_seconds * 1000.0, segment_lease)
+                finally:
+                    if authority is not None:
+                        authority.release(segment_lease)
+                holder["result"] = result
+                samples = (result or {}).get("samples") or []
+                entries = []
+                if samples:
+                    start = samples[0].get("base_position_xy_m") or (0.0, 0.0)
+                    end = samples[-1].get("base_position_xy_m") or (0.0, 0.0)
+                    entries = [float(end[0]) - float(start[0]), float(end[1]) - float(start[1])]
+                holder.setdefault("segments", []).append({
+                    "segment": segment,
+                    "command": dict(velocity),
+                    "status": ("SUCCEEDED" if (result or {}).get("failure") is None
+                               else (result or {})["failure"]["decision"]),
+                    "failure": (result or {}).get("failure"),
+                    "samples": len(samples),
+                    "delta_xy_m": entries,
+                })
                 qpos = np.asarray(backend.data.qpos, dtype=float)
                 if not np.all(np.isfinite(qpos)):
                     holder["error"] = ("仿真发散（qpos 含 NaN/Inf）⇒ 显式停止；"
