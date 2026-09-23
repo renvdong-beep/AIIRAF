@@ -116,7 +116,8 @@ SWAY_DIRECTION_TOLERANCE_DEG_RANGE = (0.0, 45.0)
 #: 机身以指令速度前进，位置环权重可以保持 1.0 继续守构型。
 #:
 #: 符号约定与 `sway_offset_m` 同源（本函数给出「足端该往哪退」，调用点直接加到足端目标上）。
-REQUIRED_WALK_KEYS = ("enabled", "return_profile", "anchor", "stride_scale")
+REQUIRED_WALK_KEYS = ("enabled", "return_profile", "anchor", "stride_scale",
+                      "command_bias_mps")
 
 #: `gait.walk.anchor` 的允许取值（两种锚定方式；见 `walk_foot_offset_m` 的 docstring）：
 #:   `command_ramp`  = 按指令速度在机身系里开环退让（第一档；保留用于 A/B 对照）；
@@ -1238,8 +1239,18 @@ def _validated_walk_block(params):
     stride_scale = float(block["stride_scale"])
     if not math.isfinite(stride_scale) or stride_scale <= 0.0:
         raise DeclarationError("gait.walk.stride_scale 必须是正有限数，实际: %r" % (block["stride_scale"],))
+    # 常量扰动前馈（机身系 2 维，m/s）：加在**退让项**的指令上（不动 QP 的真实参考）。
+    # 动机（2026-09-23 实测）：步态抬腿会给机身一个**常量 −x 推**（零指令漂移 −0.0377 m/s），
+    # 而 MPC 没有积分作用 ⇒ 稳态速度偏置，同时解释「hold 漂移 / 前进欠驱动 / 后退超调」三者；
+    # 本键就是按声明把这项常量补回来（属**前馈**，不是改 QP 的目标）。
+    bias = np.asarray(block["command_bias_mps"], dtype=float).reshape(-1)
+    if bias.size != 2:
+        raise DeclarationError("gait.walk.command_bias_mps 必须是 2 维（机身系 x/y），实际 %d"
+                               % bias.size)
+    if not np.all(np.isfinite(bias)):
+        raise DeclarationError("gait.walk.command_bias_mps 含非有限值: %r" % (block["command_bias_mps"],))
     return {"enabled": bool(block["enabled"]), "return_profile": profile, "anchor": anchor,
-            "stride_scale": stride_scale}
+            "stride_scale": stride_scale, "command_bias_mps": [float(bias[0]), float(bias[1])]}
 
 
 def _finite_walk_command(command_mps_rad_s):

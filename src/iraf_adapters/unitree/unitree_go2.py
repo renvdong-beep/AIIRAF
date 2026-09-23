@@ -181,7 +181,10 @@ def resolve_joint_bindings(model, mujoco, joints):
 class UnitreeGo2Adapter(QuadrupedAdapter):
     """Go2 仿真后端：MuJoCo 场景（步骤 13 产物）+ 声明驱动的 PD 控制。"""
 
-    #: 已实现能力。`locomote` 不在其中：首期无步态控制器，必须显式拒绝。
+    #: 已实现能力。`locomote` 不在其中：**适配器层已达标（2026-09-23 四工况两向误差 0.0659/0.0571），
+    #: 但技能层路径尚未验收通过** —— 技能层对平面 IK 有前置门禁，实测报
+    #: 「腿 FL 的足端在躯干系内有侧向偏移 1.520e-03 m：平面 IK 前提不成立」（IRAF-EXECUTION-FAILED）。
+    #: 按契约（"仅在技能层验收通过后回填能力"）⇒ 在修好该门禁之前不得入列。
     IMPLEMENTED_CAPABILITIES = frozenset(("emergency_stop", "read_state", "stand", "stop"))
 
     def __init__(self, declaration, profile, authority, *, root, mujoco, model, data, bindings):
@@ -1864,11 +1867,13 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             # 退让项的步幅增益（`gait.walk.stride_scale`）：只放大**足端退让**的给进速率，
             # QP 的参考仍用未放大的指令（它跟踪的是真实期望速度，不许被放大）。
             walk_scale = float((trot.get("walk") or {}).get("stride_scale") or 1.0)
+            walk_bias = (trot.get("walk") or {}).get("command_bias_mps") or (0.0, 0.0)
             targets = gait.gait_joint_targets(
                 trot, geometry, home, limits, elapsed, gait.amplitude_at(trot, elapsed),
                 self._body_frame_velocity(trunk_body), self._body_frame_omega(trunk_body),
                 body_mean_drift_xy=mean_drift_body(trunk_body),
-                walk_command_mps_rad_s=(walk_scale * vx_cmd, walk_scale * vy_cmd,
+                walk_command_mps_rad_s=(walk_scale * vx_cmd + float(walk_bias[0]),
+                                        walk_scale * vy_cmd + float(walk_bias[1]),
                                         walk_scale * wz_cmd),
                 walk_pose=(walk_pose_measured(elapsed)
                            if (trot.get("walk") or {}).get("anchor") == "measured_pose" else None),

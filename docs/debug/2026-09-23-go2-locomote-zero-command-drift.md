@@ -352,6 +352,54 @@
   **死声明**（`gait.py` 的消费侧存在、调用方没接）。修法：在 locomote 路径里按声明窗口算机身位移并传入，
   然后**用本条 hold 判据重新取证**（不许把"接上"当成"修好"）。
 
+## 1.12 适配器层达标（两向 ≤0.10）与**技能层的新拦阻**（2026-09-23 晚）
+
+统一机制假设（"未建模的常量 −x 扰动 + MPC 无积分作用 ⇒ 稳态速度偏置"）用**声明化的常量前馈**验证并解决：
+
+新增 `gait.walk.command_bias_mps`（2 维、机身系、有限性门禁；只加在**退让项**的指令上，
+不动 QP 的真实参考）。扫描（3 s / 100 Hz，只改本键）：
+
+| bias | forward 误差 | backward 误差 | 备注 |
+|---|---|---|---|
+| 0.00 | 0.3381 | 0.3458 | 起点 |
+| 0.12 | 0.1613 | **0.0653** | backward 首次达标 |
+| **0.18** | **0.0659** | **0.0571** | **两向同时达标**（生产取值） |
+| 0.22 | 0.0041 | 0.1395 | backward 开始超调 |
+
+同一档位下的端到端验收（四工况，3 s；`build/acceptance/go2-locomote/report.json`，passed=true）：
+
+| 工况 | 状态 | 净位移 | 倾角 | 偏航 | 误差 | 方向门禁 |
+|---|---|---|---|---|---|---|
+| forward | SUCCEEDED | 0.4570 m | 3.14° | +0.13° | **0.0659 ✅** | 通过 |
+| backward | SUCCEEDED | 0.4421 m | 1.98° | +1.03° | **0.0571 ✅** | 通过 |
+| hold | SUCCEEDED | 0.0286 m | 2.28° | −0.17° | 不适用 | 不适用 |
+| turn_left | SUCCEEDED | 0.0103 m | 2.58° | +27.81° | 仅记录 | 通过（符号） |
+| turn_right | SUCCEEDED | 0.0135 m | 2.69° | −27.86° | 仅记录 | 通过（符号） |
+
+零指令 hold 漂移 **1.5189 → 0.0286 m（53×）**；loopback 三基准逐位不变、10/10。
+
+### 1.12.1 但**技能层路径**被前置门禁拦下 ⇒ 能力声明**撤回**
+
+同一命令走技能层（TaskFlow → SkillRuntime → Policy → Provider → 适配器；
+`scenes/handoff_lab` + `scripts/scenario.py`）实测：
+
+    seq1  stand duration_ms=800                                  → SUCCEEDED
+    seq2  locomote velocity={"vx_mps":0.2,"vy_mps":0.0,"wz_rad_s":0.0} duration_ms=2000
+          → accepted=true 但 **FAILED / IRAF-EXECUTION-FAILED**：
+            「腿 FL 的足端在躯干系内有侧向偏移 1.520e-03 m：平面 IK 前提不成立」
+    seq3  pick_object → REJECTED / IRAF-SKILL-PROVIDER-UNAVAILABLE
+            「未声明能力 'pick_object'（已声明：['locomote','stand','stop']）」
+
+⇒ 技能层比适配器层多一道**平面 IK 前置门禁**（1.52 mm 的侧向偏移即拒），我的四工况验收是
+**直接调适配器**（脚本自己标注"本入口直接调适配器"）⇒ **没覆盖技能层**。
+按项目契约（"仅在**技能层**验收通过后才回填能力"）⇒ 本轮**撤回** `capabilities` 与
+`IMPLEMENTED_CAPABILITIES` 的 `locomote` 入列（保持 `[stand, stop]`；测试期望一并回退，
+全量单测回到"只剩既有的 1 项 vision 失败"）。
+
+⇒ 下一轮第一件事：定位并修这条门禁（1.52 mm 侧向偏移从哪来 —— 是 `home` 位形的侧向分量、
+还是 `gait_joint_targets` 的髋关节解算与"平面 IK 前提"的判据不一致），然后**从技能层**重跑
+同一命令；技能层通过后才谈回填。**适配器层的数字仍然有效**，只是不足以支撑能力声明。
+
 ## 2. 顺带钉住的两个事实（都曾被我误判过）
 
 - **支撑腿位置权重不能压到 0**：`stance_position_weight = 0` ⇒ 倾角 80.28° 翻倒。
