@@ -130,15 +130,21 @@ def main(argv=None):
         return EXIT_BACKEND
 
     duration_s = float(params["verification"]["duration_s"])
+    # 连续跑：显示窗口开着就把步态一轮轮接着跑（否则 10 s 仿真在墙钟上 1~2 秒就结束，
+    # 使用者只看到"闪一下"，之后一直是静止末态 —— 2026-09-23 实测反馈）。
+    # 租约 TTL 必须覆盖**整个显示窗口**（仍是 authority 强制的有限 TTL，不是永久租约）。
+    display_s = max(0.0, float(args.seconds))
     lease = authority.acquire(
         profile.name + "-mujoco",
         "gait-view-demo",
-        ttl_seconds=max(LEASE_TTL_FLOOR_S, duration_s * LEASE_TTL_MARGIN),
+        ttl_seconds=max(LEASE_TTL_FLOOR_S, display_s + duration_s * LEASE_TTL_MARGIN),
     )
 
     holder = {"result": None, "error": None}
+    stop = threading.Event()
     thread = threading.Thread(
-        target=lambda: _run_trot(backend, lease, holder), name="gait-view-trot", daemon=True
+        target=_run_gait_loop, args=(backend, lease, holder, stop), name="gait-view-gait",
+        daemon=True,
     )
     thread.start()
 
@@ -162,6 +168,11 @@ def main(argv=None):
         import mujoco.viewer
 
         render_hz = float(args.render_hz or render_hz_declared)
+        # 窗口尺寸取声明的 `render.width_px/height_px`：软件渲染（llvmpipe）在 1280×720 下
+        # 每帧要数秒（实测：进程 238% CPU 但 5 秒内视口 0% 变化 ⇒ 画面近乎冻结，使用者只看到
+        # "闪一下"），缩到 640×480 后单帧成本约降 4 倍。窗口尺寸本身不是物理量，取声明值即可。
+        backend.model.vis.global_.offwidth = int(width)
+        backend.model.vis.global_.offheight = int(height)
         snapshot = SnapshotMirror(backend.model)
         view = camera_settings(profile)          # profile 的 camera 段（free 模式初值）
         with mujoco.viewer.launch_passive(backend.model, snapshot.refresh(backend)) as viewer:
@@ -199,7 +210,8 @@ def main(argv=None):
                 if not thread.is_alive() and time.monotonic() - started >= float(args.seconds):
                     break
                 time.sleep(period)
-    thread.join(timeout=max(60.0, duration_s * LEASE_TTL_MARGIN + 30.0))
+    stop.set()                       # 窗口关闭 ⇒ 停掉连续步态，不留空转线程
+    thread.join(timeout=30.0)
 
     report = {
         "schema_version": REPORT_SCHEMA,
@@ -220,6 +232,7 @@ def main(argv=None):
             "finished": not thread.is_alive(),
             "error": holder["error"],
             "samples": len((holder["result"] or {}).get("samples") or []),
+            "cycles": int(holder.get("cycles") or 0),
         },
         "note": "显示/演示证据：数字不是验收数字；验收见 scripts/verify_go2_trot_in_place.py",
     }
@@ -237,9 +250,12 @@ def main(argv=None):
     return EXIT_OK
 
 
-def _run_trot(backend, lease, holder):
+def _run_gait_loop(backend, lease, holder, stop):
+    """连续跑步态直到 `stop` 置位（窗口关闭）或显式失败。显式失败即停，不吞、不伪造。"""
     try:
-        holder["result"] = backend.trot_in_place(lease)
+        while not stop.is_set():
+            holder["result"] = backend.trot_in_place(lease)
+            holder["cycles"] = int(holder.get("cycles") or 0) + 1
     except Exception as exc:  # noqa: BLE001
         holder["error"] = type(exc).__name__ + ": " + str(exc)
 

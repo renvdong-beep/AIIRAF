@@ -14,7 +14,10 @@ terrain:
   # 工作台字段名与 config/*_simulation_baseline.yaml 的 workbench 段一致（复用既有字段名）。
   workbench:
     top_z_m: 0.0
-    half_size_m: 0.8
+    # 台面半边长（m）：0.8 → 1.5（3 m 见方）。依据：使用者实测反馈
+    # 「台阶做大一点，不然机器人容易跑不见了」——原地踏步含重心转移，边距越大越不容易走到台边；
+    # 顶面 z 与摩擦不变（不改物理接触面，只扩大水平范围）。
+    half_size_m: 1.5
     half_thickness_m: 0.025
     friction: "1.0 0.02 0.001"
 
