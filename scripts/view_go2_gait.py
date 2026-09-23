@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import os
 import sys
 import threading
 import time
@@ -79,6 +80,9 @@ def main(argv=None):
     parser.add_argument("--report", type=Path, default=None, help="显示证据输出路径")
     parser.add_argument("--display", choices=("auto", "none"), default="auto",
                         help="auto=有显示设备即开窗；none=只跑步态不开窗（用于无人值守自查）")
+    parser.add_argument("--free-camera", action="store_true",
+                        help="窗口用自由相机（可鼠标旋转/缩放；初值取 profile 的 camera 段）。"
+                             "缺省用声明的固定相机（本机默认 GL 下最亮）")
     args = parser.parse_args(argv)
 
     root = args.root or unitree_go2.repo_root()
@@ -143,33 +147,49 @@ def main(argv=None):
     mode = resolved[0] if isinstance(resolved, tuple) else str(resolved)
     env = display_environment()
     frames = 0
-    view = None            # 交互窗口的自由相机初值（来自 profile 的 camera 段；非交互时为 None）
+    view = None            # 交互窗口的自由相机初值（仅在 free 模式下使用）
     if mode == DISPLAY_INTERACTIVE:
+        # GL 路径必须在**创建 GL 上下文之前**定（`import mujoco.viewer` 就会建上下文）。
+        # 本机实测（docs/debug/2026-09-23-go2-viewer-3d-black-screen.md）：默认 GL 路径下窗口 3D
+        # 视口几乎不亮（mean 22.2/36.4），强制 Mesa llvmpipe 后正常（95.1/42.5）⇒ 由声明开关控制。
+        if bool(_dig(declaration, "render.software_gl")):
+            os.environ["LIBGL_ALWAYS_SOFTWARE"] = "1"
+            os.environ["GALLIUM_DRIVER"] = "llvmpipe"
+            print("VIEWER_GL software (LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe)",
+                  flush=True)
+        else:
+            print("VIEWER_GL default", flush=True)
         import mujoco.viewer
 
         render_hz = float(args.render_hz or render_hz_declared)
         snapshot = SnapshotMirror(backend.model)
-        if not getattr(profile, "camera", None):
-            # 铁律 6.2：不靠隐藏默认值。缺声明 ⇒ 显式失败并告诉用户该声明什么。
-            print("声明非法：profile %s 缺 `camera` 段（交互窗口的自由相机初值必须来自声明；"
-                  "所需键：lookat_m / distance_m / azimuth_deg / elevation_deg）" % profile_path,
-                  file=sys.stderr)
-            return EXIT_DECLARATION
-        view = camera_settings(profile)
+        view = camera_settings(profile)          # profile 的 camera 段（free 模式初值）
         with mujoco.viewer.launch_passive(backend.model, snapshot.refresh(backend)) as viewer:
-            # 自由相机（**可鼠标旋转/缩放**）：只**初始化**一次，之后不再每帧覆盖 —— 原实现每帧
-            # 设 `cam.type = mjCAMERA_FIXED` 指向声明相机，按 MuJoCo 语义固定相机禁用鼠标旋转，
-            # 用户反馈"视角不能旋转"即此（2026-09-23）。
-            viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
-            viewer.cam.lookat[:] = view["lookat_m"]
-            viewer.cam.distance = view["distance_m"]
-            viewer.cam.azimuth = view["azimuth_deg"]
-            viewer.cam.elevation = view["elevation_deg"]
+            # 窗口相机模式：**默认"声明的固定相机"**（= 2026-09-22 起可用、使用者见过的画面），
+            # 可选 `--free-camera` 换成自由相机（可鼠标旋转/缩放）。
+            # 为什么默认回到固定：2026-09-23 实测四格矩阵（同一场景/同一拍，见
+            # docs/debug/2026-09-23-go2-viewer-3d-black-screen.md）——视口亮度：
+            #   固定+默认GL 22.2 / 固定+软件GL **95.1** / 自由+默认GL 36.4 / 自由+软件GL 42.5
+            if args.free_camera:
+                viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+                viewer.cam.lookat[:] = view["lookat_m"]
+                viewer.cam.distance = view["distance_m"]
+                viewer.cam.azimuth = view["azimuth_deg"]
+                viewer.cam.elevation = view["elevation_deg"]
+                print("VIEWER_CAMERA free lookat=%s distance=%.3f azimuth=%.1f elevation=%.1f"
+                      % (view["lookat_m"], view["distance_m"], view["azimuth_deg"],
+                         view["elevation_deg"]), flush=True)
+            else:
+                camera_id = mujoco.mj_name2id(backend.model, mujoco.mjtObj.mjOBJ_CAMERA, camera)
+                if camera_id < 0:
+                    print("声明非法：render.camera=%r 在模型里不存在" % camera, file=sys.stderr)
+                    return EXIT_DECLARATION
+                viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FIXED
+                viewer.cam.fixedcamid = camera_id
+                print("VIEWER_CAMERA fixed %s（鼠标旋转不可用；要旋转加 --free-camera）" % camera,
+                      flush=True)
             if env.get("warning"):
                 print("[viewer] 注意：" + env["warning"], flush=True)
-            print("VIEWER_CAMERA free lookat=%s distance=%.3f azimuth=%.1f elevation=%.1f"
-                  % (view["lookat_m"], view["distance_m"], view["azimuth_deg"],
-                     view["elevation_deg"]), flush=True)
             started = time.monotonic()
             period = 1.0 / max(1.0, render_hz)
             while viewer.is_running():

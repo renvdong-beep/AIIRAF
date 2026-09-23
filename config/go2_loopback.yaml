@@ -530,6 +530,12 @@ render:
   width_px: 640
   height_px: 480
   render_hz: 30.0
+  # 交互窗口是否强制 Mesa 软件渲染（LIBGL_ALWAYS_SOFTWARE=1 + GALLIUM_DRIVER=llvmpipe）。
+  # 依据：2026-09-23 实测（docs/debug/2026-09-23-go2-viewer-3d-black-screen.md）——本机默认 GL 路径下
+  # 窗口 3D 视口几乎不亮（固定相机 mean=22.2、自由相机 mean=36.4），使用者反馈"看不到 Go2、只有红方块"；
+  # 强制软件渲染后同一场景正常（固定相机 mean=95.1/非黑 68.3%、自由相机 mean=42.5）。
+  # 该开关只影响**交互窗口**（离屏渲染 `render.camera` 走的路径一直正常）；关掉即回到默认 GL。
+  software_gl: true
 
 state:
   # 传感器按名字解析（关节名 ≠ 执行器名：go2.xml 关节 FL_hip_joint / 执行器 FL_hip）。
