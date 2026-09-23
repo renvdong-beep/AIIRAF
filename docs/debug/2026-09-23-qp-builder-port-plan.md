@@ -20,6 +20,15 @@
 **不移植**：`mujoco_model.py`（仿真侧，生产用我们的主站/真机适配器）、`plot_helper.py`、
 `_continuousDynamics`（死代码）、任何 CasADi 依赖（生产求解走 `osqp_native`）。
 
+## 1.1 不得造第二份"接触表"事实来源（本轮澄清；违反即触铁律）
+
+上游 `gait.py` 的相位/接触判定是 `phases = mod(PHASE_OFFSET + t/period, 1)`、`contact = phases < duty`；
+**我们仓库已有同构实现**：`src/iraf_adapters/unitree/gait.py`（`is_stance(phase) = phase < duty`，
+相位偏移来自声明 `gait.legs.*.phase_offset`；ADR-0009 §8.1 已实测"同构"）。
+⇒ `trajectory.py` **必须复用** `iraf_adapters.unitree.gait` 的相位/接触表逻辑，
+**不得**在 `mpc/` 里再写一份（同一事实只能有一处来源）。移植时只需校验：
+用我们的接触表算出的 `contact_table` 与研究侧用它的接触表算出的结果**逐位一致**（同相位参数下）。
+
 ## 2. 逐位校验点（用已提交的 `traj_parity` 门禁）
 
 对**同一批状态/时间序列**（研究侧已存的 200 样本）比较下列数组的 `tobytes()`：
