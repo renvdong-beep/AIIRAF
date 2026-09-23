@@ -348,7 +348,8 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 )
 
     # ---- 能力实现 ----
-    def stand(self, lease, targets=None, duration_ms=None, execution_id=None):
+    def stand(self, lease, targets=None, duration_ms=None, execution_id=None,
+              sample_callback=None):
         self.require_motion_allowed("stand", lease)
         if execution_id is not None:
             # 同一执行内续跑：必须仍是同一 fencing token 且执行未终态（终态拒绝）。
@@ -367,7 +368,10 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         seconds = self.resolve_duration_ms(
             duration_ms, _dig(self.declaration, "stand.duration_s", "声明")
         )
-        cycles, saturated = self._run_control(resolved, seconds, ramp_s)
+        # `sample_callback` 可选（增量参数，既有调用不受影响）：停靠等组合能力需要按窗口量
+        # "保持期内的最大速度"（`stand` 报告本身不含速度指标；loopback 验收脚本也是自己采样的）。
+        cycles, saturated = self._run_control(resolved, seconds, ramp_s,
+                                              sample_callback=sample_callback)
         report = {
             "simulation": True,
             "capability": "stand",
@@ -1667,25 +1671,17 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         progress = {"reached_s": None, "settled_s": None}
 
         def provider(elapsed):
-            """逐拍指令 + **失败判定的唯一处**（超时/未停稳都走 MPC 的 `damped_hold` 路径）。
+            """接近阶段的逐拍指令 + **超时的唯一判定处**。
 
             为什么把失败判定放在这里：`locomote` 已经拥有这次执行的**终态**
             （`ledger.finish` 由它调用，且框架明确"终态不可回写"—— 实测：我在外面再 finish 一次
-            会被 `TerminalExecutionError` 拦下）。因此"停靠失败"必须**在跑的过程中**表达为
+            会被 `TerminalExecutionError` 拦下）。因此"告警式失败"必须**在跑的过程中**表达为
             `MpcUnavailableError` ⇒ 由 `locomote` 按契约 §4 转成 `damped_hold` + FAILED，
             而不是跑完再回写状态（那会伪造成功，铁律 1.6）。
             """
             if progress["reached_s"] is not None:
-                held = float(elapsed) - progress["reached_s"]
-                if held >= settle_s:
-                    speed = float(np.linalg.norm(np.asarray(self.data.qvel[0:3], dtype=float)))
-                    if speed > max_final_speed_mps:
-                        raise MpcUnavailableError(
-                            DECISION_DAMPED_HOLD,
-                            "停靠保持窗 %.3f s 内末速 %.6f m/s > 判据 %.6f m/s（未停稳）"
-                            % (held, speed, max_final_speed_mps))
-                    if progress["settled_s"] is None:
-                        progress["settled_s"] = float(elapsed)
+                # 已到位 ⇒ 精确零指令（保持）；停稳的验收交给下面的**静态保持**阶段
+                # （零速指令的 trot 仍以 5~20 cm/s 原地抖动，瞬时速度判据在 trot 下不可达）
                 return (0.0, 0.0, 0.0)
             if float(elapsed) > timeout_s:
                 target = frame_pose()
@@ -1719,14 +1715,48 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             total_s * 1000.0, lease, execution_id=execution_id, command_provider=provider,
         )
         samples = report.get("samples") or []
+
+        # ---- 阶段②：静态保持（把"到位姿态"交给静态控制器，而不是继续 trot）----
+        # 依据（2026-09-23 实测）：`max_speed_m_s` 按**瞬时速度**量；零速指令的 trot 仍让机身以
+        # 5~20 cm/s 原地抖动 ⇒ 该判据在 trot 下不可达。静态保持（`stand`）实测 |v| = 4.5e-4 m/s。
+        settle_report = None
+        settle_error = None
+        final_speed = float("inf")
+        if report.get("failure") is None:
+            # ⚠ 不能把"当前关节角"当保持目标：交接瞬间是**中步态**位形（可能有一条腿在空中），
+            # 实测保持窗速度 0.3117 m/s（判据 0.05）—— 那是"保持一个迈步中的位形"，不是站稳。
+            # 因此交给**声明的站立位形**（`stand.pose_source = profile_home`，四足落地），
+            # 由 stand 自己的斜坡从当前位形过渡过去（与 stand 验收同一条路径）。
+            # 保持用**项目已声明的"受控停止"原语** `damped_hold`（减速到零并保持站立），
+            # 而不是另造一个保持：
+            #   · 实测排除①中步态位形保持：保持窗最大 0.3117 m/s（在保持一个迈步中的位形）；
+            #   · 实测排除②直接交给 `stand`（站立位形）：含过渡 0.3585、稳态段反而 0.5030 m/s
+            #     （交接时是迈步态、有腿在空中 ⇒ 站立控制在"抢救"而不是站稳）。
+            # `damped_hold` 的判据全部来自声明（`stop.duration_s` / `stop.speed_tolerance_mps` = 0.05 /
+            # `stop.static_hold_s`），并由它写自己的终态（STOPPED / FAILED）—— 与场景判据同源。
+            settle_report = self.damped_hold(lease)
+            settle_error = (None if settle_report.get("static_entered")
+                            else "damped_hold 未在声明预算内进入静止段")
+            final_speed = float(settle_report.get("final_speed_mps", float("inf")))
+
         final = frame_pose(), body_pose()
         translation_error, _dy, yaw_error = dock_module.pose_error(
             (final[0][0], final[0][1]), final[0][2], (final[1][0], final[1][1]), final[1][2])
         translation_error_m = math.hypot(translation_error, _dy)
-        tail = [s for s in samples if s["time_s"] >= samples[-1]["time_s"] - settle_s] if samples else []
-        final_speed = max((float(s["base_linear_speed_mps"]) for s in tail), default=float("inf"))
-        # 终态由 `locomote` 拥有（它调用 `ledger.finish`）；本方法**不再回写**（框架禁止终态回写）。
-        failure = report.get("failure")   # 超时/未停稳都在 provider 里转成了 damped_hold
+        # 终态由 `locomote` / `stand` 各自拥有（它们调用 `ledger.finish`）；
+        # 本方法的判定**只进报告**（框架禁止终态回写）—— 由技能/场景层按 criteria 消费。
+        failure = report.get("failure") or (None if settle_error is None else
+                                            {"decision": "DOCK_HOLD_FAILED", "reason": settle_error})
+        if failure is None and (translation_error_m > position_tolerance_m
+                                or abs(yaw_error) > yaw_tolerance_rad):
+            failure = {"decision": "DOCK_DRIFTED",
+                       "reason": "保持后超出容差：平移 %.6f m（判据 %.6f）/ 偏航 %.6f°（判据 %.6f）"
+                                 % (translation_error_m, position_tolerance_m,
+                                    math.degrees(abs(yaw_error)), math.degrees(yaw_tolerance_rad))}
+        if failure is None and final_speed > max_final_speed_mps:
+            failure = {"decision": "DOCK_NOT_SETTLED",
+                       "reason": "静态保持窗 %.3f s 内末速 %.6f m/s > 判据 %.6f m/s"
+                                 % (settle_s, final_speed, max_final_speed_mps)}
         return {
             "simulation": True,
             "capability": "dock_for_handoff",
@@ -1745,6 +1775,8 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             "settled_at_s": progress["reached_s"],
             "settle_completed_at_s": progress["settled_s"],
             "control_cycles": report.get("control_cycles"),
+            "settle": {"max_speed_mps": None if settle_report is None else final_speed,
+                       "failure_reason": settle_error},
             "failure": failure,
             "provider": report.get("provider"),
             "client": report.get("client"),
