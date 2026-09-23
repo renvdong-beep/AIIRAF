@@ -116,7 +116,7 @@ SWAY_DIRECTION_TOLERANCE_DEG_RANGE = (0.0, 45.0)
 #: 机身以指令速度前进，位置环权重可以保持 1.0 继续守构型。
 #:
 #: 符号约定与 `sway_offset_m` 同源（本函数给出「足端该往哪退」，调用点直接加到足端目标上）。
-REQUIRED_WALK_KEYS = ("enabled", "return_profile", "anchor")
+REQUIRED_WALK_KEYS = ("enabled", "return_profile", "anchor", "stride_scale")
 
 #: `gait.walk.anchor` 的允许取值（两种锚定方式；见 `walk_foot_offset_m` 的 docstring）：
 #:   `command_ramp`  = 按指令速度在机身系里开环退让（第一档；保留用于 A/B 对照）；
@@ -1232,7 +1232,14 @@ def _validated_walk_block(params):
         raise DeclarationError(
             "gait.walk.anchor 只支持 %s，实际: %r" % (list(WALK_ANCHORS), block["anchor"])
         )
-    return {"enabled": bool(block["enabled"]), "return_profile": profile, "anchor": anchor}
+    # 步幅增益（无量纲，乘在退让速率上；必须 > 0）：退让项在实测里只贡献**固定前馈量**
+    # （walk 开/关对照：forward +0.0657 → +0.1297、backward −0.1843 → −0.2676 m/s），
+    # 也就是它不随指令成比例 ⇒ 需要按声明放大步幅（上游 Raibert 落足点同样按期望速度给进）。
+    stride_scale = float(block["stride_scale"])
+    if not math.isfinite(stride_scale) or stride_scale <= 0.0:
+        raise DeclarationError("gait.walk.stride_scale 必须是正有限数，实际: %r" % (block["stride_scale"],))
+    return {"enabled": bool(block["enabled"]), "return_profile": profile, "anchor": anchor,
+            "stride_scale": stride_scale}
 
 
 def _finite_walk_command(command_mps_rad_s):

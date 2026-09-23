@@ -68,7 +68,7 @@ def _walk_params(enabled=True, return_profile="cosine", anchor="command_ramp"):
     fragment = copy.deepcopy(document["mpc_gait"])
     if not enabled:
         fragment["overrides"]["walk"] = {"enabled": False, "return_profile": return_profile,
-                                         "anchor": anchor}
+                                         "anchor": anchor, "stride_scale": 1.0}
     if return_profile != "cosine":
         fragment["overrides"]["walk"]["return_profile"] = return_profile
     if anchor != "command_ramp":
@@ -133,7 +133,7 @@ class WalkDeclarationTest(unittest.TestCase):
     def test_production_declaration_is_accepted_and_parsed(self):
         params = _walk_params()
         self.assertEqual(params["walk"], {"enabled": True, "return_profile": "cosine",
-                                          "anchor": "command_ramp"})
+                                          "anchor": "command_ramp", "stride_scale": 1.0})
         # 与 mpc_model 的自洽门禁同时成立（period = 1/gait_hz）
         self.assertAlmostEqual(params["period_s"], 1.0 / 3.0, places=15)
 
@@ -380,7 +380,8 @@ class WalkGateTest(unittest.TestCase):
                 "FR", 0.1, (0.2, 0.0, 0.0), FOOT_XY["FR"])
 
     def test_non_finite_command_fails(self):
-        block = {"enabled": True, "return_profile": "cosine", "anchor": "command_ramp"}
+        block = {"enabled": True, "return_profile": "cosine", "anchor": "command_ramp",
+                 "stride_scale": 1.0}
         for command in ((float("inf"), 0.0, 0.0), (0.0, float("nan"), 0.0),
                         (0.0, 0.0, float("-inf"))):
             with self.assertRaises(CommandRejectedError):
@@ -491,6 +492,15 @@ class WalkMeasuredPoseTest(unittest.TestCase):
         with self.assertRaises(DeclarationError):
             gait.walk_foot_offset_m(self.params, "FR", self.stance_elapsed, (0.2, 0.0, 0.0),
                                     self.foot, {"body_xy_m": (0.0, 0.0)})
+
+    def test_bad_stride_scale_fails(self):
+        """`stride_scale` 必须是正有限数（0 / 负 / NaN 一律显式失败，不做兜底）。"""
+        for bad in (0.0, -1.0, float("nan"), float("inf")):
+            params = copy.deepcopy(self.params)
+            params["walk"]["stride_scale"] = bad
+            with self.assertRaises(DeclarationError):
+                gait.walk_foot_offset_m(params, "FR", self.stance_elapsed, (0.2, 0.0, 0.0),
+                                        self.foot, self._pose((0.0, 0.0), 0.0, None))
 
     def test_bad_anchor_value_fails(self):
         """`anchor` 只允许白名单两值（写错名字必须失败，不许静默当成某一档）。"""

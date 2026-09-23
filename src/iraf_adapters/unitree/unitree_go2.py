@@ -1828,10 +1828,14 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             """
             elapsed = now - onset
             vx_cmd, vy_cmd, wz_cmd = ramped_command(elapsed)
+            # 退让项的步幅增益（`gait.walk.stride_scale`）：只放大**足端退让**的给进速率，
+            # QP 的参考仍用未放大的指令（它跟踪的是真实期望速度，不许被放大）。
+            walk_scale = float((trot.get("walk") or {}).get("stride_scale") or 1.0)
             targets = gait.gait_joint_targets(
                 trot, geometry, home, limits, elapsed, gait.amplitude_at(trot, elapsed),
                 self._body_frame_velocity(trunk_body), self._body_frame_omega(trunk_body),
-                walk_command_mps_rad_s=(vx_cmd, vy_cmd, wz_cmd),
+                walk_command_mps_rad_s=(walk_scale * vx_cmd, walk_scale * vy_cmd,
+                                        walk_scale * wz_cmd),
                 walk_pose=(walk_pose_measured(elapsed)
                            if (trot.get("walk") or {}).get("anchor") == "measured_pose" else None),
             )
