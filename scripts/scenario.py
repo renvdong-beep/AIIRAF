@@ -25,12 +25,17 @@ Provider → 适配器 → MuJoCo）。执行器**不直接驱动后端**：后�
 其余故障类型（`actuator_timeout` / `authority_conflict` / `state_stale` / `estop`）本战役未交付：
 声明里出现即退出码 2，绝不静默跳过。
 
-判据口径（可评测的判据只有三个，其余一律显式失败）
+判据口径（可评测的判据只有五个，其余一律显式失败）
 --------------------------------------------------
 - `min_stable_hold_s` ≥ 阈值：测量值 = 本步执行期间**推进的仿真时间**
   （后端 `read_state()["time_s"]` 前后差）；
 - `max_speed_m_s` ≤ 阈值：测量值 = 步骤结束时实测的躯干线速度模长；
-- `timeout_s` ≤ 阈值：测量值 = 本步墙钟耗时。
+- `timeout_s` ≤ 阈值：测量值 = 本步墙钟耗时；
+- `translation_error_max_m` ≤ 阈值：测量值 = **技能输出 evidence** 的
+  `final_translation_error_m`（停靠结果量；后端末态采样拿不到"相对目标帧的位姿差"）；
+- `yaw_error_max_deg` ≤ 阈值：测量值 = `|evidence.final_yaw_error_deg|`（**取绝对值**：
+  带符号量直接比阈值会让 −3° 以"−3 ≤ 2"骗过判据）。
+后两条依赖技能**如实给出**结果量：缺字段时依据缺失、该条判据显式判失败，不静默通过。
 口径是"时间推进量/末态采样"，**不是**稳定性分析：物理稳定性证据见步骤 15 的 loopback 验收
 （`build/acceptance/go2-loopback/report.json`），两者不可互换（报告 `not_proved` 里明写）。
 未在 `CRITERION_SPEC` 中登记的判据（如 `pose_tolerance_m`、`min_lift_delta_m`）在**预检**阶段
@@ -107,9 +112,22 @@ CRITERION_SPEC = {
         "步骤结束时实测的躯干线速度模长（后端 read_state）",
     ),
     "timeout_s": ("wall_seconds", "<=", "本步墙钟耗时"),
+    # 停靠（`dock_for_handoff`）的**结果**判据：测量量只能来自**技能输出的 evidence**
+    # （适配器报告 `final_translation_error_m` / `final_yaw_error_deg`）—— 后端末态采样
+    # 拿不到"相对目标帧的位姿差"，而"推算"它等于把判据建在另一套几何上。
+    # evidence 缺失（例如能力未交付/未给出该字段）⇒ 依据缺失 ⇒ 该条判据**判失败**（不静默通过）。
+    "translation_error_max_m": (
+        "dock_translation_error_m", "<=",
+        "停靠结束时实测的平移误差（evidence.final_translation_error_m）",
+    ),
+    "yaw_error_max_deg": (
+        "dock_yaw_error_deg", "<=",
+        "停靠结束时实测的偏航误差**绝对值**（|evidence.final_yaw_error_deg|，单位度）",
+    ),
 }
 #: 可在报告中出现的测量量键（顺序固定，便于逐项比对）。
-MEASUREMENT_KEYS = ("sim_time_advance_s", "final_speed_mps", "wall_seconds", "evidence_duration_s")
+MEASUREMENT_KEYS = ("sim_time_advance_s", "final_speed_mps", "wall_seconds", "evidence_duration_s",
+                    "dock_translation_error_m", "dock_yaw_error_deg")
 
 #: 步骤分类（报告里逐项可见，避免"没跑"和"跑过了"混在一起）。
 STEP_EXECUTED = "EXECUTED"
@@ -654,6 +672,14 @@ def measure_step(before, after, evidence, wall_seconds):
             raise ScenarioError("后端 read_state 的 base_linear_velocity_mps 形状非法: %r" % (speed,))
     if isinstance(evidence, dict) and evidence.get("duration_ms") is not None:
         measured["evidence_duration_s"] = float(evidence["duration_ms"]) / 1000.0
+    if isinstance(evidence, dict):
+        # 停靠结果量：只有**技能自己**给出的实测值才作为依据（缺字段就不给依据 ⇒ 判失败）。
+        if evidence.get("final_translation_error_m") is not None:
+            measured["dock_translation_error_m"] = float(evidence["final_translation_error_m"])
+        if evidence.get("final_yaw_error_deg") is not None:
+            # ⚠ 判据是"误差**大小**"：适配器报告里是**带符号**偏航误差 ⇒ 必须取绝对值，
+            # 否则 −3° 会以 −3 ≤ 2 的形式**骗过**判据（实测踩点：符号型量直接比阈值必错）。
+            measured["dock_yaw_error_deg"] = abs(float(evidence["final_yaw_error_deg"]))
     return measured
 
 

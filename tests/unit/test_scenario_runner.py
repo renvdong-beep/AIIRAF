@@ -168,6 +168,28 @@ class CriterionEvaluationTests(unittest.TestCase):
         self.assertNotIn("final_speed_mps", measured)
         self.assertNotIn("sim_time_advance_s", measured)
 
+    def test_dock_criteria_take_yaw_magnitude(self):
+        # 停靠结果量直接取自技能 evidence；偏航必须取**绝对值**（带符号量会骗过判据）
+        evidence = {"final_translation_error_m": 3.6323864375270122e-05,
+                    "final_yaw_error_deg": -4.9650, "duration_ms": 3000.0}
+        measured = scenario.measure_step({"time_s": 0.0}, {"time_s": 1.0}, evidence, 0.5)
+        self.assertAlmostEqual(measured["dock_translation_error_m"], 3.6323864375270122e-05)
+        self.assertAlmostEqual(measured["dock_yaw_error_deg"], 4.9650)
+        checks = scenario.evaluate_criteria(
+            {"translation_error_max_m": 0.03, "yaw_error_max_deg": 2.0}, measured)
+        self.assertFalse(checks[1]["passed"], msg="|−4.9650°| > 2.0° ⇒ 必须判失败")
+        self.assertTrue(checks[0]["passed"], msg="36 µm ≤ 30 mm ⇒ 通过")
+
+    def test_dock_criteria_without_evidence_fail_explicitly(self):
+        # 技能没给出结果量 ⇒ 依据缺失 ⇒ 判失败（绝不静默通过）
+        measured = scenario.measure_step({"time_s": 0.0}, {"time_s": 1.0}, {}, 0.5)
+        checks = scenario.evaluate_criteria(
+            {"translation_error_max_m": 0.03, "yaw_error_max_deg": 2.0}, measured)
+        for check in checks:
+            self.assertFalse(check["passed"])
+            self.assertIsNone(check["measured"])
+            self.assertIn("评测依据不可用", check["detail"])
+
 
 class PlanAndPreflightTests(RunnerFixture):
     """声明分类：待交付跳过、未登记即失败。"""
@@ -179,11 +201,10 @@ class PlanAndPreflightTests(RunnerFixture):
         plan = scenario.plan_steps(entry, index, contract)
         pending = [item for item in plan if item["kind"] == scenario.STEP_SKIPPED_PENDING]
         self.assertEqual([item["id"] for item in pending], ["f02_dock"])
-        # 不可评测的判据必须被登记（不是被忽略）：否则"未交付"会变成静默缺口。
-        self.assertEqual(
-            sorted(pending[0]["registration"]["unevaluable_criteria"]),
-            ["translation_error_max_m", "yaw_error_max_deg"],
-        )
+        # 2026-09-24 起 `translation_error_max_m` / `yaw_error_max_deg` **可评测**（测量量取
+        # 技能 evidence 的停靠结果量，并在 `measure_step` 里对偏航取绝对值）⇒ 待交付登记里
+        # 不再把它们列为"判不了"；该步待交付的原因只剩**能力未声明**。
+        self.assertEqual(pending[0]["registration"]["unevaluable_criteria"], [])
         # 待交付步骤不得让整条场景变成"判据无依据"的非法声明。
         scenario.check_evaluable_criteria(plan)
 
