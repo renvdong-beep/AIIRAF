@@ -114,6 +114,10 @@ mpc_model:
   # 支撑腿法向力下限（N）：上游 `_compute_bounds` 里硬编码 `fz_min = 10`（注释 "Prevent slipping"），
   # 按铁律 5.3 落声明；语义 = 支撑相足端法向力的下界（lbx 的 z 行），上界仍为 +inf。
   min_normal_force_n: 10.0
+  # 期望质心位置的**逐轴钳位阈值**（m）：`reference.reference_state_trajectory` 用它与当前质心的
+  # 距离做钳位（超出即夹回）。上游 `max_pos_error` 实测值 0.1（A6a-3b 第②步 §2.2 的逐位校验
+  # 就是用这个值对齐的）；本键缺失即显式失败（plan 组装层不设默认值）。
+  max_pos_error_m: 0.1
   touchdown:
     nominal_z_m: 0.02
     swing_factor: 1.0
