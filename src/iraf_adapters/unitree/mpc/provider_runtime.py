@@ -37,6 +37,7 @@ class ProviderRuntime:
         self._last_status = "unknown"
         self._last_error = None
         self._last_response_reason = ""
+        self._update_solved = False     # 最近一次**更新拍**是否解出可用解（供失败判词精确化）
         self.stats = {"steps": 0, "updates": 0, "skips": 0, "holds": 0, "releases": 0}
 
     # ---- 只读 ----
@@ -79,12 +80,16 @@ class ProviderRuntime:
             self.stats["updates"] += 1
             resp, err = self._client.call(request, timeout_ms=timeout_ms)
             self._last_status = str(resp.get("status_class", "unknown"))
+            solved = err is None and resp.get("decision") == DECISION_OK
+            self._update_solved = solved
             # 失败**原因**必须可追溯（契约 §4 四类失败要能区分）：`err` 是客户端层的判定
             # （超时/子进程退出/响应非法/请求非法），`resp["reason"]` 是子进程层的中文原因。
             # 只留 freshness 的判词会把"为什么"丢掉（本层原先即如此）。
-            self._last_error = err
-            self._last_response_reason = str(resp.get("reason", ""))
-            if err is None and resp.get("decision") == DECISION_OK:
+            # ⚠ 只在**本次更新失败**时记录：成功解的 reason（"解可用…"）若被带到"解龄过期"
+            #   这类消费侧失败上，报告会自相矛盾（实测抓出）。
+            self._last_error = None if solved else err
+            self._last_response_reason = "" if solved else str(resp.get("reason", ""))
+            if solved:
                 self._solution = list(resp["z"])
                 self._last_ok_ms = self._now()
             else:
@@ -101,6 +106,11 @@ class ProviderRuntime:
         age_ms = None if self._last_ok_ms is None else (self._now() - self._last_ok_ms)
         verdict = decide(age_ms=age_ms, qp_status_class=self._last_status,
                          solve_ms=solve_ms, emergency=emergency)
+        reason = verdict["reason"]
+        if source == "subprocess" and self.stats["updates"] and not self._update_solved:
+            # 本拍**刚更新过且失败**：`freshness` 的 "无可用解（尚未求解）" 对"本次失败"不够精确
+            # （它分不清"从没解过"与"解过但本次失败"）⇒ 加上本层的事实前缀，报告不误导。
+            reason = "本次更新失败（状态分类 %s）⇒ %s" % (self._last_status, reason)
         if verdict["decision"] == DECISION_OK:
             z = self._solution
         else:
@@ -114,8 +124,8 @@ class ProviderRuntime:
         diagnostics = {"age_ms": age_ms, "status_class": self._last_status,
                        "solve_ms": solve_ms, "source": source, "tick": self._tick - 1,
                        "ticks_per_update": self._ticks_per_update,
-                       # 最近一次**更新拍**的失败原因（held 拍沿用上一次的值，便于追因）
+                       # **最近一次失败更新**的原因（held 拍沿用上一次的失败原因；成功后清空）
                        "client_error": self._last_error,
                        "response_reason": self._last_response_reason}
-        return {"decision": verdict["decision"], "reason": verdict["reason"],
+        return {"decision": verdict["decision"], "reason": reason,
                 "flags": verdict["flags"], "z": z, "diagnostics": diagnostics}
