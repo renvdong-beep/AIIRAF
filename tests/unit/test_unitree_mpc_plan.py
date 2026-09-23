@@ -61,8 +61,17 @@ def test_build_request_shape_and_protocol_validity():
     assert len(checked["a_rows"]) == len(checked["a_vals"]) == len(checked["a_cols"])
     assert request["meta"]["time_step_s"] == pytest.approx(0.020833333333333332, abs=1e-18)
     assert request["meta"]["horizon"] == horizon
-    # 摩擦锥上界：摆动腿 4 面为 +inf（不受约束）⇒ 至少有一个 ±inf 项被协议放行
-    assert any(np.isinf(v) for v in checked["uba"])
+    # 摩擦锥上界：摆动腿 4 面为 +inf（不受约束）⇒ 至少有一个 ±inf 项被协议放行。
+    # 注意 `validate_request` **保持记号**（`"inf"` / `"-inf"`）：`json.dumps(allow_nan=False)`
+    # 拒收 ±inf，线上格式必须用显式记号；还原成 float 会让随后的 encode 再炸一次
+    # （见 `mpc/protocol.py` `_INF_TO_TOKEN` 与 `decode`）。
+    tokens = {pr._INF_TO_TOKEN[float("inf")], pr._INF_TO_TOKEN[float("-inf")]}
+    inf_entries = [v for v in checked["uba"] if isinstance(v, str) and v in tokens]
+    assert inf_entries, "协议未放行任何 ±inf 记号（摆动腿摩擦锥上界）"
+    assert all(v == "inf" for v in inf_entries), "上界只应出现 +inf 记号"
+    # 盒约束下界同样含 −inf（位置约束的绝对值上界那条）⇒ jog 一次序列化必须不炸
+    assert all(isinstance(v, (int, float, str)) for v in checked["lbx"])
+    pr.encode(checked)                  # 端到端：记号必须能被 JSON 编码
 
 
 @pytest.mark.parametrize("missing_key", list(REQUIRED_MODEL_KEYS))
