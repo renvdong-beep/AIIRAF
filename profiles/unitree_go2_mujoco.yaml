@@ -62,11 +62,20 @@ spec:
   # capabilities（步骤 17 回填，**仅在技能层验收通过后**）：
   # - `stand` / `stop`：经 TaskFlow → SkillRuntime → Policy → Provider → 适配器 全链路验收
   #   （证据 build/acceptance/go2-skills/report.json，simulation=true）；
-  # - `locomote` **不声明**：首期无步态控制器，适配器显式拒绝该能力，
-  #   声明它就等于声明一个做不到的能力（quadruped.verify_capabilities 会拦下）。
+  # - `locomote`：**2026-09-23 回填**（两层证据齐备后才动手）：
+  #     · 适配器层四工况：forward 误差 0.0659、backward 0.0571（判据 ≤0.10）、方向门禁通过、
+  #       倾角 3.14°/1.98°（≤15°）、无 max_iter/damped_hold；turn_left/right 符号门禁通过
+  #       （量值按声明**仅记录**，上游未定义转向跟踪容差 —— 这里没有偷偷加判据）；
+  #       零指令 hold 漂移 0.0286 m/3 s；报告 build/acceptance/go2-locomote/report.json（passed=true）
+  #     · **技能层**（TaskFlow → SkillRuntime → Policy → Provider → 适配器）：stand/locomote/stop
+  #       三步全 SUCCEEDED、rejected=0；报告 build/iraf-a6a12/skill-layer-run.json
+  #     · 回归：loopback 三基准**逐位不变**（0.279953602548388 / 3.302184116303541e-05 /
+  #       0.0032068060511409）、10/10
+  #     · **边界**：全部 simulation=true；**上板部署证据（A7）另计**，本项不构成上板能力证据；
+  #       适用速度受安全策略 max_speed_mps=0.5 约束。
   # - `read_state` / `emergency_stop` 已实现但本轮不经技能层验收，故不声明
   #   （"实现即必须声明"会逼出没有技能验收支撑的声明；方向只允许 declared ⊆ implemented）。
-  capabilities: [stand, stop]
+  capabilities: [stand, stop, locomote]
 
   # ---- 构建期声明（场景构建器消费；iraf_core.profile 只读它已知的键，忽略本节）----
   # 厂商模型路径与挂载点集中在 Profile，禁止散落到脚本里（铁律 5.3）。

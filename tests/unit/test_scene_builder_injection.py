@@ -174,7 +174,7 @@ class InjectionTests(SceneBuilderFixture):
         # 步骤 17 后：stand/stop 已经过技能层全链路验收并回填进 Profile
         # （证据 build/acceptance/go2-skills/report.json）；locomote 仍未声明
         # （首期无步态控制器）。这里的断言跟着**事实**走，不是放宽门禁。
-        self.assertEqual(identity["capabilities"], ["stand", "stop"])
+        self.assertEqual(identity["capabilities"], ["stand", "stop", "locomote"])
         # 步骤 17 后 scene.robots[].profile 已闭合为路径 ⇒ 构建器走"声明路径"这条来源，
         # 而不是按声明身份回退查找（两条都合法，报告必须写明走了哪条，绝不静默）。
         self.assertEqual(report["robot"]["profile_source"], "scene.robots[].profile")

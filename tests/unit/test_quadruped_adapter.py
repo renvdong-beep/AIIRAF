@@ -242,11 +242,11 @@ class QuadrupedAdapterCases(unittest.TestCase):
 
     # ---- 2. 能力契约 ----
     def test_go2_implements_only_verified_capabilities(self):
+        # `locomote` 于 2026-09-23 两层验收达标后入列（技能层报告 build/iraf-a6a12/skill-layer-run.json）
         self.assertEqual(
-            {"emergency_stop", "read_state", "stand", "stop"},
+            {"emergency_stop", "read_state", "stand", "stop", "locomote"},
             set(UnitreeGo2Adapter.IMPLEMENTED_CAPABILITIES),
         )
-        self.assertNotIn("locomote", UnitreeGo2Adapter.IMPLEMENTED_CAPABILITIES)
 
     def test_capability_contract_accepts_declared_subset(self):
         report = quadruped.verify_capabilities(
@@ -254,12 +254,17 @@ class QuadrupedAdapterCases(unittest.TestCase):
         )
         self.assertTrue(report["passed"])
         self.assertEqual(
-            ["emergency_stop"], report["undeclared_implemented_capabilities"]
+            ["emergency_stop", "locomote"], report["undeclared_implemented_capabilities"]
         )
 
     def test_capability_contract_rejects_unimplemented_and_unknown(self):
+        class _StubAdapter:
+            """只实现 `stand` 的桩：Go2 已把词表内能力全部实现，用它保留"声明未实现能力必须被拒"的载体。"""
+
+            IMPLEMENTED_CAPABILITIES = frozenset({"stand"})
+
         with self.assertRaises(quadruped.CapabilityContractError) as context:
-            quadruped.verify_capabilities(["locomote"], UnitreeGo2Adapter)
+            quadruped.verify_capabilities(["stand", "locomote"], _StubAdapter)
         self.assertIn("locomote", str(context.exception))
         with self.assertRaises(quadruped.CapabilityContractError) as context:
             quadruped.verify_capabilities(["teleport"], UnitreeGo2Adapter)
@@ -679,7 +684,7 @@ class ProfileCheckQuadrupedCases(unittest.TestCase):
         profile_path = self.tmp / "fixture_profile_locomote.yaml"
         profile_path.write_text(
             yaml.safe_dump(
-                _fixture_profile(capabilities=["stand", "locomote"]), allow_unicode=True
+                _fixture_profile(capabilities=["stand", "teleport"]), allow_unicode=True
             ),
             encoding="utf-8",
         )
@@ -690,7 +695,7 @@ class ProfileCheckQuadrupedCases(unittest.TestCase):
         report = profile_check.check_quadruped(path)
         self.assertFalse(report["passed"])
         self.assertTrue(
-            any("locomote" in message for message in report["failures"]),
+            any("teleport" in message for message in report["failures"]),
             report["failures"],
         )
 

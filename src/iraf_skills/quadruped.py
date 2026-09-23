@@ -628,12 +628,18 @@ class StandProvider:
 
 
 class LocomoteProvider:
-    """速度指令：先校验指令形状，再交由能力层显式拒绝（首期无步态控制器）。
+    """速度指令：指令形状校验 → 适配器 `locomote` → 按输出 schema 抽取证据。
 
-    顺序刻意分成两步：`"乱下指令"`（未知字段/非有限数值）与 `"不会做"`（能力未实现）
-    在诊断上必须可区分。若后端某天真的返回了运动结果，本 Provider 也会拒绝——
-    因为那意味着有人在没有步态证据的情况下声称"走起来了"（铁律 1.5 禁止伪造成功）。
+    ⚠ 语义变更（2026-09-23）：本 Provider 曾经只有「能力未实现时必须抛错；**返回即契约破裂**」
+    的守卫（首期无步态控制器）。`locomote` 实现并通过四工况验收后，改为**真正消费报告**
+    （与 `StandProvider` 同构）—— 否则它会把**成功判成失败**；未声明/未实现的能力仍由
+    能力契约层在**执行前**拒绝（实测：`IRAF-SKILL-PROVIDER-UNAVAILABLE`）。
     """
+
+    #: 输出 schema（`skills/locomote/locomote.output.json`）要的 evidence 键。
+    #: `velocity` 不在适配器报告里（报告叫 `command`）⇒ 在 `execute` 里显式映射，
+    #: 而不是把 `command` 改名（改名会牵动报告契约与其他消费方）。
+    EVIDENCE_KEYS = ("simulation", "capability", "duration_ms")
 
     def __init__(self, profile, backend):
         self.profile = profile
@@ -641,11 +647,13 @@ class LocomoteProvider:
 
     def execute(self, inputs, lease):
         velocity = self.backend.resolve_velocity(inputs["velocity"])
-        duration_ms = self.backend.resolve_duration_ms(
-            inputs.get("duration_ms"), 1.0 if inputs.get("duration_ms") is None else 0.0
+        # 时长单位：`inputs["duration_ms"]` 是**毫秒**，原样交给适配器 —— 它内部的
+        # `resolve_duration_ms` 是**唯一**的解析点（曾经在这里先转一次，结果把"秒"当"毫秒"
+        # 传下去 ⇒ 2000 ms 变 2 ms ⇒「控制周期数不足 1」，实测 2026-09-23）。
+        duration_ms = inputs.get("duration_ms")
+        report = self.backend.locomote(
+            velocity, 1000.0 if duration_ms is None else float(duration_ms), lease
         )
-        # 适配器在能力未实现时必须抛 UnsupportedCapabilityError；返回即视为契约破裂。
-        self.backend.locomote(velocity, duration_ms, lease)
-        raise SkillContractError(
-            "locomote 返回了结果但未提供步态证据：拒绝伪造成功（首期无步态控制器）"
-        )
+        evidence = _evidence(report, self.EVIDENCE_KEYS)
+        evidence["velocity"] = dict(velocity)
+        return {"skill": "locomote", "accepted": True, "evidence": evidence}

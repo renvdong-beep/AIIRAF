@@ -73,15 +73,30 @@ class Go2InteractiveTests(unittest.TestCase):
             return report, transcript
 
     def test_declared_capabilities_run_and_report_is_contract_complete(self):
-        report, transcript = self._run(["stand", "stop"])
+        """**每个已声明能力都必须真的能跑**（本用例是能力回填的最强回归）。
+
+        `locomote` 于 2026-09-23 入列 ⇒ 本用例也要把它跑一遍：
+        嵌套的 `velocity` 用**内联 JSON** 写（点号写法会被输入 schema 拒 —— 实测）。
+        若将来有人改坏平面 IK 前提门禁/时长单位/provider 语义，这里会红。
+        """
+        report, transcript = self._run([
+            "stand duration_ms=500",
+            'locomote velocity={"vx_mps":0.1,"vy_mps":0.0,"wz_rad_s":0.0} duration_ms=500',
+            "stop",
+        ])
         self.assertEqual(report["schema_version"], scenario.INTERACT_SCHEMA)
         self.assertTrue(report["simulation"])
-        self.assertEqual(report["declared_capabilities"], ["stand", "stop"])
+        self.assertEqual(report["declared_capabilities"], ["locomote", "stand", "stop"])
         self.assertEqual(report["counts"]["rejected"], 0)
         self.assertTrue(all(item["status"] == "SUCCEEDED" for item in transcript))
 
     def test_undeclared_capability_is_rejected_before_execution(self):
-        report, transcript = self._run(["locomote vx=0.2"])
+        """未声明的能力必须在**执行前**被拒（载体随事实更新）。
+
+        `locomote` 已声明 ⇒ 换用**词表内、但本 Profile 未声明**的 `pick_object` 作载体
+        （实测报「未声明能力 'pick_object'」；`locomote` 当时是这条路径的载体）。
+        """
+        report, transcript = self._run(["pick_object"])
         self.assertEqual(report["counts"]["rejected"], 1)
         self.assertEqual(transcript[0]["error_code"], "IRAF-SKILL-PROVIDER-UNAVAILABLE")
         self.assertIn("未声明能力", transcript[0]["reason"])

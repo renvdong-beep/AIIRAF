@@ -181,11 +181,21 @@ def resolve_joint_bindings(model, mujoco, joints):
 class UnitreeGo2Adapter(QuadrupedAdapter):
     """Go2 仿真后端：MuJoCo 场景（步骤 13 产物）+ 声明驱动的 PD 控制。"""
 
-    #: 已实现能力。`locomote` 不在其中：**适配器层已达标（2026-09-23 四工况两向误差 0.0659/0.0571），
-    #: 但技能层路径尚未验收通过** —— 技能层对平面 IK 有前置门禁，实测报
-    #: 「腿 FL 的足端在躯干系内有侧向偏移 1.520e-03 m：平面 IK 前提不成立」（IRAF-EXECUTION-FAILED）。
-    #: 按契约（"仅在技能层验收通过后回填能力"）⇒ 在修好该门禁之前不得入列。
-    IMPLEMENTED_CAPABILITIES = frozenset(("emergency_stop", "read_state", "stand", "stop"))
+    #: 已实现的能力（**声明侧的唯一对照**：`Profile.capabilities ⊆ IMPLEMENTED_CAPABILITIES`）。
+    #: `locomote` 于 2026-09-23 入列，**两层证据齐备**：
+    #:   · 适配器层（`scripts/verify_go2_locomote.py`，3 s / 100 Hz，四工况）：
+    #:     forward 误差 0.0659、backward 0.0571（判据 ≤0.10）、方向门禁通过、倾角 3.14°/1.98°（≤15°）、
+    #:     左右转符号门禁通过（量值按声明仅记录）、零指令 hold 漂移 0.0286 m/3 s；
+    #:     报告 build/acceptance/go2-locomote/report.json（passed=true）
+    #:   · **技能层**（TaskFlow → SkillRuntime → Policy → Provider → 适配器，
+    #:     `scenes/handoff_lab` + `scripts/scenario.py`）：stand / locomote / stop 三步全 SUCCEEDED、
+    #:     counts {commands:3, accepted:3, rejected:0, succeeded:3}；
+    #:     报告 build/iraf-a6a12/skill-layer-run.json
+    #: · 回归：loopback 三基准逐位不变、10/10（两条既有路径未被污染）
+    #: · **边界**：以上全部 MuJoCo 仿真（simulation=true）；**上板部署证据（A7）另计**；
+    #:   转向量值无阈值；适用速度受安全策略 max_speed_mps=0.5 约束。
+    IMPLEMENTED_CAPABILITIES = frozenset(("emergency_stop", "read_state", "stand", "stop",
+                                          "locomote"))
 
     def __init__(self, declaration, profile, authority, *, root, mujoco, model, data, bindings):
         # 物理步进与显示渲染互斥（显示层通过 display_lock() 取同一把锁做快照，避免撕裂）

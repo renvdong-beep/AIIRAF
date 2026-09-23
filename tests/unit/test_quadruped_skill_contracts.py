@@ -238,14 +238,41 @@ class ProviderContractTests(unittest.TestCase):
             )
         self.assertEqual(backend.locomote_calls, 1)
 
-    def test_locomote_provider_refuses_a_backend_that_claims_success(self):
-        """后端"成功返回"但没有步态证据 ⇒ 必须拒绝伪造成功（铁律 1.5）。"""
+    def test_locomote_provider_refuses_a_report_without_gait_evidence(self):
+        """后端"成功返回"但**缺步态证据** ⇒ 必须拒绝（铁律 1.5 禁止伪造成功）。
+
+        ⚠ 语义变更（2026-09-23）：locomote 实现后本 Provider 改为**消费报告**，
+        拒绝的判据从"只要返回就拒"变为"**缺输出 schema 必需键就拒**"（`_evidence` 显式失败，
+        不静默丢字段）—— 旧的"返回即契约破裂"守卫会把**成功判成失败**，已删除。
+        """
         backend = _FakeBackend(locomote_returns={"capability": "locomote"})
         with self.assertRaises(quadruped_skills.SkillContractError) as caught:
             quadruped_skills.LocomoteProvider(profile=None, backend=backend).execute(
                 {"velocity": {"vx_mps": 0.1, "vy_mps": 0.0, "wz_rad_s": 0.0}}, lease=None
             )
-        self.assertIn("拒绝伪造成功", str(caught.exception))
+        self.assertIn("缺少输出必需键", str(caught.exception))
+
+    def test_locomote_provider_consumes_a_complete_report(self):
+        """完整报告 ⇒ 输出满足 locomote 输出 schema；且**时长单位**必须是毫秒透传。
+
+        回归依据（2026-09-23 实测）：Provider 曾先调 `resolve_duration_ms`（返回**秒**）
+        再把它当**毫秒**传下去 ⇒ `duration_ms=2000` 变成 2 ms ⇒「控制周期数不足 1」。
+        """
+        report = {"simulation": True, "capability": "locomote", "duration_ms": 2000.0,
+                  "command": {"vx_mps": 0.1, "vy_mps": 0.0, "wz_rad_s": 0.0}}
+        backend = _FakeBackend(locomote_returns=report)
+        out = quadruped_skills.LocomoteProvider(profile=None, backend=backend).execute(
+            {"velocity": {"vx_mps": 0.1, "vy_mps": 0.0, "wz_rad_s": 0.0},
+             "duration_ms": 2000}, lease=None)
+        self.assertEqual(out["skill"], "locomote")
+        self.assertTrue(out["accepted"])
+        self.assertEqual(out["evidence"]["simulation"], True)
+        self.assertEqual(out["evidence"]["capability"], "locomote")
+        self.assertEqual(out["evidence"]["duration_ms"], 2000.0)
+        self.assertEqual(out["evidence"]["velocity"],
+                         {"vx_mps": 0.1, "vy_mps": 0.0, "wz_rad_s": 0.0})
+        self.assertEqual(backend.locomote_args[1], 2000.0,
+                         "Provider 必须把毫秒透传给适配器（不得自行换算）")
 
     def test_locomote_provider_rejects_unknown_velocity_field(self):
         backend = _FakeBackend()
@@ -277,25 +304,33 @@ class SkillManifestTests(unittest.TestCase):
                 self.assertRegex(manifest.version, r"^\d+\.\d+\.\d+$")
 
     def test_capability_direction_is_declared_subset_of_implemented(self):
+        """方向门禁：`declared ⊆ implemented`。
+
+        `locomote` 于 2026-09-23 **两层达标后**才入列（适配器层四工况两向误差 0.0659/0.0571 ≤0.10、
+        技能层 stand/locomote/stop 三步全 SUCCEEDED；证据 build/acceptance/go2-locomote/report.json
+        与 build/iraf-a6a12/skill-layer-run.json）。旧守卫 `assertNotIn("locomote", declared)` 的意图
+        （"不得声明做不到的能力"）现由下面的 subset 断言接管。
+        """
         declared = {str(item) for item in (self.profile["spec"].get("capabilities") or [])}
-        self.assertEqual(declared, {"stand", "stop"})
+        self.assertEqual(declared, {"stand", "stop", "locomote"})
         implemented = {str(item) for item in UnitreeGo2Adapter.IMPLEMENTED_CAPABILITIES}
         self.assertTrue(declared <= implemented, "声明了未实现的能力: %s" % sorted(declared - implemented))
-        self.assertNotIn(
-            "locomote", declared,
-            "首期无步态控制器：不得声明 locomote（声明即声明做不到的能力）",
-        )
 
     def test_each_skill_requires_a_declared_capability(self):
         declared = {str(item) for item in (self.profile["spec"].get("capabilities") or [])}
         for name in ("stand", "stop"):
             manifest = self.registry.resolve(name, "1.0.0").manifest
             self.assertTrue(set(manifest.requires) <= declared, "%s 依赖未声明的能力" % name)
+        # `locomote` 已声明 ⇒ 旧的"未声明能力"负向载体失效；换成**真实存在且仍会拒绝**的那条：
+        # 超过安全策略上限的速度指令必须被拒（同一门禁家族，行为与代码都没变）。
         locomote = self.registry.resolve("locomote", "1.0.0").manifest
-        self.assertFalse(
-            set(locomote.requires) <= declared,
-            "locomote 必须保持依赖未声明能力的状态（Policy 拒绝路径的载体）",
-        )
+        self.assertTrue(set(locomote.requires) <= declared,
+                        "locomote 已声明，其 requires 必须落在 declared 内")
+        with self.assertRaises(quadruped_skills.SkillContractError):
+            quadruped_skills.enforce_velocity_limits(
+                {"vx_mps": 99.0, "vy_mps": 0.0, "wz_rad_s": 0.0},
+                {"max_speed_mps": 0.5, "max_yaw_rate_rad_s": 1.0},
+            )
 
     def test_scene_declaration_matches_profile_and_is_closed(self):
         scene = yaml.safe_load(SCENE.read_text(encoding="utf-8"))
@@ -316,6 +351,7 @@ class _FakeBackend:
         self.locomote_returns = locomote_returns
         self.calls = []
         self.locomote_calls = 0
+        self.locomote_args = None
 
     def stand(self, lease, targets=None, duration_ms=None, execution_id=None):
         self.calls.append({"targets": targets, "duration_ms": duration_ms, "lease": lease})
@@ -329,6 +365,7 @@ class _FakeBackend:
 
     def locomote(self, velocity, duration_ms, lease, execution_id=None):
         self.locomote_calls += 1
+        self.locomote_args = (velocity, duration_ms)
         if self.locomote_returns is None:
             raise quadruped_contract.UnsupportedCapabilityError(
                 "能力 locomote 未在本后端实现（替身）"
