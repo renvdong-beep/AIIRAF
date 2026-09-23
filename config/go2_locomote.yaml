@@ -82,3 +82,24 @@ mpc_provider:
   # 这里只登记"与 update_hz 一致"的自洽关系，不重复写数字。
   staleness_periods: 2.0
 
+# MPC **模型与代价常量**（A6a-3b 第①步；铁律 5.3：常量集中在版本化声明，代码里不得写数字）
+# 来源：上游 `src/convex_mpc/centroidal_mpc.py:12-17` 的实测值；逐位校验见
+# docs/debug/2026-09-23-qp-builder-port-plan.md §2（用 traj_parity 门禁对研究侧 200 样本比对）。
+mpc_model:
+  # 状态代价对角（12 个状态：p(3) rpy(3) v(3) ω(3)）—— 上游 COST_MATRIX_Q 原值
+  q_diag: [1.0, 1.0, 50.0, 10.0, 20.0, 1.0, 2.0, 2.0, 1.0, 1.0, 1.0, 1.0]
+  # 输入代价对角（4 足 × 3 维接触力）—— 上游 COST_MATRIX_R = diag(1e-5 × 12)
+  # ⚠ 这个 1e-5 是"H 对角跨度 5×10⁶ ⇒ OSQP 迭代 P50 340"的病态来源，
+  #   也是必须做**等价变量缩放**的原因（调试记录 §13）；此处如实登记，不得擅自放大（那是改问题）。
+  r_diag: [1.0e-5, 1.0e-5, 1.0e-5, 1.0e-5, 1.0e-5, 1.0e-5, 1.0e-5, 1.0e-5, 1.0e-5, 1.0e-5, 1.0e-5, 1.0e-5]
+  # 摩擦系数：**必须与足端 geom 摩擦配对**（上游 MU=0.8 与其 MJCF 足端 0.8 成对；
+  # 我们的厂商 MJCF 足端是 0.4 ⇒ 这里取 0.4，与 `eval_trot_23 --friction 0.4` 的实测口径一致）
+  mu: 0.4
+  # 时域与步态（上游 GAIT_HZ=3 / DUTY=0.6；horizon = GAIT_T / dt = 16，dt = GAIT_T/16 = 0.020833 s）
+  horizon: 16
+  gait_hz: 3.0
+  duty: 0.6
+  swing_height_m: 0.1
+  stand_height_m: 0.27
+
+
