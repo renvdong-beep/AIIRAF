@@ -80,23 +80,43 @@ site 本地位置（躯干系）= (0, 0, 0.057)  ← **纯竖直偏置**
 4. 删掉 `settle_completed_at_s`：该字段恒为 `None`（`progress["settled_s"]` 从未被写）
    且无消费者 —— 恒 `None` 的字段会让人误以为"有这项测量"。
 
-## 6. 仍未定位：`halt_at_stance` 在 `command_provider` 下没有生效（D2）
+## 6. `halt_at_stance` 在 `command_provider` 路径下的语义不自洽（D2，已定位并修复）
 
-实测数字（同一份 `dock-measure.json`，节拍全部零指令）：
+**先被自己的探针推翻了一半假设**：我原先怀疑"站定门禁根本没触发"。
+`build/iraf-a6a14/halt_probe.py`（6 s、基础指令 0.15 m/s、逐拍 provider 恒返回精确零）实测：
 
 ```
-settled_at_s = 0.0            → 逐拍 provider 返回**精确零**
-control_cycles = 6150         = 61.5 s × 100 Hz
-base_yaw_deg   0.0007° → 4.9650°（0.0809°/s）；xy 位移 0.0237 m
-末拍四腿法向力 FL 9.40 / FR 67.16 / RR 0.00 / RL 59.62 N  → 仍是 trot 力型（有腿在空中）
-四腿同时接触（> 声明阈值 2.0 N）的拍数 = 896 / 6150（14.57%）→ 触发窗口充足
+locomote.halt = {declared_enabled: true, period_s: 0.3333333333333333,
+                 frozen_at_s: 0.36000000000000026, zero_command_since_s: 0.0}
+halted 样本 563/600（首发 0.380 s）⇒ 门禁**确实触发**
+但末拍 stance_legs=['FL','RR']、偏航 0.0007° → 0.6917°（≈0.115°/s）、|v| 4.166e-02 m/s
 ```
 
-代码读解：冻结只作用于**形状目标**（`target_provider` 内 `elapsed = frozen_elapsed`），
-而 QP 的接触表与 B1 权重仍用**未冻结**相位（`plan_fn` 用 `self.data.time - onset`）
-⇒ "站定"在语义上不自洽（形状说四足落地、QP 仍按 trot 给两条腿下力）。
-判据缺口：`halted_at_s` 写进了 `state_holder` 但**没有进报告**，因此从报告无法判定门禁是否触发过
-（本轮先补这个字段，再谈修；修完必须复跑四工况并证明**未触发场景逐位不变**）。
+⇒ 真机制是：**冻结只作用于形状目标**（`target_provider` 内把 `elapsed` 换成冻结值），
+而 QP 的相位（`plan_fn` 里 `t0 = self.data.time - onset`）**没有冻结** ⇒
+形状说"四足落地"、QP 仍按 trot 给两条腿下力（`stance_legs` 仍交替），语义不自洽。
+
+**修复**：把站定状态机与相位时间抽成单一实现 `phase_elapsed(elapsed, command_is_zero)`，
+**形状目标与 QP 的 `t0` 共用它**；未触发站定时原样返回 `elapsed` ⇒ 非站定场景逐位不变。
+
+修复前后（同一条 6 s 探针，逐项对照）：
+
+| 量 | 修复前 | 修复后 |
+| --- | --- | --- |
+| `frozen_at_s` | 0.36 s | 0.36 s（不变） |
+| 末拍偏航 | 0.6917° | **0.0449°**（15×） |
+| 末拍 \|v\| | 4.166e-02 m/s | **2.1846e-04 m/s**（190×） |
+| 末拍 xy | (0.01147, −0.00196) | (0.00910, 0.00308) |
+
+**诚实边界**：站定成立（速度与偏航都稳），但**不是四足均载** —— 末拍逐腿法向力
+FL 2.73 / FR 76.53 / RR 0.00 / RL 73.35 N（对角两腿 149.88 N ≈ mg 152.61 N）。
+即"四足同时接触"只是**触发条件**，冻结后的支撑分布并不均匀；若停靠要"四足落地"，需要更强的
+触发判据或冻结到标称站立位形（留给停靠侧决策，不在本轮改）。
+
+证据可见性也补上了（此前不可判定）：报告新增 `halt` 段（`declared_enabled` / `period_s` /
+`frozen_at_s` / `zero_command_since_s` / `frozen_elapsed_s`）、样本新增 `halted` 与
+`effective_velocity`（逐拍**生效**指令 —— 此前样本里只有基础指令 0.15 m/s，
+看不出"其实一直下的是零"，这是上一轮判断被误导的直接原因）。
 
 ## 7. 下一步：世界固定的交接站位帧（跨界，需授权）
 

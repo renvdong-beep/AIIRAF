@@ -34,6 +34,7 @@ import numpy as np
 
 from iraf_adapters.unitree import balance as balance_module
 from iraf_adapters.unitree import gait
+from iraf_adapters.unitree import stop_verdict
 from iraf_adapters.unitree.loopback import quat_tilt_deg
 from iraf_adapters.unitree.quadruped import (
     CommandRejectedError,
@@ -1753,11 +1754,11 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             # `damped_hold` 的判据全部来自声明（`stop.duration_s` / `stop.speed_tolerance_mps` = 0.05 /
             # `stop.static_hold_s`），并由它写自己的终态（STOPPED / FAILED）—— 与场景判据同源。
             settle_report = self.damped_hold(lease)
-            # ⚠ 判定只用报告里**实际存在**的键：`damped_hold` 报告含 `final_speed_mps` / `max_tilt_deg` /
-            # `failure_reason`（`static_entered` 是 loopback **验收脚本**自己按样本算的，不在报告里 ——
-            # 我上一版按它判定 ⇒ 假失败，实测末速 0.23 mm/s 却被判"未进入静止段"，已修）。
-            settle_error = settle_report.get("failure_reason") or None
-            final_speed = float(settle_report.get("final_speed_mps", float("inf")))
+            # 判定口径统一走 `stop_verdict`（唯一实现）：只用报告里**实际存在**的键 ——
+            # `static_entered` 是 loopback 验收脚本自己按样本算的，不在 `damped_hold` 报告里
+            # （我上一版按它判定 ⇒ 假失败，实测末速 2.461973e-04 m/s 却被判"未进入静止段"）。
+            settle_error = stop_verdict.static_hold_failure(settle_report)
+            final_speed = float(settle_report["final_speed_mps"])
 
         final = frame_pose(), body_pose()
         translation_error, _dy, yaw_error = dock_module.pose_error(
@@ -2010,8 +2011,12 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         def plan_fn():
             """本拍 QP 请求（只在更新拍被调用；同一份接触表用于 QP 与 B1 权重口径）。"""
             state_now = state_vector_now()
-            elapsed = float(self.data.time) - onset
-            vx_cmd, vy_cmd, wz_cmd = command_now(elapsed)
+            raw_elapsed = float(self.data.time) - onset
+            vx_cmd, vy_cmd, wz_cmd = command_now(raw_elapsed)
+            # 步态相位时间 = **与形状目标共用同一个** `phase_elapsed`（站定冻结必须同时作用于
+            # QP 的接触表；只冻结形状会让"形状说四足落地、QP 按 trot 给两条腿下力"，实测见
+            # `phase_elapsed` 的 docstring）。
+            elapsed = phase_elapsed(raw_elapsed, (vx_cmd == 0.0 and vy_cmd == 0.0 and wz_cmd == 0.0))
             if state_holder["pos_des_world"] is None:
                 state_holder["pos_des_world"] = np.array([state_now[0], state_now[1], z_des])
             mass_now, _c, inertia_now, _b = mpc_state.subtree_mass_inertia(
@@ -2036,7 +2041,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 pos_des_world=pos_des,
                 command={"vx_body": vx_ref, "vy_body": vy_ref,
                          "yaw_rate": wz_ref, "z_des": z_des},
-                t0=float(self.data.time) - onset, return_context=True,
+                t0=elapsed, return_context=True,
             )
             # 参考位置的**钳位结果**必须跨拍保留（上游既有语义：`pos_des_world` 是有状态量）
             state_holder["pos_des_world"] = np.array(context["pos_des_world_out"], dtype=float)
@@ -2074,6 +2079,42 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                     label="jacobian[%s]" % code,
                 )
             return out
+
+        # 站定状态机（两条实测教训都在这里）：
+        #   · 只看"指令是否为零"会在 t=0 误触发并**永久冻结相位**（转向工况偏航 44°→28°）；
+        #   · 只看"非零 → 零的跳变"又会漏掉**从一开始就零指令**的 `hold` 工况（漂移回到 0.0286）。
+        # ⇒ 规则：**指令持续为零 ≥ 一个步态周期**才进入站定；指令重新非零立即释放。
+        #   "一个步态周期"是声明量（`trot.period_s`），不是实现层的常数。
+        halt_state = {"frozen_elapsed": None, "zero_since": None}
+
+        def phase_elapsed(elapsed, command_is_zero):
+            """站定状态机 + 冻结后的**相位时间**（形状目标与 QP 接触表**共用**，唯一实现）。
+
+            为什么必须共用（2026-09-24 实测，`build/iraf-a6a14/halt_probe.py`）：冻结曾只作用于
+            **形状目标** ⇒ 报告 `halted=true`、`frozen_at_s = 0.36 s`，但同一次运行的末拍
+            `stance_legs=['FL','RR']`（QP 的接触表仍按 trot 交替支撑）、偏航仍以 0.115°/s 漂移
+            （0.0007° → 0.6917° / 6 s）。形状说"四足落地"、QP 说"两腿支撑"，语义不自洽 ⇒
+            冻结必须同时进入 QP 的相位（`plan_fn` 的 `t0`）。
+            未触发站定时本函数**原样返回** `elapsed` ⇒ 非站定场景逐位不变。
+            """
+            if not command_is_zero:
+                halt_state["zero_since"] = None
+                halt_state["frozen_elapsed"] = None      # 指令重新非零 ⇒ 释放（相位继续推进）
+            elif halt_at_stance and halt_state["zero_since"] is None:
+                halt_state["zero_since"] = elapsed
+            frozen = halt_state["frozen_elapsed"]
+            if (halt_at_stance and command_is_zero and halt_state["zero_since"] is not None
+                    and (elapsed - halt_state["zero_since"]) >= float(trot["period_s"])):
+                if frozen is None:
+                    loads = self._leg_contact_forces(trot, geometry)
+                    threshold = float(trot["verification"]["contact_force_threshold_n"])
+                    if all(float(loads.get(code, 0.0)) > threshold for code in geometry):
+                        frozen = elapsed
+                        halt_state["frozen_elapsed"] = frozen
+                        state_holder["halted_at_s"] = frozen
+                if frozen is not None:
+                    return frozen
+            return elapsed
 
         hook = mpc_hook.MpcTorqueHook(
             runtime, plan_fn, index_map, stance_weight, swing_weight, jacobians_now, horizon,
@@ -2127,42 +2168,25 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                               "stance_foot_world_m": entry["foot_world"]}
             return pose
 
-        # 站定状态机（两条实测教训都在这里）：
-        #   · 只看"指令是否为零"会在 t=0 误触发并**永久冻结相位**（转向工况偏航 44°→28°）；
-        #   · 只看"非零 → 零的跳变"又会漏掉**从一开始就零指令**的 `hold` 工况（漂移回到 0.0286）。
-        # ⇒ 规则：**指令持续为零 ≥ 一个步态周期**才进入站定；指令重新非零立即释放。
-        #   "一个步态周期"是声明量（`trot.period_s`），不是实现层的常数。
-        halt_state = {"frozen_elapsed": None, "zero_since": None}
-
         def target_provider(cycle_index, now):
             """摆动/支撑的关节形状目标（MPC 只提供接触力矩；形状仍由既有目标生成给出）。
 
             `walk_command_mps_rad_s` 是与 QP **同一份**斜坡指令；`walk_pose` 是实测机身位姿
             （`anchor: measured_pose` 档用：漂移/速度指令都由它换算，见 `gait.walk_foot_offset_m`）。
             """
-            elapsed = now - onset
-            state_holder["elapsed_s"] = elapsed          # 采样对齐步态相位用（同一拍）
-            vx_cmd, vy_cmd, wz_cmd = command_now(elapsed)
-            # 站定（`locomote.halt_at_stance`）：**只在"非零 → 零"跳变之后**生效 ——
-            # 等到"四足实测接触力都超过声明阈值"的那一拍把相位冻结（支撑相目标即中立体形），
-            # 从而把"迈步中途停机"变成"四足落地后站定"（实测依据见声明注释）。
+            raw_elapsed = now - onset
+            vx_cmd, vy_cmd, wz_cmd = command_now(raw_elapsed)
+            # 本拍**实际生效**的指令进 state_holder：给 `command_provider` 路径留证据 ——
+            # 样本里的 `declared_velocity` 是**基础**指令（如停靠时它恒为 0.15 m/s），
+            # 与逐拍生效指令（停靠到位后恒 0）不同；不记下来就分不清"到底在下什么指令"。
+            state_holder["effective_velocity"] = {"vx_mps": vx_cmd, "vy_mps": vy_cmd,
+                                                  "wz_rad_s": wz_cmd}
+            # 站定（`locomote.halt_at_stance`）：状态机与相位时间都走 `phase_elapsed`（唯一实现，
+            # 与 `plan_fn` 的 QP 接触表共用同一个相位）。实测教训见它的 docstring。
             command_is_zero = (vx_cmd == 0.0 and vy_cmd == 0.0 and wz_cmd == 0.0)
-            if not command_is_zero:
-                halt_state["zero_since"] = None
-                halt_state["frozen_elapsed"] = None      # 指令重新非零 ⇒ 释放（相位继续推进）
-            elif halt_at_stance:
-                if halt_state["zero_since"] is None:
-                    halt_state["zero_since"] = elapsed
-            if (halt_at_stance and command_is_zero and halt_state["zero_since"] is not None
-                    and (elapsed - halt_state["zero_since"]) >= float(trot["period_s"])):
-                if halt_state["frozen_elapsed"] is None:
-                    loads = self._leg_contact_forces(trot, geometry)
-                    threshold = float(trot["verification"]["contact_force_threshold_n"])
-                    if all(float(loads.get(code, 0.0)) > threshold for code in geometry):
-                        halt_state["frozen_elapsed"] = elapsed
-                        state_holder["halted_at_s"] = elapsed
-                if halt_state["frozen_elapsed"] is not None:
-                    elapsed = halt_state["frozen_elapsed"]          # 冻结相位 ⇒ 目标不再随步态推进
+            elapsed = phase_elapsed(raw_elapsed, command_is_zero)
+            state_holder["elapsed_s"] = elapsed          # 采样对齐步态相位用（同一拍）
+            state_holder["halted"] = halt_state["frozen_elapsed"] is not None
             # 退让项的步幅增益（`gait.walk.stride_scale`）：只放大**足端退让**的给进速率，
             # QP 的参考仍用未放大的指令（它跟踪的是真实期望速度，不许被放大）。
             walk_scale = float((trot.get("walk") or {}).get("stride_scale") or 1.0)
@@ -2240,6 +2264,10 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 "mpc_status_class": hook.stats.get("last_status_class"),
                 "declared_velocity": {"vx_mps": resolved["vx_mps"], "vy_mps": resolved["vy_mps"],
                                       "wz_rad_s": resolved["wz_rad_s"]},
+                # 逐拍**生效**指令（`command_provider` 路径与基础指令不同）+ 该拍相位是否已冻结
+                # （站定）。停靠实测教训：报告里只有基础指令 0.15 m/s，看不出"其实一直下的是零"。
+                "effective_velocity": state_holder.get("effective_velocity"),
+                "halted": bool(state_holder.get("halted")),
                 "ctrl_saturated": int(np.count_nonzero(info["saturated"])),
             })
 
@@ -2273,7 +2301,15 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             else:
                 try:
                     hold = self.damped_hold(lease, tilt_limit_deg=None)
-                    terminal = "STOPPED" if hold.get("static_entered") else "FAILED"
+                    # 判读口径走 `stop_verdict`（唯一实现）：曾按 `static_entered` 判定 —— 该键
+                    # 不在 `damped_hold` 报告里（是 loopback 验收脚本自己算的）⇒ **停稳也会被
+                    # 判成 FAILED**（假失败 = 伪造状态）。
+                    hold_reason = stop_verdict.static_hold_failure(hold)
+                    if hold_reason is None:
+                        terminal = "STOPPED"
+                    else:
+                        terminal = "FAILED"
+                        failure["damped_hold_error"] = hold_reason
                 except Exception as hold_exc:  # noqa: BLE001 —— 停机失败必须显式落到 FAILED
                     failure["damped_hold_error"] = "%s: %s" % (type(hold_exc).__name__, hold_exc)
                     terminal = "FAILED"
@@ -2301,6 +2337,16 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                           "horizontal_reference_from": dict(reference_from)},
             "position_weight": {"stance": stance_weight, "swing": swing_weight,
                                 "leg_position_gain_scale": leg_position_gain_scale},
+            # 站定（`locomote.halt_at_stance`）的**可判定证据**：这一状态曾只写进
+            # `state_holder` 而不进报告 ⇒ 停靠实测里"61.5 s 零指令却仍在 trot"无法从报告判定
+            # 门禁是否触发过（见 docs/debug/2026-09-24-dock-target-self-frame.md §6）。
+            "halt": {
+                "declared_enabled": halt_at_stance,
+                "period_s": float(trot["period_s"]),
+                "frozen_at_s": state_holder.get("halted_at_s"),
+                "zero_command_since_s": halt_state["zero_since"],
+                "frozen_elapsed_s": halt_state["frozen_elapsed"],
+            },
             "warmup": warmup,
             "provider": hook.summary(),
             "client": dict(client.stats),
