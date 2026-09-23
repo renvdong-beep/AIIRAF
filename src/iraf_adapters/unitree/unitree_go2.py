@@ -1653,16 +1653,23 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             self.model, self.data, self.mujoco, trunk_body
         )
         tracker = mpc_state.ComStateTracker()
-        hip_offsets = {}
+        # 髋关节相对躯干的偏移（躯干系）—— QP 用它把足端力映射到质心/机身。
+        # ⚠ 必须是**当拍实测**，不能只算一次：早先实现在进入循环前算一次就冻结，
+        # 机器人一动、腿一摆，QP 的接触几何就与实物不一致 ⇒ 系统性力误差（实测四腿切向力
+        # 顶在摩擦锥角点：forward (+19.17,+19.17,47.93)、mu·fz = 19.17）。
+        # 每拍重算的成本是 4 次 `mj_name2id`（装配期可缓存 joint_id）+ 一次旋转乘法，
+        # 相对 50 Hz 的 QP 求解可忽略。
+        hip_joint_bodies = {}
         for code in sorted(geometry):
             joint_id = self.mujoco.mj_name2id(self.model, self.mujoco.mjtObj.mjOBJ_JOINT,
                                               geometry[code]["joints"]["hip_joint"])
-            hip_body = int(self.model.jnt_bodyid[joint_id])
+            hip_joint_bodies[code] = int(self.model.jnt_bodyid[joint_id])
+
+        def hip_offsets_now():
             rotation = np.asarray(self.data.xmat[int(trunk_body)], dtype=float).reshape(3, 3)
-            hip_offsets[code] = rotation.T.dot(
-                np.asarray(self.data.xpos[hip_body], dtype=float)
-                - np.asarray(self.data.xpos[int(trunk_body)], dtype=float)
-            )
+            trunk_pos = np.asarray(self.data.xpos[int(trunk_body)], dtype=float)
+            return {code: rotation.T.dot(np.asarray(self.data.xpos[body], dtype=float) - trunk_pos)
+                    for code, body in hip_joint_bodies.items()}
 
         state_holder = {"pos_des_world": None, "t0": None}
         samples = []
@@ -1720,7 +1727,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             wz_ref = float(body_omega[2]) if yaw_from == "measured" else wz_cmd
             request, context = mpc_plan.build_mpc_request(
                 mpc_model, trot, com_state=state_now, mass=mass_now,
-                inertia_com_world=inertia_now, hip_offsets=hip_offsets,
+                inertia_com_world=inertia_now, hip_offsets=hip_offsets_now(),
                 body_velocity_body=body_velocity,
                 pos_des_world=pos_des,
                 command={"vx_body": vx_ref, "vy_body": vy_ref,
