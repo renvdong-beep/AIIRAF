@@ -1560,6 +1560,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         from iraf_adapters.unitree.mpc import process_client as mpc_client
         from iraf_adapters.unitree.mpc import state_bridge as mpc_state
         from iraf_adapters.unitree.mpc import torque_hook as mpc_hook
+        from iraf_adapters.unitree.mpc import torque_provider as mpc_torque_provider
         from iraf_adapters.unitree.mpc.contact import LEG_ORDER as MPC_LEG_ORDER
         from iraf_adapters.unitree.mpc.gait_trot import merge_trot_declaration
         from iraf_adapters.unitree.mpc.provider_runtime import ProviderRuntime
@@ -1745,7 +1746,14 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 dofs = [self.bindings[joint]["dof_adr"] for joint in joints]
                 foot_world = np.asarray(self.data.xpos[int(geometry[code]["foot_body"])],
                                         dtype=float)
-                out[code] = self._foot_jacobian(dofs)(foot_world, geometry[code]["foot_body"])
+                # ⚠ 契约要 **Jᵀ**（`joint_torques` 直接做 `M @ f`），`_foot_jacobian` 给的是 J
+                # ⇒ 必须经 `jacobian_transpose_from` 转置。漏转置只会把**水平**方向搞反
+                # （实测依据见 `mpc/torque_provider.jacobian_transpose_from` 的 docstring：
+                # x/y 轴 thigh/hip 反号、z 轴同号 ⇒ 竖直"看着正常"）。
+                out[code] = mpc_torque_provider.jacobian_transpose_from(
+                    self._foot_jacobian(dofs)(foot_world, geometry[code]["foot_body"]),
+                    label="jacobian[%s]" % code,
+                )
             return out
 
         hook = mpc_hook.MpcTorqueHook(

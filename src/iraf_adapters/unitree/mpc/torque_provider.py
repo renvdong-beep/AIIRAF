@@ -52,6 +52,31 @@ def foot_forces_matrix(foot_forces):
     return out
 
 
+def jacobian_transpose_from(jacobian, label="jacobian"):
+    """把平动雅可比 `J`（行 = 世界轴 x,y,z；列 = 该腿 3 个 dof）转成契约要的 **`Jᵀ`**。
+
+    为什么需要它（2026-09-23 实测，本项目最贵的一次接线缺陷）：`joint_torques` 直接做 `M @ f`，
+    它要的入参就是 `Jᵀ`；而 `_foot_jacobian` 返回的是 `J`。**漏一次转置**不会报错、也不会让
+    竖直方向看起来不对，只把**水平方向**搞反：
+
+        FR 腿，f=(40,0,0)：J·f = (0, +10.5922, −3.8200)  vs  Jᵀ·f = (0, −10.5922, −5.2961)  （thigh 反号）
+        FR 腿，f=(0,40,0)：J·f = (−10.5922, 0, 0)        vs  Jᵀ·f = (+10.5922, 0, 0)        （hip 反号）
+        FR 腿，f=(0,0,38.25)：J·f = (−5.0644, 0, −6.3820) vs Jᵀ·f = (−3.6529, 0, −6.3820)  （**同号**）
+
+    ⇒ 竖直"看着正常"（calf 项完全相同）、水平反号 ⇒ QP 的水平修正被反号施加 ⇒ 正反馈
+    （与"前进只剩 16%、后退发散、measured 参考反而收敛"等实测一致）。
+    为什么长期没被发现：此前所有单测与探针都用**单位矩阵/对称矩阵**当雅可比，转置不改变结果。
+
+    ⚠ 因此本函数是**唯一**允许把雅可比交给 `joint_torques` 的入口：调用方不得再手写 `J`。
+    """
+    matrix = np.asarray(jacobian, dtype=float)
+    if matrix.shape != (3, 3):
+        raise ValueError("%s 形状必须为 (3,3)，实际 %r" % (label, matrix.shape))
+    if not np.all(np.isfinite(matrix)):
+        raise ValueError("%s 含非有限值" % label)
+    return matrix.T.copy()
+
+
 def joint_torques(foot_forces, jacobian_transpose):
     """`τ_腿 = Jᵀ · f_腿`，返回 `(12,)`（行序 `LEG_ORDER` × (hip, thigh, calf)）。
 

@@ -109,3 +109,69 @@ def test_rejects_bad_jacobian():
     bad_extra = dict(_eye_jt(), ZZ=np.eye(3))
     with pytest.raises(ValueError):
         joint_torques(forces, bad_extra)
+
+
+# ---------- 转置回归（2026-09-23：漏转置只把「水平」搞反，单位矩阵掩盖了它） ----------
+
+#: 生产实测的前右腿平动雅可比（行 = 世界 x,y,z；列 = (hip, thigh, calf)）。
+#: 来源：`build/iraf-a6a6/sign_axis_probe.py` A 段（解析值 vs 数值微分 max|Δ| = 1.324e-07）。
+FR_JACOBIAN = np.array([[0.000000, -0.264806, -0.132403],
+                        [0.264806, 0.000000, 0.000000],
+                        [-0.095500, 0.000000, -0.166849]])
+
+
+def test_fr_jacobian_is_asymmetric_so_identity_tests_cannot_catch_transpose():
+    """前提检查：生产雅可比**非对称** ⇒ 用单位矩阵的用例根本验证不了转置。
+
+    这正是缺陷能长期潜伏的原因：`_eye_jt()` 下 `J·f == Jᵀ·f`。
+    """
+    assert not np.allclose(FR_JACOBIAN, FR_JACOBIAN.T)
+
+
+def test_jacobian_transpose_from_transposes():
+    """接线入口必须给 **Jᵀ**：`jacobian_transpose_from(J) == J.T`（且不改原矩阵）。"""
+    from iraf_adapters.unitree.mpc.torque_provider import jacobian_transpose_from
+
+    transposed = jacobian_transpose_from(FR_JACOBIAN)
+    np.testing.assert_allclose(transposed, FR_JACOBIAN.T, atol=0.0)
+    transposed[0, 0] = 123.0                       # 返回的是副本：不许污染调用方矩阵
+    assert FR_JACOBIAN[0, 0] == 0.000000
+    with pytest.raises(ValueError):
+        jacobian_transpose_from(np.eye(4))
+    with pytest.raises(ValueError):
+        jacobian_transpose_from(np.full((3, 3), np.nan))
+
+
+def test_horizontal_torques_flip_sign_if_transpose_is_missed():
+    """回归本体：非对称雅可比下，漏转置会把**水平**方向的力矩符号搞反。
+
+    实测依据（同上探针，FR 腿）：
+      · f=(40,0,0)：J·f = (0, +10.5922, −3.8200)  vs Jᵀ·f = (0, −10.5922, −5.2961)（thigh 反号）
+      · f=(0,40,0)：J·f = (−10.5922, 0, 0)        vs Jᵀ·f = (+10.5922, 0, 0)（hip 反号）
+      · f=(0,0,38.25)：两者**同号**（calf 项完全相同）⇒ 竖直方向看不出缺陷
+    ⇒ 本用例既钉住「水平必须用 Jᵀ」，也钉住「竖直两种写法同号」（说明为什么它潜伏）。
+    """
+    from iraf_adapters.unitree.mpc.torque_provider import jacobian_transpose_from
+
+    jt = {code: np.eye(3) for code in LEG_ORDER}
+    jt["FR"] = jacobian_transpose_from(FR_JACOBIAN)
+
+    def torques_for(force):
+        forces = {code: np.zeros(3) for code in LEG_ORDER}
+        forces["FR"] = np.array(force, dtype=float)
+        return joint_torques(forces, jt)[3:6]
+
+    for axis_force in ([40.0, 0.0, 0.0], [0.0, 40.0, 0.0]):
+        correct = FR_JACOBIAN.T @ np.array(axis_force)
+        missed = FR_JACOBIAN @ np.array(axis_force)
+        np.testing.assert_allclose(torques_for(axis_force), correct, atol=1e-12)
+        # 漏转置的那一支必须与正确值显著不同（否则本用例抓不到缺陷）
+        assert not np.allclose(correct, missed, atol=1e-6), axis_force
+
+    vertical = [0.0, 0.0, 38.25]
+    correct_v = FR_JACOBIAN.T @ np.array(vertical)
+    missed_v = FR_JACOBIAN @ np.array(vertical)
+    np.testing.assert_allclose(torques_for(vertical), correct_v, atol=1e-12)
+    # 竖直方向：两支**逐分量同号**（这就是缺陷潜伏的原因，写进测试防复发）
+    assert np.all(np.sign(correct_v) == np.sign(missed_v)), (correct_v, missed_v)
+    assert not np.allclose(correct_v, missed_v, atol=1e-9)   # 但数值仍不同（hip 项）
