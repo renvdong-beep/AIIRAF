@@ -82,8 +82,31 @@ def main(argv=None):
                         help="auto=有显示设备即开窗；none=只跑步态不开窗（用于无人值守自查）")
     parser.add_argument("--free-camera", action="store_true",
                         help="窗口用自由相机（可鼠标旋转/缩放；初值取 profile 的 camera 段）。"
-                             "缺省用声明的固定相机（本机默认 GL 下最亮）")
+                            "缺省用声明的固定相机（本机默认 GL 下最亮）")
+    parser.add_argument("--walk", default=None, metavar="vx,vy,wz[;vx,vy,wz...]",
+                        help="改为**行走**演示：三个规范速度字段（见 quadruped.VELOCITY_FIELDS）。"
+                             "可用分号串联多段并**循环**，例如往返：`--walk 0.2,0,0;-0.2,0,0`"
+                             "（前进↔倒退交替，避免单向走出台面）。"
+                             "单段例：0.2,0,0 前进｜-0.2,0,0 倒退｜0,0,0.5 左转｜0,0,-0.5 右转。"
+                             "走的是 `locomote` 的 MPC 正式路径（50 Hz 求解 + 100 Hz 消费）")
+    parser.add_argument("--walk-seconds", type=float, default=1.5,
+                        help="行走演示**每段**的时长（秒）；往返演示用默认 1.5 s 足够看到两个方向")
     args = parser.parse_args(argv)
+    walk_sequence = None
+    if args.walk is not None:
+        walk_sequence = []
+        for segment in str(args.walk).split(";"):
+            parts = [chunk.strip() for chunk in segment.split(",")]
+            if len(parts) != 3:
+                print("用法错误：--walk 每段需要三个数 vx,vy,wz（段内用逗号、段间用分号）",
+                      file=sys.stderr)
+                return EXIT_USAGE
+            try:
+                walk_sequence.append(dict(zip(quadruped_contract.VELOCITY_FIELDS,
+                                              (float(chunk) for chunk in parts))))
+            except ValueError:
+                print("用法错误：--walk 的元素必须是数值", file=sys.stderr)
+                return EXIT_USAGE
 
     root = args.root or unitree_go2.repo_root()
     config_path = _resolve(root, args.config)
@@ -134,16 +157,24 @@ def main(argv=None):
     # 使用者只看到"闪一下"，之后一直是静止末态 —— 2026-09-23 实测反馈）。
     # 租约 TTL 必须覆盖**整个显示窗口**（仍是 authority 强制的有限 TTL，不是永久租约）。
     display_s = max(0.0, float(args.seconds))
+    # 租约 TTL 必须覆盖**整个显示窗口**（仍是 authority 强制的有限 TTL，不是永久租约）；
+    # 行走演示是"多段循环"，每段时长来自 `--walk-seconds`，故按它估算循环次数（实测踩过：
+    # 只按声明时长算 TTL ⇒ 50 段后 `lease expired` 被 authority 拦下、显示循环随之中断）。
+    per_cycle_s = duration_s
+    if walk_sequence:
+        per_cycle_s = max(per_cycle_s, float(args.walk_seconds) * len(walk_sequence))
     lease = authority.acquire(
         profile.name + "-mujoco",
         "gait-view-demo",
-        ttl_seconds=max(LEASE_TTL_FLOOR_S, display_s + duration_s * LEASE_TTL_MARGIN),
+        ttl_seconds=max(LEASE_TTL_FLOOR_S, display_s + per_cycle_s * LEASE_TTL_MARGIN),
     )
 
     holder = {"result": None, "error": None}
     stop = threading.Event()
     thread = threading.Thread(
-        target=_run_gait_loop, args=(backend, lease, holder, stop), name="gait-view-gait",
+        target=_run_gait_loop, args=(backend, lease, holder, stop, walk_sequence,
+                                     float(args.walk_seconds)),
+        name="gait-view-gait",
         daemon=True,
     )
     thread.start()
@@ -250,11 +281,27 @@ def main(argv=None):
     return EXIT_OK
 
 
-def _run_gait_loop(backend, lease, holder, stop):
-    """连续跑步态直到 `stop` 置位（窗口关闭）或显式失败。显式失败即停，不吞、不伪造。"""
+def _run_gait_loop(backend, lease, holder, stop, walk_sequence=None, walk_seconds=1.5):
+    """连续跑（原地踏步或 `locomote` 行走）直到 `stop` 置位或显式失败。
+
+    行走演示按 `walk_sequence` **循环**给出多段速度（往返演示 = 前进段 + 倒退段），
+    并在每段结束检查状态有限性：**仿真发散（NaN/Inf）必须显式停止**，不让它静默传播
+    （实测：单向无限行走 33 s 后走出台面 ⇒ `Nan, Inf or huge value in QACC`）。
+    """
     try:
+        segment = 0
         while not stop.is_set():
-            holder["result"] = backend.trot_in_place(lease)
+            if walk_sequence is None:
+                holder["result"] = backend.trot_in_place(lease)
+            else:
+                velocity = walk_sequence[segment % len(walk_sequence)]
+                segment += 1
+                holder["result"] = backend.locomote(velocity, walk_seconds * 1000.0, lease)
+                qpos = np.asarray(backend.data.qpos, dtype=float)
+                if not np.all(np.isfinite(qpos)):
+                    holder["error"] = ("仿真发散（qpos 含 NaN/Inf）⇒ 显式停止；"
+                                       "最常见原因：走出支撑台面边缘")
+                    break
             holder["cycles"] = int(holder.get("cycles") or 0) + 1
     except Exception as exc:  # noqa: BLE001
         holder["error"] = type(exc).__name__ + ": " + str(exc)
