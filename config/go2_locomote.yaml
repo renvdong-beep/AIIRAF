@@ -126,6 +126,23 @@ mpc_model:
   # 距离做钳位（超出即夹回）。上游 `max_pos_error` 实测值 0.1（A6a-3b 第②步 §2.2 的逐位校验
   # 就是用这个值对齐的）；本键缺失即显式失败（plan 组装层不设默认值）。
   max_pos_error_m: 0.1
+  # QP 的水平/偏航参考从哪来（**按通道**声明；缺键、缺子键或非法取值一律显式失败）：
+  #   `translation`：`p(x,y)` 与 `v(x,y)` 的参考；
+  #   `yaw`        ：偏航率参考。
+  # 取值只允许 `command`（参考由指令给出）或 `measured`（参考取**实测**值，QP 该通道零误差 ⇒ 交还给
+  # 机械/步态层）。两条实测依据（2026-09-23，同一 `vx=±0.2` / 4 s 工况，均为 `walk.enabled: true`）：
+  #   1. 两者都取 `command`（既有行为）⇒ 支撑足退让与 QP 参考**都在实现同一个指令速度**
+  #      （等效回路增益≈2）：前进净位移 +0.128 m（指令的 16%、往复振荡）；
+  #      后退**发散** −2.232 m、Σfz 3630.53 N = 23.8×mg、3.0 s 摔倒、tick 348 QP max_iter。
+  #   2. 两者都取 `measured` ⇒ **发散消失**（两方向都 SUCCEEDED、无 max_iter），
+  #      但偏航失去闭环 ⇒ 后退 4 s 偏航 **+30.51°**、横漂 Δy −0.571 m；
+  #      前进 47.4% 误差（横漂 Δy −0.457 m，x 几乎不动）。
+  # ⇒ 预期分工：**平移交给足端退让、偏航与高度/姿态留给 MPC**。
+  # 判据（未验证）：`translation: measured` + `yaw: command` 时，前进/后退净位移方向正确、
+  #   `mean_rel_error ≤ 0.10`、|Δ偏航| ≤ 10°、倾角 ≤15°、无 `max_iter`。
+  horizontal_reference_from:
+    translation: command
+    yaw: command
   # 口径 B（动力学自洽性）的判据阈值：`scripts/verify_mpc_dynamics_consistency.py` 用独立算路
   # （连续时间 RK4 质心动力学）对照 `Ad/Bd/gd` 的一步预测，残差上限取本值。
   # 为什么需要它：上游 `x0/Ad/Bd/gd` 来自 pinocchio/URDF 而我们是 MuJoCo 厂商 MJCF

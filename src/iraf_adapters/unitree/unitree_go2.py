@@ -1591,6 +1591,30 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         provider_doc = yaml.safe_load(provider_config.read_text(encoding="utf-8"))
         deployment = mpc_deployment.load_deployment(provider_doc["mpc_provider"], self.control_hz)
         mpc_model = dict(provider_doc["mpc_model"])
+        # QP 水平/偏航参考的来源（见 `mpc_model.horizontal_reference_from` 声明注释）：
+        # 按通道声明，取值只允许 command / measured；缺键、缺子键、非法取值一律显式失败
+        # （不在实现层给默认值 —— 默认值会让「声明漏了」伪装成成功）。
+        reference_from = mpc_model.get("horizontal_reference_from")
+        if not isinstance(reference_from, dict):
+            raise DeclarationError("mpc_model.horizontal_reference_from 必须是映射，实际: %r"
+                                   % (reference_from,))
+        for channel in ("translation", "yaw"):
+            if channel not in reference_from:
+                raise DeclarationError(
+                    "mpc_model.horizontal_reference_from 缺少子键: %s（白名单: translation/yaw）"
+                    % channel)
+            value = str(reference_from[channel])
+            if value not in ("command", "measured"):
+                raise DeclarationError(
+                    "mpc_model.horizontal_reference_from.%s 只支持 ['command', 'measured']，实际: %r"
+                    % (channel, reference_from[channel]))
+        unknown = [key for key in sorted(reference_from) if key not in ("translation", "yaw")]
+        if unknown:
+            raise DeclarationError(
+                "mpc_model.horizontal_reference_from 含未知子键 %s（白名单: translation/yaw）" % unknown)
+        translation_from = str(reference_from["translation"])
+        yaw_from = str(reference_from["yaw"])
+
         # trot 步态声明：与定位/接触表/落足点共用同一份（移植清单 §1.1：不得造第二份事实来源）
         trot = gait.load_gait_declaration(
             merge_trot_declaration(self.declaration, provider_doc["mpc_gait"]), self.profile.joints
@@ -1681,13 +1705,25 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             mass_now, _c, inertia_now, _b = mpc_state.subtree_mass_inertia(
                 self.model, self.data, self.mujoco, trunk_body
             )
+            body_velocity = self._body_frame_velocity(trunk_body)
+            body_omega = self._body_frame_omega(trunk_body)
+            # 平移通道（位置 + 速度）按声明取参考：`measured` ⇒ 该通道零误差（交给足端退让），
+            # `command` ⇒ QP 用接触力把机身加速到指令速度。偏航通道独立声明（见配置注释的实测：
+            # 两者都放开给 `measured` 时后退 4 s 偏航 +30.51°，偏航必须留在 MPC 闭环里）。
+            if translation_from == "measured":
+                vx_ref, vy_ref = float(body_velocity[0]), float(body_velocity[1])
+                pos_des = np.array([state_now[0], state_now[1], z_des], dtype=float)
+            else:
+                vx_ref, vy_ref = vx_cmd, vy_cmd
+                pos_des = state_holder["pos_des_world"]
+            wz_ref = float(body_omega[2]) if yaw_from == "measured" else wz_cmd
             request, context = mpc_plan.build_mpc_request(
                 mpc_model, trot, com_state=state_now, mass=mass_now,
                 inertia_com_world=inertia_now, hip_offsets=hip_offsets,
-                body_velocity_body=self._body_frame_velocity(trunk_body),
-                pos_des_world=state_holder["pos_des_world"],
-                command={"vx_body": vx_cmd, "vy_body": vy_cmd,
-                         "yaw_rate": wz_cmd, "z_des": z_des},
+                body_velocity_body=body_velocity,
+                pos_des_world=pos_des,
+                command={"vx_body": vx_ref, "vy_body": vy_ref,
+                         "yaw_rate": wz_ref, "z_des": z_des},
                 t0=float(self.data.time) - onset, return_context=True,
             )
             # 参考位置的**钳位结果**必须跨拍保留（上游既有语义：`pos_des_world` 是有状态量）
@@ -1821,7 +1857,8 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             "ctrl_saturated_samples": int(saturated),
             "deployment": deployment.as_dict(),
             "mpc_model": {"horizon": horizon, "gait_hz": mpc_model["gait_hz"],
-                          "z_des_m": z_des},
+                          "z_des_m": z_des,
+                          "horizontal_reference_from": dict(reference_from)},
             "position_weight": {"stance": stance_weight, "swing": swing_weight},
             "warmup": warmup,
             "provider": hook.summary(),
