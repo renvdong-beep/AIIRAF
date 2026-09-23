@@ -99,9 +99,21 @@
 - **口径 B（模型一致项，本轮新增，生产更关键）**：
   用**我们自己的** MuJoCo 被控对象验证动力学的**自洽性** —— 在若干状态上用 `Ad/Bd/gd` 前向预测
   一步（`x_{k+1} = Ad·x_k + Bd·u_k + gd`）与 MuJoCo 实际推进一个 MPC 步后的状态比对，
-  判据 = 残差 ≤ 声明的容差（声明键待落：`mpc_model.dynamics_consistency_tol`）。
+  判据 = 残差 ≤ 声明的容差（`mpc_model.dynamics_consistency_tol`，**已落声明**）。
   理由：MPC 要控制的是**我们这个本体**（含托盘），"与上游 URDF 数值差多少"不影响稳定性，
   而"我们的模型与我们的被控对象是否一致"直接决定闭环能不能收敛。
+
+  **口径 B 实测（2026-09-23，`scripts/verify_mpc_dynamics_consistency.py`，4 例：home / roll+2° /
+  pitch−3° / yaw90，状态抬到 z=0.32 m 无接触）**：
+
+  | 判据 | 期望/对照 | 实测残差 | 结论 |
+  |---|---|---|---|
+  | 重力语义（u=0 ⇒ Δv_z = −g·dt） | −0.204375 m/s（= −9.81×0.0208333） | **0.000e+00 m/s** | 4/4 通过 |
+  | 独立 RK4 连续积分 vs `Ad/Bd/gd` 一步预测 | 独立算路 | **2.776e-17**（机器精度） | 4/4 通过 |
+
+  报告：`build/acceptance/mpc-dynamics-consistency/report.json`（`passed: true`）。
+  ⇒ 我们的离散动力学在**无接触重力段**与独立算路一致到机器精度；线性化项（`Bd` 接触力项）
+  的有接触验证随 `locomote()` 接线后由闭环证据覆盖（见 §6.3）。
 
 ⇒ 实现顺序更新为：① `plan.py`（已完成，结构级）→ ② **口径 B 探针**（`scripts/verify_mpc_dynamics_consistency.py`）
 → ③ 口径 A 的复跑（复用既有 parity 脚本，作为"移植未回退"的门禁）→ ④ 接 `locomote()`。

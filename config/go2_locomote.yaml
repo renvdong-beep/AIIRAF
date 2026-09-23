@@ -118,6 +118,14 @@ mpc_model:
   # 距离做钳位（超出即夹回）。上游 `max_pos_error` 实测值 0.1（A6a-3b 第②步 §2.2 的逐位校验
   # 就是用这个值对齐的）；本键缺失即显式失败（plan 组装层不设默认值）。
   max_pos_error_m: 0.1
+  # 口径 B（动力学自洽性）的判据阈值：`scripts/verify_mpc_dynamics_consistency.py` 用独立算路
+  # （连续时间 RK4 质心动力学）对照 `Ad/Bd/gd` 的一步预测，残差上限取本值。
+  # 为什么需要它：上游 `x0/Ad/Bd/gd` 来自 pinocchio/URDF 而我们是 MuJoCo 厂商 MJCF
+  # ⇒ 逐位对照不可达；真正要验的是"我们的模型说得对不对"（见 docs/debug/2026-09-23-a6a4-state-bridge-facts.md §6.1）。
+  # 实测（2026-09-23，scripts/verify_mpc_dynamics_consistency.py 4 例 home/roll/pitch/yaw90）：
+  #   重力语义残差 = 0.000e+00 m/s（期望 −0.204375 = −9.81×0.0208333）；独立 RK4 对照残差 = 2.776e-17。
+  # ⇒ 阈值取 1.0e-9（比实测大 8 个量级、仍远紧于任何物理差异），任何"模型说错话"都会被它拦下。
+  dynamics_consistency_tol: 1.0e-9
   touchdown:
     nominal_z_m: 0.02
     swing_factor: 1.0
