@@ -238,7 +238,7 @@ UPSTREAM_MU = 0.8
 def test_friction_rows_count_layout_and_coefficients():
     m = _model()
     out = friction_rows(_mask(1), m)
-    assert out["n_rows"] == 16 * 4 * int(m["horizon"]) == 256
+    assert out["n_rows"] == 4 * 4 * int(m["horizon"]) == 256   # 4 腿 × 4 面 × N
     trip = list(zip(out["rows"], out["cols"], out["vals"]))
     # 第一拍第一条腿的 4 个面：+fx−μfz、−fx−μfz、+fy−μfz、−fy−μfz（列基准 baseU = 192）
     mu = float(m["mu"])
