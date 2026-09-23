@@ -35,7 +35,7 @@ __all__ = ["ALLOWED_OVERRIDE_KEYS", "merge_trot_declaration", "load_trot_gait",
 
 #: 允许覆盖的 `gait` 段键。白名单（而非黑名单）是刻意的：写错名字的"覆盖"会变成
 #: 无人消费的假声明，必须显式失败。
-ALLOWED_OVERRIDE_KEYS = ("kind", "duty_factor", "frequency_hz", "legs")
+ALLOWED_OVERRIDE_KEYS = ("kind", "duty_factor", "frequency_hz", "legs", "walk")
 
 
 def _require_mapping(value, label):

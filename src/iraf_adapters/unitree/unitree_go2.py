@@ -1660,12 +1660,22 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 np.asarray(self.data.qvel[3:6], dtype=float), tracker, rotation=rotation,
             )
 
+        def ramped_command(elapsed):
+            """指令斜坡（**单一来源**）：QP 参考与步态支撑足退让项必须消费同一份值。
+
+            依据（2026-09-23 实测）：阶跃指令会让 QP 第 0 拍给出 Σfx=+74.803 N（匀速态只需
+            +0.495 N），这段反向冲量造成恒定后漂。`velocity_ramp_s` 来自 `locomote` 段声明。
+            """
+            ramp = (1.0 if velocity_ramp_s <= 0.0
+                    else min(1.0, max(float(elapsed), 0.0) / velocity_ramp_s))
+            return (ramp * resolved["vx_mps"], ramp * resolved["vy_mps"],
+                    ramp * resolved["wz_rad_s"])
+
         def plan_fn():
             """本拍 QP 请求（只在更新拍被调用；同一份接触表用于 QP 与 B1 权重口径）。"""
             state_now = state_vector_now()
             elapsed = float(self.data.time) - onset
-            ramp = (1.0 if velocity_ramp_s <= 0.0
-                    else min(1.0, max(elapsed, 0.0) / velocity_ramp_s))
+            vx_cmd, vy_cmd, wz_cmd = ramped_command(elapsed)
             if state_holder["pos_des_world"] is None:
                 state_holder["pos_des_world"] = np.array([state_now[0], state_now[1], z_des])
             mass_now, _c, inertia_now, _b = mpc_state.subtree_mass_inertia(
@@ -1676,9 +1686,8 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 inertia_com_world=inertia_now, hip_offsets=hip_offsets,
                 body_velocity_body=self._body_frame_velocity(trunk_body),
                 pos_des_world=state_holder["pos_des_world"],
-                command={"vx_body": ramp * resolved["vx_mps"],
-                         "vy_body": ramp * resolved["vy_mps"],
-                         "yaw_rate": ramp * resolved["wz_rad_s"], "z_des": z_des},
+                command={"vx_body": vx_cmd, "vy_body": vy_cmd,
+                         "yaw_rate": wz_cmd, "z_des": z_des},
                 t0=float(self.data.time) - onset, return_context=True,
             )
             # 参考位置的**钳位结果**必须跨拍保留（上游既有语义：`pos_des_world` 是有状态量）
@@ -1727,11 +1736,17 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 break
 
         def target_provider(cycle_index, now):
-            """摆动/支撑的关节形状目标（MPC 只提供接触力矩；形状仍由既有目标生成给出）。"""
+            """摆动/支撑的关节形状目标（MPC 只提供接触力矩；形状仍由既有目标生成给出）。
+
+            `walk_command_mps_rad_s` 是与 QP **同一份**斜坡指令：支撑足目标按指令速度反向退让
+            （世界系钉住足端），否则位置环会把机身钉在站立点上（`gait.walk_foot_offset_m` docstring）。
+            """
             elapsed = now - onset
+            vx_cmd, vy_cmd, wz_cmd = ramped_command(elapsed)
             targets = gait.gait_joint_targets(
                 trot, geometry, home, limits, elapsed, gait.amplitude_at(trot, elapsed),
                 self._body_frame_velocity(trunk_body), self._body_frame_omega(trunk_body),
+                walk_command_mps_rad_s=(vx_cmd, vy_cmd, wz_cmd),
             )
             return np.array([targets[joint] for joint in self.joint_order], dtype=float)
 

@@ -37,6 +37,14 @@ velocity_tracking:
   steady_window_start_s: 2.5
   # 硬判据：相对指令速度的**误差均值**上限（无量纲，0.10 = 10%）
   max_mean_rel_error: 0.10
+  # 方向门禁（**纯符号判据**，不引入新阈值）：判据不得只看速度大小 —— 实测暴露过一次
+  # 「前进指令实际后退 0.9642 m」被 `mean_rel_error`（只比大小）判成通过。
+  #   `check_translation`：`vx≠0` 的工况，稳态窗位移在**指令方向**上的投影必须 > 0；
+  #   `check_yaw`：`wz≠0` 的工况，稳态窗平均偏航率符号必须与指令同号。
+  # 转向工况仍按 `applies_when` 不设量值判据（上游未定义转向跟踪容差），只加方向门禁。
+  direction_gate:
+    check_translation: true
+    check_yaw: true
   # 仅记录、不设阈的指标（先用数据积累，再定阈值）
   record_only:
     - abs_err_mean_mps
@@ -146,7 +154,7 @@ mpc_gait:
   #   sway = 逐相位重心转移（wave 的静态稳定项，trot 不得声明）；
   #   foothold = 落足点规划（同上）。
   drop: [sway, foothold]
-  # 只允许 kind / duty_factor / frequency_hz / legs 四类覆盖键（多余键即显式失败）
+  # 只允许 kind / duty_factor / frequency_hz / legs / walk 五类覆盖键（多余键即显式失败）
   overrides:
     kind: trot
     # 占空比：上游 `DUTY = 0.6`（trot 门禁要求 ∈ [0.5, 1.0)）
@@ -155,6 +163,18 @@ mpc_gait:
     # 与 `mpc_model.horizon = 16` 的整除关系由 mpc.gait_trot 的自洽门禁强制
     # （period_s 必须 = 1 / mpc_model.gait_hz）
     frequency_hz: 3.0
+    # 支撑足**按指令速度反向退让**（世界系钉住足端）⇒ 机身以指令速度前进，而支撑腿位置环
+    # 权重可保持 1.0 继续守构型。这是「能走路」的开关：`enabled: false` 完全回到
+    # 「原地踏步」目标（`foot_offset` 的 `dx ≡ 0`，逐位一致，用于 A/B 对照）。
+    # 依据（2026-09-23 实测，同一 `vx=+0.2` / 4 s 工况，每次只改一处声明）：
+    #   基线（摆动 1.0 / 支撑 1.0） ⇒ 位移 −0.9642 m（**反向**，位置环把机身钉在站立点）
+    #   只降摆动腿权重到 0.3        ⇒ 位移 −0.4604 m（仍反向，减半）
+    #   只降支撑腿权重到 0.2        ⇒ 位移 +0.6090 m（方向正确）但倾角 179.29°（腿构型失守、翻倒）
+    # 详见 `gait.walk_foot_offset_m` docstring 与 `docs/debug/2026-09-23-go2-walk-foot-retraction.md`。
+    walk:
+      enabled: true
+      # 摆动相把退让位移按 1−cos 归零（两端速度为零 ⇒ 落足无冲击）
+      return_profile: cosine
     # 相位偏移：上游 `PHASE_OFFSET = [0.5, 0.0, 0.0, 0.5]`，**其索引顺序是 [FL, FR, RL, RR]
     # （RL 在 RR 之前）** ⇒ FL 0.5 / FR 0.0 / RL 0.0 / RR 0.5。
     # 对角配对由门禁强制：恰好两组、每组 2 条腿、两组相差 0.5。

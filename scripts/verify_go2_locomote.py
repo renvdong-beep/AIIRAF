@@ -22,6 +22,7 @@ import argparse
 import datetime
 import hashlib
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -51,7 +52,27 @@ def _sha256(path):
 
 
 def _steady(samples, start_s):
-    return [s for s in samples if float(s["time_s"]) >= start_s] or samples
+    """稳态窗（相对本段起点的时刻 ≥ start_s）。
+
+    注意：`samples[i]["time_s"]` 是**仿真绝对时刻**（每段接着上一段的仿真时间跑），
+    必须减去本段首拍时刻再与声明窗口比较；否则第 N 段的窗口会整体后移，稳态段被截短。
+    """
+    if not samples:
+        return []
+    t0 = float(samples[0]["time_s"])
+    return [s for s in samples if float(s["time_s"]) - t0 >= start_s] or samples
+
+
+def _projected(displacement_xy, yaw0_deg, vx_cmd):
+    """把位移投影到**指令方向**上（带符号）：`vx>0` ⇒ 机身初始朝向；`vx<0` ⇒ 其反向。
+
+    判据必须带符号：此前只比速度**大小**，把「前进指令实际后退」判成通过（已暴露）。
+    机身初始朝向取本段首拍 yaw（本段从静止起步、yaw≈0，但投影写法不依赖这一点）。
+    """
+    heading = math.radians(yaw0_deg)
+    forward = (math.cos(heading), math.sin(heading))
+    sign = 1.0 if vx_cmd >= 0.0 else -1.0
+    return float(displacement_xy[0] * forward[0] + displacement_xy[1] * forward[1]) * sign
 
 
 def main(argv=None):
@@ -108,9 +129,12 @@ def main(argv=None):
             results.append(entry)
             print("  %-11s **异常** %s: %s" % (name, type(exc).__name__, exc))
             continue
+        finally:
+            # 每段结束必须释放租约：否则下一段 `acquire` 直接 `LeaseConflict: resource busy`
+            # （实测：四工况连跑在第二段崩在脚本里，掩盖了第一段的失败结论）。
+            authority.release(lease)
         samples = report.get("samples") or []
-        steady = _steady(samples, steady_start + float(samples[0]["time_s"]) if samples else 0.0)
-        speeds = np.array([float(s["base_linear_speed_mps"]) for s in steady]) if steady else np.array([0.0])
+        steady = _steady(samples, steady_start)
         tilts = np.array([float(s["tilt_deg"]) for s in steady]) if steady else np.array([0.0])
         yaw_rates = np.array([float(s["base_yaw_rate_rad_s"]) for s in steady]) if steady else np.array([0.0])
         yaw0 = float(samples[0]["base_yaw_deg"]) if samples else 0.0
@@ -118,17 +142,29 @@ def main(argv=None):
         xy0 = np.array(samples[0]["base_position_xy_m"], dtype=float) if samples else np.zeros(2)
         xy1 = np.array(samples[-1]["base_position_xy_m"], dtype=float) if samples else np.zeros(2)
         displacement = float(np.linalg.norm(xy1 - xy0))
-        mean_speed = float(np.mean(speeds))
-        cmd_speed = abs(float(velocity["vx_mps"]))
-        cmd_yaw = abs(float(velocity["wz_rad_s"]))
+        cmd_vx = float(velocity["vx_mps"])
+        cmd_speed = abs(cmd_vx)
+        cmd_wz = float(velocity["wz_rad_s"])
+        cmd_yaw = abs(cmd_wz)
+        # 稳态窗内的**带符号**位移与均速（判据必须能识别「方向反了」）：
+        # 均速 = 稳态窗位移在指令方向上的投影 / 稳态窗时长（而不是逐拍速度大小的均值）。
+        steady_xy0 = np.array(steady[0]["base_position_xy_m"], dtype=float) if steady else np.zeros(2)
+        steady_xy1 = np.array(steady[-1]["base_position_xy_m"], dtype=float) if steady else np.zeros(2)
+        steady_span = (float(steady[-1]["time_s"]) - float(steady[0]["time_s"])) if steady else 0.0
+        signed_disp = _projected(steady_xy1 - steady_xy0, yaw0, cmd_vx)
+        signed_track_disp = _projected(xy1 - xy0, yaw0, cmd_vx)
+        mean_speed = signed_disp / steady_span if steady_span > 0.0 else 0.0
+        mean_yaw_rate = float(np.mean(yaw_rates))
         checks = []
         entry.update({
             "status": "SUCCEEDED" if report.get("failure") is None else report["failure"]["decision"],
             "failure": report.get("failure"),
             "displacement_m": displacement,
+            "signed_displacement_m": signed_track_disp,
+            "steady_signed_displacement_m": signed_disp,
             "mean_speed_mps": mean_speed,
             "yaw_change_deg": yaw1 - yaw0,
-            "mean_yaw_rate_rad_s": float(np.mean(yaw_rates)),
+            "mean_yaw_rate_rad_s": mean_yaw_rate,
             "max_tilt_deg": float(np.max(tilts)),
             "control_cycles": report.get("control_cycles"),
             "ctrl_saturated_samples": report.get("ctrl_saturated_samples"),
@@ -148,18 +184,29 @@ def main(argv=None):
             rel = abs(mean_speed - cmd_speed) / cmd_speed
             checks.append({"name": "mean_rel_error", "value": rel,
                            "expectation": "<= %g" % max_rel, "passed": bool(rel <= max_rel)})
-        else:                                   # 转向：按声明**仅记录**
+        if cmd_speed == 0.0:                    # 转向：按声明**仅记录**量值
             entry["yaw_rate_record_only"] = {
-                "mean_yaw_rate_rad_s": float(np.mean(yaw_rates)), "commanded": velocity["wz_rad_s"]}
+                "mean_yaw_rate_rad_s": mean_yaw_rate, "commanded": cmd_wz}
+        # 方向门禁（声明 `velocity_tracking.direction_gate`，纯符号判据，不引入阈值）
+        gate = tracking.get("direction_gate") or {}
+        if cmd_speed > 0.0 and bool(gate.get("check_translation", False)):
+            checks.append({"name": "direction_translation", "value": signed_disp,
+                           "expectation": "> 0（位移在指令方向上的投影为正）",
+                           "passed": bool(signed_disp > 0.0)})
+        if cmd_yaw != 0.0 and bool(gate.get("check_yaw", False)):
+            checks.append({"name": "direction_yaw", "value": mean_yaw_rate,
+                           "expectation": "与指令同号（符号 %+g）" % cmd_wz,
+                           "passed": bool(mean_yaw_rate * cmd_wz > 0.0)})
         checks.append({"name": "max_tilt_deg", "value": float(np.max(tilts)),
                        "expectation": "<= %g" % max_tilt, "passed": bool(np.max(tilts) <= max_tilt)})
         entry["checks"] = checks
         entry["passed"] = all(c["passed"] for c in checks) and report.get("failure") is None
         results.append(entry)
-        print("  %-11s 位移=%.4f m 段内均速=%.4f m/s 偏航变化=%+.2f° 均偏航率=%+.4f rad/s "
-              "最大倾角=%.2f° 失败=%s %s"
-              % (name, displacement, mean_speed, yaw1 - yaw0, float(np.mean(yaw_rates)),
-                 float(np.max(tilts)), report.get("failure"), "通过" if entry["passed"] else "**未通过**"))
+        print("  %-11s 位移=%.4f m 带符号稳态位移=%+.4f m 稳态均速=%+.4f m/s 偏航变化=%+.2f° "
+              "均偏航率=%+.4f rad/s 最大倾角=%.2f° 失败=%s %s"
+              % (name, displacement, signed_disp, mean_speed, yaw1 - yaw0, mean_yaw_rate,
+                 float(np.max(tilts)), report.get("failure"),
+                 "通过" if entry["passed"] else "**未通过**"))
 
     failed = [r["scenario"] for r in results if not r["passed"]]
     report = {
