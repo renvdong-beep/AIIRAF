@@ -12,8 +12,12 @@
 **不含**（下一块）：`compute_x_ref_vec`；接触表按移植清单 §1.1 **复用 `iraf_adapters.unitree.gait`**
 （`mpc/contact.py`）。足端参考见本模块 `foot_reference_trajectory`。
 
-未验证边界：与本模块配套的**逐位校验**（对研究侧同批状态比较 `pos/vel/rpy/omega_traj_world`）
-仍是下一步；在此之前不得接进 `provider_runtime`。
+**逐位校验状态**：
+  · 足端参考（落足点公式）**已验**（2026-09-23，`build/research/mpc-repo/verify_foot_reference_parity.py`）：
+    200 随机状态 × 4 腿 = 800 次比较 vs 上游 `compute_touchdown_world_for_traj_purpose_only`，
+    **语义不一致 0 处**；800 处为往返 ulp 分类（最大 \|Δ\| 2.776e-17，其中 1479 个分量逐位相等）。
+  · 状态相关轨迹（`pos/vel/rpy/omega_traj_world`）的逐位校验**仍是下一步** ⇒ 该部分接
+    `provider_runtime` 前需先补这一步（`foot_reference_trajectory` 已可接）。
 """
 
 from __future__ import annotations

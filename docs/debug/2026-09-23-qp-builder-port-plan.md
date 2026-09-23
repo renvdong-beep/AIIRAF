@@ -93,9 +93,24 @@ theirs `0` / ours `1`、`min_phase_distance_to_boundary = 0.0`。成因：两侧
 
 腿序来源 = `contact.LEG_ORDER`（与接触表行序同一事实，不靠字典迭代顺序）。
 
-**尚缺（下一步）**：`nominal_z_m`（0.02）与 `pred_time` 的两个系数目前由调用方传入，
-须落进声明（`mpc_model` 的 touchdown 组）后才能接 `provider_runtime`；本模块自身的逐位校验
-（对上游客体在同一批状态上比较四足 `r_*_foot_world`）也尚未做。
+**常量已落声明**：`mpc_model.touchdown`（`nominal_z_m` 0.02 / `swing_factor` 1.0 /
+`stance_half_factor` 0.5 / `lookahead_factor` 0.5），由 `reference.touchdown_parameters` 派生
+`t_swing = (1−duty)·period`、`t_stance = duty·period`、`pred_time = lookahead_factor·T`；
+`foot_reference_trajectory` 只收 `nominal_z_m` 与 `pred_time_s`（前瞻时间**只算一处**）。
+
+**逐位校验（已完成，2026-09-23）**：脚本 `build/research/mpc-repo/verify_foot_reference_parity.py`｜
+报告 `build/research/mpc-repo/foot_reference_parity.json`（`all_ok: true`，退出码 0）。
+基准 = 上游 `convex_mpc.gait.compute_touchdown_world_for_traj_purpose_only`（用它的 `PinGo2Model()`
++ `update_model_simplified(q, dq)` 设状态，hip 偏移取它的 URDF 值）：
+
+| 项 | 规模 | 结果 |
+|---|---|---|
+| 落足点公式（nominal + drift + rot − base_pos） | 200 随机状态 × 4 腿 = 800 次 | **语义不一致 0 处**；800 处被分类为**往返 ulp**（我们的输出是机身相对量 ⇒ 比较式 `rel + pos` 在浮点上 `(a−b)+b ≠ a`），最大 \|Δ\| = **2.776e-17** ≤ 判据 `4·eps·尺度 = 8.88e-16`，其中 **1479/2400 个分量逐位相等** |
+
+覆盖的状态域：`pos` x/y ∈ ±1.0 m、z ∈ [0.25, 0.29]、`rpy` roll/pitch ∈ ±0.1 rad、yaw ∈ ±π、
+体速度 x/y ∈ ±1.0 m/s、`w_body` z ∈ ±1.0 rad/s（含偏航非零 ⇒ 同时校验 `R_z @ hip_offset` 与 `rot` 项）。
+沿用的纪律：只打印计数会把"我的对照式写错"伪装成"被测代码错" ⇒ 本脚本打印首个样本的
+两侧数值 / 分量级差异 / ulp 判据，并按"语义 vs ulp"两栏分别计数（本轮首版即因对照式差 1 ulp 报 800/800）。
 
 ## 2. 逐位校验点（用已提交的 `traj_parity` 门禁）
 
