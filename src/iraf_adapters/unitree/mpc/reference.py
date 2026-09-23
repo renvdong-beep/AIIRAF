@@ -22,11 +22,50 @@ import numpy as np
 
 from iraf_adapters.unitree.mpc.contact import LEG_ORDER
 
-__all__ = ["yaw_rotation", "reference_state_trajectory", "foot_reference_trajectory"]
+__all__ = ["yaw_rotation", "reference_state_trajectory", "foot_reference_trajectory",
+           "REQUIRED_TOUCHDOWN_KEYS", "touchdown_parameters"]
+
+#: `mpc_model.touchdown` 必需键（缺项即显式失败；多余键同样失败 ⇒ 拒绝"假声明"）。
+REQUIRED_TOUCHDOWN_KEYS = ("nominal_z_m", "swing_factor", "stance_half_factor", "lookahead_factor")
+
+
+def touchdown_parameters(gait_params, touchdown_declaration):
+    """由 **trot 步态声明** + **touchdown 声明** 派生 `foot_reference_trajectory` 的调用参数。
+
+    `t_swing` / `t_stance` 由步态声明派生（`(1−duty)·period` / `duty·period`），
+    不在 touchdown 段重复声明；`pred_time` 由三个系数算出。
+    返回 `{"nominal_z_m", "swing_time_s", "stance_time_s", "pred_time_s", "T_s"}`。
+    """
+    if not isinstance(touchdown_declaration, dict):
+        raise ValueError("touchdown 声明必须是映射，实际: %r" % (type(touchdown_declaration).__name__,))
+    missing = [key for key in REQUIRED_TOUCHDOWN_KEYS if key not in touchdown_declaration]
+    if missing:
+        raise ValueError("mpc_model.touchdown 缺少必需键: %s" % missing)
+    extra = [key for key in touchdown_declaration if key not in REQUIRED_TOUCHDOWN_KEYS]
+    if extra:
+        raise ValueError("mpc_model.touchdown 含未定义键: %s（多余键视为假声明）" % extra)
+    values = {}
+    for key in REQUIRED_TOUCHDOWN_KEYS:
+        values[key] = float(touchdown_declaration[key])
+    for key, value in values.items():
+        if not value > 0:
+            raise ValueError("mpc_model.touchdown.%s 必须为正数，实际 %r" % (key, value))
+    duty = float(gait_params["duty_factor"])
+    period = float(gait_params["period_s"])
+    swing_time = (1.0 - duty) * period
+    stance_time = duty * period
+    horizon = values["swing_factor"] * swing_time + values["stance_half_factor"] * stance_time
+    return {
+        "nominal_z_m": values["nominal_z_m"],
+        "swing_time_s": swing_time,
+        "stance_time_s": stance_time,
+        "T_s": horizon,
+        "pred_time_s": values["lookahead_factor"] * horizon,
+    }
 
 
 def foot_reference_trajectory(masks, base_pos_traj, base_vel_body, r_z, yaw_rate_des,
-                              hip_offsets, swing_time_s, stance_time_s, nominal_z_m):
+                              hip_offsets, nominal_z_m, pred_time_s):
     """足端参考轨迹（上游 `com_trajectory.py:113-207` 的**逐拍状态机**语义移植）。
 
     上游行为（逐字复刻，含其"混合坐标系"的既有做法）：
@@ -38,7 +77,8 @@ def foot_reference_trajectory(masks, base_pos_traj, base_vel_body, r_z, yaw_rate
           掩码未变 ⇒ 参考 = 上一拍的值（**递推**，故第 0 拍不会取到 `[-1]`）。
       · 落足点（上游 `gait.compute_touchdown_world_for_traj_purpose_only`）：
           `body_pos = [base_pos[0], base_pos[1], 0]`；`hip_pos_world = body_pos + R_z @ hip_offset`
-          `T = swing_time + 0.5·stance_time`；`pred_time = T/2`
+          `T = swing_time + 0.5·stance_time`；`pred_time = T/2`（**由 `touchdown_parameters` 一次算出**，
+          本函数只收 `pred_time_s`，不在两处各算一遍）
           `nominal = [hip_pos_world[0], hip_pos_world[1], nominal_z_m]`（z 为**常量**，非机身高度）
           `drift   = [base_vel_body[0]·pred, base_vel_body[1]·pred, 0]`
           `dtheta  = yaw_rate_des · pred`；`r_xy = nominal[:2] − base_pos[:2]`
@@ -70,9 +110,9 @@ def foot_reference_trajectory(masks, base_pos_traj, base_vel_body, r_z, yaw_rate
     r_z = np.asarray(r_z, dtype=float)
     if r_z.shape != (3, 3):
         raise ValueError("r_z 形状必须为 (3,3)，实际 %r" % (r_z.shape,))
-    swing, stance = float(swing_time_s), float(stance_time_s)
-    if not (swing > 0 and stance > 0):
-        raise ValueError("swing/stance 时间必须为正，实际 %r/%r" % (swing_time_s, stance_time_s))
+    pred_time = float(pred_time_s)
+    if not pred_time > 0:
+        raise ValueError("pred_time_s 必须为正，实际 %r" % (pred_time_s,))
 
     # 腿序必须由 `contact.LEG_ORDER` 决定（与接触表行序同一事实），不靠字典迭代顺序：
     # 顺序写错会静默把一条腿的落足点安到另一条腿上，而数值上"看起来很合理"。
@@ -91,7 +131,6 @@ def foot_reference_trajectory(masks, base_pos_traj, base_vel_body, r_z, yaw_rate
             raise ValueError("hip_offsets[%r] 必须是 3 维，实际 %r" % (code, offset.size))
         offsets[code] = offset
 
-    pred_time = (swing + 0.5 * stance) / 2.0
     nominal_z = float(nominal_z_m)
     out = {code: np.zeros((3, n), dtype=float) for code in codes}
     next_td = {code: np.zeros(3, dtype=float) for code in codes}

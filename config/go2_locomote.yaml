@@ -101,6 +101,21 @@ mpc_model:
   duty: 0.6
   swing_height_m: 0.1
   stand_height_m: 0.27
+  # 落足点（Raibert）规划常量 —— 上游 `gait.compute_touchdown_world_for_traj_purpose_only` 的
+  # 硬编码常量与系数，逐项落声明（铁律 5.3：代码不得写数字）。语义：
+  #   nominal_z_m：标称落足点的**世界系 z**（上游写死 0.02 m，**不是**机身高度）
+  #   swing_factor / stance_half_factor：
+  #       T = swing_factor·t_swing + stance_half_factor·t_stance
+  #       （上游 `T = t_swing + 0.5*t_stance`：在**离地瞬间**规划，对该腿摆动期 +
+  #        另一对角组剩余半个支撑期做前瞻）
+  #   lookahead_factor：`pred_time = lookahead_factor · T`（上游 `T/2`）
+  #   其中 t_swing / t_stance **不在这里声明**：它们由 trot 步态声明的 `duty_factor` 与
+  #   `period_s` 派生（`t_swing = (1−duty)·period`、`t_stance = duty·period`），避免同一事实两处。
+  touchdown:
+    nominal_z_m: 0.02
+    swing_factor: 1.0
+    stance_half_factor: 0.5
+    lookahead_factor: 0.5
 
 # MPC 的 **trot 步态来源**（A6a-3b 第②步下半；接触表要的 period/duty/相位偏移必须来自声明）
 #

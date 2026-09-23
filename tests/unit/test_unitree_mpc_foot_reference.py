@@ -12,6 +12,7 @@ from iraf_adapters.unitree.mpc.reference import foot_reference_trajectory
 HIP = {"FL": (0.19, 0.047, 0.0), "FR": (0.19, -0.047, 0.0),
        "RL": (-0.19, 0.047, 0.0), "RR": (-0.19, -0.047, 0.0)}
 SWING, STANCE, NOM_Z = 0.13333333333333333, 0.2, 0.02
+PRED = (SWING + 0.5 * STANCE) / 2.0
 
 
 def _call(masks, base_pos=None, vel=(0.0, 0.0, 0.0), yaw=0.0, yaw_rate=0.0, n_cols=None):
@@ -20,7 +21,7 @@ def _call(masks, base_pos=None, vel=(0.0, 0.0, 0.0), yaw=0.0, yaw_rate=0.0, n_co
         base_pos = np.tile(np.array([0.0, 0.0, 0.27]).reshape(3, 1), (1, n))
     from iraf_adapters.unitree.mpc.reference import yaw_rotation
     return foot_reference_trajectory(masks, base_pos, vel, yaw_rotation(yaw), yaw_rate,
-                                     HIP, SWING, STANCE, NOM_Z)
+                                     HIP, NOM_Z, PRED)
 
 
 def test_hand_computed_takeoff_then_touchdown_then_hold():
@@ -32,7 +33,7 @@ def test_hand_computed_takeoff_then_touchdown_then_hold():
         [1, 1, 1, 1],
     ])
     out = _call(masks)
-    pred = (SWING + 0.5 * STANCE) / 2.0
+    pred = PRED
     # 无速度、无偏航：td = [hip_x, hip_y, 0.02]（机身 xy = 0），参考 = td − base_pos
     td = np.array([HIP["FL"][0], HIP["FL"][1], NOM_Z]) - np.array([0.0, 0.0, 0.27])
     assert np.allclose(out["FL"][:, 1], [0.0, 0.0, 0.0])          # 离地当拍置零
@@ -52,7 +53,7 @@ def test_touchdown_records_state_at_takeoff_step_not_at_touchdown_step():
     base = np.array([[0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.27, 0.27, 0.27, 0.27]])
     vel = (0.5, 0.0, 0.0)
     out = _call(masks, base_pos=base, vel=vel)
-    pred = (SWING + 0.5 * STANCE) / 2.0
+    pred = PRED
     assert np.allclose(out["FL"][:, 3], np.array([HIP["FL"][0] + 0.5 * pred,
                                                   HIP["FL"][1], NOM_Z - 0.27]))
     # 机身位置在触地拍变了，但参考仍是离地拍（i=1）算出的值 ⇒ 换 base_pos 不影响已记录值
@@ -65,7 +66,7 @@ def test_touchdown_records_state_at_takeoff_step_not_at_touchdown_step():
 def test_rotation_correction_term_and_sign():
     masks = np.array([[1, 0, 1]] + [[1, 1, 1]] * 3)
     out = _call(masks, yaw=0.0, yaw_rate=2.0)
-    pred = (SWING + 0.5 * STANCE) / 2.0
+    pred = PRED
     dtheta = 2.0 * pred
     r_xy = np.array([HIP["FL"][0], HIP["FL"][1]])       # nominal[:2] − base[:2]（base xy = 0）
     expect = np.array([r_xy[0] - dtheta * r_xy[1], r_xy[1] + dtheta * r_xy[0], NOM_Z - 0.27])
@@ -90,7 +91,7 @@ def test_per_step_base_velocity_supported_and_takeoff_column_used():
     # (3,N) 形式：x 行在 i=1 处为 0.5（离地拍）⇒ 应取该列，而不是第 0 列（0.9）或第 2 列（0.1）
     vel = np.array([[0.9, 0.5, 0.1], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
     out = _call(masks, vel=vel)
-    pred = (SWING + 0.5 * STANCE) / 2.0
+    pred = PRED
     expect = np.array([HIP["FL"][0] + 0.5 * pred, HIP["FL"][1], NOM_Z - 0.27])
     assert np.allclose(out["FL"][:, 2], expect)
     for wrong_col in (0.9, 0.1):
@@ -103,9 +104,8 @@ def test_per_step_base_velocity_supported_and_takeoff_column_used():
     {"masks": np.zeros((3, 4), dtype=int)},
     {"hip_offsets": {k: v for k, v in HIP.items() if k != "RL"}},
     {"hip_offsets": dict(HIP, XX=(0.0, 0.0, 0.0))},
-    {"swing_time_s": 0.0},
-    {"swing_time_s": -1.0},
-    {"stance_time_s": 0.0},
+    {"pred_time_s": 0.0},
+    {"pred_time_s": -1.0},
     {"base_pos_traj": np.zeros((3, 5))},
     {"base_vel_body": np.zeros((3, 5))},
     {"r_z": np.eye(2)},
@@ -114,7 +114,7 @@ def test_invalid_inputs_raise(bad):
     masks = np.array([[1, 0, 1]] + [[1, 1, 1]] * 3)
     kwargs = dict(masks=masks, base_pos_traj=np.tile([0.0, 0.0, 0.27], (3, 1)),
                   base_vel_body=(0.0, 0.0, 0.0), r_z=np.eye(3), yaw_rate_des=0.0,
-                  hip_offsets=HIP, swing_time_s=SWING, stance_time_s=STANCE, nominal_z_m=NOM_Z)
+                  hip_offsets=HIP, nominal_z_m=NOM_Z, pred_time_s=PRED)
     kwargs.update(bad)
     with pytest.raises(ValueError):
         foot_reference_trajectory(**kwargs)
@@ -132,3 +132,64 @@ def test_rows_follow_leg_order():
     masks = np.array([[1, 0, 1]] + [[1, 1, 1]] * 3)
     out = _call(masks)
     assert list(out.keys()) == list(LEG_ORDER)
+
+
+# ---- touchdown 声明（常量落声明 + 与 trot 步态声明自洽）----
+
+from iraf_adapters.unitree.mpc.reference import REQUIRED_TOUCHDOWN_KEYS, touchdown_parameters  # noqa: E402
+
+
+def _gait_params():
+    return {"duty_factor": 0.6, "period_s": 1.0 / 3.0}
+
+
+def test_touchdown_parameters_derives_swing_stance_and_pred_time():
+    out = touchdown_parameters(_gait_params(), {"nominal_z_m": 0.02, "swing_factor": 1.0,
+                                               "stance_half_factor": 0.5, "lookahead_factor": 0.5})
+    assert out["swing_time_s"] == pytest.approx(0.4 / 3.0)
+    assert out["stance_time_s"] == pytest.approx(0.6 / 3.0)
+    # T = 1.0*swing + 0.5*stance = 0.1333333 + 0.1 = 0.2333333；pred = T/2
+    assert out["T_s"] == pytest.approx((0.4 / 3.0) + 0.5 * (0.6 / 3.0))
+    assert out["pred_time_s"] == pytest.approx(out["T_s"] / 2.0)
+    assert out["nominal_z_m"] == 0.02
+    # 与手算的 pred 一致（测试里的 PRED 用同一 duty/period 算出）
+    assert out["pred_time_s"] == pytest.approx(PRED)
+
+
+def test_touchdown_declaration_round_trip_through_foot_reference():
+    """用**声明派生**的参数跑一次足端参考，证明两层能接上（不是各算一套）。"""
+    gait = _gait_params()
+    td = touchdown_parameters(gait, {"nominal_z_m": 0.02, "swing_factor": 1.0,
+                                    "stance_half_factor": 0.5, "lookahead_factor": 0.5})
+    masks = np.array([[1, 0, 1]] + [[1, 1, 1]] * 3)
+    base = np.tile(np.array([0.0, 0.0, 0.27]).reshape(3, 1), (1, 3))   # 按列铺，不是按行
+    out = foot_reference_trajectory(masks, base, (0.5, 0.0, 0.0),
+                                    np.eye(3), 0.0, HIP, td["nominal_z_m"], td["pred_time_s"])
+    expect = np.array([HIP["FL"][0] + 0.5 * td["pred_time_s"], HIP["FL"][1],
+                       td["nominal_z_m"] - 0.27])
+    assert np.allclose(out["FL"][:, 2], expect)
+
+
+@pytest.mark.parametrize("bad", [
+    None,
+    {},
+    {"nominal_z_m": 0.02},
+    dict(zip(REQUIRED_TOUCHDOWN_KEYS, (0.02, 1.0, 0.5, 0.5)), extra_key=1),
+    {"nominal_z_m": 0.0, "swing_factor": 1.0, "stance_half_factor": 0.5, "lookahead_factor": 0.5},
+    {"nominal_z_m": 0.02, "swing_factor": -1.0, "stance_half_factor": 0.5, "lookahead_factor": 0.5},
+    {"nominal_z_m": "x", "swing_factor": 1.0, "stance_half_factor": 0.5, "lookahead_factor": 0.5},
+])
+def test_touchdown_declaration_invalid_raises(bad):
+    with pytest.raises((ValueError, TypeError)):
+        touchdown_parameters(_gait_params(), bad)
+
+
+def test_touchdown_declaration_from_real_config_matches_upstream_values():
+    """真实声明里的四个键必须等于上游硬编码值（0.02 / 1.0 / 0.5 / 0.5）—— 这是"移植不改语义"的断言。"""
+    import yaml
+    from pathlib import Path
+    doc = yaml.safe_load((Path(__file__).resolve().parents[2] / "config" / "go2_locomote.yaml")
+                         .read_text(encoding="utf-8"))
+    td = doc["mpc_model"]["touchdown"]
+    assert td == {"nominal_z_m": 0.02, "swing_factor": 1.0,
+                  "stance_half_factor": 0.5, "lookahead_factor": 0.5}
