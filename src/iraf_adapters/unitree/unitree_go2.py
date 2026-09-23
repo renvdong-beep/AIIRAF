@@ -1741,6 +1741,14 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             )
             # 参考位置的**钳位结果**必须跨拍保留（上游既有语义：`pos_des_world` 是有状态量）
             state_holder["pos_des_world"] = np.array(context["pos_des_world_out"], dtype=float)
+            # MPC **参考姿态**（`x_ref` **行序** p(3)→rpy(3)→v(3)→ω(3)、列=视界 ⇒ rpy 在第 0 列取 [3:6, 0]）：
+            # 用于判定「俯仰偏置是 QP 自己要的，还是 plant 到不了」。⚠ 该布局坑在 reference.py 里被
+            # 明文警告过（(12,N) 不是 (N,12)），此处按行序取，避免静默错位。
+            try:
+                x_ref = np.asarray(context["x_ref"], dtype=float)
+                state_holder["ref_rpy_deg"] = [float(np.degrees(v)) for v in x_ref[3:6, 0]]
+            except (KeyError, IndexError, TypeError, ValueError):
+                state_holder["ref_rpy_deg"] = None
             # B1 权重的支撑集 = 声明相位（QP 接触表第一列，与 QP 同一份表）**∧ 实测接触**
             declared = {code: bool(context["contact_table"][index, 0])
                         for index, code in enumerate(MPC_LEG_ORDER)}
@@ -1865,6 +1873,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 "leg_force_n": {code: float(value) for code, value
                                 in self._leg_contact_forces(trot, geometry).items()},
                 "gait_elapsed_s": float(state_holder.get("elapsed_s") or -1.0),
+                "mpc_ref_rpy_deg": state_holder.get("ref_rpy_deg"),
                 # 诊断量：本拍 MPC 载荷经 ctrlrange 截断后的执行力矩峰值 + 本拍支撑集
                 # （用于定位"从第几拍开始失控"，不参与任何判据）
                 "max_abs_ctrl_nm": float(np.max(np.abs(np.asarray(info["ctrl"], dtype=float)))),

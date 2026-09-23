@@ -187,6 +187,7 @@ def main(argv=None):
                                                     "base_linear_speed_mps",
                                                     "body_roll_deg", "body_pitch_deg",
                                                     "leg_force_n", "gait_elapsed_s",
+                                                    "mpc_ref_rpy_deg",
                                                     "base_position_xy_m", "base_yaw_deg",
                                                     "ctrl_saturated")}
                              for s in samples[::(1 if args.dense_diagnostics else 10)]]
