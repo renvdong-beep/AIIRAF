@@ -134,6 +134,15 @@ def main(argv=None):
             "ctrl_saturated_samples": report.get("ctrl_saturated_samples"),
             "provider_stats": (report.get("provider") or {}).get("stats"),
             "client_stats": report.get("client"),
+            # 诊断序列（**不参与判据**）：每 10 拍取一个 + 末 5 拍，用于定位"从第几拍开始失控"。
+            # 完整 samples 太大不入库；本序列含 倾角/支撑集/峰力矩/速度/位置。
+            "diagnostics": ([{k: s.get(k) for k in ("time_s", "tilt_deg", "stance_legs",
+                                                    "max_abs_ctrl_nm", "base_linear_speed_mps",
+                                                    "base_position_xy_m", "base_yaw_deg",
+                                                    "ctrl_saturated")}
+                             for s in samples[::10]] + [s for s in samples[-5:]]),
+            "samples_count": len(samples),
+            "warmup": report.get("warmup"),
         })
         if cmd_speed > 0.0:                     # 直行/倒退：硬判据（声明 applies_when）
             rel = abs(mean_speed - cmd_speed) / cmd_speed

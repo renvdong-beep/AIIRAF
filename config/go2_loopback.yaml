@@ -558,6 +558,14 @@ locomote:
   # 未显式给 `duration_ms` 时的默认执行时长（**秒**；与 `resolve_duration_ms` 的
   # `declared_seconds` 参数同单位 —— 该函数返回秒）。
   duration_seconds: 3.0
+  # MPC 路径的**位置级 PD 权重**（逐关节混合 τ = w ⊙ τ_pd + w_bal·τ_bal 里的 w）。
+  # 为什么不用 `balance.stance_weight_position`（=0）：那个 0 是**平衡路径**的语义（有平衡器
+  # 自己的力分配+姿态控制兜底，支撑腿可以完全交给力控）；MPC 路径没有那层兜底，支撑腿若失去
+  # 位置环，腿的构型（腿长/姿态）就没人守 —— 实测 0.9 s 内倾角级联到 46.02°、力矩长期顶在模型
+  # 上限 45.430 N·m。上游 `leg_controller` 的结构是"每条腿都有位置/速度回路 + 叠加 −Jᵀf"，
+  # 故这里取 1.0/1.0：PD 守构型，MPC 的接触力矩叠加在上面。
+  stance_position_weight: 1.0
+  swing_position_weight: 1.0
 
 state:
   # 传感器按名字解析（关节名 ≠ 执行器名：go2.xml 关节 FL_hip_joint / 执行器 FL_hip）。

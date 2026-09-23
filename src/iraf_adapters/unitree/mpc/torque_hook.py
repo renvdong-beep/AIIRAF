@@ -264,6 +264,18 @@ class MpcTorqueHook:
                                          position_weight_vector(mask, self._joint_index_map,
                                                                 self._stance_weight,
                                                                 self._swing_weight))
+        # 饱和**前**的原始载荷峰值（诊断用）：用于区分"QP 给的力本身过大"与"混合/截断把它放大"
+        # （实测：执行端峰力矩恒为 45.430 N·m = 模型上限 ⇒ 一直饱和，必须看清源头）。
+        self.stats["last_payload_max_nm"] = float(
+            np.max(np.abs(np.asarray(payload["balance_torque_nm"], dtype=float)))
+        )
+        self.stats["last_forces_max_n"] = float(np.max(np.abs(forces)))
+        self.stats["last_forces_sum_z_n"] = float(np.sum(np.asarray(forces, dtype=float)[:, 2]))
+        # 最近一次求解的耗时与迭代数（诊断：用于看清"哪一拍开始变慢"——
+        # 实测运行末段稳定在 ~0.88 s 处超时，需要区分"求解变慢"与"状态发散"）
+        diagnostics = out.get("diagnostics", {})
+        self.stats["last_solve_ms"] = diagnostics.get("solve_ms")
+        self.stats["last_status_class"] = diagnostics.get("status_class")
         self._mask = mask
         self.stats["payloads"] += 1
         self.stats["last_decision"] = DECISION_OK

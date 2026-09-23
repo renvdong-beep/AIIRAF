@@ -1577,7 +1577,9 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         section = self.declaration.get("locomote")
         if not isinstance(section, dict):
             raise DeclarationError("声明缺少 locomote 段（Provider 配置与默认时长必须来自声明）")
-        missing = [key for key in ("provider_config", "duration_seconds") if key not in section]
+        missing = [key for key in ("provider_config", "duration_seconds",
+                                   "stance_position_weight", "swing_position_weight")
+                   if key not in section]
         if missing:
             raise DeclarationError("声明缺少 locomote 的键: %s" % missing)
         provider_config = Path(str(section["provider_config"]))
@@ -1597,18 +1599,15 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         trunk_body = gait.trunk_body_id(self.model, self.mujoco, trot)
         home = {joint: float(self.profile.home[joint]) for joint in self.joint_order}
         limits = {joint: self.profile.joint_limits[joint] for joint in self.joint_order}
-        balance_params = self._balance_parameters()
-        stance_weight = float(balance_params["stance_weight_position"])
-        swing_weight = float(balance_params["weight_position"])
-        # 前置门禁（**不是** balance.enabled）：`enabled` 控制的是"平衡器 Provider 是否安装"，
-        # 而 locomote 不安装它（力矩由 MPC 的接触力提供）；本路径真正需要的是**逐关节位置权重**：
-        # 支撑腿必须被放开位置环（weight < 1），否则 PD 位置环会把 MPC 给的力矩顶回去 ⇒ 显式失败。
-        if stance_weight >= 1.0:
-            raise DeclarationError(
-                "balance.stance_weight_position=%.6f ≥ 1：支撑腿仍在位置环内，MPC 的接触力矩会被"
-                "PD 顶回（locomote 需要支撑腿放开位置控制）⇒ 显式失败，不静默降级"
-                % stance_weight
-            )
+        # 位置级权重**取自本路径自己的声明**（2026-09-23 实测修正，见 config 里 `locomote` 段注释）：
+        # 不用 `balance.stance_weight_position`（=0）——那个 0 会把支撑腿的位置环整段关掉，
+        # 而 MPC 路径没有平衡器那层兜底 ⇒ 腿构型没人守 ⇒ 倾角级联（实测 46.02°）。
+        stance_weight = float(section["stance_position_weight"])
+        swing_weight = float(section["swing_position_weight"])
+        for label, value in (("stance_position_weight", stance_weight),
+                             ("swing_position_weight", swing_weight)):
+            if not 0.0 <= value <= 1.0:
+                raise DeclarationError("locomote.%s 必须落在 [0,1]，实际 %r" % (label, value))
         # B1 权重的支撑集口径 = **声明相位 ∧ 实测接触**（与平衡路径 `declared_and_contact` 同一规则；
         # 2026-09-21 调试记录 §15/§22 的实测：只按声明会把「该抬未抬」的腿当支撑腿 ⇒ 给它零位置权重
         # 又不给它力控 ⇒ 被压在地面/翻倒）。阈值同样来自步态声明的 verification 段，不写数字。
@@ -1745,6 +1744,12 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 "max_abs_ctrl_nm": float(np.max(np.abs(np.asarray(info["ctrl"], dtype=float)))),
                 "stance_legs": sorted(code for code, flag
                                       in (state_holder.get("mask") or {}).items() if flag),
+                # 饱和前的 MPC 原始载荷峰值 / 足端力峰值 / 四腿法向力合计（诊断，不参与判据）
+                "mpc_payload_max_nm": hook.stats.get("last_payload_max_nm"),
+                "mpc_forces_max_n": hook.stats.get("last_forces_max_n"),
+                "mpc_forces_sum_z_n": hook.stats.get("last_forces_sum_z_n"),
+                "mpc_solve_ms": hook.stats.get("last_solve_ms"),
+                "mpc_status_class": hook.stats.get("last_status_class"),
                 "declared_velocity": {"vx_mps": resolved["vx_mps"], "vy_mps": resolved["vy_mps"],
                                       "wz_rad_s": resolved["wz_rad_s"]},
                 "ctrl_saturated": int(np.count_nonzero(info["saturated"])),
