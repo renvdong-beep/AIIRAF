@@ -1580,7 +1580,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             raise DeclarationError("声明缺少 locomote 段（Provider 配置与默认时长必须来自声明）")
         missing = [key for key in ("provider_config", "duration_seconds",
                                    "stance_position_weight", "swing_position_weight",
-                                   "velocity_ramp_s")
+                                   "velocity_ramp_s", "leg_position_gain_scale")
                    if key not in section]
         if missing:
             raise DeclarationError("声明缺少 locomote 的键: %s" % missing)
@@ -1643,6 +1643,11 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         velocity_ramp_s = float(section["velocity_ramp_s"])
         if velocity_ramp_s < 0.0:
             raise DeclarationError("locomote.velocity_ramp_s 必须 ≥ 0，实际 %r" % velocity_ramp_s)
+        # 本路径 PD 增益缩放（见下方 `saved_gains` 处的实测依据）：必须 > 0，1.0 = 与 stand 同档。
+        leg_position_gain_scale = float(section["leg_position_gain_scale"])
+        if not leg_position_gain_scale > 0.0:
+            raise DeclarationError(
+                "locomote.leg_position_gain_scale 必须 > 0，实际 %r" % (leg_position_gain_scale,))
         # `resolve_duration_ms(duration_ms, declared_seconds)` **返回秒**，且缺省值也是秒
         # （quadruped.py:608）；因此这里不再换算、声明键也用 `duration_seconds`。
         seconds = self.resolve_duration_ms(duration_ms, float(section["duration_seconds"]))
@@ -1860,6 +1865,15 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 "ctrl_nm": [float(v) for v in np.asarray(info["ctrl"], dtype=float)],
                 "ctrl_position_nm": [float(v) for v in np.asarray(
                     info.get("ctrl_position_nm", info["ctrl"]), dtype=float)],
+                # 位置环的**跟踪误差**（rad）：τ_pd 的 kp·Δq 项直接由它决定。
+                # 静态站立时髋力矩需求 ~23.7 N·m ⇒ kp=150 反推 Δq ≈ 0.158 rad ≈ 9°；
+                # 到底是「目标本来就偏」还是「追不上」，只有把 Δq 打出来才能判。
+                "track_err_rad": [float(v) for v in
+                                  (np.asarray(info["desired"], dtype=float)
+                                   - np.asarray(info.get("q", info["desired"]), dtype=float))],
+                "max_track_err_rad": float(np.max(np.abs(
+                    np.asarray(info["desired"], dtype=float)
+                    - np.asarray(info.get("q", info["desired"]), dtype=float)))),
                 "stance_legs": sorted(code for code, flag
                                       in (state_holder.get("mask") or {}).items() if flag),
                 # 饱和前的 MPC 原始载荷峰值 / 足端力峰值 / 四腿法向力合计（诊断，不参与判据）
@@ -1877,6 +1891,16 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         terminal = "SUCCEEDED"
         cycles = 0
         saturated = 0
+        # 本路径的 PD 增益缩放（声明键 `locomote.leg_position_gain_scale`）：
+        # `control.kp_nm_per_rad = 150 / kd = 4` 是按**静态站立**指标选出来的（见声明注释的扫描）；
+        # 在 trot 3 Hz 摆动目标下实测跟踪误差 Δq 达 0.10~0.26 rad ⇒ `kp·Δq` 直接撞到每关节力矩上限
+        # （逐关节实测：髋/大腿 ±23.7、小腿 −45.4 全部饱和）⇒ B1 的 MPC 载荷被截断吃掉
+        # （零指令 hold：|τ总|max = |τ位置|max = 45.43 N·m，而 MPC 载荷只有 6~16 N·m）。
+        # 只在本执行内有效（`finally` 恢复），不影响 stand/stop 两条既有路径。
+        saved_gains = (np.array(self.kp, dtype=float, copy=True),
+                       np.array(self.kd, dtype=float, copy=True))
+        self.kp = saved_gains[0] * leg_position_gain_scale
+        self.kd = saved_gains[1] * leg_position_gain_scale
         try:
             with client:
                 cycles, saturated = self._run_control(
@@ -1900,6 +1924,9 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             self.ledger.finish(active_id, terminal, failure["reason"])
         else:
             self.ledger.finish(active_id, terminal)
+        finally:
+            # 恢复 stand/stop 路径的增益（本路径的缩放只在本执行内有效）
+            self.kp, self.kd = saved_gains
 
         report = {
             "simulation": True,
@@ -1916,7 +1943,8 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             "mpc_model": {"horizon": horizon, "gait_hz": mpc_model["gait_hz"],
                           "z_des_m": z_des,
                           "horizontal_reference_from": dict(reference_from)},
-            "position_weight": {"stance": stance_weight, "swing": swing_weight},
+            "position_weight": {"stance": stance_weight, "swing": swing_weight,
+                                "leg_position_gain_scale": leg_position_gain_scale},
             "warmup": warmup,
             "provider": hook.summary(),
             "client": dict(client.stats),
@@ -2129,7 +2157,8 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 sample_callback(
                     cycle_index,
                     {"desired": np.asarray(desired, dtype=float), "ctrl": ctrl, "saturated": saturated,
-                     "ctrl_position_nm": np.asarray(ctrl_position_nm, dtype=float)},
+                     "ctrl_position_nm": np.asarray(ctrl_position_nm, dtype=float),
+                     "q": np.asarray(q, dtype=float), "dq": np.asarray(dq, dtype=float)},
                 )
         return cycles, saturated_total
 

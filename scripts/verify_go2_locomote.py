@@ -180,6 +180,7 @@ def main(argv=None):
                                                     "max_abs_ctrl_nm", "max_abs_ctrl_position_nm",
                                                     "ctrl_position_sum_abs_nm", "ctrl_sum_abs_nm",
                                                     "ctrl_nm", "ctrl_position_nm",
+                                                    "track_err_rad", "max_track_err_rad",
                                                     "mpc_payload_max_nm",
                                                     "base_linear_speed_mps",
                                                     "base_position_xy_m", "base_yaw_deg",
