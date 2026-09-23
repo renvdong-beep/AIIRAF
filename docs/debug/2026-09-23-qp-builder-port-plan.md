@@ -29,6 +29,29 @@
 **不得**在 `mpc/` 里再写一份（同一事实只能有一处来源）。移植时只需校验：
 用我们的接触表算出的 `contact_table` 与研究侧用它的接触表算出的结果**逐位一致**（同相位参数下）。
 
+**已落地**：`src/iraf_adapters/unitree/mpc/contact.py`（`contact_table` / `current_mask`，行序 `LEG_ORDER`）。
+移植中发现三处必须显式化的差异（不写清就会静默错位）：
+
+1. **腿序**：上游 `PHASE_OFFSET = [0.5, 0.0, 0.0, 0.5]` 的索引顺序是 `[FL, FR, RL, RR]`
+   —— **RL 在 RR 之前**，与我们既有 wave 声明的书写顺序不同 ⇒ `LEG_ORDER` 显式写死，
+   不靠字典迭代顺序（单测覆盖插入顺序无关）。
+2. **采样时刻**：上游 `compute_contact_table` 取 `t = t0 + arange(N)·dt + dt/2`，而
+   `compute_current_mask` 取 `t = t0`（`dt=0, N=1` ⇒ 半拍项为 0，两者自洽）⇒ 半拍项由
+   `half_step` 参数显式化，`current_mask` 是它的单点特例。
+3. **相位结构（实测，与直觉不同）**：`duty = 0.6 > 0.5` + 两组偏移相差 0.5 ⇒ 两组支撑窗口
+   在相位环上相交**两段**、总长 `2·(duty − 0.5) = 0.2` 周期 ⇒ 存在**四足同时支撑**窗口、
+   **无腾空相**。「trot 恒两条腿支撑」只在 `duty ≤ 0.5` 成立。单测 64 采样实测重叠
+   `12/64 = 0.1875`，与解析式一致。
+
+**⚠ 阻塞项（本轮新发现，尚未解决）**：`config/` 与 `profiles/` 里**唯一的 `phase_offset` 声明是
+wave 的环形顺序**（`config/go2_loopback.yaml:368-371`：FL 0.0 / FR 0.25 / RR 0.5 / RL 0.75），
+**没有 trot 的对角相位声明**（上游 trot = FL 0.5 / FR 0.0 / RL 0.0 / RR 0.5）。
+⇒ 按铁律 5.3「常量集中在版本化声明、代码不得写数字」与 §1.1「同事实一处来源」，
+`contact_table` 的入参必须来自一份**合法的 trot 步态声明**（经 `gait.load_gait_declaration`
+校验，含 `kind: trot`、`duty_factor: 0.6`、两组对角 `phase_offset`、`verification` 等段）。
+本轮**未**伪造该声明（伪造即制造第二份事实来源）；下一步先落这份声明并让它过既有校验门禁，
+再把 `contact_table` 接到它上面。
+
 ## 2. 逐位校验点（用已提交的 `traj_parity` 门禁）
 
 对**同一批状态/时间序列**（研究侧已存的 200 样本）比较下列数组的 `tobytes()`：
