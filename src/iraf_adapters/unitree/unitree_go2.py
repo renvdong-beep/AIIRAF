@@ -348,8 +348,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 )
 
     # ---- 能力实现 ----
-    def stand(self, lease, targets=None, duration_ms=None, execution_id=None,
-              sample_callback=None):
+    def stand(self, lease, targets=None, duration_ms=None, execution_id=None):
         self.require_motion_allowed("stand", lease)
         if execution_id is not None:
             # 同一执行内续跑：必须仍是同一 fencing token 且执行未终态（终态拒绝）。
@@ -368,10 +367,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         seconds = self.resolve_duration_ms(
             duration_ms, _dig(self.declaration, "stand.duration_s", "声明")
         )
-        # `sample_callback` 可选（增量参数，既有调用不受影响）：停靠等组合能力需要按窗口量
-        # "保持期内的最大速度"（`stand` 报告本身不含速度指标；loopback 验收脚本也是自己采样的）。
-        cycles, saturated = self._run_control(resolved, seconds, ramp_s,
-                                              sample_callback=sample_callback)
+        cycles, saturated = self._run_control(resolved, seconds, ramp_s)
         report = {
             "simulation": True,
             "capability": "stand",
@@ -1735,8 +1731,10 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             # `damped_hold` 的判据全部来自声明（`stop.duration_s` / `stop.speed_tolerance_mps` = 0.05 /
             # `stop.static_hold_s`），并由它写自己的终态（STOPPED / FAILED）—— 与场景判据同源。
             settle_report = self.damped_hold(lease)
-            settle_error = (None if settle_report.get("static_entered")
-                            else "damped_hold 未在声明预算内进入静止段")
+            # ⚠ 判定只用报告里**实际存在**的键：`damped_hold` 报告含 `final_speed_mps` / `max_tilt_deg` /
+            # `failure_reason`（`static_entered` 是 loopback **验收脚本**自己按样本算的，不在报告里 ——
+            # 我上一版按它判定 ⇒ 假失败，实测末速 0.23 mm/s 却被判"未进入静止段"，已修）。
+            settle_error = settle_report.get("failure_reason") or None
             final_speed = float(settle_report.get("final_speed_mps", float("inf")))
 
         final = frame_pose(), body_pose()
@@ -1775,8 +1773,12 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             "settled_at_s": progress["reached_s"],
             "settle_completed_at_s": progress["settled_s"],
             "control_cycles": report.get("control_cycles"),
-            "settle": {"max_speed_mps": None if settle_report is None else final_speed,
-                       "failure_reason": settle_error},
+            "settle": {"final_speed_mps": None if settle_report is None else final_speed,
+                       "failure_reason": settle_error,
+                       # `damped_hold` 自己的实测量（用于与其 `static_entered` 判定对照 ——
+                       # 实测末速 0.23 mm/s 却报 static_entered=false 时，必须能看清它的窗口口径）
+                       "report": None if settle_report is None else
+                       {k: v for k, v in settle_report.items() if k != "samples"}},
             "failure": failure,
             "provider": report.get("provider"),
             "client": report.get("client"),
@@ -1826,7 +1828,8 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             raise DeclarationError("声明缺少 locomote 段（Provider 配置与默认时长必须来自声明）")
         missing = [key for key in ("provider_config", "duration_seconds",
                                    "stance_position_weight", "swing_position_weight",
-                                   "velocity_ramp_s", "leg_position_gain_scale")
+                                   "velocity_ramp_s", "leg_position_gain_scale",
+                                   "halt_at_stance")
                    if key not in section]
         if missing:
             raise DeclarationError("声明缺少 locomote 的键: %s" % missing)
@@ -1897,6 +1900,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         if velocity_ramp_s < 0.0:
             raise DeclarationError("locomote.velocity_ramp_s 必须 ≥ 0，实际 %r" % velocity_ramp_s)
         # 本路径 PD 增益缩放（见下方 `saved_gains` 处的实测依据）：必须 > 0，1.0 = 与 stand 同档。
+        halt_at_stance = bool(section["halt_at_stance"])   # 见声明注释（指令归零 ⇒ 冻结在四足落地位形）
         leg_position_gain_scale = float(section["leg_position_gain_scale"])
         if not leg_position_gain_scale > 0.0:
             raise DeclarationError(
@@ -2098,6 +2102,13 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                               "stance_foot_world_m": entry["foot_world"]}
             return pose
 
+        # 站定状态机（两条实测教训都在这里）：
+        #   · 只看"指令是否为零"会在 t=0 误触发并**永久冻结相位**（转向工况偏航 44°→28°）；
+        #   · 只看"非零 → 零的跳变"又会漏掉**从一开始就零指令**的 `hold` 工况（漂移回到 0.0286）。
+        # ⇒ 规则：**指令持续为零 ≥ 一个步态周期**才进入站定；指令重新非零立即释放。
+        #   "一个步态周期"是声明量（`trot.period_s`），不是实现层的常数。
+        halt_state = {"frozen_elapsed": None, "zero_since": None}
+
         def target_provider(cycle_index, now):
             """摆动/支撑的关节形状目标（MPC 只提供接触力矩；形状仍由既有目标生成给出）。
 
@@ -2107,6 +2118,26 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             elapsed = now - onset
             state_holder["elapsed_s"] = elapsed          # 采样对齐步态相位用（同一拍）
             vx_cmd, vy_cmd, wz_cmd = command_now(elapsed)
+            # 站定（`locomote.halt_at_stance`）：**只在"非零 → 零"跳变之后**生效 ——
+            # 等到"四足实测接触力都超过声明阈值"的那一拍把相位冻结（支撑相目标即中立体形），
+            # 从而把"迈步中途停机"变成"四足落地后站定"（实测依据见声明注释）。
+            command_is_zero = (vx_cmd == 0.0 and vy_cmd == 0.0 and wz_cmd == 0.0)
+            if not command_is_zero:
+                halt_state["zero_since"] = None
+                halt_state["frozen_elapsed"] = None      # 指令重新非零 ⇒ 释放（相位继续推进）
+            elif halt_at_stance:
+                if halt_state["zero_since"] is None:
+                    halt_state["zero_since"] = elapsed
+            if (halt_at_stance and command_is_zero and halt_state["zero_since"] is not None
+                    and (elapsed - halt_state["zero_since"]) >= float(trot["period_s"])):
+                if halt_state["frozen_elapsed"] is None:
+                    loads = self._leg_contact_forces(trot, geometry)
+                    threshold = float(trot["verification"]["contact_force_threshold_n"])
+                    if all(float(loads.get(code, 0.0)) > threshold for code in geometry):
+                        halt_state["frozen_elapsed"] = elapsed
+                        state_holder["halted_at_s"] = elapsed
+                if halt_state["frozen_elapsed"] is not None:
+                    elapsed = halt_state["frozen_elapsed"]          # 冻结相位 ⇒ 目标不再随步态推进
             # 退让项的步幅增益（`gait.walk.stride_scale`）：只放大**足端退让**的给进速率，
             # QP 的参考仍用未放大的指令（它跟踪的是真实期望速度，不许被放大）。
             walk_scale = float((trot.get("walk") or {}).get("stride_scale") or 1.0)
