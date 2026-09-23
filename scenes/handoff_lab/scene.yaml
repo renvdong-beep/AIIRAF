@@ -38,8 +38,14 @@ robots:
     # build/acceptance/go2-skills/report.json（simulation=true）。
     # 引用从占位改为路径的同时，capabilities 必须至少一项（schema 的 if/then 门禁）。
     profile: profiles/unitree_go2_mujoco.yaml
-    capabilities: [stand, stop]
-    note: 厂家 MJCF 已探测（12 个力矩型 motor、imu site、无相机/无雷达），仅证明低层模型存在，不代表导航/停靠能力（AGENTS.md 6.8）；场景构建器按本场景声明注入相机/雷达/托盘/道具/光照，厂商文件只读。locomote 未声明：首期无步态控制器，只交付显式拒绝路径（证据同上），停靠/行走/载荷确认见 scenario.yaml 的 pending 登记。
+    # 2026-09-23 同步：`locomote` 已在**两层验收通过后**声明（Profile 与适配器的
+    # IMPLEMENTED_CAPABILITIES 同步更新）。本清单是**场景级**能力声明，必须跟着 Profile 走
+    # （同一事实的第二处出现 ⇒ 改 Profile 时必须一并改这里，否则场景层会误拒）。
+    #   证据：适配器四工况 build/acceptance/go2-locomote/report.json（passed=true，
+    #         forward 误差 0.0659 / backward 0.0571 ≤0.10）+ 技能层
+    #         build/iraf-a6a12/skill-layer-run.json（stand/locomote/stop 三步全 SUCCEEDED）
+    capabilities: [stand, stop, locomote]
+    note: 厂家 MJCF 已探测（12 个力矩型 motor、imu site、无相机/无雷达），仅证明低层模型存在，不代表导航/停靠能力（AGENTS.md 6.8）；场景构建器按本场景声明注入相机/雷达/托盘/道具/光照，厂商文件只读。locomote 已在 MuJoCo 仿真里验收并声明（速度指令可走/转/退，受安全策略 max_speed_mps=0.5 约束；**上板部署证据另计**）；**停靠/放托盘/载荷确认仍未交付**，见 scenario.yaml 的 pending 登记（步骤 18）。
   - id: humanoid_static
     kind: humanoid
     role: scene_entity
