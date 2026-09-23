@@ -318,8 +318,9 @@ from iraf_adapters.unitree.mpc.qp_builder import dynamics_equality  # noqa: E402
 
 
 def _dyn_inputs(n):
-    # 稠密 Ad（真实上游 Ad 是稠密的 ⇒ 每个次对角块贡献 12×12 = 144 个非零）
-    Ad = (np.arange(144, dtype=float).reshape(12, 12) + 1.0) * 0.01
+    # 稠密但**良态**的 Ad：真实上游 Ad 是稠密且稳定（否则 144 非零/块的记账不成立，
+    # 而病态 Ad 会让求解打满 max_iter —— 上一版用 `[1..144]*0.01` 就是这种情况）
+    Ad = 0.5 * np.eye(12) + 0.001 * np.arange(144, dtype=float).reshape(12, 12)
     Bd = np.zeros((n, 12, 12))
     for k in range(n):
         Bd[k, k % 12, k % 12] = 1.0
@@ -397,3 +398,108 @@ def test_dynamics_equality_matches_captured_upstream_bitwise():
         assert beq.tobytes() == np.asarray(qp["uba"], dtype=float)[:192].tobytes()
         checked += 1
     assert checked >= 20
+
+
+# ---- 装配 + 缩放 + 原生求解 ----
+
+from iraf_adapters.unitree.mpc.qp_builder import assemble_qp, solve_qp  # noqa: E402
+
+#: 求解状态的可用词表：直接消费模块的单一事实来源（不自己造词表）
+from iraf_adapters.unitree.mpc.qp_builder import USABLE_SOLVER_STATUSES as SOLVED_STATUSES  # noqa: E402
+
+
+def _qp_inputs(n, m):
+    Ad, Bd, x0, gd = _dyn_inputs(n)
+    return {"mpc_model": m, "x_ref": np.zeros((12, n)), "contact_table": np.full((4, n), 1, dtype=int),
+            "ad": Ad, "bd": Bd, "x0": x0, "gd": gd}
+
+
+def test_assemble_qp_shapes_match_upstream_measured():
+    m = _model()
+    n = int(m["horizon"])
+    qp = assemble_qp(**(_qp_inputs(n, m)))
+    assert qp["n_vars"] == 384 and qp["n_cons"] == 448          # 与实测 A 形状 [448, 384] 一致
+    assert len(qp["lbx"]) == len(qp["ubx"]) == 384
+    assert len(qp["lba"]) == len(qp["uba"]) == 448
+    assert int(qp["a_rows"].max()) == 447
+    assert int(qp["a_cols"].max()) == 383
+
+
+def test_assemble_qp_row_order_is_equality_then_friction():
+    m = _model()
+    n = int(m["horizon"])
+    qp = assemble_qp(**(_qp_inputs(n, m)))
+    eq_rows = qp["a_rows"] < 192
+    fr_rows = qp["a_rows"] >= 192
+    assert eq_rows.any() and fr_rows.any()
+    # 摩擦段列必须全部落在力段（>= 192）
+    assert np.all(qp["a_cols"][fr_rows] >= 192)
+    # 等式段必须不占力段以外的行
+    assert np.all(qp["lba"][:192] == qp["uba"][:192])
+
+
+def _captured_qp(index=0):
+    """取截获的上游真实 QP（证据缺席即 skip，不用自造工况冒充）。"""
+    import json
+    path = ROOT / "build" / "research" / "mpc-repo" / "qp_inputs.json"
+    if not path.is_file():
+        pytest.skip("缺少截获证据 %s" % path)
+    captured = json.loads(path.read_text(encoding="utf-8"))
+    for key in ("x_ref", "contact_table", "Ad", "Bd", "x0", "gd"):
+        if key not in captured["qps"][index]:
+            pytest.skip("证据文件未含 %s（需重跑探针）" % key)
+    return captured["qps"][index]
+
+
+def test_solve_qp_returns_original_units_and_status():
+    """可解性/原单位/状态断言走**真实 QP 回放**。
+
+    为什么不用自造合成工况：我曾用 `Ad = [1..144]·0.01`（稠密病态）+ `x_ref=0` + 全腿支撑做夹具，
+    求解直接打满 `max_iter`（真实 QP 只需 60 次迭代）⇒ 那种工况不具代表性，判据会变成"考我的夹具"
+    而不是"考求解链"。真实数据更强，且不引入第二套事实。
+    """
+    pytest.importorskip("osqp", reason="solve_qp 需要 osqp（Provider 独立进程环境）")
+    qp = _captured_qp(0)
+    out = solve_qp(_model(), np.asarray(qp["x_ref"]), np.asarray(qp["contact_table"]),
+                   np.asarray(qp["Ad"]), np.asarray(qp["Bd"]), np.asarray(qp["x0"]),
+                   np.asarray(qp["gd"]))
+    assert out["status"] in SOLVED_STATUSES
+    assert out["x"].shape == (384,)
+    assert np.all(np.isfinite(out["x"])) and np.isfinite(out["objective"])
+
+
+def test_solve_qp_rejects_bad_inputs():
+    m = _model()
+    n = int(m["horizon"])
+    bad = _qp_inputs(n, m)
+    bad["contact_table"] = np.zeros((3, n), dtype=int)
+    with pytest.raises(ValueError):
+        solve_qp(**bad)
+
+
+def test_solve_qp_matches_upstream_solution_objective():
+    pytest.importorskip("osqp", reason="solve_qp 需要 osqp（Provider 独立进程环境）")
+    """解级判据：状态可用 + 目标值相对差 ≤ 1e-3（与第 2 块验收同口径）。"""
+    import json
+    path = ROOT / "build" / "research" / "mpc-repo" / "qp_inputs.json"
+    if not path.is_file():
+        pytest.skip("缺少截获证据 %s" % path)
+    captured = json.loads(path.read_text(encoding="utf-8"))
+    m = _model()
+    rels, checked = [], 0
+    for qp in captured["qps"]:
+        for key in ("x_ref", "contact_table", "Ad", "Bd", "x0", "gd", "x_up", "h_diag", "g"):
+            if key not in qp:
+                pytest.skip("证据文件未含 %s（需重跑探针）" % key)
+        out = solve_qp(m, np.asarray(qp["x_ref"]), np.asarray(qp["contact_table"]),
+                       np.asarray(qp["Ad"]), np.asarray(qp["Bd"]), np.asarray(qp["x0"]),
+                       np.asarray(qp["gd"]))
+        assert out["status"] in SOLVED_STATUSES
+        xu = np.asarray(qp["x_up"], dtype=float)
+        hd = np.asarray(qp["h_diag"], dtype=float)
+        g = np.asarray(qp["g"], dtype=float)
+        f_up = 0.5 * float(xu @ (hd * xu)) + float(g @ xu)
+        rels.append(abs(out["objective"] - f_up) / max(1.0, abs(f_up)))
+        checked += 1
+    assert checked >= 20
+    assert max(rels) <= 1.0e-3

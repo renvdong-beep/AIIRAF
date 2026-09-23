@@ -21,7 +21,7 @@ import numpy as np
 
 __all__ = ["REQUIRED_MODEL_KEYS", "REQUIRED_BOUNDS_KEYS", "REQUIRED_FRICTION_KEYS",
            "cost_diagonal", "state_cost_weights", "box_bounds", "linear_cost", "friction_rows",
-           "dynamics_equality"]
+           "dynamics_equality", "assemble_qp", "solve_qp", "USABLE_SOLVER_STATUSES"]
 
 #: `mpc_model` 中本模块消费的键。
 REQUIRED_MODEL_KEYS = ("q_diag", "r_diag", "horizon")
@@ -29,6 +29,16 @@ REQUIRED_MODEL_KEYS = ("q_diag", "r_diag", "horizon")
 #: 状态维 / 输入维（12 = 质心 6 自由度状态；4 足 × 3 维接触力）。
 STATE_DIM = 12
 INPUT_DIM = 12
+
+#: 求解状态的**可用词表**：单一事实来源是 `freshness`（`{"ok", "ok_inaccurate"}`）。
+#: 这里不重写一份，而是从它派生 —— 曾经我在判据里写 `status == "solved"`，
+#: 结果 20/20 解被误判为"不通过"（其实全是 `ok`）。
+def _usable_statuses():
+    from iraf_adapters.unitree.mpc.freshness import _USABLE_STATUS
+    return tuple(sorted(key for key, usable in _USABLE_STATUS.items() if usable))
+
+
+USABLE_SOLVER_STATUSES = _usable_statuses()
 
 #: 盒约束需要的声明键。
 REQUIRED_BOUNDS_KEYS = ("horizon", "min_normal_force_n")
@@ -181,6 +191,56 @@ def friction_rows(contact_table, mpc_model):
                 r0 += 1
     return {"rows": rows, "cols": cols, "vals": vals, "n_rows": r0,
             "upper_bound": upper, "lower_bound": np.full(r0, -np.inf, dtype=float)}
+
+
+def assemble_qp(mpc_model, x_ref, contact_table, ad, bd, x0, gd):
+    """把六项装配成一份完整 QP（与上游 `qp_args` 同形）：`h_diag/g/a_*/lx/ux/lba/uba`。
+
+    `A = vertcat(A_eq, A_friction)`（行序：等式段 192 行在前、摩擦段 256 行在后），
+    `lb/ub = vertcat(beq, 摩擦下/上界)`。**不**用 `osqp_native.stack_identity_rows` 另加单位行——
+    上游的 `I` 已经在 `A_eq` 的第一列块里（重复加会让行数变 640，与实测 448 矛盾）。
+    """
+    cost = cost_diagonal(mpc_model)
+    g = linear_cost(x_ref, mpc_model)
+    box = box_bounds(contact_table, mpc_model)
+    friction = friction_rows(contact_table, mpc_model)
+    A_eq, beq = dynamics_equality(ad, bd, x0, gd, mpc_model)
+    n_eq = A_eq.shape[0]
+    nz = np.nonzero(A_eq)
+    a_rows = nz[0].tolist() + [r + n_eq for r in friction["rows"]]
+    a_cols = nz[1].tolist() + list(friction["cols"])
+    a_vals = A_eq[nz].tolist() + list(friction["vals"])
+    lb = np.concatenate([beq, friction["lower_bound"]])
+    ub = np.concatenate([beq, friction["upper_bound"]])
+    return {"h_diag": cost["h_diag"], "g": g,
+            "a_rows": np.asarray(a_rows, dtype=np.int64),
+            "a_cols": np.asarray(a_cols, dtype=np.int64),
+            "a_vals": np.asarray(a_vals, dtype=float),
+            "lbx": box[0], "ubx": box[1], "lba": lb, "uba": ub,
+            "n_vars": int(cost["size"]), "n_cons": int(n_eq + friction["n_rows"])}
+
+
+def solve_qp(mpc_model, x_ref, contact_table, ad, bd, x0, gd, prev=None):
+    """装配 → 等价变量缩放（`z = D⁻¹w`）→ 原生 OSQP 求解 → 回代到原问题单位。
+
+    返回 `{"x", "objective", "status", "iter", "scaled"}`：`x` 为原问题变量、`objective` 为
+    `½xᵀHx + gᵀx`（用**未缩放**的 `h_diag/g` 算），便于与上游解的目标值直接对比。
+    """
+    from iraf_adapters.unitree.mpc import osqp_native as on
+    from iraf_adapters.unitree.mpc import qp_scaling as qs
+
+    qp = assemble_qp(mpc_model, x_ref, contact_table, ad, bd, x0, gd)
+    d = qs.build_scale_diag(qp["h_diag"])
+    h_s = qs.scale_hessian_diag(qp["h_diag"], d)
+    g_s = qs.scale_linear_cost(qp["g"], d)
+    a_s = qs.scale_matrix_nonzeros(qp["a_vals"], qp["a_cols"], d)
+    lbx_s, ubx_s = qs.scale_box_bounds(qp["lbx"], qp["ubx"], d)
+    out = on.solve_native(h_s, g_s, qp["a_rows"], qp["a_cols"], a_s,
+                          lbx_s, ubx_s, qp["lba"], qp["uba"], prev=prev)
+    z = qs.from_scaled_variables(np.asarray(out["x"], dtype=float), d)
+    objective = 0.5 * float(z @ (qp["h_diag"] * z)) + float(qp["g"] @ z)
+    return {"x": z, "objective": objective, "status": on.classify_status(out.get("status")),
+            "iter": out.get("iter"), "scaled": True}
 
 
 def dynamics_equality(ad, bd, x0, gd, mpc_model):
