@@ -66,3 +66,19 @@ evidence:
     - control_frequency_hz
     - friction_pairing            # 同摩擦配对：(我们 0.4 / 它 0.4)、(我们 0.8 / 它 0.8)
     - qp_overrun_count            # 移动中 QP 越界次数（记录项）
+
+# MPC Provider 的**部署参数**（A6a-2；铁律 5.3：集中在版本化声明，业务代码不得硬编码）
+# 只放"怎么起、等多久、多久更新"，**不放**任何安全阈值（阈值只在安全策略）与判据（在上面的 velocity_tracking）。
+mpc_provider:
+  # 独立进程入口（模块形式，见 src/iraf_adapters/unitree/mpc/worker.py）
+  worker_module: iraf_adapters.unitree.mpc.worker
+  # 求解器来源（"模块:可调用对象"），worker 侧经 IRAF_MPC_SOLVER 注入；默认即生产实现
+  solver: iraf_adapters.unitree.mpc.osqp_native:solve_native
+  # 单次调用的墙钟超时（ms）：父侧超时即 kill+重启并按 damped_hold 处理
+  call_timeout_ms: 200.0
+  # MPC 更新率（Hz）：必须整除 control_frequency_hz（100 Hz ⇒ 50 或 25…），且 ≤ 预算口径
+  update_hz: 50.0
+  # 解新鲜度：由 adapters/unitree/mpc/freshness.py 的单一事实来源保证（= 2 × 20.0 ms = 40.0 ms），
+  # 这里只登记"与 update_hz 一致"的自洽关系，不重复写数字。
+  staleness_periods: 2.0
+
