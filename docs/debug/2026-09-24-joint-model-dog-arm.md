@@ -316,6 +316,38 @@ delta=[0.004229494155511382, 5.415238119581278e-06, 0.013817039392046003]`
 （纪律提醒：这类"声明了却不起作用"的问题必须当成**链路缺陷**查到具体一行，不能用"改个数字
 试试"绕过 —— 否则同一类问题会在别的参数上重演。）
 
+### 9.3 参数链路已逐环核对：**四环全部原样透传**，矛盾点收窄到 `pick_object` 内部
+
+已核（每一环都读了实现，不是推断）：
+
+| 环节 | 位置 | 结论 |
+| --- | --- | --- |
+| 步骤 → 请求 | `scripts/scenario.py: _dispatch_step` → `_request(..., step["params"], ...)` | 原样放进 `parameters` ✓ |
+| 策略准入 | `iraf_core/policy.py: PolicyGateway.validate` | `PolicyDecision(..., parameters)` 原样返回；仅当 `duration > min(manifest.timeout_seconds*1000, safety.max_duration_ms)` 才拒绝（8000 ≤ 30000，不触发）✓ |
+| 清单分发 | `iraf_core/registry.py: Manifest.invoke(inputs)` | `validate_inputs` 后原样交给 `provider.execute(inputs, lease)` ✓ |
+| Provider | `iraf_skills/common/manipulation.py: PickObjectProvider` | `duration_ms=int(inputs.get("duration_ms", 1000))` → `backend.pick_object(duration_ms=…)` ✓ |
+
+而实测的两个数字互相矛盾（这是当前**未定位**项，不臆测原因）：
+- 探针 `grasp_geometry_probe.py` 用**与 pick 相同的三次 `_move_trajectory`（各 1600 ms）+ 同名前馈**
+  走到 grasp 位姿 ⇒ 门禁残差 **7.551e-06 m**；
+- 走 `nominal` 的 s03_pick（声明 `duration_ms: 8000` ⇒ 每段同样 1600 ms）⇒ 门禁残差
+  **0.013817039392046003 m（z 向）**，且两次复跑逐位相同、墙钟 3.697321214945987 → 3.718921724939719 s
+  （只差 0.6% ⇒ 时长几乎没起作用）。
+
+⇒ 下一步的**仪器化点**（唯一还没直接观测的地方是 pick 内部拿到的实参）：
+1. 给 `MujocoBackend.pick_object` 加一个与既有 `IRAF_DEBUG_PICK` 同风格的观测（打印
+   `duration_ms`、三段实际 `duration_ms//5`、`home/approach/grasp_positions` 的键与 `gripper`
+   配置来源路径）⇒ 一眼看出 pick 内部与探针的入参是否一致；
+2. 同一次观测里打印 `_pick_ctrl_offsets(phase)` 的返回（前馈是否真的被取到 —— 例如键名
+   与位置指令不一致时前馈会**静默失效**，而 `build_robot_pick_scene` 的显式校验在 Piper 这条
+   路径上**没有**（§9 第 2 点）：这正是最可疑的一环）；
+3. 必要时把探针与 pick 的**同一段**代码抽成共享函数，消除"两处实现"本身。
+
+（第 2 点给出一个具体嫌疑：Piper 的 `_pick_ctrl_offsets` 返回的键是**关节名**，而
+`_move_trajectory` 用 `_actuator_channel(name)` 解析 —— 若前馈字典里的名字不是该段的
+位置指令键，`unknown` 检查会抛错（不会静默）；但若前馈**相位字典为空**则整段无前馈 ⇒
+回到 §8 的下垂状态。观测先看这一条。）
+
 下一步的判死顺序（不要一次改多处）：
 1. 门禁用的是 `pad_boxes`（若声明）否则左右指腹 geom 的**中点**；先量"模型里实际 pad 中点
    与目标中心的几何关系"（`data.geom_xpos` + `xpos[target]`，逐轴），与门禁期望的
