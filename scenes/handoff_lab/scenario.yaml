@@ -102,6 +102,10 @@ scenarios:
           # 参数来源键：由场景报告 targets[] 组装世界系 grasp_pose（见下方说明与
           # scripts/scenario.py: resolve_param_sources）。声明里不复制坐标。
           grasp_pose_from: report_target
+          # 时长必须在声明里给出（技能入参契约允许 duration_ms，1..30000；缺省时每段只剩极短时间
+          # ⇒ 到位精度不达标）。取值依据是**实测**（2026-09-24）：每段 1600 ms（本值 8000/5）下
+          # 门禁残差 7.551e-06 m（远小于 0.005），同一路径不带前馈时为 1.2113e-02 m。
+          duration_ms: 8000
         # 输入来源（2026-09-24 落地，原"待交付"登记已解除）——`pick_object` 必填的 `grasp_pose`
         # 是**目标体在世界系的位置 + 朝向**（不是 TCP/指尖位姿）：适配器会拿 `position` 与
         # `data.xpos[target_body]` 在 `pose_tolerance_m` 内核对、拿 `orientation` 推出接近轴
