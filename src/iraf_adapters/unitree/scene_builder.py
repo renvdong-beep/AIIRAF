@@ -510,8 +510,15 @@ def _attach_robots(staging, scene, root, attached_ids):
     """
     import mujoco
 
+    staging_parsed = ET.parse(str(staging)).getroot()
+    key_qpos_by_index = {}
+    for parsed_key in staging_parsed.find("keyframe") or []:
+        if parsed_key.tag == "key" and parsed_key.get("qpos"):
+            key_qpos_by_index[len(key_qpos_by_index)] = [
+                float(v) for v in parsed_key.get("qpos").split()]
     spec = mujoco.MjSpec.from_file(str(staging))
     records = []
+    attached_robot_values = []
     for robot_id in attached_ids:
         entity = resolve_robot(scene, robot_id)
         profile_path, _source = resolve_profile(root, entity, robot_id)
@@ -554,14 +561,25 @@ def _attach_robots(staging, scene, root, attached_ids):
         frame = spec.worldbody.add_frame(pos=[float(v) for v in pos],
                                         quat=[float(v) for v in quat])
         spec.attach(child, prefix=prefix, frame=frame)
-        keys = list(getattr(spec, "keys", []) or [])
-        for key in keys:
-            key.qpos = list(key.qpos) + joint_values
+
+        attached_robot_values.append(list(joint_values))
         records.append({"id": robot_id, "prefix": prefix, "source": str(model["file"]),
                         "placement": {"pos_m": [float(v) for v in pos],
                                       "quat_wxyz": [float(v) for v in quat]},
                         "child_dir": str(child_dir),
-                        "home_joints": len(joint_values), "keyframes_extended": len(keys)})
+                        "home_joints": len(joint_values),
+                        "keyframes_extended": len(list(getattr(spec, "keys", []) or []))})
+    # ---- 关键帧：**覆写**为「主模型关键帧 + 各附加本体的声明初值」（所有本体附加完成后统一做）
+    # ⚠ 两处实测教训：① `attach()` 可能自行扩展主模型的关键帧 ⇒ 必须覆写而不是追加；
+    # ② 收集附加初值的顺序必须在覆写**之前**（我第一版把覆写放在循环内、用还没收集完的列表
+    #    ⇒ 实际写回 26 而非 34，报 `keyframe 0: invalid qpos size, expected length 34`）。
+    if attached_robot_values:
+        flat = [value for values in attached_robot_values for value in values]
+        base_qpos = [float(v) for v in key_qpos_by_index.get(0, [])]
+        for index, key in enumerate(list(getattr(spec, "keys", []) or [])):
+            base = key_qpos_by_index.get(index, base_qpos)
+            key.qpos = list(base) + flat
+
     # ---- 资产自包含（A1）：两个本体的 meshdir 不同 ⇒ 合成后相对路径互指（实测
     # `.../piper_description/mujoco_model/../../../vendor/unitree_go2/.../base_link.STL` 不存在）。
     # 做法：把每个附加本体引用的 mesh/texture 拷进 `<产物目录>/assets/<本体 id>/`，
