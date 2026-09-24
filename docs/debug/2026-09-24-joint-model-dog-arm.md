@@ -252,7 +252,52 @@ delta=[0.0022387082780914447, 5.394919764631356e-06, 0.011904138538288277]`
 **不在实现层写默认值**。验收：同一探针的关节误差降到 ≤1e-3 rad 量级、s03_pick 的
 `distance` ≤ 0.005 m。
 
-## 9. 下一步
+## 9. 修法的精确配方与接线点（2026-09-24 查清，未实施）
+
+**结论**：Piper 抓取相位的重力前馈**没有生成过**，而仓库里已有现成配方与被验证过的消费路径。
+
+现成配方（`src/iraf_core/kinematics.py:507`）：
+
+```python
+gravity_hold_ctrl(model, arm_joints, hold_positions, hold_ms=4000, tolerance_rad=1e-3,
+                  use_keyframe=True)
+# 返回 ({关节名: ctrl 增量}, 证据字典)；内部：qfrc_bias(qvel=0)/gainprm[0]，并做**静态保持自证**
+# （把增量加到目标 ctrl 上跑 hold_ms，要求残余关节误差 ≤ tolerance_rad，否则抛 KinematicsError）
+```
+
+消费路径（`scripts/build_robot_pick_scene.py:466-491`，UR5e 在用）：把
+`reference["gravity_feedforward"][phase]` 从**关节名**翻译成 **ctrl 通道名**后写进
+`gripper["gravity_feedforward"][phase]`，并对"前馈键与位置指令键不一致"**显式失败**（错位 = 静默失效）。
+后端取用处是 `MujocoBackend._pick_ctrl_offsets(phase)` → `_move_trajectory(..., ctrl_offsets)`。
+
+**接线点有三处（这是为什么不能只写一行）**：
+1. `scripts/build_piper_baseline.py: build()`（`scene = build_scene(...)` 之后）—— 对
+   `reference` 的 home/approach/grasp/lift 四个姿态逐个调用 `gravity_hold_ctrl`，写回
+   `reference["gravity_feedforward"]` + `reference["gravity_feedforward_evidence"]`；
+   ⚠ `home` 是 `{关节名: 值}` 而 approach/grasp/lift 是 `{"joint_positions": {...}}`（两种形状），
+   ⚠ 必须用**注入增益后**的模型（`build/models/piper-pick-scene.xml`，`scene.arm_position_kp = 200`）
+   作为 `model` 入参，否则增益错、增量就错。
+2. 该路径用的是 **Piper 自己的** `build_piper_pick_scene.build_scene`（不是通用
+   `build_robot_pick_scene`）⇒ 缺少"关节名 → ctrl 通道名"的翻译与键一致性校验，需按第 2 段的方式补上
+   （Piper 上执行器与关节同名，但**不得**依赖这个巧合；校验必须显式）。
+3. `config/piper_simulation_baseline.yaml` 需新增两个**声明**量：`hold_ms` 与 `tolerance_rad`
+   （实现层不写默认值）。
+
+**勘误（留痕）**：本文件 §8 之前我写"报告里没有参考姿态"依据的是 `reference_pose`/`grasp_pose` 两个
+键名 —— 实际键名是 `reference_poses`（`build_piper_baseline.build()` 的 `scene["reference_poses"]
+= reference`）。但**当前盘上的** `build/models/piper-pick-scene.json` 里确实没有该键
+（实测 `reference_poses 存在: False`、`gripper.gravity_feedforward: None`）⇒ 结论不变，只是
+"为什么没有"应当说成"该报告由更早的路径生成/尚未重跑"，而不是"构造器不写"。这也是又一次
+"别假设报告键名"的实例。
+
+验收（下轮照做即为闭环）：
+1. 重跑 `python3 scripts/build_piper_baseline.py`（默认 `--baseline config/piper_simulation_baseline.yaml`
+   `--scene build/models/piper-pick-scene.xml`），报告出现 `gripper.gravity_feedforward` 四个相位；
+2. `build/iraf-a6a14/grasp_error_probe.py` ⇒ `max|q − q_des|` 从 0.005314844537182922 rad 降到 ≤1e-3 量级；
+3. `scenario.py run --scene scenes/handoff_lab --scenario nominal` ⇒ s03_pick 的 `distance` ≤ 0.005 m、
+   三项判据由"无证据判失败"转为有实测值。
+
+## 10. 下一步
 
 1. `s03_pick` 三项判据口径（`pose_tolerance_m` / `min_lift_delta_m` / `require_bilateral_contact`）
    → s04/s05 → `nominal` 全场景 → 两臂轮番运输。
