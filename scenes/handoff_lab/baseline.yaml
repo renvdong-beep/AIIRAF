@@ -16,6 +16,21 @@ robots:
     closed_by: "步骤 12"
     reason: 人形只作静态实体，不进入 Skill 闭环，因此不需要机型基线；资产登记在 vendor/ 与许可证 BOM。
 
+# --- 联合世界（多本体同一份 MJCF + 共享植物）的机型绑定 ---
+# 为什么单独一组而不是替换上面的 robots：单本体产物（狗只用 go2 的 MJCF）与联合产物
+# `build/scenes/handoff_lab/handoff_lab_joint.xml` 是**两个不同的模型**，验收数字不可互换
+# （docs/debug/2026-09-24-joint-model-dog-arm.md §5 实测：两个后端=两个世界；§10：联合世界跑绿的
+# 里程碑）。因此两套绑定并存、由 `scenario.py run --world {single,joint}` 选择，缺省 single
+# ⇒ 既有验收（s02 停靠 0.02858758381668675 等）仍可逐位复现。
+# 共享植物角色：unitree_go2 = owner（唯一时间推进者）、piper = guest（注入 owner 的植物）。
+robots_joint:
+  piper: config/machines/piper_joint.yaml
+  unitree_go2: config/go2_joint.yaml
+  humanoid_static:
+    state: unverified
+    closed_by: "步骤 12"
+    reason: 人形只作静态实体、不进入 Skill 闭环；联合世界里同样不装配（无后端绑定）。
+
 initial_state:
   # 参考姿态来源写 profile 而不是复制关节角：profile 改了这里自动跟随，避免两份事实。
   piper:

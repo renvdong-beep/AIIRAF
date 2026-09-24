@@ -440,6 +440,17 @@
             ]
           }
         },
+        "robots_joint": {
+          "type": "object",
+          "minProperties": 1,
+          "description": "**联合世界**（多个本体装进同一份 MJCF、共享同一株植物）的机型绑定；键集合同样必须与 scene.robots[].id 完全一致。缺省不出现 ⇒ 单本体世界（默认行为逐位不变）。为什么单独一组：单本体产物与联合产物是**两个不同的模型**，验收数字不可互换（docs/debug/2026-09-24-joint-model-dog-arm.md §5/§10）。它同时声明了共享植物的角色与 owner（见各机型声明的 robot.plant 段）。",
+          "additionalProperties": {
+            "oneOf": [
+              {"$ref": "#/definitions/repo_relative_path"},
+              {"$ref": "#/definitions/unverified_ref"}
+            ]
+          }
+        },
         "initial_state": {
           "type": "object",
           "minProperties": 1,

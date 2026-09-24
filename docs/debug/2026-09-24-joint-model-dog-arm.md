@@ -513,7 +513,47 @@ gravity_hold_ctrl(model, arm_joints, hold_positions, hold_ms=4000, tolerance_rad
 - **磁盘上的报告可能是上一轮的**：进程崩溃时报告不落盘 ⇒ 读报告前先确认本次运行真的写成功了
   （本次的教训：把陈旧报告的失败原因当成新结果）。
 
-## 11. 下一步
+## 11. 联合世界迁移（2026-09-24）：`--world joint` 已可用，s02 在联合模型通过
+
+声明与执行器的改动（默认行为不变）：
+- `config/scene.schema.json`：`scene_baseline` 新增可选 `robots_joint`（联合世界的机型绑定）；
+- `scenes/handoff_lab/baseline.yaml`：新增 `robots_joint: {piper: config/machines/piper_joint.yaml,
+  unitree_go2: config/go2_joint.yaml, humanoid_static: 待交付}`（保留原 `robots` ⇒ 单本体验收仍可复现）；
+- `scripts/scenario.py`：`run --world {single,joint}`（缺省 single）；`machine_declaration(...,
+  world=)` 按世界取绑定、缺声明即显式失败；装配时按**声明角色排序**（owner 先、guest 后）并传入
+  `plant_registry`；报告新增 `"world"` 字段留痕。
+
+实测：
+- `stand_stop --world joint` ⇒ **exit 0 / passed=true**（stand 末速 2.6904769153005103e-05 m/s；
+  stop 末速 0.0026950035834258264），报告 `world: joint` ✓ 两个本体在同一株植物上装配并执行。
+- `nominal --world joint` ⇒ exit 5（诚实红）：
+  · s01 ✓（2.6904769153005103e-05 m/s）
+  · **s02_dock ✓ 在联合模型里通过**：平移 0.028587598959680105 ≤ 0.03、偏航 0.6011883605747808 ≤ 2.0、
+    末速 0.0002612973083285042 ≤ 0.05（与单本体基准 0.02858758381668675 同量级 —— 狗是独立刚体，
+    加入臂不改变它的动力学，这正是预期）
+  · s03_pick 失败：`等待 owner(unitree_go2) 推进到第 10751 步超时（0.060 s，当前 10750 步）`
+
+### 11.1 架构性卡点（本轮判死，下一步的入口）
+
+场景执行器是**逐步串行**的：执行 s03 时狗的 runtime 并不在工作 ⇒ **没有人在推进植物**
+（植物只在某个后端 `step` 时才前进）。这不是带宽或超时系数问题（我用 1 步 × timestep 0.002 s ×
+系数 30 = 0.060 s 的超时精确对上），而是**"一份植物 + 多控制器"里"时间推进者必须在有人工作时一直活着"**
+这条约束没有被满足。
+
+而且四足是**力矩型执行器**（PD 在适配器每拍算，见 `config/go2_loopback.yaml` 的 `torque_limit_source:
+model` 与 loopback 报告 `stop.collapsed: true`）⇒ 没有人给它算控制量时它会**塌**（§5.2 已量化：
+0.1 s 内 0.288372 → 0.077172）。所以联合世界里"狗站着、臂去抓"这件事，要求狗的控制器在**臂执行期间
+持续在线**，否则托盘会随狗塌掉而离开臂的可达范围。
+
+**修法（下一步，按声明而非硬编码）**：
+1. 在 owner 的机型声明里增加"植物驻留"声明（例如 `robot.plant.hold: {skill: stand, duration_ms: N,
+   reissue: true}`），表示"联合世界执行期间由本本体持续执行该技能维持植物状态"；
+2. `run_scenario` 在 world=joint 时按该声明起一个**后台驻留线程**（循环执行该技能；技能本身走
+   SkillRuntime，租约 TTL 需覆盖循环周期 —— 已有 TTL 经验见 §10 第 4 点），并在所有步骤结束后
+   停止它、把"驻留期间的实测"（如躯干高度序列）写进报告；
+3. 判据仍然只来自实测：臂抓取的三项判据 + 驻留期间狗的高度/姿态不越界（阈值来自声明）。
+
+## 12. 下一步
 
 1. `s03_pick` 三项判据口径（`pose_tolerance_m` / `min_lift_delta_m` / `require_bilateral_contact`）
    → s04/s05 → `nominal` 全场景 → 两臂轮番运输。

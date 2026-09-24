@@ -312,15 +312,34 @@ def sensor_index(scene):
     return index
 
 
-def machine_declaration(robot_id, index, baseline):
-    """解析某本体的机型声明（后端入口 + Profile 路径），并做两侧一致性核对。"""
+#: 场景包声明的"世界"（同一场景在两套模型上的执行绑定）：
+#:   single = 各本体各自的单本体产物（默认，历史行为逐位不变）
+#:   joint  = 多本体装进同一份 MJCF 的**联合世界**（共享植物；绑定写在 baseline.robots_joint）
+WORLD_BINDING_KEYS = {"single": "robots", "joint": "robots_joint"}
+
+
+def machine_declaration(robot_id, index, baseline, world="single"):
+    """解析某本体的机型声明（后端入口 + Profile 路径），并做两侧一致性核对。
+
+    `world` 选择绑定组：`single`（默认，baseline.robots = 各本体的单本体产物）或
+    `joint`（baseline.robots_joint = 多本体同一份 MJCF 的联合世界）。缺声明即显式失败，
+    不静默退回另一套（单本体与联合产物是两个不同模型，验收数字不可互换）。
+    """
+    if world not in WORLD_BINDING_KEYS:
+        raise ScenarioError(
+            "未知世界 %r（可用：%s）" % (world, sorted(WORLD_BINDING_KEYS)), EXIT_DECLARATION)
+    bindings = baseline.get(WORLD_BINDING_KEYS[world])
+    if not isinstance(bindings, dict) or not bindings:
+        raise ScenarioError(
+            "场景包未声明 baseline.%s（世界=%s 的机型绑定）：要跑联合世界必须在 baseline.yaml 补这一组，"
+            "键集合与 scene.robots[].id 一致" % (WORLD_BINDING_KEYS[world], world), EXIT_REFERENCE)
     profile_ref = index[robot_id].get("profile")
     if not isinstance(profile_ref, str):
         raise ScenarioError(
             "本体 %s 的 profile 仍是待交付占位（%r）：S2 执行器拒绝在该本体上执行步骤" % (robot_id, profile_ref),
             EXIT_REFERENCE,
         )
-    baseline_ref = (baseline.get("robots") or {}).get(robot_id)
+    baseline_ref = bindings.get(robot_id)
     if not isinstance(baseline_ref, str):
         raise ScenarioError(
             "本体 %s 的 baseline.robots 引用不是路径（%r）：机型声明缺失" % (robot_id, baseline_ref),
@@ -1112,7 +1131,8 @@ def _fault_records(faults):
     return records
 
 
-def run_scenario(scene_dir, scenario_name, *, report_path=None, require_injected_faults=False):
+def run_scenario(scene_dir, scenario_name, *, report_path=None, require_injected_faults=False,
+                 world="single"):
     """执行一个场景并写报告；返回 (report, exit_code)。"""
     scene_dir = Path(scene_dir)
     if not scene_dir.is_dir():
@@ -1147,7 +1167,7 @@ def run_scenario(scene_dir, scenario_name, *, report_path=None, require_injected
     for step in plan:
         if step["kind"] != STEP_EXECUTED or step["robot"] in bindings:
             continue
-        binding = machine_declaration(step["robot"], index, baseline)
+        binding = machine_declaration(step["robot"], index, baseline, world=world)
         check_model_available(binding["declaration_document"], ROOT)
         bindings[step["robot"]] = binding
 
@@ -1176,7 +1196,17 @@ def run_scenario(scene_dir, scenario_name, *, report_path=None, require_injected
 
     runtimes = {}
     robot_records = []
-    for robot_id, binding in bindings.items():
+    # 共享植物的登记处（联合世界）：owner 先装配并把植物登记进来，guest 再注入**同一株**；
+    # `assemble` 内部强制"guest 早于 owner ⇒ 显式失败"，这里按声明角色排序把顺序变成确定的
+    # （不依赖 steps 里谁先出现 —— 那种隐式顺序会在步骤重排后静默失效）。
+    plant_registry = {}
+
+    def _plant_role(binding):
+        spec = ((binding.get("declaration_document") or {}).get("robot") or {}).get("plant") or {}
+        return str(spec.get("role") or "")
+
+    for robot_id, binding in sorted(
+            bindings.items(), key=lambda item: 0 if _plant_role(item[1]) == "owner" else 1):
         state = assemble(
             {
                 "root": ROOT,
@@ -1191,6 +1221,7 @@ def run_scenario(scene_dir, scenario_name, *, report_path=None, require_injected
                 "declaration_document": binding.get("declaration_document"),
                 "backend": binding["backend"],
                 "safety_policy": binding["safety_policy"],
+                "plant_registry": plant_registry,
             }
         )
         runtimes[robot_id] = state
@@ -1326,6 +1357,8 @@ def run_scenario(scene_dir, scenario_name, *, report_path=None, require_injected
             "injected_faults": len([item for item in fault_records if item["injected"]]),
             "unverified_faults": len(unverified_faults),
         },
+        # 本次执行用的**世界**（single/joint）：两套绑定的验收数字不可互换，必须随报告留痕。
+        "world": str(world),
         "pending_steps": pending_steps,
         "unregistered_steps": unregistered,
         "unverified_faults": unverified_faults,
@@ -1665,6 +1698,10 @@ def main(argv=None):
     run_parser.add_argument("--scenario", required=True, help="场景名（scenario.yaml 的键）")
     run_parser.add_argument("--report", type=Path, default=None, help="覆盖报告输出路径")
     run_parser.add_argument(
+        "--world", choices=tuple(WORLD_BINDING_KEYS), default="single",
+        help="single=各本体自己的单本体产物（默认，历史行为不变）；"
+             "joint=多本体同一份 MJCF 的联合世界（baseline.robots_joint + 共享植物）")
+    run_parser.add_argument(
         "--require-injected-faults",
         action="store_true",
         help="任何故障未被注入即失败（退出码 5）：占位不是通过",
@@ -1749,6 +1786,7 @@ def main(argv=None):
             args.scenario,
             report_path=args.report,
             require_injected_faults=args.require_injected_faults,
+            world=args.world,
         )
     except ScenarioError as exc:
         print("· " + str(exc), file=sys.stderr)
