@@ -564,12 +564,31 @@ def build_backend_config(root, declaration, spec):
     realtime = spec.get("realtime")
     if not isinstance(realtime, bool):
         raise ScenarioError("robot.backend_config.realtime 必须是布尔值（是否按实时步进）", EXIT_DECLARATION)
+    # 联合模型（`--attach` 产物）× 单本体命名的差异：报告带 `manipulation.name_map` 时**透传**给后端，
+    # 使其能把声明名（Profile 口径 `joint1`）解析到联合模型里的实际名字（`piper_joint1`）。
+    # fail-closed：报告已是联合报告（声明了 manipulation.attached_robot）却没有 name_map ⇒ 拒绝装配 ——
+    # 否则臂会等到第一次运动才报"找不到关节或执行器: joint1"，那时已经跑了一半。
+    attached = (report.get("manipulation") or {}).get("attached_robot")
+    name_map = (report.get("manipulation") or {}).get("name_map")
+    if attached and not name_map:
+        raise ScenarioError(
+            "场景报告 %s 声明了 manipulation.attached_robot=%s（联合模型）却没有 name_map："
+            "联合模型里附加本体的对象一律带前缀，臂无法按声明名解析对象 ⇒ 拒绝装配"
+            "（重新运行构建入口生成报告即可带上 name_map）" % (report_path, attached),
+            EXIT_DECLARATION,
+        )
+    if name_map is not None and (not isinstance(name_map, dict) or not name_map):
+        raise ScenarioError(
+            "场景报告 %s 的 manipulation.name_map 必须是非空对象（声明名 → 模型名）" % report_path,
+            EXIT_DECLARATION,
+        )
     return {
         "model_path": model_path,
         "manipulation": {"targets": targets, "gripper": gripper},
         "vision": report.get("vision"),
         "realtime": realtime,
         "source_report": str(report_path),
+        "name_map": name_map,
     }
 
 

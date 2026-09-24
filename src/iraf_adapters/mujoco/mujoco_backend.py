@@ -189,6 +189,67 @@ def _declared_gripper_geometry(gripper):
     return {key: str(gripper[key]) for key in GRIPPER_GEOMETRY_FIELDS}
 
 
+def _parse_name_map(name_map, model):
+    """解析并**校验**「声明名 → 模型名」映射（联合模型专有）；返回 (正向表, 反向表)。
+
+    为什么需要（A 方案，2026-09-24）：联合模型把附加本体整体加前缀（`piper_joint1`），
+    而 Profile / 技能参数口径是**声明名**（`joint1`）。若不映射，臂后端在联合模型上
+    直接报 `找不到关节或执行器: joint1`（实测）——"Profile 名 == 模型名"这条隐含前提
+    第一次被跨本体场景打破。映射表由构建器**机械生成**（联合报告 `manipulation.name_map`），
+    本函数只做校验与查表，不生成、不猜。
+
+    校验（全部 fail-closed，装配期就失败而不是等第一次运动）：
+      * 键值必须都是非空字符串，且 `声明名 != 模型名`（同值映射是声明错误，不是"无需映射"）；
+      * **声明名不得已存在于模型里**（否则解析有歧义：到底指主本体的对象还是附加本体的？）；
+      * **模型名必须存在于模型里**（joint/body/geom/site/actuator 之一）；
+      * 反向表不得出现多对一（两个声明名指向同一模型名 ⇒ 回写 `last_positions` 时会互相覆盖）。
+    未声明映射（None / 空表）时返回两张空表：所有解析原样返回，单本体路径行为逐位不变。
+    """
+    if name_map is None:
+        return {}, {}
+    if not isinstance(name_map, dict):
+        raise ValueError("name_map 必须是对象（声明名 → 模型名）；实际 %r" % (name_map,))
+    if not name_map:
+        return {}, {}
+
+    def spot(name):
+        """名字在模型里的种类（取第一个命中）；不存在返回 None。"""
+        text = str(name)
+        for label in ("joint", "body", "geom", "site", "actuator"):
+            kind = getattr(mujoco.mjtObj, "mjOBJ_%s" % label.upper())
+            if mujoco.mj_name2id(model, kind, text) >= 0:
+                return label
+        return None
+
+    forward = {}
+    reverse = {}
+    for declared, model_name in name_map.items():
+        key = str(declared)
+        value = str(model_name)
+        if not key or not value:
+            raise ValueError("name_map 的键值必须是非空字符串：%r -> %r" % (declared, model_name))
+        if key == value:
+            raise ValueError(
+                "name_map 出现同值映射（%s -> %s）：同值不需要映射，出现即声明错误" % (key, value))
+        existing = spot(key)
+        if existing is not None:
+            raise ValueError(
+                "name_map 的声明名 %s 已存在于模型里（作为 %s）：解析会有歧义 —— 是主本体的对象"
+                "还是附加本体的？拒绝装配，不静默选一个" % (key, existing))
+        found = spot(value)
+        if found is None:
+            raise ValueError(
+                "name_map 指向的模型名 %s 不存在（joint/body/geom/site/actuator 都没有）："
+                "映射已过期或报告与模型不匹配" % value)
+        if value in reverse:
+            raise ValueError(
+                "name_map 多对一：%s 与 %s 都指向 %s ⇒ 关节状态回写会互相覆盖"
+                % (reverse[value], key, value))
+        forward[key] = value
+        reverse[value] = key
+    return forward, reverse
+
+
 class MujocoBackend:
     @classmethod
     def from_config(cls, config, profile, authority):
@@ -207,6 +268,8 @@ class MujocoBackend:
                 int(config.get("display_width", 640)),
                 int(config.get("display_height", 480)),
             ),
+            # 声明名 → 模型名（联合模型专有；单本体产物不带此键 ⇒ 行为逐位不变）
+            name_map=config.get("name_map"),
         )
 
     def __init__(
@@ -219,6 +282,7 @@ class MujocoBackend:
         vision_config=None,
         realtime=False,
         display_size=(640, 480),
+        name_map=None,
     ):
         self.profile = profile
         self.authority = authority
@@ -249,6 +313,10 @@ class MujocoBackend:
             for index in range(self.model.nu)
         }
         self.last_positions = {joint: 0.0 for joint in profile.joints}
+        # 声明名 → 模型名映射（A 方案）：联合模型（狗 + 臂同一个 MJCF）里附加本体的对象一律带前缀
+        # （`piper_joint1`、`piper_link6`），而 Profile / 技能参数口径是**声明名**（`joint1`）。
+        # 单本体产物不带 name_map ⇒ 两张表都空 ⇒ 所有解析原样返回，行为与改动前逐位一致。
+        self._name_map, self._declaration_by_model = _parse_name_map(name_map, self.model)
         self.stopped = False
         self._cancel_event = threading.Event()
         self._data_lock = threading.RLock()
@@ -1110,12 +1178,12 @@ class MujocoBackend:
         - 关节名：直接查 jnt_qposadr（UR5 的 actuator 名与关节名不同，
           只查 actuator 会全部返回 None，自检信息失去意义）。
         """
-        actuator = self._actuators.get(name)
+        actuator = self._actuators.get(self._model_name(name))
         if actuator is not None:
             joint_id = int(self.model.actuator_trnid[actuator, 0])
             return float(self.data.qpos[self.model.jnt_qposadr[joint_id]])
         joint_id = mujoco.mj_name2id(
-            self.model, mujoco.mjtObj.mjOBJ_JOINT, str(name)
+            self.model, mujoco.mjtObj.mjOBJ_JOINT, self._model_name(name)
         )
         if joint_id < 0:
             return None
@@ -1433,6 +1501,20 @@ class MujocoBackend:
             self.data.ctrl[:] = 0.0
             self.stopped = True
 
+    def _model_name(self, name):
+        """把**声明名**解析为模型里的实际名字；未声明映射即原样返回（单本体路径行为不变）。
+
+        解析点必须覆盖所有"调用方按声明名点对象"的入口，否则会出现
+        "某条路径能动、另一条报找不到对象"（Piper 上同名恰好掩盖过同类差异）。
+        """
+        text = str(name)
+        return self._name_map.get(text, text)
+
+    def _declaration_name(self, name):
+        """把**模型名**还原为声明名；无反向映射即原样返回（状态回写的键空间统一口径）。"""
+        text = str(name)
+        return self._declaration_by_model.get(text, text)
+
     def _direct_actuator_channel(self, name):
         """返回**直接**驱动该关节的执行器通道名；没有直接执行器时返回 None。
 
@@ -1445,12 +1527,16 @@ class MujocoBackend:
 
         关节名不存在时仍然显式失败（那是配置错误，不是"不可直接控制"）。
         """
-        name = str(name)
+        declared = str(name)
+        # 声明名先解析到模型名：联合模型里臂的关节叫 `piper_joint1`，Profile 口径是 `joint1`
+        name = self._model_name(declared)
         if name in self._actuators:
             return name
         joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name)
         if joint_id < 0:
-            raise ValueError("找不到关节或执行器: " + name)
+            raise ValueError(
+                "找不到关节或执行器: " + declared
+                + ("" if name == declared else "（经 name_map 解析为 %s）" % name))
         for index in range(int(self.model.nu)):
             if int(self.model.actuator_trnid[index, 0]) != int(joint_id):
                 continue
@@ -1486,12 +1572,15 @@ class MujocoBackend:
         对外契约统一到**关节名**口径（`profile.joints`、`move_joint` 返回值），
         因此内部按执行器通道写 ctrl 时，要把状态回写到关节名键上。
         """
-        name = str(name)
-        if name in self._actuators:
-            joint_id = int(self.model.actuator_trnid[self._actuators[name], 0])
+        declared = str(name)
+        model_name = self._model_name(declared)
+        if model_name in self._actuators:
+            joint_id = int(self.model.actuator_trnid[self._actuators[model_name], 0])
             joint = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_JOINT, joint_id)
-            return str(joint) if joint else name
-        return name
+            # 回写键统一到**声明名**（联合模型里模型名是 `piper_joint1`，而
+            # `last_positions` / `profile.joints` 的口径是 `joint1`）
+            return self._declaration_name(str(joint)) if joint else declared
+        return declared
 
     def _set_controls(self, positions):
         with self._data_lock:
@@ -1659,11 +1748,12 @@ class MujocoBackend:
         }
 
     def _body_id(self, name):
+        declared = str(name)
         body_id = mujoco.mj_name2id(
-            self.model, mujoco.mjtObj.mjOBJ_BODY, str(name)
+            self.model, mujoco.mjtObj.mjOBJ_BODY, self._model_name(declared)
         )
         if body_id < 0:
-            raise ValueError("body not found: " + str(name))
+            raise ValueError("body not found: " + declared)
         return int(body_id)
 
     @staticmethod

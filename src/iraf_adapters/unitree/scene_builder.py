@@ -556,6 +556,31 @@ def _attach_robots(staging, scene, root, attached_ids):
                       "附加本体 %s 的关节 %s 未在 Profile spec.model.home 声明初值："
                       "联合模型的关键帧不猜值" % (robot_id, name))
             joint_values.append(float(home[name]))
+        # 声明名清单（联合报告 `manipulation.name_map` 的**输入**）：附加本体在**自己的模型**里的
+        # 对象名。采集必须在 `attach` **之前** —— attach 之后这些名字一律带上前缀，问不回原名。
+        # 只收集后端能按名字解析的种类（body/geom/site/joint）：执行器与关节在 Piper 上同名，
+        # 由关节解析覆盖；mesh/material 由 MjSpec 自己改写引用，不进这张表。
+        declared_sets = {"bodies": set(), "geoms": set(), "sites": set(), "joints": set()}
+
+        def _collect_names(kind, items):
+            """收集某一类的对象名；同时把 body 的**子对象**按自己的类别归档。
+
+            （MjSpec 顶层 `.geoms` / `.sites` 在本版本里为空而 body 内有对象 ⇒ 必须下钻；
+            归档到各自类别，否则报告里的 kind 标签会把关节写成 body。）
+            """
+            for item in items:
+                name = str(getattr(item, "name", "") or "")
+                if name:
+                    declared_sets[kind].add(name)
+                for attribute in ("geoms", "sites", "joints"):
+                    for nested in (getattr(item, attribute, []) or []):
+                        nested_name = str(getattr(nested, "name", "") or "")
+                        if nested_name:
+                            declared_sets[attribute].add(nested_name)
+
+        for bucket in ("bodies", "geoms", "sites", "joints"):
+            _collect_names(bucket, getattr(child, bucket, []) or [])
+        declared_names = {key: sorted(value) for key, value in declared_sets.items()}
         prefix = "%s_" % robot_id
         # MjSpec 需要**数值列表**（`_numbers()` 是给 XML 属性用的字符串，别混用）
         frame = spec.worldbody.add_frame(pos=[float(v) for v in pos],
@@ -591,6 +616,8 @@ def _attach_robots(staging, scene, root, attached_ids):
                         "placement": {"pos_m": [float(v) for v in pos],
                                       "quat_wxyz": [float(v) for v in quat]},
                         "child_dir": str(child_dir),
+                        # 附加本体在**自己模型**里的名字清单（联合报告 name_map 的输入与留痕）
+                        "declared_names": declared_names,
                         "home_joints": len(joint_values),
                         "keyframes_extended": len(list(getattr(spec, "keys", []) or []))})
     # ---- 关键帧：**覆写**为「主模型关键帧 + 各附加本体的声明初值」（所有本体附加完成后统一做）
@@ -661,18 +688,30 @@ def _attach_robots(staging, scene, root, attached_ids):
     return records
 
 
-def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model):
+def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, declared_names=None):
     """联合报告的 manipulation 事实：继承**臂自己报告**的声明事实，并按**可判定规则**改写名字。
 
     改名规则（不猜）：某个名字 `n` 改写成 `<prefix>n` **当且仅当** `<prefix>n` 出现在联合模型的
     事实里、且 `n` 本身不在。这样臂自有对象（body/geom/joint）被正确指向联合模型里的实际名字，
     而场景道具（如 `box_01`）与场景几何保持原名 —— 避免照抄臂自己场景的命名（联合模型里不存在）。
+
+    `name_map`（A 方案，2026-09-24）：把上述规则的结果**机械地**落成一张
+    `声明名 → 联合模型名` 的表，使臂后端能按 Profile 名字（`joint1..8`）解析到联合模型里的对象
+    （`piper_joint1..8`），而不需要把前缀泄漏进 Profile/技能参数。四个判定桶都会被记录：
+
+      * `mapped`：只有 `prefix+n` 存在 ⇒ 进表（这是唯一会改名的情形）；
+      * `identical`：只有 `n` 存在 ⇒ 不进表（声明名 == 模型名，无需映射）；
+      * `conflict`：**两者都存在** ⇒ 不进表（映射有歧义：`n` 指的是主本体的对象，还是附加本体的？
+        留痕到 `name_map_facts.conflicts`，供人工裁定；被 manipulation 直接引用的名字仍按原规则取 `n`）；
+      * `missing`：两者都不存在 ⇒ 该对象在联合模型里不存在；**被 manipulation 引用的名字**按原规则
+        显式失败（fail-closed），未被引用的（如被 attach 丢弃的对象）只留痕。
     """
     if not arm_report_path or not Path(arm_report_path).is_file():
         _fail(EXIT_REFERENCE,
               "联合构建需要臂侧场景报告以继承 manipulation 事实（不存在: %s）" % arm_report_path)
     report = json.loads(Path(arm_report_path).read_text(encoding="utf-8"))
     mj = mujoco
+    name_map = {}
 
     def exists(name):
         """名字是否存在于**联合模型**里（任意 kind）——用编译后的模型校验，不看文本。"""
@@ -691,8 +730,10 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model):
 
     def rename(name):
         text = str(name)
-        if exists("%s%s" % (prefix, text)) and not exists(text):
-            return "%s%s" % (prefix, text)
+        prefixed = "%s%s" % (prefix, text)
+        if exists(prefixed) and not exists(text):
+            name_map[text] = prefixed
+            return prefixed
         if exists(text):
             return text
         # fail-closed：既不原名存在、也不带前缀存在 ⇒ 名字无法指向联合模型里的对象
@@ -718,9 +759,42 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model):
             if isinstance(entry.get(key), str):
                 entry[key] = rename(entry[key])
         targets.append(entry)
+    # ---- 全量判定桶（A 方案 name_map 的输入）：对附加本体**自己模型里的每个对象名**套同一条规则。
+    # 只对被 manipulation 引用的名字 fail-closed（上方 rename），其余只留痕 —— attach 可能丢弃对象，
+    # 把它当构建失败会误伤；但"声明名既不在原名也不在前缀名里"必须能被人看见。
+    buckets = {"mapped": [], "identical": [], "conflicts": [], "missing": []}
+    declared = {"bodies": [], "geoms": [], "sites": [], "joints": []}
+    for bucket in declared:
+        for value in ((declared_names or {}).get(bucket) or []):
+            text = str(value)
+            declared[bucket].append(text)
+            prefixed = "%s%s" % (prefix, text)
+            has_prefixed = exists(prefixed)
+            has_plain = exists(text)
+            if has_prefixed and has_plain:
+                buckets["conflicts"].append({"kind": bucket, "declared": text, "model": prefixed})
+            elif has_prefixed:
+                buckets["mapped"].append({"kind": bucket, "declared": text, "model": prefixed})
+                name_map.setdefault(text, prefixed)
+            elif has_plain:
+                buckets["identical"].append({"kind": bucket, "declared": text, "model": text})
+            else:
+                buckets["missing"].append({"kind": bucket, "declared": text})
+    facts = {
+        "rule": "声明名→联合模型名：只对 <prefix>name 存在且 name 不存在的情形映射",
+        "counts": {key: len(value) for key, value in buckets.items()},
+        "mapped": buckets["mapped"], "identical": buckets["identical"],
+        "conflicts": buckets["conflicts"], "missing": buckets["missing"],
+        "declared_names_source": "附加本体自身模型（attach 之前采集）",
+        "declared_object_counts": {key: len(value) for key, value in declared.items()},
+        "note": ("conflict（同名对象在主本体与附加本体里都存在）**不进 name_map**：映射有歧义，"
+                 "需人工裁定；missing 只留痕，被 manipulation 直接引用的名字已在 rename() 里显式失败。"),
+    }
     return {"gripper": out_gripper, "targets": targets,
             "target_id": (targets[0]["id"] if targets else report.get("target_id")),
             "vision": report.get("vision"),
+            "name_map": dict(sorted(name_map.items())),
+            "name_map_facts": facts,
             "inherited_from": str(Path(arm_report_path)), "rename_rule":
                 "改写成 <prefix>name 当且仅当 <prefix>name 在联合模型事实里、且 name 不在"}
 
@@ -1429,6 +1503,7 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
         arm_report = None
         prefix = None
         robot_id = None
+        arm_declared_names = None
         for attached in attach:
             entity = resolve_robot(scene, attached)
             candidate = entity.get("manipulation_report")
@@ -1436,19 +1511,26 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
                 arm_report = root / str(candidate)
                 prefix = "%s_" % attached
                 robot_id = attached
+                for record in attached_robots:
+                    if str(record.get("id")) == str(attached):
+                        arm_declared_names = record.get("declared_names")
                 break
         if arm_report is None:
             _fail(EXIT_DECLARATION,
                   "使用 --attach 时必须在本体声明 `manipulation_report`（继承 gripper/targets 的"
                   "来源；缺声明即失败，不猜）")
-        manipulation = _joint_manipulation(root, arm_report, prefix, facts, compiled)
+        manipulation = _joint_manipulation(root, arm_report, prefix, facts, compiled, arm_declared_names)
         report["gripper"] = manipulation["gripper"]
         report["targets"] = manipulation["targets"]
         report["target_id"] = manipulation["target_id"]
         report["vision"] = manipulation["vision"]
+        # `name_map`：声明名 → 联合模型名的**机械**产物（臂后端据此按 Profile 名解析对象）；
+        # `name_map_facts`：四个判定桶的留痕（mapped/identical/conflicts/missing）。
         report["manipulation"] = {"attached_robot": str(robot_id),
                                   "inherited_from": manipulation["inherited_from"],
-                                  "rename_rule": manipulation["rename_rule"]}
+                                  "rename_rule": manipulation["rename_rule"],
+                                  "name_map": manipulation["name_map"],
+                                  "name_map_facts": manipulation["name_map_facts"]}
         report["manipulation_absent_reason"] = None
     output_path.with_suffix(".json").write_text(
         json.dumps(report, ensure_ascii=True, indent=2) + "\n", encoding="utf-8"

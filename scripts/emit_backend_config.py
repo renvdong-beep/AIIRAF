@@ -34,6 +34,9 @@ def build_config(scene, scene_path, realtime=False):
         },
         # 视觉 Provider 声明（未声明时为 None，后端据此要求请求显式给 evidence）
         "vision": scene.get("vision"),
+        # 联合模型（`--attach` 产物）专有：声明名 → 模型名。**必须一起搬**，否则臂在联合模型上
+        # 会以"找不到关节或执行器: joint1"在第一次运动时失败（单本体报告没有这一段 ⇒ None）。
+        "name_map": (scene.get("manipulation") or {}).get("name_map"),
     }
 
 
