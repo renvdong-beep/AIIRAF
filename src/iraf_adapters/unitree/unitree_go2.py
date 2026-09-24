@@ -1636,7 +1636,9 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         if not isinstance(section, dict):
             raise DeclarationError("声明缺少 dock_for_handoff 段（接近参数必须来自声明）")
         missing = [key for key in ("target_frame", "approach_speed_mps", "gain_s_inv",
-                                  "settle_s", "timeout_s") if key not in section]
+                                  "settle_s", "timeout_s",
+                                  "approach_position_tolerance_m",
+                                  "approach_yaw_tolerance_rad") if key not in section]
         if missing:
             raise DeclarationError("声明缺少 dock_for_handoff 的键: %s" % missing)
         approach_speed = float(section["approach_speed_mps"])
@@ -1661,6 +1663,28 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         if approach_speed > float(section["approach_speed_mps"]):
             raise CommandRejectedError("接近速度 %r 超过声明上限 %r" % (approach_speed,
                                                                       section["approach_speed_mps"]))
+        # **接近停止**用的控制容差（声明值）≠ 调用方传入的**终态验收**容差：
+        # `approach_command` 一进容差就返回精确零 ⇒ 到位误差天然贴着该容差值，此后保持期的漂移
+        # 全部记在验收余量上（实测：控制=验收=0.03 m 时，到位误差 0.029935 m 只剩 65 µm 余量，
+        # 18.4 s 保持期漂移 12.7 mm ⇒ 直接超差）。因此控制容差必须**严于**验收容差，
+        # 且本方法显式拒绝"控制容差 ≥ 验收容差"的声明（否则通过与否靠运气）。
+        approach_position_tolerance_m = float(section["approach_position_tolerance_m"])
+        approach_yaw_tolerance_rad = float(section["approach_yaw_tolerance_rad"])
+        for label, value in (("approach_position_tolerance_m", approach_position_tolerance_m),
+                             ("approach_yaw_tolerance_rad", approach_yaw_tolerance_rad)):
+            if not math.isfinite(value) or value <= 0.0:
+                raise DeclarationError(
+                    "dock_for_handoff.%s 必须是正有限数，实际 %r" % (label, value))
+        if approach_position_tolerance_m > position_tolerance_m:
+            raise CommandRejectedError(
+                "声明 dock_for_handoff.approach_position_tolerance_m=%.6f 不严于调用方的验收容差 "
+                "%.6f：接近会在验收带之外就停下（到位即零），通过与否将取决于保持期运气"
+                % (approach_position_tolerance_m, position_tolerance_m))
+        if approach_yaw_tolerance_rad > yaw_tolerance_rad:
+            raise CommandRejectedError(
+                "声明 dock_for_handoff.approach_yaw_tolerance_rad=%.6f 不严于调用方的验收容差 "
+                "%.6f（同上：控制容差必须严于验收判据）" % (approach_yaw_tolerance_rad,
+                                                          yaw_tolerance_rad))
 
         target_frame = str(section["target_frame"])
         frame_id = self.mujoco.mj_name2id(self.model, self.mujoco.mjtObj.mjOBJ_SITE, target_frame)
@@ -1743,7 +1767,9 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             command = dock_module.approach_command(
                 dx, dy, yaw_err, gain_s_inv=gain_s_inv, max_speed_mps=approach_speed,
                 max_yaw_rate_rad_s=max(1.0e-3, min(1.0, gain_s_inv * abs(yaw_err))),
-                position_tolerance_m=position_tolerance_m, yaw_tolerance_rad=yaw_tolerance_rad,
+                # 控制容差（声明）用于"到位即零"；验收容差（调用方）用于终态判定，两者不可混用
+                position_tolerance_m=approach_position_tolerance_m,
+                yaw_tolerance_rad=approach_yaw_tolerance_rad,
                 body_yaw_rad=body[2],
             )
             if command == (0.0, 0.0, 0.0):
@@ -1814,7 +1840,11 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             "target_frame_body": self._body_name(frame_body),
             "target_frame_world_fixed": True,
             "approach": {"speed_mps": approach_speed, "gain_s_inv": gain_s_inv,
-                         "settle_s": settle_s, "timeout_s": timeout_s},
+                         "settle_s": settle_s, "timeout_s": timeout_s,
+                         # 控制容差（声明）与验收容差（调用方）**都进报告**：两者混用时
+                         # "到位误差贴着判据"这类问题才会被看见（见 §11.3 结论 2）
+                         "control_position_tolerance_m": approach_position_tolerance_m,
+                         "control_yaw_tolerance_rad": approach_yaw_tolerance_rad},
             "criteria": {"position_tolerance_m": position_tolerance_m,
                          "yaw_tolerance_rad": yaw_tolerance_rad,
                          "max_final_speed_mps": max_final_speed_mps},
@@ -2214,6 +2244,10 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             # 退让项的步幅增益（`gait.walk.stride_scale`）：只放大**足端退让**的给进速率，
             # QP 的参考仍用未放大的指令（它跟踪的是真实期望速度，不许被放大）。
             walk_scale = float((trot.get("walk") or {}).get("stride_scale") or 1.0)
+            # ⚠ 2026-09-24 实测否证过一条"看起来对"的改动：把 bias 在**零指令时置零**（想法：
+            # 前馈不该在保持期残留推力）——结果更差：停靠末态误差 63.5 → 87.8 mm、
+            # 偏航 −0.44° → −3.02°。⇒ bias 在零指令下也在**部分抵消**步态整流（不是纯推力），
+            # 该改动已回退（行为保持）。保持期漂移的真机制见计划 §11.4（滑行超调，不是慢爬）。
             walk_bias = (trot.get("walk") or {}).get("command_bias_mps") or (0.0, 0.0)
             targets = gait.gait_joint_targets(
                 trot, geometry, home, limits, elapsed, gait.amplitude_at(trot, elapsed),

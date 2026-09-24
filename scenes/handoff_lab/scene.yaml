@@ -88,6 +88,24 @@ props:
         frame: tray_frame
     note: 停靠判据（平移 ≤30mm、偏航 ≤2deg）针对 tray_frame，见 baseline.yaml 的 acceptance 段。
 
+# 世界固定参考系（`frames:`）：导航/停靠/交接的目标帧。
+# 为什么必须是"世界固定"而不是挂在机器人上：挂在四足躯干上的帧（如 `tray_frame`）与机身**同一刚体**
+# ⇒ 停靠量到的是自指量（偏航恒 0、平移 = 帧本地偏置的投影），接近过程从不执行。
+# 详见 docs/debug/2026-09-24-dock-target-self-frame.md 与提交 ba22c9e 的执行前门禁。
+frames:
+  - id: handoff_station_frame
+    kind: site
+    pose:
+      # 站位：四足把背上的托盘停到这里，机械臂才够得着托盘。
+      # 依据：工具点在托盘顶面高度（z ≈ 0.347 m）的可达水平环带 r ∈ [0.002028, 0.594284] m
+      # （build/iraf-a6a14/reach_probe.py，20000 次 FK 采样，臂基座在原点）⇒ 取 0.55 m 保守内侧。
+      pos_m: [0.55, 0.0, 0.0]
+      # 期望机身朝向（yaw 0 = 与出生点朝向一致，故本工况不需要转向）
+      quat_wxyz: [1.0, 0.0, 0.0, 0.0]
+    note: >-
+      前提：臂基座在台面原点附近（臂尚未装进同一模型，见 .hermes/plans/2026-09-23-dock-for-handoff.md
+      §11）；只按**位置**可达筛选，**未约束工具姿态**。待臂的摆放（A/B/C 方案）确定后复核此坐标。
+
 # 传感器声明。厂商 MJCF 不提供相机与雷达（实测 go2.xml 0 命中），
 # 因此 source=scene 的必须由场景构建器按本声明注入，厂商文件保持只读。
 sensors:
