@@ -916,23 +916,19 @@ class MujocoBackend:
         approach_positions = gripper.get("approach_positions")
         grasp_positions = gripper.get("grasp_positions")
         home_positions = gripper.get("home_positions")
+        phase_ms = max(1, duration_ms // 5)
         if home_positions:
             self._log_pick_phase("HOME_HOLD", target_body)
-            self._move_trajectory(
-                home_positions, max(1, duration_ms // 5), self._pick_ctrl_offsets("home")
-            )
+            self._move_trajectory(home_positions, phase_ms, self._pick_ctrl_offsets("home"))
+            self.dump_pick_phase("HOME_HOLD", phase_ms, target_body, left_body, right_body, approach_axis)
         if approach_positions:
             self._log_pick_phase("APPROACH", target_body)
-            self._move_trajectory(
-                approach_positions, max(1, duration_ms // 5),
-                self._pick_ctrl_offsets("approach"),
-            )
+            self._move_trajectory(approach_positions, phase_ms, self._pick_ctrl_offsets("approach"))
+            self.dump_pick_phase("APPROACH", phase_ms, target_body, left_body, right_body, approach_axis)
         if grasp_positions:
             self._log_pick_phase("DESCEND", target_body)
-            self._move_trajectory(
-                grasp_positions, max(1, duration_ms // 5),
-                self._pick_ctrl_offsets("grasp"),
-            )
+            self._move_trajectory(grasp_positions, phase_ms, self._pick_ctrl_offsets("grasp"))
+            self.dump_pick_phase("DESCEND", phase_ms, target_body, left_body, right_body, approach_axis)
         # 对齐门禁必须用目标实际姿态推出的接近轴换算抓取点：
         # 目标倾斜时仍按固定竖直轴减 pad_offset 会把抓取点算错半个高度。
         alignment = self._grasp_alignment_evidence(
@@ -1215,6 +1211,26 @@ class MujocoBackend:
                 for name in self._arm_joint_names()
             },
         }
+
+    def dump_pick_phase(self, phase, ms, target_body, left_body, right_body, approach_axis):
+        """相位级观测（`IRAF_DEBUG_PICK=1` 时打印）——pick 与探针**共用同一实现**，保证可比。
+
+        2026-09-24：pick 与探针在**入参一致**（见 PICK_INPUTS）的情况下给出矛盾的到位残差
+        （1.3817e-02 vs 7.551e-06 m）⇒ 必须逐相位比对**输出**，而不是继续猜。
+        """
+        if os.environ.get("IRAF_DEBUG_PICK") != "1":
+            return None
+        alignment = self._grasp_alignment_evidence(target_body, left_body, right_body, approach_axis)
+        print("PICK_PHASE " + json.dumps({
+            "phase": str(phase),
+            "ms": int(ms),
+            "center_delta_m": alignment["center_delta_m"],
+            "center_distance_m": alignment["center_distance_m"],
+            "finger_center_position_m": alignment["finger_center_position_m"],
+            "target_position_m": alignment["target_position_m"],
+            "joint_qpos": alignment["joint_qpos"],
+        }, ensure_ascii=False), flush=True)
+        return alignment
 
     def _arm_joint_names(self):
         """返回 profile 声明为 arm 角色的关节名（按 profile.joints 顺序）。
