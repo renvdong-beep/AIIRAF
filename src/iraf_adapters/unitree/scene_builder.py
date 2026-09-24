@@ -26,6 +26,7 @@
 import copy
 import json
 import os
+import shutil
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -523,7 +524,9 @@ def _attach_robots(staging, scene, root, attached_ids):
                   % robot_id)
         pos = _vec3(placement.get("pos_m"), "robots.%s.placement.pos_m" % robot_id)
         quat = _quat_wxyz(placement.get("quat_wxyz"), "robots.%s.placement.quat_wxyz" % robot_id)
-        child = mujoco.MjSpec.from_file(str(root / str(model["file"])))
+        child_path = root / str(model["file"])
+        child = mujoco.MjSpec.from_file(str(child_path))
+        child_dir = child_path.resolve().parent
         # 关节初值来自**声明的**两个来源（缺键即显式失败，不猜）：
         #   · `spec.home`：本体标称位形（臂的 joint1..6）
         #   · `spec.gripper.open_positions`：抓手的"张开"位形（臂的 joint7/8 在这段里声明）
@@ -557,7 +560,61 @@ def _attach_robots(staging, scene, root, attached_ids):
         records.append({"id": robot_id, "prefix": prefix, "source": str(model["file"]),
                         "placement": {"pos_m": [float(v) for v in pos],
                                       "quat_wxyz": [float(v) for v in quat]},
+                        "child_dir": str(child_dir),
                         "home_joints": len(joint_values), "keyframes_extended": len(keys)})
+    # ---- 资产自包含（A1）：两个本体的 meshdir 不同 ⇒ 合成后相对路径互指（实测
+    # `.../piper_description/mujoco_model/../../../vendor/unitree_go2/.../base_link.STL` 不存在）。
+    # 做法：把每个附加本体引用的 mesh/texture 拷进 `<产物目录>/assets/<本体 id>/`，
+    # 并把合成 spec 里的资产路径改写为**相对产物目录**的路径 ⇒ 产物自包含、不写死本机绝对路径。
+    output_dir = Path(staging).parent
+    # ⚠ MuJoCo 把资产路径解析为 **`compiler.meshdir` + file**（实测：改写后的相对路径会被拼到
+    # 子模型的 meshdir 后面 ⇒ `.../go2/assets/assets/piper/base_link.STL`）⇒ 必须把合成 spec 的
+    # meshdir 指向**产物目录**，file 才按"相对产物目录"解析。
+    # ⚠ MjSpec 的 compiler 没有 `meshdir` 可写属性（实测 AttributeError）⇒ 保持主模型声明的 meshdir，
+    # 把搬过来的资产按**相对 meshdir 的路径**写（与主模型自己的资产同一套约定 ⇒ 产物仍可移植）。
+    staging_root = ET.parse(str(staging)).getroot()
+    compiler = staging_root.find("compiler")
+    meshdir = compiler.get("meshdir") if compiler is not None else None
+    meshdir_abs = (output_dir / str(meshdir)).resolve() if meshdir else output_dir.resolve()
+    copied = 0
+    for item in spec.meshes:
+        path = str(getattr(item, "file", "") or "")
+        if not path or path.startswith("assets/"):
+            continue
+        for record in records:
+            candidate = Path(record["child_dir"]) / path
+            if candidate.is_file():
+                target_rel = Path("assets") / str(record["id"]) / Path(path).name
+                target = output_dir / target_rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(candidate, target)
+                # ⚠ `to_xml()` 仍按**附加子模型的 meshdir** 解析这些路径（实测：写成相对路径会被
+                # 拼到 `.../piper_description/mujoco_model/` 后面）⇒ 先落**绝对路径**并登记为
+                # host-specific 债务（自包含的相对表达受阻于 MjSpec 的 per-attach meshdir 行为）。
+                item.file = str(target.resolve())
+                copied += 1
+                break
+    for item in getattr(spec, "textures", []):
+        path = str(getattr(item, "file", "") or "")
+        if not path or path.startswith("assets/"):
+            continue
+        for record in records:
+            candidate = Path(record["child_dir"]) / path
+            if candidate.is_file():
+                target_rel = Path("assets") / str(record["id"]) / Path(path).name
+                target = output_dir / target_rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(candidate, target)
+                item.file = str(target.resolve())
+                copied += 1
+                break
+    for record in records:
+        record.pop("child_dir", None)
+        record["assets_copied"] = copied
+        record["assets_path_style"] = "absolute_host_path"
+        record["assets_note"] = ("合成产物的资产用绝对路径（MjSpec 的 per-attach meshdir 使两个本体的"
+                                 "资产无法用单一相对 meshdir 表达）⇒ 该产物是 **host-specific**；"
+                                 "迁到相对表达需进一步研究 MjSpec 的资产搬迁语义")
     Path(staging).write_text(spec.to_xml(), encoding="utf-8")
     return records
 
