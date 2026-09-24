@@ -182,6 +182,10 @@
         "kind": {"enum": ["arm", "quadruped", "humanoid"]},
         "role": {"enum": ["manipulator", "carrier", "scene_entity"]},
         "profile": {"$ref": "#/definitions/unverified_or_path"},
+        "manipulation_report": {
+          "type": "string",
+          "description": "继承 manipulation 事实（gripper/targets）的臂侧场景报告路径；仅 `--attach` 时消费。"
+        },
         "profile_name": {
           "type": "string",
           "description": "场景 id 与 Profile 身份不同名时的**显式映射**（值必须等于 Profile 的 metadata.name，仍是硬校验）。"

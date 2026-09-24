@@ -36,6 +36,9 @@ robots:
     #   ≤ 工具点在托盘高度（z≈0.347 m）的可达环带上界 0.594284 m（§11.1 实测）；
     #   ② 落在四足出生点→站位的路径之外（y = −0.45，四足躯干半宽 ~0.2 m ⇒ 不挡路）；
     #   ③ 台面 half_size_m=1.5 ⇒ 在台面内。yaw=90°（quat_wxyz 绕 z 转 90°）令臂正面朝站位。
+    # 继承 manipulation 事实的来源（臂自己的场景报告）：联合报告据此得到 gripper/targets，
+    # 名字按"仅当加前缀后存在于联合模型"的规则改写（见 scene_builder._joint_manipulation）。
+    manipulation_report: build/models/piper-pick-scene.json
     placement:
       pos_m: [0.45, -0.45, 0.0]
       quat_wxyz: [0.7071067811865476, 0.0, 0.0, 0.7071067811865475]

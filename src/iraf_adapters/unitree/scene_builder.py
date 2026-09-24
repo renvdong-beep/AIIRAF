@@ -637,6 +637,69 @@ def _attach_robots(staging, scene, root, attached_ids):
     return records
 
 
+def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model):
+    """联合报告的 manipulation 事实：继承**臂自己报告**的声明事实，并按**可判定规则**改写名字。
+
+    改名规则（不猜）：某个名字 `n` 改写成 `<prefix>n` **当且仅当** `<prefix>n` 出现在联合模型的
+    事实里、且 `n` 本身不在。这样臂自有对象（body/geom/joint）被正确指向联合模型里的实际名字，
+    而场景道具（如 `box_01`）与场景几何保持原名 —— 避免照抄臂自己场景的命名（联合模型里不存在）。
+    """
+    if not arm_report_path or not Path(arm_report_path).is_file():
+        _fail(EXIT_REFERENCE,
+              "联合构建需要臂侧场景报告以继承 manipulation 事实（不存在: %s）" % arm_report_path)
+    report = json.loads(Path(arm_report_path).read_text(encoding="utf-8"))
+    mj = mujoco
+
+    def exists(name):
+        """名字是否存在于**联合模型**里（任意 kind）——用编译后的模型校验，不看文本。"""
+        text = str(name)
+        for kind in (mj.mjtObj.mjOBJ_BODY, mj.mjtObj.mjOBJ_GEOM, mj.mjtObj.mjOBJ_SITE,
+                     mj.mjtObj.mjOBJ_JOINT, mj.mjtObj.mjOBJ_CAMERA):
+            if mj.mj_name2id(model, kind, text) >= 0:
+                return True
+        return False
+
+    known = set()
+    for bucket in ("bodies", "geoms", "sites", "joints", "cameras"):
+        for name in ((joint_facts or {}).get(bucket) or []):
+            known.add(str(name))
+
+    def rename(name):
+        text = str(name)
+        if exists("%s%s" % (prefix, text)) and not exists(text):
+            return "%s%s" % (prefix, text)
+        if exists(text):
+            return text
+        # fail-closed：既不原名存在、也不带前缀存在 ⇒ 名字无法指向联合模型里的对象
+        _fail(EXIT_REFERENCE,
+              "联合报告的 manipulation 引用的名字 %s 在联合模型里既不存在原名也不存在 %s 前缀名"
+              "（臂侧报告与联合模型的命名不一致 ⇒ 装配会指错对象）" % (text, prefix))
+
+    gripper = report.get("gripper")
+    if not isinstance(gripper, dict) or not gripper:
+        _fail(EXIT_REFERENCE, "臂侧场景报告缺少 gripper 段，无法继承: %s" % arm_report_path)
+    out_gripper = {}
+    for key, value in gripper.items():
+        if isinstance(value, str):
+            out_gripper[key] = rename(value)
+        elif isinstance(value, dict):
+            out_gripper[key] = {rename(k): float(v) for k, v in value.items()}
+        else:
+            out_gripper[key] = value
+    targets = []
+    for item in (report.get("targets") or []):
+        entry = dict(item)
+        for key in ("body", "geom", "material"):
+            if isinstance(entry.get(key), str):
+                entry[key] = rename(entry[key])
+        targets.append(entry)
+    return {"gripper": out_gripper, "targets": targets,
+            "target_id": (targets[0]["id"] if targets else report.get("target_id")),
+            "vision": report.get("vision"),
+            "inherited_from": str(Path(arm_report_path)), "rename_rule":
+                "改写成 <prefix>name 当且仅当 <prefix>name 在联合模型事实里、且 name 不在"}
+
+
 def _inject_world_frames(world, scene):
     """按声明注入**世界固定**参考系（site 直接挂 `worldbody`）—— 导航/停靠/交接的目标帧。
 
@@ -1334,6 +1397,34 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
             "simulation": bool(profile_spec.get("simulation")),
         },
     }
+    if attached_robots:
+        # 联合报告：把臂侧的 manipulation 事实（gripper/targets）按**可判定规则**改名后并入，
+        # 使 `robot.backend_config.mode: scene_report` 能直接指向本报告装配臂后端
+        # （`output` 已是联合产物路径）。
+        arm_report = None
+        prefix = None
+        robot_id = None
+        for attached in attach:
+            entity = resolve_robot(scene, attached)
+            candidate = entity.get("manipulation_report")
+            if candidate:
+                arm_report = root / str(candidate)
+                prefix = "%s_" % attached
+                robot_id = attached
+                break
+        if arm_report is None:
+            _fail(EXIT_DECLARATION,
+                  "使用 --attach 时必须在本体声明 `manipulation_report`（继承 gripper/targets 的"
+                  "来源；缺声明即失败，不猜）")
+        manipulation = _joint_manipulation(root, arm_report, prefix, facts, compiled)
+        report["gripper"] = manipulation["gripper"]
+        report["targets"] = manipulation["targets"]
+        report["target_id"] = manipulation["target_id"]
+        report["vision"] = manipulation["vision"]
+        report["manipulation"] = {"attached_robot": str(robot_id),
+                                  "inherited_from": manipulation["inherited_from"],
+                                  "rename_rule": manipulation["rename_rule"]}
+        report["manipulation_absent_reason"] = None
     output_path.with_suffix(".json").write_text(
         json.dumps(report, ensure_ascii=True, indent=2) + "\n", encoding="utf-8"
     )
