@@ -124,10 +124,29 @@ CRITERION_SPEC = {
         "dock_yaw_error_deg", "<=",
         "停靠结束时实测的偏航误差**绝对值**（|evidence.final_yaw_error_deg|，单位度）",
     ),
+    # 抓取（`pick_object`）的三项判据：测量量同样**只能来自技能证据**
+    # （抓取点的对齐误差、提起高度、双侧指腹接触），不从末态位姿"推算"。
+    # 阈值出处（不是实现层默认值）：`config/machines/piper_joint.yaml: robot.backend_config.
+    # target_tolerance_m`（= 0.005，与臂侧基线 `acceptance.pose_tolerance_m` 同值）与
+    # 联合报告 `gripper.min_lift_delta_m`（= 0.02）；两侧都是声明，本文件只做评测。
+    # `require_bilateral_contact` 是布尔量：拿 1.0/0.0 与 `true` 比（见 evaluate_criteria 的 "=="）。
+    "pose_tolerance_m": (
+        "grasp_center_distance_m", "<=",
+        "抓取时实测的夹爪中心到目标中心的距离（evidence.grasp_alignment.center_distance_m）",
+    ),
+    "min_lift_delta_m": (
+        "grasp_lift_delta_m", ">=",
+        "抓取后实测的目标体提起高度（evidence.lift_delta_m）",
+    ),
+    "require_bilateral_contact": (
+        "grasp_bilateral_contact", "==",
+        "实测双侧指腹同时接触（evidence.bilateral_contact，布尔量）",
+    ),
 }
 #: 可在报告中出现的测量量键（顺序固定，便于逐项比对）。
 MEASUREMENT_KEYS = ("sim_time_advance_s", "final_speed_mps", "wall_seconds", "evidence_duration_s",
-                    "dock_translation_error_m", "dock_yaw_error_deg")
+                    "dock_translation_error_m", "dock_yaw_error_deg",
+                    "grasp_center_distance_m", "grasp_lift_delta_m", "grasp_bilateral_contact")
 
 #: 步骤分类（报告里逐项可见，避免"没跑"和"跑过了"混在一起）。
 STEP_EXECUTED = "EXECUTED"
@@ -380,23 +399,29 @@ def plan_steps(entry, index, contract, registry=None):
                 EXIT_DECLARATION,
             )
         unsupported = [key for key in record["criteria"] if key not in CRITERION_SPEC]
-        if record["action"] not in robot["capabilities"]:
-            if record["pending_closed_by"]:
-                record["kind"] = STEP_SKIPPED_PENDING
-                record["registration"] = {
-                    "mechanism": "pending_declaration",
-                    "closed_by": record["pending_closed_by"],
-                    "reason": record["pending_reason"],
-                    # 待交付步骤的判据由交付该能力的步骤实现；这里显式登记"本执行器评测不了"，
-                    # 而不是把整条场景判为非法（该步不会被下发，也不参与通过判定）。
-                    "unevaluable_criteria": unsupported,
-                }
-            else:
-                raise ScenarioError(
-                    "步骤 %s 使用本体 %s 未声明具备的能力 %s，且未登记待交付（缺 pending_closed_by/reason）："
-                    "显式失败，不静默跳过" % (record["id"], record["robot"], record["action"]),
-                    EXIT_REFERENCE,
-                )
+        if record["pending_closed_by"]:
+            # **声明了待交付就是待交付**：该步不执行、不参与通过判定 —— 即使能力已经声明。
+            # 为什么需要这条（2026-09-24 实测 s03_pick）：它的能力 `pick_object` 确实已声明，
+            # 但它必填的 `grasp_pose`（世界系笛卡尔位姿）还没有声明来源（臂侧参考姿态求解器给的
+            # 是关节空间参考姿态）⇒ 若继续按"能力已具备"走参数校验，预检会拿"能力存在"与
+            # "输入契约未交付"两件事互相打脸、以退出码 2 卡住**整条场景**（连可执行的 s01/s02
+            # 也跑不了）。登记待交付 = 显式承认这一步还交不了，比放宽参数校验诚实。
+            record["kind"] = STEP_SKIPPED_PENDING
+            record["registration"] = {
+                "mechanism": "pending_declaration",
+                "closed_by": record["pending_closed_by"],
+                "reason": record["pending_reason"],
+                # 待交付步骤的判据由交付该能力的步骤实现；这里显式登记"本执行器评测不了"，
+                # 而不是把整条场景判为非法（该步不会被下发，也不参与通过判定）。
+                "unevaluable_criteria": unsupported,
+                "capability_already_declared": record["action"] in robot["capabilities"],
+            }
+        elif record["action"] not in robot["capabilities"]:
+            raise ScenarioError(
+                "步骤 %s 使用本体 %s 未声明具备的能力 %s，且未登记待交付（缺 pending_closed_by/reason）："
+                "显式失败，不静默跳过" % (record["id"], record["robot"], record["action"]),
+                EXIT_REFERENCE,
+            )
         elif registry is not None and registry.resolve(record["action"], "") is None:
             raise ScenarioError(
                 "步骤 %s 的能力 %s 已声明但没有对应的技能清单（skills/%s/skill.yaml）：引用完整性失败"
@@ -752,6 +777,15 @@ def measure_step(before, after, evidence, wall_seconds):
             # ⚠ 判据是"误差**大小**"：适配器报告里是**带符号**偏航误差 ⇒ 必须取绝对值，
             # 否则 −3° 会以 −3 ≤ 2 的形式**骗过**判据（实测踩点：符号型量直接比阈值必错）。
             measured["dock_yaw_error_deg"] = abs(float(evidence["final_yaw_error_deg"]))
+        # 抓取结果量（同样只认技能自己给出的实测值；缺字段就不给依据 ⇒ 评测时判失败）
+        alignment = evidence.get("grasp_alignment")
+        if isinstance(alignment, dict) and alignment.get("center_distance_m") is not None:
+            measured["grasp_center_distance_m"] = float(alignment["center_distance_m"])
+        if evidence.get("lift_delta_m") is not None:
+            measured["grasp_lift_delta_m"] = float(evidence["lift_delta_m"])
+        if evidence.get("bilateral_contact") is not None:
+            # 布尔量统一成 1.0/0.0，使 `require_bilateral_contact: true` 能用 "==" 与 `true` 直接比
+            measured["grasp_bilateral_contact"] = 1.0 if evidence["bilateral_contact"] else 0.0
     return measured
 
 
@@ -773,7 +807,13 @@ def evaluate_criteria(criteria, measured):
             )
             continue
         value = float(measured[basis])
-        passed = value >= float(limit) if operator == ">=" else value <= float(limit)
+        if operator == ">=":
+            passed = value >= float(limit)
+        elif operator == "==":
+            # 布尔判据（如 `require_bilateral_contact: true`）：测量量已归一为 1.0/0.0
+            passed = value == (1.0 if limit is True else float(limit))
+        else:
+            passed = value <= float(limit)
         checks.append(
             {
                 "name": name,

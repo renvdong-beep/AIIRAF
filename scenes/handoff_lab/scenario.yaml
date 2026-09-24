@@ -91,22 +91,43 @@ scenarios:
           translation_error_max_m: 0.03
           yaw_error_max_deg: 2.0
           max_speed_m_s: 0.05
+      # 参数名必须与技能输入契约一致（`skills/pick_object/pick_object.input.json` 的必填键是
+      # `target_id`，不是 `target`；实测预检直接报 'target_id' is a required property）。
+      # 取值 = 场景声明里的道具 id（`scene.yaml: props[].id = box_01`），也是报告 `target_id` 的值。
       - id: s03_pick
         action: pick_object
         robot: piper
         params:
-          target: box_01
-        # ⚠ 失败口径更正（2026-09-24 实测）：本文原先写"未声明 robot.backend 绑定 ⇒ 退出码 3"，
-        # 但机型运行时绑定 `config/machines/piper.yaml` 已经存在 ⇒ **绑定普查通过**，
-        # 预检真正卡在**判据**：本步的三项判据在本执行器里没有评测依据（下面的 criteria 段），
-        # 实测 `scenario.py run --scenario nominal` ⇒ **退出码 2**（SCENARIO_DECLARATION_ERROR），
-        # 报 `步骤 s03_pick 声明了本执行器没有评测依据的判据 ['pose_tolerance_m', 'min_lift_delta_m',
-        # 'require_bilateral_contact']`。
-        # 这三项的量测口径依赖"机械臂已接入同一个仿真模型"——而当前场景构建产物里**没有臂**
-        # （`build/scenes/handoff_lab/handoff_lab.xml` 是 `<mujoco model="go2">`、19 个 body；
-        # `scripts/build_scene.py` 每次只装配一个本体）⇒ 与四足侧"世界固定站位帧"是同一根因，
-        # 见 `.hermes/plans/2026-09-23-dock-for-handoff.md` §11（A/B/C 三方案待人工决策）。
-        # 可执行子集见 stand_stop。
+          target_id: box_01
+        # ⚠ 待交付（卡的**不是**判据，是本步的**输入**）：`pick_object` 的输入契约
+        # （`skills/pick_object/pick_object.input.json`）还要求 `grasp_pose`
+        # = {frame_id, position{x,y,z}, orientation{x,y,z,w}}（**世界系笛卡尔**）。
+        # 而声明里现有的抓取位姿来源是臂侧参考姿态求解器
+        # （`scripts/build_piper_baseline.py: build_reference_poses` ⇒ `config/piper_simulation_baseline.yaml`
+        # 的 `grasp` 段），它给出的是 **home/approach/grasp/lift 四个关节空间参考姿态** +
+        # 指尖中点笛卡尔量（`grasp.finger_center_m`）与 `approach_direction_world`。
+        # "关节空间参考 + 接近方向 → 技能输入的世界系位姿"是一次**契约适配**（属臂侧工作项），
+        # 不得在这里手抄一组数字当第二份事实（AGENTS.md 5.3）。
+        # schema 要求 `步骤 NN` 形式（`^步骤 [0-9]{2}$`）⇒ 沿用交接集成那一步的编号，
+        # 具体范围由 pending_reason 说明（这才是 pending_reason 的用途）。
+        pending_closed_by: "步骤 18"
+        pending_reason: >-
+          pick_object 需要世界系 grasp_pose；声明侧只有臂参考姿态求解器的关节空间参考
+          （build_reference_poses）。需要新增"参考姿态 → 技能输入"的契约适配层（含朝向由
+          approach_direction_world/gripper_axis_world 构造并在**同一个模型**上复核指尖不碰台），
+          不得在场景声明里复制一组数字。三项判据的评测口径已于 2026-09-24 落地
+          （scripts/scenario.py 的 CRITERION_SPEC/measure_step：测量量全部取自技能证据
+          grasp_alignment.center_distance_m / lift_delta_m / bilateral_contact）。
+        # 判据口径（2026-09-24 落地，此前 exit 2 的卡点已解除）：
+        #   · 三项判据的**测量量全部来自技能证据**（不推算）——
+        #     `pose_tolerance_m` ← evidence.grasp_alignment.center_distance_m（抓取点对齐误差）
+        #     `min_lift_delta_m` ← evidence.lift_delta_m（提起高度）
+        #     `require_bilateral_contact` ← evidence.bilateral_contact（布尔量，按 1.0/0.0 与 true 比）
+        #   · 阈值出处是声明而不是脚本默认值：`config/machines/piper.yaml:
+        #     robot.backend_config.target_tolerance_m = 0.005`（与臂侧基线 acceptance.pose_tolerance_m
+        #     同值）与 `gripper.min_lift_delta_m = 0.02`；
+        #   · 评测期缺字段 ⇒ 该条判据**判失败**（不静默通过），见 scripts/scenario.py 的
+        #     CRITERION_SPEC / measure_step。
         criteria:
           pose_tolerance_m: 0.005
           min_lift_delta_m: 0.02
