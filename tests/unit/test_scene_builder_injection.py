@@ -163,10 +163,20 @@ class WorldFixedFramesTests(SceneBuilderFixture):
         self.assertEqual(float(model.site_pos[site_id][2]), 0.0567)
 
     def test_absent_frames_leave_injection_empty(self):
-        # 向后兼容：不声明 frames 时既有多一份空记录、也不影响其他注入
+        # 向后兼容：场景**不声明** frames 时，注入记录为空且不影响其他注入。
+        # ⚠ 注意本用例必须**显式去掉** frames —— 生产场景（scenes/handoff_lab）现在已声明站位帧，
+        # 直接 build() 会拿到 1 条记录（这正是我第一版写错的地方：断言与生产声明互相矛盾）。
+        self.mutate_scene(lambda doc: doc.pop("frames", None))
         report = self.build()
         self.assertEqual(report["injections"]["world_frames"], [])
         self.assertTrue(report["injections"]["mount_frames"])
+
+    def test_production_scene_declares_the_station_frame(self):
+        # 生产声明侧：站位帧确实在场景里，且注入为 world site（与上面的"无声明"路径成对）
+        report = self.build()
+        self.assertEqual([item["id"] for item in report["injections"]["world_frames"]],
+                         ["handoff_station_frame"])
+        self.assertIn("handoff_station_frame", report["model_facts"]["sites"])
 
     def test_duplicate_name_fails_explicitly(self):
         # 与既有 site（托盘挂载参考系）重名 ⇒ 退出码 2，不静默改名
@@ -204,10 +214,14 @@ class InjectionTests(SceneBuilderFixture):
         for prop in scene["props"]:
             self.assertIn(prop["body"], facts["bodies"], msg=prop["id"])
         self.assertIn("tray_frame", facts["sites"])
+        # 场景声明的**世界固定帧**（`frames:`）也必须出现在编译后模型里
+        for frame in scene.get("frames") or []:
+            self.assertIn(frame["id"], facts["sites"], msg=frame["id"])
         # 注入计数（厂商 nbody=18 含 world、ncam=0、nsite=1）：
-        # 注入后 nbody=20（+box_01 +tray_01）、ncam=1、nsite=3（+tray_frame +payload_lidar_site）。
+        # 注入后 nbody=20（+box_01 +tray_01）、ncam=1、nsite=4
+        #（+tray_frame +payload_lidar_site +handoff_station_frame）。
         self.assertEqual(facts["ncam"], 1)
-        self.assertEqual(facts["nsite"], 3)
+        self.assertEqual(facts["nsite"], 4)
         self.assertEqual(facts["nbody"], 20)
         self.assertEqual(facts["nu"], 12)  # 四足 12 个力矩型 motor，未被改写
         self.assertEqual([item["name"] for item in report["sensors"]["injected"]], ["overhead_camera", "payload_lidar_site"])
