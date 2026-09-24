@@ -221,7 +221,38 @@ guest 的请求**必须等 owner 已经开始推进**才能发：第一版让臂
 只能看到 status=FAILED）。正确做法（已落地）：**owner 的仿真时长要远长于 guest 的墙钟耗时**
 （stand 30000 ms 仿真 ≈ 2.5 s 墙钟，覆盖臂 200 步），guest 在 1.2 s 后插入 ⇒ 两者真正重叠。
 
-## 8. 下一步
+## 8. 机械臂抓取到位误差 12.113 mm 的机制判死（2026-09-24 续）
+
+现象（`build/acceptance/handoff_lab/nominal/report.json` 的 s03_pick，exit 5）：
+`IRAF-EXECUTION-FAILED 末端未到达目标抓取位姿: distance=0.012113m tolerance=0.005000m
+delta=[0.0022387082780914447, 5.394919764631356e-06, 0.011904138538288277]`
+
+探针 `build/iraf-a6a14/grasp_error_probe.py` → `grasp-error-probe.json`（判死两个岔路）：
+
+| duration_ms | max|q − q_des|（rad） | 备注 |
+| --- | --- | --- |
+| 1600 | **0.016796437522027752** | 还没稳定 |
+| 4000 | **0.005316921001245409** | |
+| 8000 | **0.005314844537182922** | 与 4000 几乎相同 ⇒ **平台期** |
+
+- `hypothesis_A_not_converged = true`（关节误差 5.3e-3 rad 远大于 1e-3）、
+  `hypothesis_B_declaration_vs_model = false`（不是“声明几何 vs 模型几何”不符）。
+- 关键旁证：报告的 `gravity_feedforward_phases = []`（**一个相位都没有**），而
+  `MujocoBackend._pick_ctrl_offsets(phase)` 只从 `gripper.gravity_feedforward` 取前馈
+  ⇒ 抓取三段（home/approach/grasp）**全是零前馈** ⇒ 纯 PD 稳态下垂（τ_g/kp）。
+- 时间无关性把“收敛慢/稳定窗不够”排除掉：加长 2 倍稳定时间只把误差从
+  0.005316921001245409 改到 0.005314844537182922（差 2.08e-6）。
+
+⇒ 结论：**12.1 mm 的 z 向到位误差 = 缺重力前馈造成的稳态下垂**（关节级 5.3e-3 rad，
+经串联臂放大到末端 ~12 mm），不是判据问题、不是几何声明问题、不是时序问题。
+
+修法（下一项，按声明生成的路线）：给 Piper 的抓取相位生成 `gripper.gravity_feedforward`
+—— 与 UR5e 同一套配方（`scripts/build_ur5_baseline._gravity_hold_ctrl`：按该位形的
+`qfrc_bias` 与执行器 `gainprm[0]` 算 τ_g/gain），写进臂侧场景报告，由基线构建器生成，
+**不在实现层写默认值**。验收：同一探针的关节误差降到 ≤1e-3 rad 量级、s03_pick 的
+`distance` ≤ 0.005 m。
+
+## 9. 下一步
 
 1. `s03_pick` 三项判据口径（`pose_tolerance_m` / `min_lift_delta_m` / `require_bilateral_contact`）
    → s04/s05 → `nominal` 全场景 → 两臂轮番运输。
