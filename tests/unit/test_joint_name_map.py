@@ -20,6 +20,7 @@ from unittest.mock import patch
 import mujoco
 
 from iraf_adapters.mujoco.mujoco_backend import MujocoBackend, _parse_name_map
+from iraf_adapters.mujoco.plant import MujocoPlant
 from iraf_adapters.unitree.scene_builder import SceneBuildError
 
 # 一个小模型：主本体（`base_link` = 狗躯干、`box_01` = 场景道具）+ 附加本体（link1/指爪）。
@@ -174,6 +175,67 @@ class NameMapResolutionTests(unittest.TestCase):
     def test_parse_name_map_rejects_non_object(self):
         with self.assertRaises(ValueError):
             _parse_name_map([("joint1", "piper_joint1")], SimpleNamespace())
+
+
+class AssemblePlantWiringTests(unittest.TestCase):
+    """场景层装配：共享植物（owner 先建 / guest 注入）与**技能注册表不被覆盖**。
+
+    为什么专门测"注册表"：`scenario.assemble` 里我第一版把局部变量 `registry`（技能注册表）
+    复用来存植物登记处 ⇒ `SkillRuntime` 拿到 dict，所有技能解析失败
+    （`'dict' object has no attribute 'resolve'`）。这条回归锁住"两件事共用同一个名字"的错误。
+    """
+
+    def _scenario(self):
+        import sys
+        scripts = str(Path(__file__).resolve().parents[2] / "scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        import scenario
+        return scenario
+
+    def _inputs(self, scenario, declaration_ref, plant_registry):
+        root = Path(__file__).resolve().parents[2]
+        document = scenario._load_yaml(root / declaration_ref, "机型声明")
+        spec = document.get("robot") or {}
+        return {
+            "root": str(root), "robot": str(spec.get("id")), "declaration": declaration_ref,
+            "declaration_document": document, "backend": str(spec.get("backend")),
+            "profile": str(spec.get("profile")),
+            "safety_policy": str((document.get("skills") or {}).get("safety_policy")),
+            "plant_registry": plant_registry,
+        }
+
+    def test_guest_injects_registered_plant_and_keeps_skill_registry(self):
+        scenario = self._scenario()
+        root = Path(__file__).resolve().parents[2]
+        joint_model = root / "build/scenes/handoff_lab/handoff_lab_joint.xml"
+        if not joint_model.is_file():
+            self.skipTest("联合产物不存在（先跑 --attach 构建）")
+        model = mujoco.MjModel.from_xml_path(str(joint_model))
+        data = mujoco.MjData(model)
+        # guest 只要求"注入的植物不是本后端的"；owner 身份用声明名表示即可（装配期按名核对）
+        owner_plant = MujocoPlant(model, data, owner="unitree_go2", owner_name="unitree_go2")
+        registry = {"unitree_go2": owner_plant}
+        states = scenario.assemble(self._inputs(scenario, "config/machines/piper_joint.yaml", registry))
+        # ① 植物真的注入了（同一株、同一份 data）
+        self.assertIs(states["backend"].plant, owner_plant)
+        self.assertIs(states["backend"].data, data)
+        # ② 技能注册表仍是 SkillRegistry，而不是植物登记处
+        self.assertTrue(hasattr(states["runtime"].registry, "resolve"))
+        self.assertIsNotNone(states["runtime"].registry.resolve("move_joint"))
+        # ③ 登记处语义：owner 角色装配后必须登记（这里手工放进去，验证"按 id 取"这条路径）
+        self.assertIs(registry["unitree_go2"], owner_plant)
+
+    def test_missing_registry_and_order_are_rejected(self):
+        scenario = self._scenario()
+        with self.assertRaises(scenario.ScenarioError) as ctx:
+            scenario.assemble({k: v for k, v in
+                               self._inputs(scenario, "config/machines/piper_joint.yaml", {}).items()
+                               if k != "plant_registry"})
+        self.assertIn("plant_registry", str(ctx.exception))
+        with self.assertRaises(scenario.ScenarioError) as ctx:
+            scenario.assemble(self._inputs(scenario, "config/machines/piper_joint.yaml", {}))
+        self.assertIn("装配顺序必须 owner 先于 guest", str(ctx.exception))
 
 
 if __name__ == "__main__":

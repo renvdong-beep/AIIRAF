@@ -22,6 +22,12 @@ robot:
   # 为什么写在机型声明里：「这台本体用哪个适配器」是部署事实，属声明而不是脚本常量（铁律 5.3）；
   # 缺键即显式失败（执行器退出码 3），**禁止**在脚本里猜测/硬编码后端入口。
   backend: unitree_go2_mujoco
+  # 共享植物角色：**owner** = 唯一时间推进者（联合场景里由本机型推进整个 MJCF 的时间线）。
+  # 臂侧机型声明 `config/machines/piper_joint.yaml` 声明 role: guest 并注入本植物的引用。
+  # 缺这段声明时两个本体各自自建植物 ⇒ 两个独立世界（实测见
+  # docs/debug/2026-09-24-joint-model-dog-arm.md §5.1）。
+  plant:
+    role: owner
 
 model:
   # 被测模型 = 场景构建产物（步骤 13）：保证"演示与验收走同一条链路"。
@@ -30,10 +36,6 @@ model:
   # 联合产物的构建入口（可复跑）：--attach 才是"两个本体同一个 MJCF"的那一步
   builder: scripts/build_scene.py
   builder_args: ["--scene", "scenes/handoff_lab", "--robot", "unitree_go2", "--attach", "piper"]
-  plant:
-    # 共享植物角色声明：本机型是**时间推进者**（owner）。臂侧的机型声明声明 role: guest
-    # （缺声明时各自自建植物 ⇒ 两个独立世界，实测见 §5.1）。
-    role: owner
 
 initial:
   # 初始状态取厂商模型自带关键帧（实测 build/iraf-24h/15/probe-api.txt：

@@ -10,5 +10,15 @@ robot:
     report: build/scenes/handoff_lab/handoff_lab_joint.json
     target_tolerance_m: 0.005
     realtime: false
+  plant:
+    # 共享植物角色：**guest** —— 本本体在联合场景里注入 `owner`（四足）持有的植物，
+    # 因此不得推进时间，只能写自己 name_map 界定的执行器（越界即显式失败）。
+    # guest_timeout_factor = 等 owner 推进时间的**墙钟**余量系数（超时 = 步数 × timestep × 系数）。
+    # 取值依据：四足 100 Hz 控制循环在 4 核机上约 3000 步/墙钟秒（实测 build/iraf-a6a14/
+    # shared-plant-dog-owner.json：stand 9000 步 ≈ 数秒墙钟），臂一段 2000 ms 的 move_joint
+    # 需要 200 步 ⇒ 30 倍余量足以覆盖机器被占满的情况；仍会显式超时而不是静默失败。
+    role: guest
+    owner: unitree_go2
+    guest_timeout_factor: 30.0
 skills:
   safety_policy: profiles/safety/simulation_lab.yaml

@@ -497,6 +497,11 @@ def plan_faults(entry, plan, sensors, contract):
 # --------------------------------------------------------------------------
 SUPPORTED_BACKEND_CONFIG_MODES = ("scene_report",)
 
+# 共享植物（联合场景：狗 + 臂同一个 MJCF）里的角色声明（`robot.plant.role`）：
+#   owner = 唯一时间推进者（四足）；guest = 注入 owner 的植物、不得推进时间（臂）。
+# 缺声明 ⇒ 各自自建植物 ⇒ 两个独立世界（实测见 docs/debug/2026-09-24-joint-model-dog-arm.md §5.1）。
+PLANT_ROLES = ("owner", "guest")
+
 
 def build_backend_config(root, declaration, spec):
     """按声明的 `robot.backend_config` 构造后端配置（缺失声明＝用声明文件本身）。
@@ -622,12 +627,52 @@ def assemble(runtime_inputs):
         backend_config = str(_resolve(root, runtime_inputs["declaration"]))
     else:
         backend_config = build_backend_config(root, runtime_inputs.get("declaration_document"), config_spec)
+    # ---- 共享植物：owner 先建、guest 注入（顺序是硬约束，违反即显式失败）
+    plant_spec = declaration_spec.get("plant")
+    plant_kwargs = {}
+    if plant_spec is not None:
+        if not isinstance(plant_spec, dict):
+            raise ScenarioError("robot.plant 必须是对象（role/owner/guest_timeout_factor）", EXIT_DECLARATION)
+        role = str(plant_spec.get("role") or "")
+        if role not in PLANT_ROLES:
+            raise ScenarioError(
+                "robot.plant.role 必须是 %s 之一，实际 %r；不需要共享植物时删除整段"
+                % (list(PLANT_ROLES), role), EXIT_DECLARATION)
+        # ⚠ 变量名必须是 `plant_registry`：本函数上面已经有一个同名局部 `registry`（技能注册表），
+        #   我第一版复用它 ⇒ **把技能注册表覆盖成植物登记处**，于是 SkillRuntime 拿到一个 dict，
+        #   所有技能解析都失败（表现为 `'dict' object has no attribute 'resolve'`）。
+        plant_registry = runtime_inputs.get("plant_registry")
+        if not isinstance(plant_registry, dict):
+            raise ScenarioError(
+                "声明了 robot.plant(role=%s) 就必须由场景层传入 plant_registry（共享植物的登记处）："
+                "没有登记处就无从共享，拒绝装配而不是各建一份" % role, EXIT_DECLARATION)
+        if role == "guest":
+            owner_id = plant_spec.get("owner")
+            if not isinstance(owner_id, str) or not owner_id:
+                raise ScenarioError("robot.plant.role=guest 必须声明 owner（owner 的 robot.id）", EXIT_DECLARATION)
+            plant = plant_registry.get(owner_id)
+            if plant is None:
+                raise ScenarioError(
+                    "guest 声明的 plant.owner=%s 尚未创建：装配顺序必须 owner 先于 guest"
+                    "（已登记：%s）" % (owner_id, sorted(plant_registry)), EXIT_REFERENCE)
+            factor = plant_spec.get("guest_timeout_factor")
+            if not isinstance(factor, (int, float)) or float(factor) <= 0:
+                raise ScenarioError(
+                    "robot.plant.guest_timeout_factor 必须是正数（guest 等 owner 推进时间的墙钟余量，"
+                    "实现层不猜）", EXIT_DECLARATION)
+            if isinstance(backend_config, dict):
+                backend_config = dict(backend_config)
+                backend_config["plant"] = plant
+                backend_config["plant_guest_timeout_factor"] = float(factor)
+            else:
+                plant_kwargs = {"plant": plant, "plant_guest_timeout_factor": float(factor)}
     try:
         backend = load_backend(
             KNOWN_BACKENDS[runtime_inputs["backend"]],
             backend_config,
             profile,
             authority,
+            **plant_kwargs,
         )
     except ScenarioError:
         raise
@@ -638,6 +683,14 @@ def assemble(runtime_inputs):
         )
     except Exception as exc:  # 模型编译等：显式失败，不返回半成品
         raise ScenarioError("后端装配失败（模型编译等）：%s" % exc, EXIT_BACKEND)
+    if plant_spec is not None and str(plant_spec.get("role")) == "owner":
+        # owner 必须真的成为植物的时间推进者，否则"登记成功"是假的（guest 会等一个没人推的植物）
+        owned_plant = getattr(backend, "plant", None)
+        if owned_plant is None or not owned_plant.is_owner(runtime_inputs["robot"]):
+            raise ScenarioError(
+                "robot.plant.role=owner 但后端 %s 没有成为植物 owner（%s）"
+                % (runtime_inputs["backend"], runtime_inputs["robot"]), EXIT_DECLARATION)
+        plant_registry[runtime_inputs["robot"]] = owned_plant
     runtime = SkillRuntime(
         profile, safety, backend, registry, authority, SqliteExecutionStore(":memory:")
     )

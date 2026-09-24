@@ -159,9 +159,50 @@ B 联合 handoff_lab_joint.xml   （nu=20，key.ctrl 长度 20，后 8 位全零
    ⇒ 臂侧 ctrl 初值不是声明值；关键帧只保证 **qpos** 初值来自声明。若将来需要"臂初始保持张开"，
    要把 `ctrl` 也按声明补齐（属共享植物装配的工作项）。
 
-## 6. 下一步（共享植物：一份 MjData + 多控制器）
+## 6. 共享植物落地：场景层 + 技能层（2026-09-24 续）
 
-详见 `.hermes/plans/2026-09-23-dock-for-handoff.md` §15（设计）：`plant` 注入、单一时间推进者、
-按执行器划分控制权、`stop()` 作用域、每个本体一张 `name_map`。
+实现（`robot.plant` 声明 + `scenario.assemble` 的 plant_registry）：
+
+| 层 | 改动 |
+| --- | --- |
+| 声明 | `config/go2_joint.yaml`（四足，`model.file` → 联合产物、`robot.plant.role: owner`）；`config/machines/piper_joint.yaml`（臂，`robot.plant: {role: guest, owner: unitree_go2, guest_timeout_factor: 30.0}`） |
+| 装配 | `scenario.assemble` 读 `robot.plant`：owner 装配后把植物登记进 `plant_registry`；guest 从登记处取同一株注入（`plant` + `plant_guest_timeout_factor` 进后端配置）。缺 registry / guest 先于 owner / 系数非正数 ⇒ **显式失败** |
+| 后端 | `load_backend(..., **kwargs)` 透传；四足后端 `from_config(..., plant=None)`；两者步进都走 `plant.step_once(self)` |
+
+证据 `build/iraf-a6a14/shared-plant-skills.json`（6/6，**走 `assemble` + `SkillRuntime.execute`**，
+与 `interact`/`run` 同链路）：
+
+```
+负向：guest 先装配 ⇒ 「装配顺序必须 owner 先于 guest」；声明了 plant 但无 registry ⇒ 「必须传入 plant_registry」
+正向：registry = {unitree_go2}，臂拿到的是同一株植物（same_data=True）
+狗 stand（技能层）SUCCEEDED：base_z 0.2760863419784013，plant 推进 4000 步，8 个周期
+臂 move_joint（技能层，声明名 joint3/joint5/joint7）SUCCEEDED，墙钟 0.4698 s：
+  末态误差 0.0031713854410383435 / 0.01808743373350441 / 3.9077193394326803e-08 rad
+臂 stop（技能层）后：改动过的狗执行器下标集合 = []（狗 ctrl 仍是 stand 的真实力矩 −5.357969215043955 … 6.67198225602607 N·m），臂 8 个执行器归零
+```
+
+### 6.1 我的三个判据错误（同一类，必须记住）
+
+1. 拿"已步进过的实例"当对照 ⇒ 把对侧自己的演化当成泄漏（§5.1）。
+2. 用"位移过半"判到位 ⇒ 起始位形非零（关键帧 home joint3=−1.15）时把已到位的关节判成没动。
+3. 在 owner 仍在跑时比较"指令前后 ctrl 快照" ⇒ owner 每拍都在写自己的 ctrl，判据天然不成立。
+   正确做法：**先冻住 owner 再量**，并记录"被改动的下标集合 ⊆ 本后端拥有的执行器"。
+
+共同点：**判据必须只让一个变量动**（一次只动一侧 / 只比末态 / 先停扰动源）。
+
+### 6.2 一个隐蔽的变量遮蔽缺陷（自己引入，已修）
+
+`scenario.assemble` 里我第一版用局部变量 `registry` 存植物登记处，覆盖了上面的**技能注册表** ⇒
+`SkillRuntime` 拿到 dict，所有技能解析失败（`'dict' object has no attribute 'resolve'`），
+而两处 try/except 一度把失败吞成"状态未返回"。已改名 `plant_registry`，并加回归测试
+`tests/unit/test_joint_name_map.py::AssemblePlantWiringTests`（断言 `runtime.registry` 仍是
+`SkillRegistry` 且 `resolve("move_joint")` 非空）。
+
+## 7. 下一步
+
+1. `s03_pick` 三项判据口径（`pose_tolerance_m` / `min_lift_delta_m` / `require_bilateral_contact`）
+   → s04/s05 → `nominal` 全场景 → 两臂轮番运输。
+2. 联合产物的资产相对化（消 host-specific）；债 S4（臂厂商资产入库 + 重写锁 + 许可证 BOM）；S3。
+3. owner 侧作用域的**声明化**（现在 owner = 模型全部执行器；联合植物里应显式声明"我拥有哪些"）。
 
 
