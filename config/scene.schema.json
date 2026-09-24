@@ -77,6 +77,11 @@
       "description": "道具清单（盒体/托盘/支架）。几何必须是内联基元或已存在的 mesh 文件（mesh 文件不存在即引用完整性失败）。",
       "items": {"$ref": "#/definitions/scene_prop"}
     },
+    "frames": {
+      "type": "array",
+      "description": "世界固定参考系（导航/停靠/交接的目标帧）：注入为 worldbody 下的 site。停靠目标帧**必须**世界固定且不与机器人刚性相连 —— 挂在机器人身上的帧会让误差恒为自指量（实测：偏航恒 0、平移 = 帧本地偏置的投影，见 docs/debug/2026-09-24-dock-target-self-frame.md）。",
+      "items": {"$ref": "#/definitions/scene_world_frame"}
+    },
     "sensors": {
       "type": "array",
       "minItems": 1,
@@ -296,6 +301,30 @@
         "friction": {"$ref": "#/definitions/friction"},
         "rgba": {"$ref": "#/definitions/rgba"},
         "pose": {"$ref": "#/definitions/pose"},
+        "note": {"type": "string"}
+      }
+    },
+    "scene_world_frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "pose"],
+      "description": "世界固定参考系：只有 site 一种形态（无质量、无自由关节、不参与碰撞 ⇒ 不会被推走，也不占台面）。pose 必须显式给出（世界系），不允许 `mount`。",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "帧名（= 生成模型里的 site 名，唯一；与既有对象重名即失败）。"
+        },
+        "kind": {"const": "site"},
+        "pose": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["pos_m", "quat_wxyz"],
+          "properties": {
+            "pos_m": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}},
+            "quat_wxyz": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "number"}}
+          }
+        },
         "note": {"type": "string"}
       }
     },

@@ -111,6 +111,85 @@ class SceneBuilderFixture(unittest.TestCase):
         return context.exception
 
 
+class WorldFixedFramesTests(SceneBuilderFixture):
+    """世界固定帧（`frames:`）—— 停靠目标帧的正确形态（2026-09-24 新增）。
+
+    要证明的四件事：
+      1. 声明 → 注入为 **worldbody 下的 site**，且所属 body 是 worldbody（body 0）
+         ⇒ 满足停靠对目标帧的要求"世界固定、不与机器人刚性相连"；
+      2. 位姿按声明逐位生效（编译结果为准，不看 XML 文本）；
+      3. 报告登记 `injected_as: world_site` + `pose_source: declaration`（可追溯）；
+      4. 负向：重名 / `kind` 非 site / 缺 `pose` 一律**显式失败**（退出码 2），不静默跳过。
+    """
+
+    FRAME = {"id": "handoff_station_frame", "kind": "site",
+             "pose": {"pos_m": [0.55, 0.0, 0.0], "quat_wxyz": [1.0, 0.0, 0.0, 0.0]},
+             "note": "夹具：站位帧"}
+
+    def _build_with(self, frames):
+        self.mutate_scene(lambda doc: doc.__setitem__("frames", frames))
+        return self.build()
+
+    def test_declared_frame_is_injected_as_world_fixed_site(self):
+        import mujoco
+
+        report = self._build_with([dict(self.FRAME)])
+        records = report["injections"]["world_frames"]
+        self.assertEqual([item["id"] for item in records], ["handoff_station_frame"])
+        self.assertEqual(records[0]["injected_as"], "world_site")
+        self.assertEqual(records[0]["pose_source"], "declaration")
+
+        model = mujoco.MjModel.from_xml_path(report["output"])
+        site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "handoff_station_frame")
+        self.assertGreaterEqual(site_id, 0, msg="声明帧必须出现在**编译后**模型里")
+        # 关键属性：所属 body = worldbody(0) ⇒ 世界固定（停靠门禁要求的那一条）
+        self.assertEqual(int(model.site_bodyid[site_id]), 0)
+        self.assertAlmostEqual(float(model.site_pos[site_id][0]), 0.55, places=9)
+        self.assertAlmostEqual(float(model.site_pos[site_id][1]), 0.0, places=9)
+        self.assertAlmostEqual(float(model.site_pos[site_id][2]), 0.0, places=9)
+
+    def test_frame_pose_is_bit_exact_from_declaration(self):
+        # 声明值 → 模型值逐位一致（避免"看着差不多"）
+        report = self._build_with([dict(self.FRAME,
+                                       pose={"pos_m": [0.4321, -0.1234, 0.0567],
+                                             "quat_wxyz": [0.7071067811865476, 0.0, 0.0,
+                                                           0.7071067811865475]})])
+        import mujoco
+
+        model = mujoco.MjModel.from_xml_path(report["output"])
+        site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "handoff_station_frame")
+        self.assertEqual(float(model.site_pos[site_id][0]), 0.4321)
+        self.assertEqual(float(model.site_pos[site_id][1]), -0.1234)
+        self.assertEqual(float(model.site_pos[site_id][2]), 0.0567)
+
+    def test_absent_frames_leave_injection_empty(self):
+        # 向后兼容：不声明 frames 时既有多一份空记录、也不影响其他注入
+        report = self.build()
+        self.assertEqual(report["injections"]["world_frames"], [])
+        self.assertTrue(report["injections"]["mount_frames"])
+
+    def test_duplicate_name_fails_explicitly(self):
+        # 与既有 site（托盘挂载参考系）重名 ⇒ 退出码 2，不静默改名
+        self.mutate_scene(lambda doc: doc.__setitem__(
+            "frames", [{"id": "tray_frame", "kind": "site",
+                        "pose": {"pos_m": [0.0, 0.0, 0.0], "quat_wxyz": [1.0, 0.0, 0.0, 0.0]}}]))
+        self.assertBuildFails(scene_builder.EXIT_DECLARATION, "重名")
+
+    def test_non_site_kind_fails_explicitly(self):
+        # 两层防线：schema（`kind: const site`）先拒；构建器里还有第二层同判定（防"绕过 schema 的
+        # 调用路径"）。这里断言第一层的实际消息 —— 判据是"显式失败"，不是某句固定文案。
+        self.mutate_scene(lambda doc: doc.__setitem__(
+            "frames", [{"id": "station_body", "kind": "body",
+                        "pose": {"pos_m": [0.5, 0.0, 0.0], "quat_wxyz": [1.0, 0.0, 0.0, 0.0]}}]))
+        error = self.assertBuildFails(scene_builder.EXIT_DECLARATION, "frames/0/kind")
+        self.assertIn("site", str(error))
+
+    def test_missing_pose_fails_explicitly(self):
+        self.mutate_scene(lambda doc: doc.__setitem__(
+            "frames", [{"id": "station_frame", "kind": "site"}]))
+        self.assertBuildFails(scene_builder.EXIT_DECLARATION, "pose")
+
+
 class InjectionTests(SceneBuilderFixture):
     def test_all_declared_objects_are_found_in_compiled_model(self):
         report = self.build()

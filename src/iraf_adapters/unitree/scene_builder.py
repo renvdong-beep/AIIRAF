@@ -468,6 +468,41 @@ def _inject_props(
     return injected, frames
 
 
+def _inject_world_frames(world, scene):
+    """按声明注入**世界固定**参考系（site 直接挂 `worldbody`）—— 导航/停靠/交接的目标帧。
+
+    为什么需要这一类（2026-09-24 实测，docs/debug/2026-09-24-dock-target-self-frame.md）：
+    停靠的目标帧必须世界固定且**不与机器人刚性相连**，否则量到的是自指量：
+      · `mount_frames` 注入在**躯干**上 ⇒ 与机身同一刚体：偏航误差恒 `0.0`（同一个 `xmat`）、
+        平移误差恒为「帧本地偏置在机身姿态下的 xy 投影」，接近过程**从不执行**；
+      · prop `body` 是**自由体**（每个 prop 都带自由关节）⇒ 会被机器人推走：实测站距 0.19 m 时
+        目标被推 ~35 mm（占末态误差 45%）。
+    世界固定 site 无质量、无自由关节、不参与碰撞 ⇒ 既不会被推，也不占台面。
+    """
+    frames = scene.get("frames") or []
+    existing = {element.get("name") for element in world.iter("*") if element.get("name")}
+    injected = []
+    for index, frame in enumerate(frames):
+        label = "frames[%d]" % index
+        kind = frame.get("kind")
+        if kind != "site":
+            _fail(EXIT_DECLARATION, "%s.kind 只支持 site（世界固定帧的唯一形态），实际 %r" % (label, kind))
+        name = str(frame.get("id"))
+        if name in existing:
+            _fail(EXIT_DECLARATION, "%s.id=%s 与场景里既有对象（body/site/camera）重名" % (label, name))
+        pose = frame.get("pose")
+        if not isinstance(pose, dict):
+            _fail(EXIT_DECLARATION, "%s.pose 必须是对象（世界系 pos_m + quat_wxyz）" % label)
+        pos = _vec3(pose.get("pos_m"), "%s.pose.pos_m" % label)
+        quat = _quat_wxyz(pose.get("quat_wxyz"), "%s.pose.quat_wxyz" % label)
+        ET.SubElement(world, "site", name=name, pos=_numbers(pos, "%.9f"),
+                      quat=_numbers(quat, "%.9f"))
+        existing.add(name)
+        injected.append({"id": name, "kind": "site", "injected_as": "world_site",
+                         "pose_source": "declaration", "pos_m": list(pos), "quat_wxyz": list(quat)})
+    return injected
+
+
 def _inject_mount_frames(trunk_body, model, used_frames):
     """把所有被引用的挂载参考系作为 site 注入躯干（供位姿查询与验收判据使用）。"""
     frames = model.get("mount_frames") or {}
@@ -1021,6 +1056,8 @@ def build_scene_model(scene_dir, robot, root=None, output=None):
     )
     injections["props"] = props
     injections["mount_frames"] = _inject_mount_frames(trunk_body, model, {item["mount"]["frame"] for item in props if "mount" in item})
+    # 世界固定帧：必须在 mount_frames 之后注入（重名检查要能看见已注入的挂载参考系）
+    injections["world_frames"] = _inject_world_frames(world, scene)
     injected_sensors, vendor_sensors, deferred_sensors = _inject_sensors(
         scene, robot, trunk_body, trunk_body_name, world, vendor_site_names
     )
@@ -1049,6 +1086,9 @@ def build_scene_model(scene_dir, robot, root=None, output=None):
     for name in injections["mount_frames"]:
         if name not in facts["sites"]:
             failures.append("挂载参考系 %s 不在生成模型里" % name)
+    for item in injections["world_frames"]:
+        if item["id"] not in facts["sites"]:
+            failures.append("世界固定帧 %s 不在生成模型里" % item["id"])
     if trunk_body_name not in facts["bodies"]:
         failures.append("躯干 body %s 不在生成模型里" % trunk_body_name)
     if failures:
