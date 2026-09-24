@@ -14,6 +14,7 @@ import mujoco
 import numpy as np
 import yaml
 
+from iraf_adapters.mujoco.plant import MujocoPlant, PlantError, PlantOwnershipError
 from iraf_skills.common.trajectory import quintic_position
 
 #: 伺服前馈（重力静差补偿）的单关节上限，单位 rad。
@@ -270,6 +271,11 @@ class MujocoBackend:
             ),
             # 声明名 → 模型名（联合模型专有；单本体产物不带此键 ⇒ 行为逐位不变）
             name_map=config.get("name_map"),
+            # 共享植物（联合场景）：注入别人拥有的植物 ⇒ 本后端是 guest，不得推进时间
+            plant=config.get("plant"),
+            # guest 等待 owner 推进时间的**墙钟**余量系数（只在本后端是 guest 时必需；
+            # 缺声明即装配失败 —— 超时不猜，见 plant.wait_until）
+            plant_guest_timeout_factor=config.get("plant_guest_timeout_factor"),
         )
 
     def __init__(
@@ -283,12 +289,24 @@ class MujocoBackend:
         realtime=False,
         display_size=(640, 480),
         name_map=None,
+        plant=None,
+        plant_guest_timeout_factor=None,
     ):
         self.profile = profile
         self.authority = authority
         self._model_path = str(Path(model_path).resolve())
-        self.model = mujoco.MjModel.from_xml_path(self._model_path)
-        self.data = mujoco.MjData(self.model)
+        # 共享植物（联合场景）：数据来自**别人拥有的植物** ⇒ 本后端是 guest：
+        #   · 不再自建 MjModel/MjData（否则就是"两个世界"，实测见 plant.py 模块注释）；
+        #   · 不重放关键帧（初始状态由 owner 决定，重放会把对方的状态冲掉）；
+        #   · 不能推进时间（step 改为等 owner 推进，见 step()）。
+        # plant=None ⇒ 自带植物且自己是 owner ⇒ 单本体路径逐位不变。
+        self._plant_injected = plant is not None
+        if self._plant_injected:
+            self.model = plant.model
+            self.data = plant.data
+        else:
+            self.model = mujoco.MjModel.from_xml_path(self._model_path)
+            self.data = mujoco.MjData(self.model)
         # **按模型自带的关键帧初始化位形**（存在时）。
         # 为什么必须做：MjData 的默认 qpos 是**全零**，而全零位形对多数
         # 6 轴臂意味着"手臂竖直向上 / 夹爪水平伸出"。pick_object 的
@@ -303,9 +321,11 @@ class MujocoBackend:
         # 用 getattr 探测而非直接取属性：单测会用 SimpleNamespace 替身，
         # 没有 nkey 字段（直接取会在装配期抛 AttributeError）。
         key_count = int(getattr(self.model, "nkey", 0) or 0)
-        if key_count > 0:
+        if key_count > 0 and not self._plant_injected:
             mujoco.mj_resetDataKeyframe(self.model, self.data, 0)
-        mujoco.mj_forward(self.model, self.data)
+            mujoco.mj_forward(self.model, self.data)
+        elif not self._plant_injected:
+            mujoco.mj_forward(self.model, self.data)
         self._actuators = {
             mujoco.mj_id2name(
                 self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, index
@@ -317,9 +337,29 @@ class MujocoBackend:
         # （`piper_joint1`、`piper_link6`），而 Profile / 技能参数口径是**声明名**（`joint1`）。
         # 单本体产物不带 name_map ⇒ 两张表都空 ⇒ 所有解析原样返回，行为与改动前逐位一致。
         self._name_map, self._declaration_by_model = _parse_name_map(name_map, self.model)
+        # 植物与"我拥有的执行器"（控制权作用域）
+        #  · 自带植物 ⇒ 我是 owner，拥有的执行器 = 模型里全部（单本体语义逐位不变）；
+        #  · 注入植物 ⇒ 我是 guest：只能写 name_map 指向的那些执行器（越界即显式失败），
+        #    且 `stop()` 只归零**自己的**执行器（不再碰主本体）。
+        if self._plant_injected:
+            self.plant = plant
+            if not self.plant.is_owner(self) and plant_guest_timeout_factor is None:
+                raise PlantError(
+                    "共享植物模式下本后端是 guest（owner=%s）⇒ 必须声明 plant_guest_timeout_factor"
+                    "（等待 owner 推进时间的墙钟余量系数，实现层不猜）" % self.plant.owner)
+            self._plant_guest_timeout_factor = (
+                None if plant_guest_timeout_factor is None else float(plant_guest_timeout_factor))
+            if self._plant_guest_timeout_factor is not None and self._plant_guest_timeout_factor <= 0:
+                raise PlantError("plant_guest_timeout_factor 必须是正数：%r"
+                                 % (plant_guest_timeout_factor,))
+        else:
+            self.plant = MujocoPlant(self.model, self.data, owner=self, label=self._model_path)
+            self._plant_guest_timeout_factor = None
+        self._owned_actuators = self._resolve_owned_actuators()
         self.stopped = False
         self._cancel_event = threading.Event()
-        self._data_lock = threading.RLock()
+        # 共享植物下一律用**植物自己的锁**：Viewer 同步与两侧的控制写入必须互斥
+        self._data_lock = self.plant.lock()
         self._loop_lock = threading.RLock()
         self._metrics_lock = threading.RLock()
         self._loop_stop = threading.Event()
@@ -1198,7 +1238,7 @@ class MujocoBackend:
                 # （场景 report 口径）。Piper 两者同名掩盖了这个差异，
                 # UR5e 上 Home 动作因此报 "actuator not found: shoulder_pan_joint"。
                 channel = self._actuator_channel(joint)
-                self.data.ctrl[self._actuators[channel]] = float(value)
+                self._write_ctrl(channel, value)
                 # 状态按**关节名**回写，与 profile.joints / 返回值口径一致。
                 self.last_positions[self._joint_name_of(joint)] = float(value)
             self.stopped = False
@@ -1225,9 +1265,17 @@ class MujocoBackend:
         self._safe_stop_controls()
 
     def step(self, count=1):
+        """推进仿真 count 步。
+
+        · 本后端是植物 **owner**（自带植物或显式当 owner）⇒ 自己 mj_step；
+        · 本后端是 **guest**（注入别人的植物）⇒ 不能推进时间，改为"等 owner 推够步数"，
+          语义等价（"仿真前进了 count 步"），但时间线始终只有一个推进者。
+        """
         count = int(count)
         if count < 1:
             raise ValueError("MuJoCo 步进次数必须为正数")
+        if not self.plant.is_owner(self):
+            return self._wait_for_guest_steps(count)
         for _ in range(count):
             fault_kind, fault_delay = self._consume_fault()
             started = time.monotonic()
@@ -1236,7 +1284,7 @@ class MujocoBackend:
             if fault_kind == "step_delay":
                 time.sleep(fault_delay)
             with self._data_lock:
-                mujoco.mj_step(self.model, self.data)
+                self.plant.step_once(self)
             self._record_step(time.monotonic() - started)
             if self._realtime:
                 time.sleep(float(self.model.opt.timestep))
@@ -1447,7 +1495,7 @@ class MujocoBackend:
             if not positions:
                 raise RuntimeError("无法锁存当前位姿：没有可直接控制的关节通道")
             for channel, value in positions.items():
-                self.data.ctrl[self._actuators[channel]] = float(value)
+                self._write_ctrl(channel, value)
                 self.last_positions[name] = float(value)
             self.stopped = False
         return positions
@@ -1497,9 +1545,68 @@ class MujocoBackend:
                 self._loop_stop.wait(remaining)
 
     def _safe_stop_controls(self):
+        """安全停机：只归零**本后端拥有的**执行器。
+
+        为什么不是 `data.ctrl[:] = 0.0`（2026-09-24 实测发现）：联合模型里整条数组归零会把
+        **主本体（狗）** 的 12 个执行器一并清零（实测 FR_thigh 0.9 → 0.0）⇒ 一个本体的急停
+        把另一个本体也停了。作用域收敛后单本体路径无差别（拥有的通道 = 模型全部执行器 ⇒ 逐位不变，
+        由 loopback 三基准回归证明）；全植物急停属于**场景层**的职责，不在单控制器后端里做。
+        """
         with self._data_lock:
-            self.data.ctrl[:] = 0.0
+            for name in self._owned_actuators:
+                index = self._actuators.get(name)
+                if index is not None:
+                    self.data.ctrl[index] = 0.0
             self.stopped = True
+
+    def _resolve_owned_actuators(self):
+        """本后端**拥有**的执行器名集合（控制权作用域）。
+
+        自带植物 ⇒ 模型里全部执行器（单本体语义逐位不变）。
+        guest（注入植物）⇒ `name_map` 指向的对象对应的执行器：
+          · 关节名与执行器名同名（Piper 的 `piper_joint1`）⇒ 直接命中；
+          · 不同名（UR5e 的关节 `shoulder_pan_joint` / 执行器 `shoulder_pan`）⇒ 用 `actuator_trnid`
+            反查驱动该关节的执行器；
+          · name_map 里也有 body/geom（非执行器）⇒ 跳过。
+        两类都不是（映射没落到任何执行器）⇒ 显式失败：guest 一个通道都不拥有等于不能动，
+        静默放行会让"越权写别人的执行器"看起来正常。
+        """
+        if not self._plant_injected:
+            return set(self._actuators)
+        if not self._name_map:
+            raise PlantError(
+                "共享植物模式必须同时声明 name_map（本后端拥有的执行器由它界定）："
+                "否则无法判定控制权作用域，拒绝装配而不是默认放行")
+        owned = set()
+        for model_name in self._name_map.values():
+            if model_name in self._actuators:
+                owned.add(model_name)
+                continue
+            joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, model_name)
+            if joint_id < 0:
+                continue
+            for index in range(int(self.model.nu)):
+                if int(self.model.actuator_trnid[index, 0]) != int(joint_id):
+                    continue
+                name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, index)
+                if name:
+                    owned.add(str(name))
+        if not owned:
+            raise PlantError(
+                "共享植物模式下 name_map 没有落到任何执行器 ⇒ 本后端无法控制任何通道"
+                "（声明与模型不匹配）")
+        return owned
+
+    def _assert_owned(self, channel):
+        if channel not in self._owned_actuators:
+            raise PlantError(
+                "控制权越界：执行器 %s 不属于本后端（拥有的通道：%s）—— "
+                "同一执行器任一时刻只允许一个控制源（AGENTS.md 1.13）"
+                % (channel, sorted(self._owned_actuators)))
+
+    def _write_ctrl(self, channel, value):
+        self._assert_owned(channel)
+        self.data.ctrl[self._actuators[channel]] = float(value)
 
     def _model_name(self, name):
         """把**声明名**解析为模型里的实际名字；未声明映射即原样返回（单本体路径行为不变）。
@@ -1586,7 +1693,8 @@ class MujocoBackend:
         with self._data_lock:
             for actuator, value in positions.items():
                 channel = self._actuator_channel(actuator)
-                self.data.ctrl[self._actuators[channel]] = float(value)
+                # 受控写入：guest 只能写自己拥有的执行器（共享植物下越界即显式失败）
+                self._write_ctrl(channel, value)
 
     def _set_gripper_controls(self, positions):
         """只更新夹爪通道，避免开合动作覆盖机械臂关节。
@@ -1668,6 +1776,22 @@ class MujocoBackend:
         self._set_controls(commands)
         self._advance_for(settle_ms)
 
+    def _wait_for_guest_steps(self, count):
+        """guest 的时间等待：等 owner 把植物推进 count 步（**等价于**"仿真前进 count 步"）。
+
+        为什么这样做：共享植物下时间线只能有一个推进者，guest 不能 mj_step（plant.step_once 会
+        直接拒绝），所以把"推进"翻译成"等 owner 推进"。超时 = count × timestep ×
+        `plant_guest_timeout_factor`（系数在装配期由声明强制、不猜）⇒ 机器慢时表现为显式超时，
+        而不是静默卡死或伪造成功。
+        """
+        if self._plant_guest_timeout_factor is None:
+            raise PlantError("guest 缺少 plant_guest_timeout_factor（装配期本应拒绝装配）")
+        count = int(count)
+        target = self.plant.step_index + count
+        timeout = abs(float(self.plant.timestep)) * count * self._plant_guest_timeout_factor
+        self.plant.wait_until(target, timeout=timeout, poll_seconds=abs(float(self.plant.timestep)))
+        return {joint: float(self.last_positions[joint]) for joint in self.profile.joints}
+
     def _advance_for(self, duration_ms, contact_bodies=None):
         bilateral = False
         deadline = time.monotonic() + max(1, int(duration_ms)) / 1000.0
@@ -1679,13 +1803,19 @@ class MujocoBackend:
             return bilateral
 
         steps = max(1, int(math.ceil((duration_ms / 1000.0) / self.model.opt.timestep)))
+        if not self.plant.is_owner(self):
+            # guest：时间由 owner 推进 ⇒ 等 owner 走完这段时长（超时按声明的系数）
+            self._wait_for_guest_steps(steps)
+            if contact_bodies:
+                bilateral = self._has_bilateral_contact(*contact_bodies)
+            return bilateral
         for _ in range(steps):
             if self._cancel_event.is_set():
                 self._safe_stop_controls()
                 break
             # 与 Viewer 的 Home 阶段使用同一条受锁保护的 MuJoCo 步进路径。
             with self._data_lock:
-                mujoco.mj_step(self.model, self.data)
+                self.plant.step_once(self)
             self._record_step(float(self.model.opt.timestep))
             if self._realtime:
                 time.sleep(float(self.model.opt.timestep))
