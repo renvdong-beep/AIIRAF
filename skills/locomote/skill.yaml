@@ -12,7 +12,13 @@ spec:
   requires: [locomote]
   preconditions: []
   intentExamples: ["向前走 0.2 米每秒", "四足按速度移动", "locomote"]
-  timeoutSeconds: 30
+  # 租约 TTL 必须覆盖**墙钟**耗时（不是仿真时长）：本机 MPC 路径实测 ~2.3× 慢于实时
+  # （4 核 + 软件渲染 + 其它负载），10 s 仿真 ≈ 23 s 墙钟 + 冷启动 ≈ 5~8 s ⇒ 旧的 30 s 会被
+  # **租约过期**打断，表现为交互入口报「执行未返回结构化 status」（2026-09-24 实测复现：
+  # duration_ms=1000 墙钟 8.11 s ⇒ SUCCEEDED；duration_ms=10000 ⇒ 租约过期 ⇒ 无结构化 status）。
+  # 取值 60 s：覆盖 30 s 仿真上限（安全策略 `max_duration_ms: 30000`，那是**仿真时长**上限）
+  # 在最坏 2× 慢机上的墙钟耗时；安全边界仍由 `max_duration_ms` 与 max_speed_mps 约束，本值只放宽等待。
+  timeoutSeconds: 60
   cancellation: cooperative_stop
   recovery: [stop, request_handover]
   safetyClass: controlled_motion
