@@ -255,6 +255,25 @@ locomote 内慢漂（≈1.7 mm/s，7 s）  +11.9 mm
 ```
 证据：`build/iraf-a6a14/station-acceptance.json`（含逐拍样本）。
 
+### 6.7 技能层失败路径负向用例（12/12，全部走 `SkillRuntime.execute` 同一入口）
+
+`build/iraf-a6a14/skill_layer_dock_negative.py` → `skill-layer-dock-negative.json`：
+
+| 用例 | 终态 | error_code | 物理步进 | 断言（原因关键词，不只状态） |
+| --- | --- | --- | --- | --- |
+| A 目标帧不存在（`no_such_frame_xyz`） | FAILED | IRAF-EXECUTION-FAILED | 0.000 s | 原因指认目标帧名 ✓ |
+| B 验收判据收紧到 0.020 m（实测 0.028234） | SUCCEEDED | （空） | 13.500 s | 证据 `failure=DOCK_DRIFTED` ✓ 且**判据层判失败** ✓ |
+| C 控制容差 0.05 > 验收容差 0.03 | FAILED | IRAF-EXECUTION-FAILED | **0.000 s** | 原因含"不严于调用方的验收容差" ✓ |
+| D 目标帧 `tray_frame`（挂在躯干上） | FAILED | IRAF-EXECUTION-FAILED | **0.000 s** | 原因含"刚性挂在机器人" ✓ |
+
+**B 的设计含义（必须写清楚，避免被误读）**：适配器在保持段结束后才发现"漂出容差"，而框架
+**禁止终态回写**（`ledger.finish` 由 `locomote` 调用）⇒ 执行终态仍是 SUCCEEDED，**结果的失败**
+写在证据里（`failure=DOCK_DRIFTED` + `final_translation_error_m`）。因此**判据层是判官**：
+本用例用运行期同一套判据（`scenario.measure_step` + `evaluate_criteria`，口径取自 s02_dock）
+真跑一遍，证明确实判失败 —— 这也正是提交 224f925 把
+`translation_error_max_m` / `yaw_error_max_deg` 做成**可评测**的原因。
+若没有那条判据，B 这类漂移就会**只有证据没有判据**，等于放行。
+
 ### 6.2 证据易失性处理（同一轮自查）
 
 `build/iraf-a6a13/dock-measure.json`（18 MB，含 6150 条逐拍样本）**每跑一次覆盖一次**，而 §2 的复算
