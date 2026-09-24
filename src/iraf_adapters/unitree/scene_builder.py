@@ -561,6 +561,30 @@ def _attach_robots(staging, scene, root, attached_ids):
         frame = spec.worldbody.add_frame(pos=[float(v) for v in pos],
                                         quat=[float(v) for v in quat])
         spec.attach(child, prefix=prefix, frame=frame)
+        # 指爪 geom 命名（A 方案）：厂商 Piper MJCF 里指爪 geom **无名**（实测 `piper_link7 -> [None]`），
+        # 而臂侧自己的场景构建器按 `gripper.left_finger_geom/right_finger_geom` 的约定命名
+        # ⇒ 联合模型必须沿用**同一个声明名**，否则 grasp 判据（按 geom 命中双边接触）指不到对象。
+        arm_report_path = entity.get("manipulation_report")
+        if arm_report_path and (root / str(arm_report_path)).is_file():
+            arm_doc = json.loads((root / str(arm_report_path)).read_text(encoding="utf-8"))
+            arm_gripper = arm_doc.get("gripper") or {}
+            for side in ("left", "right"):
+                body_name = arm_gripper.get("%s_finger_body" % side)
+                geom_name = arm_gripper.get("%s_finger_geom" % side)
+                if not body_name or not geom_name:
+                    continue
+                body = spec.body("%s%s" % (prefix, body_name))
+                if body is None:
+                    _fail(EXIT_REFERENCE, "附加本体 %s 的指爪 body %s%s 不在合成模型里"
+                          % (robot_id, prefix, body_name))
+                geoms = list(getattr(body, "geoms", []) or [])
+                if len(geoms) != 1:
+                    _fail(EXIT_REFERENCE,
+                          "附加本体 %s 的指爪 body %s 有 %d 个 geom，无法唯一确定指爪碰撞体"
+                          "（臂侧约定是按名字引用单个 geom）" % (robot_id, body_name, len(geoms)))
+                geoms[0].name = str(geom_name)
+                for record_key in ("named_finger_geoms",):
+                    pass
 
         attached_robot_values.append(list(joint_values))
         records.append({"id": robot_id, "prefix": prefix, "source": str(model["file"]),
@@ -654,7 +678,8 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model):
         """名字是否存在于**联合模型**里（任意 kind）——用编译后的模型校验，不看文本。"""
         text = str(name)
         for kind in (mj.mjtObj.mjOBJ_BODY, mj.mjtObj.mjOBJ_GEOM, mj.mjtObj.mjOBJ_SITE,
-                     mj.mjtObj.mjOBJ_JOINT, mj.mjtObj.mjOBJ_CAMERA):
+                     mj.mjtObj.mjOBJ_JOINT, mj.mjtObj.mjOBJ_CAMERA, mj.mjtObj.mjOBJ_MATERIAL,
+                     mj.mjtObj.mjOBJ_TEXTURE):
             if mj.mj_name2id(model, kind, text) >= 0:
                 return True
         return False

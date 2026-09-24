@@ -1,0 +1,14 @@
+schema_version: iraf.machine-declaration/v1
+# 机型运行时绑定（**联合场景**版）：与 `piper.yaml` 唯一差别是 `backend_config.report` 指向
+# **联合报告**（狗+臂同模型的产物）⇒ 臂在联合场景里工作，而**不改**臂侧既有绑定与验收。
+robot:
+  id: piper
+  profile: profiles/piper_mujoco.yaml
+  backend: mujoco_arm
+  backend_config:
+    mode: scene_report
+    report: build/scenes/handoff_lab/handoff_lab_joint.json
+    target_tolerance_m: 0.005
+    realtime: false
+skills:
+  safety_policy: profiles/safety/simulation_lab.yaml
