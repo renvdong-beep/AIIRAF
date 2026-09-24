@@ -61,6 +61,7 @@ import argparse
 import json
 import math
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -985,6 +986,108 @@ def _dispatch_step(runtime_state, step, correlation, key):
     return record
 
 
+# --------------------------------------------------------------------------
+# 植物驻留（联合世界）：owner 在 guest 执行期间**持续在线**
+# --------------------------------------------------------------------------
+def _plant_hold_spec(binding):
+    plant = ((binding.get("declaration_document") or {}).get("robot") or {}).get("plant") or {}
+    return str(plant.get("role") or ""), plant.get("hold")
+
+
+def _start_plant_residency(runtimes, bindings, world):
+    """按声明让 owner 在整场执行期间持续执行其 `hold` 技能；非联合世界不启动。
+
+    为什么必须（2026-09-24 实测，docs/debug/2026-09-24-joint-model-dog-arm.md §11.1）：
+    场景执行器是**逐步串行**的 ⇒ 执行 guest（臂）的步骤时没人推进植物，guest 的等待必然超时
+    （实测 `等待 owner(unitree_go2) 推进到第 10751 步超时（0.060 s，当前 10750 步）`）；
+    且四足是**力矩型执行器**（PD 在适配器每拍计算）⇒ 没人算控制量它会塌（§5.2 量化 0.288372 →
+    0.077172 / 0.1 s）。驻留线程把"owner 一直活着"这件事变成声明驱动的行为，而不是靠步骤顺序碰巧。
+    """
+    if world != "joint":
+        return None
+    owner_id = None
+    spec = None
+    for robot_id, binding in bindings.items():
+        role, hold = _plant_hold_spec(binding)
+        if role == "owner":
+            owner_id, spec = robot_id, hold
+            break
+    if owner_id is None:
+        return None
+    if not isinstance(spec, dict):
+        raise ScenarioError(
+            "联合世界（world=joint）要求 owner 在机型声明里给出 robot.plant.hold"
+            "（{skill, duration_ms}）：否则执行 guest 步骤时无人推进植物、等待必然超时"
+            "（实测见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.1）", EXIT_DECLARATION)
+    skill = spec.get("skill")
+    duration_ms = spec.get("duration_ms")
+    if not isinstance(skill, str) or not skill:
+        raise ScenarioError("robot.plant.hold.skill 必须是非空技能名", EXIT_DECLARATION)
+    if not isinstance(duration_ms, int) or isinstance(duration_ms, bool) or duration_ms <= 0:
+        raise ScenarioError("robot.plant.hold.duration_ms 必须是正整数（实现层不写默认值）",
+                            EXIT_DECLARATION)
+    state = runtimes.get(owner_id)
+    if state is None:
+        raise ScenarioError(
+            "声明的植物 owner %s 未在本场景装配（它的 hold 技能无法执行）" % owner_id, EXIT_REFERENCE)
+    profile = state["profile"]
+    stop_event = threading.Event()
+    records = []
+
+    def loop():
+        cycle = 0
+        while not stop_event.is_set():
+            cycle += 1
+            started = time.monotonic()
+            status, error = "", ""
+            try:
+                request = _request(
+                    profile, state["safety"], skill, {"duration_ms": int(duration_ms)},
+                    profile.name, "plant-residency-%s-%d" % (owner_id, cycle),
+                    key="plant-residency-%s-%d" % (owner_id, cycle),
+                    deadline_offset_ms=600000)
+                result = state["runtime"].execute(request, _context())
+                status = str((result or {}).get("status", ""))
+                error = "" if status == "SUCCEEDED" else str((result or {}).get("reason", ""))
+            except Exception as exc:  # noqa: BLE001 —— 留痕后停止驻留，让主流程看到"驻留已断"
+                status, error = "EXCEPTION", "%s: %s" % (type(exc).__name__, exc)
+            records.append({"cycle": cycle, "status": status, "error": error,
+                            "wall_seconds": time.monotonic() - started})
+            if status != "SUCCEEDED":
+                break
+
+    thread = threading.Thread(target=loop, name="plant-residency", daemon=True)
+    thread.start()
+    return {"owner": owner_id, "skill": skill, "duration_ms": int(duration_ms),
+            "stop_event": stop_event, "thread": thread, "records": records,
+            "state": state}
+
+
+def _stop_plant_residency(residency):
+    """停止驻留并返回汇总（周期数、失败周期、owner 收尾实测）。"""
+    if residency is None:
+        return None
+    residency["stop_event"].set()
+    residency["thread"].join(timeout=120.0)
+    records = residency["records"]
+    summary = {"owner": residency["owner"], "skill": residency["skill"],
+               "duration_ms": residency["duration_ms"], "cycles": len(records),
+               "failed_cycles": [item for item in records if item["status"] != "SUCCEEDED"],
+               "wall_seconds": round(sum(item["wall_seconds"] for item in records), 6),
+               "thread_alive_after_stop": bool(residency["thread"].is_alive())}
+    reader = getattr(residency["state"]["backend"], "read_state", None)
+    if callable(reader):
+        try:
+            final = reader() or {}
+            summary["owner_final_state_keys"] = sorted(final.keys())
+            position = final.get("base_position_m")
+            if isinstance(position, (list, tuple)) and len(position) == 3:
+                summary["owner_final_base_z_m"] = float(position[2])
+        except Exception as exc:  # noqa: BLE001 —— 只记录读取失败，不影响判定
+            summary["owner_final_state_error"] = "%s: %s" % (type(exc).__name__, exc)
+    return summary
+
+
 def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id):
     """按声明顺序执行；故障注入点拒绝下发，其后只允许声明为安全动作的步骤继续。"""
     records = []
@@ -1241,7 +1344,12 @@ def run_scenario(scene_dir, scenario_name, *, report_path=None, require_injected
         )
 
     scene_id = str(scene.get("id"))
-    steps = execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id)
+    # 植物驻留：联合世界下 owner 全程在线（见 _start_plant_residency 的说明）
+    residency = _start_plant_residency(runtimes, bindings, world)
+    try:
+        steps = execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id)
+    finally:
+        residency_summary = _stop_plant_residency(residency)
     fault_records = _fault_records(faults)
 
     # 故障条目按**实测的执行记录**判定，而不是预置结论：被拒绝的步骤不得是 SUCCEEDED
@@ -1359,6 +1467,8 @@ def run_scenario(scene_dir, scenario_name, *, report_path=None, require_injected
         },
         # 本次执行用的**世界**（single/joint）：两套绑定的验收数字不可互换，必须随报告留痕。
         "world": str(world),
+        # 植物驻留（联合世界）的实测：周期数、失败周期、owner 收尾基座高度 ⇒ 证明"owner 全程在线"
+        "plant_residency": residency_summary,
         "pending_steps": pending_steps,
         "unregistered_steps": unregistered,
         "unverified_faults": unverified_faults,

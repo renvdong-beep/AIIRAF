@@ -553,6 +553,31 @@ model` 与 loopback 报告 `stop.collapsed: true`）⇒ 没有人给它算控制
    停止它、把"驻留期间的实测"（如躯干高度序列）写进报告；
 3. 判据仍然只来自实测：臂抓取的三项判据 + 驻留期间狗的高度/姿态不越界（阈值来自声明）。
 
+### 11.2 植物驻留已实现（按 §11.1 的修法），但联合世界运行**崩溃**（未定位，诚实登记）
+
+已落地（声明驱动，仅 `world=joint` 生效 ⇒ 单本体默认路径不受影响）：
+- `config/go2_joint.yaml`：owner 声明 `robot.plant.hold: {skill: stand, duration_ms: 8000}`；
+- `scripts/scenario.py`：新增 `_start_plant_residency` / `_stop_plant_residency` —— 联合世界下按声明
+  起后台线程**循环执行 owner 的 hold 技能**（走 SkillRuntime；`deadline_offset_ms=600000`；
+  单周期失败即停止驻留并留痕），步骤执行结束后停止，汇总（周期数/失败周期/owner 收尾基座高度）
+  写进报告 `plant_residency` 字段；owner 未声明 `hold` 时**拒绝跑联合世界**（不猜）。
+
+实测：`nominal --world joint` ⇒ **exit 139（段错误，core dumped）**，进程在写报告**之前**崩掉。
+⚠ 判读陷阱（本战役第三次踩到）：磁盘上的 `build/acceptance/handoff_lab/nominal/report.json`
+是**上一轮**（无驻留那轮）的陈旧报告（mtime 17:45:47 vs 运行时刻 17:47:35），里面那句
+`等待 owner(unitree_go2) 推进到第 10751 步超时` **不是**本轮驻留版的结果 ⇒ 本轮驻留是否生效
+**未观测到**（不能据陈旧报告下结论）。
+
+下一步（先定位崩溃，再谈驻留效果）：
+1. 崩溃特征（SIGSEGV）指向**跨线程 MuJoCo 访问**：驻留线程里 owner 的 `stand` 会 `stamp` 步进植物，
+   主线程的臂在同一条时间线上写 ctrl 并 `mj_forward` —— 两者虽共用植物锁，但 MuJoCo 的
+   C 侧调用在多线程下的边界值得怀疑（也可能是我在某处绕过了锁）。
+   定位手段：① 用 `faulthandler.enable()` + `-X faulthandler` 抓崩溃时的 Python 栈；
+   ② 若确认是并发访问 ⇒ 改成**单线程时间线**（owner 的驻留与新提案合并：步骤执行时由
+   "谁在工作谁推进"统一到一个调度点），而不是两个线程争锁；
+2. 定位后重跑 `nominal --world joint`，判据同样是 s03 的三项实测 + `plant_residency.cycles ≥ 1`
+   且 `failed_cycles = []` + `owner_final_base_z_m` 在声明范围内。
+
 ## 12. 下一步
 
 1. `s03_pick` 三项判据口径（`pose_tolerance_m` / `min_lift_delta_m` / `require_bilateral_contact`）
