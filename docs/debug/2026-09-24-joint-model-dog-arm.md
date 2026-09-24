@@ -114,3 +114,54 @@ move_joint（声明名口径 joint3/joint5/joint7，2000 ms）SUCCEEDED
 2. `s03_pick` 三项判据口径（`pose_tolerance_m` / `min_lift_delta_m` / `require_bilateral_contact`）。
 3. 联合产物的资产相对化（消 host-specific）；债 S4（臂资产入库）。
 
+## 5. 联合场景的两个前提问题：实测判死（2026-09-24 续）
+
+### 5.1 "两个本体都指向同一份联合 MJCF"**不**等于同一个世界
+
+探针 `build/iraf-a6a14/joint_model_two_backends_probe.py` → `joint-model-two-backends-probe.json`：
+
+```
+同一份 XML 两次 from_xml_path：same_mjmodel_object=False、same_mjdata_object=False、
+                              same_qpos_buffer=False（nq=34/nu=20 两边一致）
+实验 A：peer（未带 name_map 的第二实例）步进 200 步 ⇒ 狗的 base 从 z=0.288372 掉到 0.0771723378766752；
+        而**从未步进过的**臂实例里 base 仍是 [0, 0, 0.288372, 1, 0, 0, 0]（逐位未变）
+实验 B：臂实例 move_joint + 200 步（joint5 → 0.39921470672285164）⇒ peer 的 base 前后**逐位相同**
+⇒ two_independent_worlds = True
+```
+
+对比事实：四足后端同样自持模型与数据（`src/iraf_adapters/unitree/unitree_go2.py:305`、`:315`）⇒
+真实装配里每个本体一个后端实例 = 每个本体一份世界。
+
+**教训（我自己的判据错误）**：第一版探针拿"已经跑过 `move_joint` 的臂实例"去比 peer 的初值，
+量到 0.288372 → 0.077172 就得出"两侧互相泄漏"的相反结论 —— 那是**臂自己那份世界里的狗在倒塌**。
+判据必须是"未步进过的新实例 vs 步进后的对侧"，即**一次只动一侧**。
+
+### 5.2 关键帧 ctrl 不是控制器：狗在**两个模型里塌得一样**（与本变更无关）
+
+探针 `build/iraf-a6a14/joint_model_keyframe_ab.py` → `joint-model-keyframe-ab.json`
+（同关键帧初值、不下任何新指令、只步进；timestep 0.002 s）：
+
+```
+A 四足单本体 handoff_lab.xml   （nu=12，key.ctrl 长度 12）
+  base_z：0 → 0.2883725 ｜ 50 → 0.23317931719286822 ｜ 100 → 0.08431690724624108
+          200 → 0.0771723436516014 ｜ 500 → 0.07724787916154259
+B 联合 handoff_lab_joint.xml   （nu=20，key.ctrl 长度 20，后 8 位全零 ⇒ 臂侧是零填充）
+  base_z：0 → 0.288372   ｜ 50 → 0.23317881719286826 ｜ 100 → 0.08431662103679326
+          200 → 0.0771723378766752 ｜ 500 → 0.07724848525427036
+⇒ joint_assembly_is_cause = False
+```
+
+结论两条：
+1. 狗在关键帧 ctrl 下 0.1 s 内就坐到地面上（0.288 → 0.077）——**两个模型完全一致**，
+   与联合装配无关；狗的站立/行走必须由控制器（`stand` / `locomote` 的 MPC 路径）驱动。
+   这也解释了为什么直接步进联合模型时"狗不见了"：它是塌下去的，不是渲染问题。
+2. 联合模型的关键帧 `ctrl` 对臂侧 8 个执行器是**零填充**（不是声明的 `open_positions ±0.035`）
+   ⇒ 臂侧 ctrl 初值不是声明值；关键帧只保证 **qpos** 初值来自声明。若将来需要"臂初始保持张开"，
+   要把 `ctrl` 也按声明补齐（属共享植物装配的工作项）。
+
+## 6. 下一步（共享植物：一份 MjData + 多控制器）
+
+详见 `.hermes/plans/2026-09-23-dock-for-handoff.md` §15（设计）：`plant` 注入、单一时间推进者、
+按执行器划分控制权、`stop()` 作用域、每个本体一张 `name_map`。
+
+
