@@ -748,6 +748,16 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
     for key, value in gripper.items():
         if isinstance(value, str):
             out_gripper[key] = rename(value)
+        elif isinstance(value, dict) and value and all(isinstance(item, dict) for item in value.values()):
+            # **嵌套字典**（如 `gravity_feedforward: {相位: {关节: 增量}}`）：外层键是相位名
+            # （不是模型对象，**不改名**），内层键才是关节名（要改名）。
+            # 实测踩点（2026-09-24）：只处理"字符串/数值字典"时，这里会把相位名 `home` 当成对象名
+            # 去 rename ⇒ 报"名字 home 在联合模型里既不存在原名也不存在 piper_ 前缀名"、退出码 3，
+            # 把整个联合构建挡死（症状看着像命名问题，其实是"没预料到的字典形状"）。
+            out_gripper[key] = {
+                str(phase): {rename(name): float(item) for name, item in inner.items()}
+                for phase, inner in value.items()
+            }
         elif isinstance(value, dict):
             out_gripper[key] = {rename(k): float(v) for k, v in value.items()}
         else:
@@ -790,13 +800,101 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
         "note": ("conflict（同名对象在主本体与附加本体里都存在）**不进 name_map**：映射有歧义，"
                  "需人工裁定；missing 只留痕，被 manipulation 直接引用的名字已在 rename() 里显式失败。"),
     }
+    # ---- FK 自检（构建期，防"静默继承场景专属参考姿态"）----
+    # 为什么必须（2026-09-24 实测，docs/debug/2026-09-24-joint-model-dog-arm.md §11.3/§11.4）：
+    # 继承来的 `*_positions` 是**在臂自己基座系里求解的关节解**（MJCF 的 qpos 是局部量）；
+    # 换到联合模型的基座位姿后直接照搬，指腹会落到别处（实测残差 0.368903942 m），而构建期
+    # 毫无提示 ⇒ 一直藏到运行期、以"末端未到达目标抓取位姿"的形式出现。
+    # 这里用**联合模型 + 继承位姿**做一次 FK，把残差与判读写进报告（阈值取目标自己声明的
+    # `pose_tolerance_m`，不新造数字）。
+    # 声明容差的来源：臂侧报告的**顶层** `pose_tolerance_m`（该报告里 target 条目本身不带它；
+    # 运行期门禁用的是机型声明的 `target_tolerance_m`，两者同值 0.005 ⇒ 取臂报告这一处即可）。
+    reference_pose_check = _reference_pose_check(
+        model, out_gripper, targets,
+        declared_pose_tolerance_m=report.get("pose_tolerance_m"))
     return {"gripper": out_gripper, "targets": targets,
             "target_id": (targets[0]["id"] if targets else report.get("target_id")),
             "vision": report.get("vision"),
             "name_map": dict(sorted(name_map.items())),
             "name_map_facts": facts,
+            "reference_pose_check": reference_pose_check,
             "inherited_from": str(Path(arm_report_path)), "rename_rule":
                 "改写成 <prefix>name 当且仅当 <prefix>name 在联合模型事实里、且 name 不在"}
+
+
+def _reference_pose_check(model, gripper, targets, declared_pose_tolerance_m=None):
+    """用**联合模型** + 继承来的命令位姿做 FK，量指腹中点与目标抓取点的残差。
+
+    判据口径与运行期门禁**完全一致**（`MujocoBackend._grasp_alignment_evidence`）：
+        center = pad中点 − 轴·pad_offset_m ；要求 |center − 目标中心| ≤ pose_tolerance_m
+    （阈值取目标自己声明的 `pose_tolerance_m`，本函数不新造数字。）
+    残差超阈值不是"构建失败"，而是**构建期可见的诊断**：它说明继承的参考姿态与这份模型的
+    基座位姿不匹配（本场景实测 0.368903942 m ⇒ 需要在联合模型上重算，见 §11.4）。
+
+    缺任一必需输入（位姿/指腹 geom/目标位置）时返回 `{"skipped": 原因}`，不猜、也不静默当成通过。
+    """
+    import math as _math
+
+    import numpy as np
+
+    def _pad_midpoint(data):
+        points = []
+        for key in ("left_finger_geom", "right_finger_geom"):
+            name = str(gripper.get(key) or "")
+            ident = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, name) if name else -1
+            if ident < 0:
+                return None, "联合模型里找不到声明的指腹 geom: %r" % name
+            points.append(np.asarray(data.geom_xpos[ident], dtype=float))
+        return (points[0] + points[1]) / 2.0, None
+
+    positions = {str(joint): float(value)
+                 for joint, value in (gripper.get("grasp_positions") or {}).items()}
+    if not positions:
+        return {"skipped": "继承的 gripper 段没有 grasp_positions，无法做 FK 自检"}
+    if not targets:
+        return {"skipped": "报告没有 targets[]，无法确定目标中心"}
+    target = targets[0]
+    body = str(target.get("body") or "")
+    body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body) if body else -1
+    if body_id < 0:
+        return {"skipped": "联合模型里找不到目标 body: %r" % body}
+
+    data = mujoco.MjData(model)
+    for joint, value in positions.items():
+        joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, joint)
+        if joint_id < 0:
+            return {"skipped": "联合模型里找不到关节 %r（位姿键与模型不一致）" % joint}
+        data.qpos[int(model.jnt_qposadr[joint_id])] = value
+    mujoco.mj_forward(model, data)
+    midpoint, error = _pad_midpoint(data)
+    if midpoint is None:
+        return {"skipped": error}
+    center = np.asarray(data.xpos[body_id], dtype=float)
+    axis = np.asarray(gripper.get("pad_offset_axis") or [0.0, 0.0, 1.0], dtype=float)
+    norm = float(np.linalg.norm(axis))
+    axis = axis / norm if norm > 1e-9 else np.asarray([0.0, 0.0, 1.0], dtype=float)
+    offset = float(gripper.get("pad_offset_m") or 0.0)
+    residual = midpoint - axis * offset - center
+    tolerance = (target.get("pose_tolerance_m")
+                 if isinstance(target.get("pose_tolerance_m"), (int, float))
+                 else declared_pose_tolerance_m)
+    distance = float(np.sqrt(float(residual @ residual)))
+    return {
+        "target_id": target.get("id"),
+        "target_body": body,
+        "target_center_m": [round(float(v), 9) for v in center],
+        "pad_midpoint_m": [round(float(v), 9) for v in midpoint],
+        "pad_offset_m": offset,
+        "pad_offset_axis": [round(float(v), 9) for v in axis],
+        "residual_m": [round(float(v), 9) for v in residual],
+        "distance_m": round(distance, 9),
+        "declared_pose_tolerance_m": (None if not isinstance(tolerance, (int, float))
+                                      else float(tolerance)),
+        "within_declared_tolerance": (None if not isinstance(tolerance, (int, float))
+                                      else bool(distance <= float(tolerance))),
+        "note": ("继承的 `*_positions` 若来自别的基座位姿，本残差会显著大于声明容差 ⇒ "
+                 "必须在**联合模型**上重算参考姿态（见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.4）"),
+    }
 
 
 def _inject_world_frames(world, scene):
@@ -1520,6 +1618,7 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
                   "使用 --attach 时必须在本体声明 `manipulation_report`（继承 gripper/targets 的"
                   "来源；缺声明即失败，不猜）")
         manipulation = _joint_manipulation(root, arm_report, prefix, facts, compiled, arm_declared_names)
+        reference_pose_check = manipulation.get("reference_pose_check")
         report["gripper"] = manipulation["gripper"]
         report["targets"] = manipulation["targets"]
         report["target_id"] = manipulation["target_id"]
@@ -1530,7 +1629,8 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
                                   "inherited_from": manipulation["inherited_from"],
                                   "rename_rule": manipulation["rename_rule"],
                                   "name_map": manipulation["name_map"],
-                                  "name_map_facts": manipulation["name_map_facts"]}
+                                  "name_map_facts": manipulation["name_map_facts"],
+                                  "reference_pose_check": reference_pose_check}
         report["manipulation_absent_reason"] = None
     output_path.with_suffix(".json").write_text(
         json.dumps(report, ensure_ascii=True, indent=2) + "\n", encoding="utf-8"
