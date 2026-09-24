@@ -10,7 +10,12 @@ spec:
     - safety.estop == false
     - manipulation.target_visible == true
   intentExamples: ["抓取 box_01", "拾取目标物体", "pick object"]
-  timeoutSeconds: 30
+  # 租约 TTL 必须覆盖**墙钟**（不是仿真时长）：带重力前馈后抓取实测墙钟 53.71632638690062 s
+  # （五段各 1600 ms 仿真 + 稳定窗，4 核软件渲染），原 30 s 会在收尾前过期 ⇒ 收尾路径抛
+  # LeaseConflict、整步被记成崩溃（2026-09-24 实测）。120 s = 约 2.2 倍余量（与 locomote 60 s /
+  # dock_for_handoff 120 s 同口径）。注意：它同时是策略层的时长上限来源
+  # （min(timeoutSeconds*1000, safety.max_duration_ms=30000) 不受影响）。
+  timeoutSeconds: 120
   cancellation: cooperative_stop
   recovery: [stop, reacquire_target, request_handover]
   safetyClass: controlled_motion

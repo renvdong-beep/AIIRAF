@@ -480,7 +480,40 @@ gravity_hold_ctrl(model, arm_joints, hold_positions, hold_ms=4000, tolerance_rad
 3. `scenario.py run --scene scenes/handoff_lab --scenario nominal` ⇒ s03_pick 的 `distance` ≤ 0.005 m、
    三项判据由"无证据判失败"转为有实测值。
 
-## 10. 下一步
+## 10. 里程碑：`nominal` 端到端跑绿（含机械臂真抓取）—— 2026-09-24
+
+`build/acceptance/handoff_lab/nominal/report.json`：`passed = true`、`failed_checks = []`、
+`exit 0`，counts = {steps: 5, executed: 3, skipped_pending: 2, faults: 0}
+
+| 步骤 | 结果 | 实测 |
+| --- | --- | --- |
+| s01_verify_ready（四足 stand） | EXECUTED / SUCCEEDED | 推进 7.999999999999341 s、末速 2.6904543928034624e-05 m/s |
+| s02_dock（四足停靠交接站位） | EXECUTED / SUCCEEDED | 平移 0.02858758381668675 ≤ 0.03；偏航 0.6011861926754793 ≤ 2.0；末速 0.00026129710678484644 ≤ 0.05 |
+| s03_pick（**机械臂真抓取**） | EXECUTED / SUCCEEDED | `pose_tolerance_m` **9.387527248483805e-06** ≤ 0.005；`min_lift_delta_m` **0.088446** ≥ 0.02；`require_bilateral_contact` **1.0**；墙钟 53.69587149005383 s |
+| s04/s05 | SKIPPED_PENDING | 能力待交付（`place_object` / `accept_payload`） |
+
+这条链上四个真缺陷（全部本轮或前几轮修掉，都有实测依据）：
+
+1. **缺重力前馈** ⇒ 关节稳态下垂 5.314844537182922e-03 rad ⇒ 末端 z 向 11.904 mm（§8）；
+   修：构建期生成四相位 `gripper.gravity_feedforward`（`gravity_hold_ctrl` + 静态保持自证），
+   改后关节残差 2.9338248136322893e-05 rad。
+2. **`run_scenario` 装配不传 `declaration_document`** ⇒ `scene_report` 模式的机械臂根本装配不了
+   （`'str' object has no attribute 'get'`，exit 4）。
+3. **`_dispatch_step` 假定后端有 `read_state`** ⇒ 机械臂首次被下发即 `AttributeError`；
+   现按"无测量"处理（缺依据的判据判失败，不静默通过）。
+4. **租约 TTL 短于墙钟 + 收尾释放路径严格** ⇒ 抓取实际 53.69587149005383 s 而 TTL 30 s，
+   收尾 `release` 抛 `LeaseConflict` 把整步变成未捕获异常、**报告写不出来**（磁盘上留着上一轮的
+   陈旧报告 —— 我据此把旧失败原因当成新结果，误判过一次）。修：TTL 30 → **120 s**（同一类问题的
+   第三例，前两例是 locomote 60 s / dock_for_handoff 120 s）；`SkillRuntime` 收尾改为
+   容忍"已过期"并留痕（`cleanup_note`），而"租约被顶掉"仍显式失败。
+
+判据/观测纪律（本轮新增两条）：
+- 排查"声明了参数却不起作用"必须看**实参**：`IRAF_DEBUG_PICK=1` 打印 `PICK_INPUTS`（调用序号、
+  时间戳、duration_ms、每段时长、四段 positions 键、前馈取值）与 `PICK_TRACE`（逐相位残差与关节角）；
+- **磁盘上的报告可能是上一轮的**：进程崩溃时报告不落盘 ⇒ 读报告前先确认本次运行真的写成功了
+  （本次的教训：把陈旧报告的失败原因当成新结果）。
+
+## 11. 下一步
 
 1. `s03_pick` 三项判据口径（`pose_tolerance_m` / `min_lift_delta_m` / `require_bilateral_contact`）
    → s04/s05 → `nominal` 全场景 → 两臂轮番运输。

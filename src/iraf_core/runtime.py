@@ -19,6 +19,8 @@ class ActiveExecution:
     sequence: int = 0
     reason: str = ""
     lease: object = None
+    #: 收尾阶段的留痕（例如"release 时租约已过期"）：不改变执行结果，只说明收尾发生了什么。
+    cleanup_note: str = ""
     cancel_reason: str = ""
     stop_error: str = ""
     stop_invoked: bool = False
@@ -126,7 +128,17 @@ class SkillRuntime:
             return self._result(flow, correlation, "IRAF-EXECUTION-FAILED", str(exc))
         finally:
             if lease is not None:
-                self.authority.release(lease)
+                # 收尾释放：租约**已过期**时容忍（并留痕），其余不一致仍显式失败。
+                # 为什么（2026-09-24 实测）：抓取带重力前馈后墙钟约 53.7 s，而技能声明的
+                # `timeoutSeconds` 是租约 TTL（原 30 s）⇒ 收尾时租约已过期，严格 release 抛
+                # LeaseConflict 把**整步**变成未捕获异常：报告写不出来，磁盘上留着上一轮的
+                # 陈旧报告 ⇒ 我据此误判过一次（把"上一轮的失败原因"当成这一轮的结果）。
+                # 语义边界：过期 = 资源本来就已释放（无可抢占对象）；"租约被别的持有者顶掉"
+                # （fencing token 不一致）仍必须显式失败。
+                try:
+                    self.authority.release(lease)
+                except LeaseConflict as exc:
+                    control.cleanup_note = "release 时租约已过期（%s）：资源已不可再被占用，仅留痕" % exc
             with self._active_lock:
                 control.lease = None
 

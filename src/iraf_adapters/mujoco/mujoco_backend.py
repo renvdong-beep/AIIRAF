@@ -866,6 +866,8 @@ class MujocoBackend:
             raise RuntimeError("MuJoCo Backend 未配置夹爪接触信息（来源：场景 report 的 gripper 段）")
         if grasp_pose.get("frame_id") != "world":
             raise ValueError("MuJoCo 抓取当前只接受 world 坐标系")
+        # 调用序号（判"是否被调用多次"用）：每次进入 pick_object 都自增，早退也算一次。
+        self._pick_invocation = int(getattr(self, "_pick_invocation", 0)) + 1
 
         target_body = self._body_id(target["body"])
         left_body = self._body_id(gripper["left_finger_body"])
@@ -897,6 +899,8 @@ class MujocoBackend:
         if os.environ.get("IRAF_DEBUG_PICK") == "1":
             phase_ms = max(1, duration_ms // 5)
             print("PICK_INPUTS " + json.dumps({
+                "invocation": int(getattr(self, "_pick_invocation", 0)),
+                "wall_monotonic": round(time.monotonic(), 6),
                 "target_id": str(target_id),
                 "duration_ms": int(duration_ms),
                 "phase_ms_each": int(phase_ms),
@@ -931,6 +935,10 @@ class MujocoBackend:
             self.dump_pick_phase("DESCEND", phase_ms, target_body, left_body, right_body, approach_axis)
         # 对齐门禁必须用目标实际姿态推出的接近轴换算抓取点：
         # 目标倾斜时仍按固定竖直轴减 pad_offset 会把抓取点算错半个高度。
+        # 门禁前的紧邻取样：与 DESCEND 的 dump 比对即可判别"DESCEND 之后状态是否被改动"
+        # （不同 ⇒ 有东西在动；相同 ⇒ 异常来自另一次调用）
+        self.dump_pick_phase("DESCEND_PRE_GATE", phase_ms, target_body, left_body, right_body,
+                             approach_axis)
         alignment = self._grasp_alignment_evidence(
             target_body, left_body, right_body, approach_axis
         )
@@ -1221,7 +1229,10 @@ class MujocoBackend:
         if os.environ.get("IRAF_DEBUG_PICK") != "1":
             return None
         alignment = self._grasp_alignment_evidence(target_body, left_body, right_body, approach_axis)
-        print("PICK_PHASE " + json.dumps({
+        # ⚠ 前缀必须是 **PICK_TRACE**：既有的 `_log_pick_phase` 打的是 `PICK_PHASE <NAME>`，
+        #   两套格式共用前缀会让 grep/解析混在一起（我第一版解析脚本就因此崩溃）。
+        print("PICK_TRACE " + json.dumps({
+            "invocation": int(getattr(self, "_pick_invocation", 0)),
             "phase": str(phase),
             "ms": int(ms),
             "center_delta_m": alignment["center_delta_m"],
