@@ -37,6 +37,13 @@ spec:
     closed_positions: {joint7: 0.023, joint8: -0.023}
     pad_offset_m: 0.0298
     max_tilt_deg: 30.0
+  # 构建期声明（`spec.model.*`）：供**联合模型**构建器（`--attach piper`）读取。
+  # 机械臂自己的产物仍走 `config/piper_simulation_baseline.yaml` 的 model 段（本场景不改其语义）。
+  model:
+    vendor: agilex_piper
+    file: vendor/agilex_piper/piper_description/mujoco_model/piper_description.xml
+    # 本体的"根" body（挂载参考系的宿主）；机械臂无挂载系 ⇒ 只声明根
+    trunk_body: link1
   home:
     joint1: 0.0
     joint2: 0.65

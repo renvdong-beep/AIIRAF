@@ -22,6 +22,7 @@
 """
 
 import argparse
+import yaml
 import json
 import sys
 from pathlib import Path
@@ -38,6 +39,9 @@ def main(argv=None):
     parser.add_argument("--scene", type=Path, required=True, help="场景包目录（含 scene.yaml）")
     parser.add_argument("--robot", required=True, help="场景内本体的 id（也是 Profile 的 metadata.name）")
     parser.add_argument("--output", type=Path, default=None, help="覆盖 scene.yaml 的 model.output")
+    parser.add_argument("--attach", action="append", default=[], metavar="ROBOT",
+                        help="附加本体的 id（可重复）：把声明了 placement 的本体合成进同一模型，"
+                             "产物写 scene.yaml 的 model.joint_output（单本体产物不受影响）")
     parser.add_argument("--root", type=Path, default=None, help="仓库根（默认按本文件位置推断）")
     parser.add_argument("--quiet", action="store_true", help="只打印退出码对应摘要，不打印完整报告")
     args = parser.parse_args(argv)
@@ -46,8 +50,17 @@ def main(argv=None):
         print("用法错误：场景目录不存在: %s" % args.scene, file=sys.stderr)
         return scene_builder.EXIT_REFERENCE
     try:
+        # `--attach` 时写联合产物路径（声明里的 model.joint_output），否则写 model.output
+        output = args.output
+        if args.attach and output is None:
+            scene_doc = yaml.safe_load((args.scene / "scene.yaml").read_text(encoding="utf-8"))
+            joint_output = (scene_doc.get("model") or {}).get("joint_output")
+            if not joint_output:
+                print("用法错误：使用 --attach 时 scene.yaml 必须声明 model.joint_output", file=sys.stderr)
+                return scene_builder.EXIT_DECLARATION
+            output = Path(joint_output)
         report = scene_builder.build_scene_model(
-            args.scene, args.robot, root=args.root, output=args.output
+            args.scene, args.robot, root=args.root, output=output, attach=tuple(args.attach)
         )
     except scene_builder.SceneBuildError as exc:
         print("场景生成失败（退出码 %d）：%s" % (exc.code, exc), file=sys.stderr)

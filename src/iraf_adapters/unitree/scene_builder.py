@@ -157,6 +157,16 @@ def resolve_profile(root, entity, robot):
             _fail(EXIT_REFERENCE, "robots.%s.profile 引用的文件不存在: %s" % (robot, declared))
         document = _read_yaml(path, "本体 Profile")
         name = str((document.get("metadata") or {}).get("name") or "")
+        # 场景 id 与 Profile 身份可以不同名，但**必须在声明里显式写明映射**（`profile_name`）：
+        # 例：场景 id `piper` ↔ Profile `piper_mujoco`（历史命名）。仍然是硬校验（值必须等于
+        # Profile 的真实 metadata.name），只是把"允许不同名"这件事摆到声明里，不做隐式放行。
+        declared_name = entity.get("profile_name")
+        if declared_name is not None:
+            if str(declared_name) != name:
+                _fail(EXIT_DECLARATION,
+                      "robots.%s.profile_name=%s 与 Profile 的 metadata.name=%s 不一致"
+                      % (robot, declared_name, name))
+            return path, "scene.robots[].profile"
         if name != str(robot):
             _fail(
                 EXIT_DECLARATION,
@@ -466,6 +476,62 @@ def _inject_props(
             record["quaternion_wxyz"] = quaternion
         injected.append(record)
     return injected, frames
+
+
+def _attach_robots(staging, scene, root, attached_ids):
+    """把**附加本体**合成进主模型（`MjSpec.attach(child, prefix, frame)`，库原生合成）。
+
+    为什么用 MjSpec 而不是拼 XML：`attach` 由 MuJoCo 自己完成 asset/actuator/joint 引用的改写，
+    手写名字前缀重写极易漏引用（mesh/material/actuator 的 joint 名）。
+    关键帧：合成后 qpos 维度变长 ⇒ 用**附加本体 Profile 声明的 home** 按关节名补齐（**不猜值**：
+    缺声明即显式失败），并把补齐细节记进报告。
+    """
+    import mujoco
+
+    spec = mujoco.MjSpec.from_file(str(staging))
+    records = []
+    for robot_id in attached_ids:
+        entity = resolve_robot(scene, robot_id)
+        profile_path, _source = resolve_profile(root, entity, robot_id)
+        model, profile_spec = load_build_declarations(profile_path, robot_id)
+        verify_vendor_source(root, model, "spec.model")
+        placement = entity.get("placement")
+        if not isinstance(placement, dict):
+            _fail(EXIT_REFERENCE,
+                  "robots.%s 缺少 placement（附加本体的相对位姿必须来自声明，不得由构建器假定）"
+                  % robot_id)
+        pos = _vec3(placement.get("pos_m"), "robots.%s.placement.pos_m" % robot_id)
+        quat = _quat_wxyz(placement.get("quat_wxyz"), "robots.%s.placement.quat_wxyz" % robot_id)
+        child = mujoco.MjSpec.from_file(str(root / str(model["file"])))
+        # 关节初值来自 Profile 的 `spec.home`（声明式；缺键即显式失败，不猜）
+        home = (profile_spec.get("home") or {})
+        joint_values = []
+        for joint in child.joints:
+            name = str(joint.name)
+            kind = str(joint.type).upper()
+            if "FREE" in kind:
+                joint_values.extend([0.0] * 7)
+                continue
+            if "BALL" in kind:
+                joint_values.extend([0.0] * 4)
+                continue
+            if name not in home:
+                _fail(EXIT_DECLARATION,
+                      "附加本体 %s 的关节 %s 未在 Profile spec.model.home 声明初值："
+                      "联合模型的关键帧不猜值" % (robot_id, name))
+            joint_values.append(float(home[name]))
+        prefix = "%s_" % robot_id
+        frame = spec.worldbody.add_frame(pos=_numbers(pos, "%.9f"), quat=_numbers(quat, "%.9f"))
+        spec.attach(child, prefix=prefix, frame=frame)
+        keys = list(getattr(spec, "keys", []) or [])
+        for key in keys:
+            key.qpos = list(key.qpos) + joint_values
+        records.append({"id": robot_id, "prefix": prefix, "source": str(model["file"]),
+                        "placement": {"pos_m": [float(v) for v in pos],
+                                      "quat_wxyz": [float(v) for v in quat]},
+                        "home_joints": len(joint_values), "keyframes_extended": len(keys)})
+    Path(staging).write_text(spec.to_xml(), encoding="utf-8")
+    return records
 
 
 def _inject_world_frames(world, scene):
@@ -991,7 +1057,7 @@ def _model_facts(path):
     }
 
 
-def build_scene_model(scene_dir, robot, root=None, output=None):
+def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
     """按声明生成模型与报告；返回报告字典（不打印、不退出，便于单测直接断言）。"""
     root = Path(root or repo_root())
     scene_path, scene = load_scene(scene_dir, root)
@@ -1071,6 +1137,11 @@ def build_scene_model(scene_dir, robot, root=None, output=None):
     initial_alignment = _align_initial_pose(
         xml_root, tree, staging, model, scene, trunk_body_name
     )
+    # 联合模型：把声明的附加本体合成进主模型（只在 `--attach` 时发生；单本体产物逐位不变）
+    attached_robots = []
+    if attach:
+        attached_robots = _attach_robots(staging, scene, root, list(attach))
+    injections["attached_robots"] = attached_robots
     try:
         compiled, facts = _model_facts(staging)
     except Exception as exc:  # MuJoCo 编译失败即显式失败，不落半成品
@@ -1089,6 +1160,12 @@ def build_scene_model(scene_dir, robot, root=None, output=None):
     for item in injections["world_frames"]:
         if item["id"] not in facts["sites"]:
             failures.append("世界固定帧 %s 不在生成模型里" % item["id"])
+    for item in attached_robots:
+        # 附加本体的**根 body** 必须按前缀出现在合成模型里（前缀由 attach 保证唯一）
+        if item["prefix"] not in " ".join(facts["bodies"]) and not any(
+                name.startswith(item["prefix"]) for name in facts["bodies"]):
+            failures.append("附加本体 %s 的 body 未按前缀 %s 出现在合成模型里"
+                            % (item["id"], item["prefix"]))
     if trunk_body_name not in facts["bodies"]:
         failures.append("躯干 body %s 不在生成模型里" % trunk_body_name)
     if failures:

@@ -104,6 +104,11 @@
           "type": "string",
           "pattern": "^(build|artifacts)/[A-Za-z0-9._/-]+\\.xml$"
         },
+        "joint_output": {
+          "type": "string",
+          "pattern": "^(build|artifacts)/[A-Za-z0-9._/-]+\\.xml$",
+          "description": "联合模型（多本体合成，`--attach <本体>`）的输出路径；单本体产物仍写 `output`。"
+        },
         "builder": {
           "$ref": "#/definitions/unverified_or_path",
           "description": "场景构建器入口：要么是已存在的仓库相对路径，要么是显式 unverified 占位（占位会进 scene_check 的 pending_refs，不是静默忽略）。"
@@ -177,6 +182,10 @@
         "kind": {"enum": ["arm", "quadruped", "humanoid"]},
         "role": {"enum": ["manipulator", "carrier", "scene_entity"]},
         "profile": {"$ref": "#/definitions/unverified_or_path"},
+        "profile_name": {
+          "type": "string",
+          "description": "场景 id 与 Profile 身份不同名时的**显式映射**（值必须等于 Profile 的 metadata.name，仍是硬校验）。"
+        },
         "capabilities": {
           "type": "array",
           "uniqueItems": true,
@@ -188,7 +197,17 @@
           "type": "string",
           "description": "人形等静态实体必须写「仅模型」（英文键 + 中文取值，设计 §10）。"
         },
-        "note": {"type": "string"}
+        "note": {"type": "string"},
+        "placement": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["pos_m", "quat_wxyz"],
+          "description": "联合模型里的相对位姿（世界系）：仅 `--attach <本体>` 时被消费；单本体产物不受影响。",
+          "properties": {
+            "pos_m": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}},
+            "quat_wxyz": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "number"}}
+          }
+        }
       },
       "allOf": [
         {

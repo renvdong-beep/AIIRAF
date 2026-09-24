@@ -28,7 +28,17 @@ robots:
     kind: arm
     role: manipulator
     profile: profiles/piper_mujoco.yaml
+    # 场景 id（piper）与 Profile 身份（piper_mujoco）不同名 ⇒ 显式映射（硬校验，不隐式放行）
+    profile_name: piper_mujoco
     capabilities: [move_joint, pick_object, visual_pick, stop]
+    # 联合模型里的**相对位姿**（世界系）：只有 `--attach piper` 时才被消费（单本体产物不变）。
+    # 取值依据：① 距交接站位 `handoff_station_frame`(0.45, 0) 的水平距离 = 0.45 m
+    #   ≤ 工具点在托盘高度（z≈0.347 m）的可达环带上界 0.594284 m（§11.1 实测）；
+    #   ② 落在四足出生点→站位的路径之外（y = −0.45，四足躯干半宽 ~0.2 m ⇒ 不挡路）；
+    #   ③ 台面 half_size_m=1.5 ⇒ 在台面内。yaw=90°（quat_wxyz 绕 z 转 90°）令臂正面朝站位。
+    placement:
+      pos_m: [0.45, -0.45, 0.0]
+      quat_wxyz: [0.7071067811865476, 0.0, 0.0, 0.7071067811865475]
     note: 既有能力（MuJoCo 仿真已验收）；本场景复用配置 config/piper_simulation_baseline.yaml，不改其语义。
   - id: unitree_go2
     kind: quadruped
@@ -170,4 +180,6 @@ lights:
 model:
   # 生成产物写入 build/（AGENTS.md 5.5）；生成器由步骤 13 交付。
   output: build/scenes/handoff_lab/handoff_lab.xml
+  # 联合产物（`--attach <本体>` 时写入本路径）：单本体产物保持逐个构建、互不影响。
+  joint_output: build/scenes/handoff_lab/handoff_lab_joint.xml
   builder: scripts/build_scene.py
