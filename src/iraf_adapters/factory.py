@@ -153,11 +153,15 @@ def verify_backend_contract(backend_class, profile):
     }
 
 
-def load_backend(entrypoint, config, profile, authority):
-    """装配 Backend；装配期即完成契约校验，失败不返回半成品。"""
+def load_backend(entrypoint, config, profile, authority, **kwargs):
+    """装配 Backend；装配期即完成契约校验，失败不返回半成品。
+
+    `**kwargs` 透传给 `from_config`（共享植物场景注入 `plant=` / 各后端自己的可选参数）；
+    不传时行为与改动前逐位一致（既有调用点全部不传）。
+    """
     backend_class = _resolve_class(entrypoint)
     report = verify_backend_contract(backend_class, profile)
-    backend = backend_class.from_config(config, profile, authority)
+    backend = backend_class.from_config(config, profile, authority, **kwargs)
     # 把报告挂到实例上，便于运行期审计与验收脚本读取；
     # 不参与任何运动链路，仅作为装配证据。
     try:

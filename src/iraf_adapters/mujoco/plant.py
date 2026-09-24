@@ -34,17 +34,22 @@ class PlantWaitTimeout(PlantError):
 class MujocoPlant:
     """持有 model/data、步数计数与**唯一**时间推进者。"""
 
-    def __init__(self, model, data, owner, label=None):
+    def __init__(self, model, data, owner, owner_name=None, label=None):
         if model is None or data is None:
             raise PlantError("植物必须显式给出 model 与 data（本模块不构造默认模型）")
         if not hasattr(data, "qpos"):
             raise PlantError("data 看起来不是 MjData（没有 qpos）：%r" % (data,))
+        if owner is None:
+            raise PlantError("植物必须声明 owner（唯一时间推进者）；不猜")
         self.model = model
         self.data = data
-        self.owner = str(owner) if owner is not None else None
-        if self.owner is None:
-            raise PlantError("植物必须声明 owner（唯一时间推进者）；不猜")
-        self.label = str(label) if label else self.owner
+        # ⚠ owner 是**对象身份**（控制器实例），不是名字：判定必须用 `is_owner()`。
+        # 实测踩过：一处传对象、一处传声明名 ⇒ `step_once(self)` 报"只有 owner(unitree_go2) 能推进"，
+        # 于是狗自己都推不动时间。名字只用于诊断与"装配期按声明名核对"。
+        self._owner = owner
+        self.owner_name = str(owner_name if owner_name is not None
+                              else (owner if isinstance(owner, str) else type(owner).__name__))
+        self.label = str(label) if label else self.owner_name
         self._lock = threading.RLock()
         self._step_index = 0
 
@@ -55,6 +60,11 @@ class MujocoPlant:
             return self._step_index
 
     @property
+    def owner(self):
+        """owner 的**标识字符串**（诊断/报告用）；判定请用 `is_owner()`。"""
+        return self.owner_name
+
+    @property
     def timestep(self):
         return float(self.model.opt.timestep)
 
@@ -63,7 +73,14 @@ class MujocoPlant:
         return self._lock
 
     def is_owner(self, who):
-        return str(who) == self.owner
+        """`who` 是否为本植物唯一的时间推进者。
+
+        接受两种情况：**对象本身**（运行期各后端传 `self`），或**声明名**（装配期核对
+        "注入的植物是不是我这台机型的"，此时还没有对象可比）。
+        """
+        if who is self._owner:
+            return True
+        return isinstance(who, str) and who == self.owner_name
 
     # ---- 时间推进
     def step_once(self, caller):

@@ -36,6 +36,7 @@ from iraf_adapters.unitree import balance as balance_module
 from iraf_adapters.unitree import gait
 from iraf_adapters.unitree import stop_verdict
 from iraf_adapters.unitree.loopback import quat_tilt_deg
+from iraf_adapters.mujoco.plant import MujocoPlant
 from iraf_adapters.unitree.quadruped import (
     CommandRejectedError,
     DeclarationError,
@@ -202,9 +203,17 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
     IMPLEMENTED_CAPABILITIES = frozenset(("emergency_stop", "read_state", "stand", "stop",
                                           "locomote", "dock_for_handoff"))
 
-    def __init__(self, declaration, profile, authority, *, root, mujoco, model, data, bindings):
-        # 物理步进与显示渲染互斥（显示层通过 display_lock() 取同一把锁做快照，避免撕裂）
-        self._lock = threading.Lock()
+    def __init__(self, declaration, profile, authority, *, root, mujoco, model, data, bindings,
+                 plant=None):
+        # 植物（一份 MjModel/MjData + 唯一时间推进者）：
+        #   · plant=None ⇒ 自建（owner = 本机型 id），行为与改动前逐位一致；
+        #   · 注入 ⇒ 复用别人的植物（本机型必须是 owner，装配期已校验）。
+        self.plant = plant if plant is not None else MujocoPlant(
+            model, data, owner=self, owner_name=str(_dig(declaration, "robot.id", "声明")))
+        # 物理步进与显示渲染互斥（显示层通过 display_lock() 取同一把锁做快照，避免撕裂）。
+        # 共享植物下一律用**植物自己的锁**（它与两侧的读写共用同一把，否则快照会与对侧的
+        # 步进交错）；自带植物时该锁只属于本后端，语义不变。
+        self._lock = self.plant.lock()
         self._display_renderer_cache = None
         # 步态资源惰性解析（步骤 02）：声明与几何都只在首次调用步态时解析/实测，
         # 未使用步态的路径（stand/stop）不因步态声明问题而失败。
@@ -256,8 +265,13 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
 
     # ---- 装配 ----
     @classmethod
-    def from_config(cls, config, profile, authority):
-        """装配：声明 -> 模型 -> 绑定 -> 能力。任一步不可用都显式失败，不返回半成品。"""
+    def from_config(cls, config, profile, authority, plant=None):
+        """装配：声明 -> 模型 -> 绑定 -> 能力。任一步不可用都显式失败，不返回半成品。
+
+        `plant=`（共享植物，2026-09-24）：注入别人持有的植物时**不再自建 MjModel/MjData**，
+        也不再重放关键帧（初始状态由植物决定）。四足在共享植物里必须是**时间推进者**
+        （owner）—— 若非本机型的 owner，装配期即显式失败，不静默地把时间推两遍。
+        """
         declaration, root = load_declaration(config)
         robot_id = str(_dig(declaration, "robot.id", "声明"))
         profile_name = str(getattr(profile, "name", ""))
@@ -292,6 +306,11 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         if not callable(getattr(cls, "render_frames", None)):
             raise DeclarationError("声明了 render 段但 %s 未实现 render_frames" % cls.__name__)
 
+        robot_id = str(_dig(declaration, "robot.id", "声明"))
+        if plant is not None and not plant.is_owner(robot_id):
+            raise DeclarationError(
+                "注入的植物 owner=%s 与本声明 robot.id=%s 不一致：四足后端在共享植物里必须是"
+                "时间推进者（否则会出现两个步进者或根本没人推进）" % (plant.owner, robot_id))
         model_rel = str(_dig(declaration, "model.file", "声明"))
         model_path = Path(model_rel)
         model_path = model_path if model_path.is_absolute() else Path(root) / model_path
@@ -301,20 +320,31 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             )
         import mujoco
 
-        try:
-            model = mujoco.MjModel.from_xml_path(str(model_path))
-        except Exception as exc:  # mujoco 抛的是多种异常，统一显式失败
-            raise ModelUnavailableError("模型编译失败（%s）: %s" % (model_path, exc))
-
         keyframe_name = str(_dig(declaration, "initial.keyframe", "声明"))
-        keyframe_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, keyframe_name)
-        if keyframe_id < 0:
-            raise ModelUnavailableError(
-                "initial.keyframe=%s 不在模型里（实测 nkey=%d）" % (keyframe_name, model.nkey)
-            )
-        data = mujoco.MjData(model)
-        mujoco.mj_resetDataKeyframe(model, data, keyframe_id)
-        mujoco.mj_forward(model, data)
+        if plant is not None:
+            # 共享植物：用植物里的 model/data（不再自建，否则就是"两个世界"）；
+            # 关键帧不重放（初始状态由植物决定，重放会把对侧的状态冲掉），但**名字仍校验**
+            # —— 声明指向的关键帧必须真实存在，否则说明声明与模型不匹配。
+            model = plant.model
+            data = plant.data
+            if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, keyframe_name) < 0:
+                raise ModelUnavailableError(
+                    "initial.keyframe=%s 不在共享植物的模型里（实测 nkey=%d）"
+                    % (keyframe_name, model.nkey))
+            keyframe_id = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, keyframe_name))
+        else:
+            try:
+                model = mujoco.MjModel.from_xml_path(str(model_path))
+            except Exception as exc:  # mujoco 抛的是多种异常，统一显式失败
+                raise ModelUnavailableError("模型编译失败（%s）: %s" % (model_path, exc))
+            keyframe_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, keyframe_name)
+            if keyframe_id < 0:
+                raise ModelUnavailableError(
+                    "initial.keyframe=%s 不在模型里（实测 nkey=%d）" % (keyframe_name, model.nkey)
+                )
+            data = mujoco.MjData(model)
+            mujoco.mj_resetDataKeyframe(model, data, keyframe_id)
+            mujoco.mj_forward(model, data)
 
         bindings = resolve_joint_bindings(model, mujoco, [str(item) for item in profile.joints])
         cls._assert_limits_tighten_only(model, mujoco, profile, bindings)
@@ -327,6 +357,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             model=model,
             data=data,
             bindings=bindings,
+            plant=plant,
         )
         adapter.model_path = model_path
         adapter.keyframe_name = keyframe_name
@@ -2707,8 +2738,9 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             saturated_total += int(np.count_nonzero(saturated))
             self.data.ctrl[self.actuator_ids] = ctrl
             for _ in range(self.substeps):
+                # 时间只能由植物 owner 推进（共享植物下越权即 PlantOwnershipError）
                 with self._lock:
-                    self.mujoco.mj_step(self.model, self.data)
+                    self.plant.step_once(self)
             if sample_callback is not None:
                 sample_callback(
                     cycle_index,

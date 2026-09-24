@@ -353,7 +353,9 @@ class MujocoBackend:
                 raise PlantError("plant_guest_timeout_factor 必须是正数：%r"
                                  % (plant_guest_timeout_factor,))
         else:
-            self.plant = MujocoPlant(self.model, self.data, owner=self, label=self._model_path)
+            self.plant = MujocoPlant(self.model, self.data, owner=self,
+                                     owner_name=str(getattr(self.profile, "name", "") or self._model_path),
+                                     label=self._model_path)
             self._plant_guest_timeout_factor = None
         self._owned_actuators = self._resolve_owned_actuators()
         self.stopped = False
