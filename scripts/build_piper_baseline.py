@@ -224,11 +224,23 @@ def solve_finger_center_pose(
         joint_names,
     )
 
-def build_reference_poses(root, baseline, target_id=None):
+def build_reference_poses(root, baseline, target_id=None, target_xy_override_m=None,
+                          target_z_override_m=None):
     """求解 home/approach/grasp 三个参考关节姿态。
 
     target_id 用于多目标场景：显式指定本次求解针对哪个目标，
     缺省沿用配置 target.id，保持单目标场景行为不变。
+
+    `target_z_override_m`（可选，2026-09-24）＝抓取点 z（**世界系**，即目标中心高度）。
+    为什么这两个覆盖都要：本函数按"臂自己场景"的目标几何（`top_z + half_size`）求解；联合场景若
+    方块尺寸/台面声明不同（本场景半边长 0.025 ≠ 基线 0.03），只覆盖 xy 会留下一个纯 z 的常数偏差
+    （实测 0.018389447 m）。缺省 None ⇒ 行为与改动前逐位一致。
+
+    `target_xy_override_m`（可选，2026-09-24）＝**抓取点相对臂基座的 xy**（臂基座系）。
+    为什么需要：本函数在臂自己场景里求解，臂基座在原点 ⇒ 解出来的是"目标相对基座"的关节解；
+    联合场景里臂被 `placement` 挪走并转了 90°（`scenes/handoff_lab/scene.yaml`）⇒ 直接照搬会让
+    指腹落到别处（实测残差 0.367696068 m）。把目标先换算到臂基座系再重解即可复用同一套配方与模型。
+    缺省 None ⇒ 行为与改动前逐位一致。
     """
     model_cfg = baseline["model"]
     source = _resolve(root, model_cfg["source"])
@@ -259,10 +271,14 @@ def build_reference_poses(root, baseline, target_id=None):
     grasp_cfg = baseline.get("grasp") or {}
     half_size = float(target_cfg.get("half_size_m", 0.03))
     top_z = float(workbench.get("top_z_m", 0.0))
-    finger_xy = grasp_cfg.get("finger_center_xy_m")
+    finger_xy = (list(target_xy_override_m) if target_xy_override_m is not None
+                 else grasp_cfg.get("finger_center_xy_m"))
     if not finger_xy or len(finger_xy) != 2:
         raise ValueError("基线配置缺少 grasp.finger_center_xy_m")
-    grasp_target = [float(finger_xy[0]), float(finger_xy[1]), top_z + half_size]
+    grasp_target = [
+        float(finger_xy[0]), float(finger_xy[1]),
+        (float(target_z_override_m) if target_z_override_m is not None else top_z + half_size),
+    ]
 
     solver_cfg = grasp_cfg.get("solver") or {}
     offset = float(grasp_cfg.get("pregrasp_offset_m", 0.04))

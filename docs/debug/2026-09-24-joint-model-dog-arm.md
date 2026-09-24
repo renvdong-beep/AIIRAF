@@ -643,6 +643,41 @@ s03_pick ✗ 末端未到达目标抓取位姿: distance=0.369305m tolerance=0.0
 加一项 FK 自检（用联合模型 + 继承位姿算指腹中点与目标的差，写进报告字段；差超声明阈值即可见告警，
 不静默），这正是本次 0.369 m 之所以能藏到运行期的原因。
 
+### 11.5 参考姿态重解已实现并量化（下一步只需把它写进联合报告）
+
+改动：`scripts/build_piper_baseline.build_reference_poses` 新增两个**可选**覆盖参数（缺省 None ⇒
+行为逐位不变）：`target_xy_override_m`（抓取点相对**臂基座**的 xy）与 `target_z_override_m`（抓取点 z）。
+探针 `build/iraf-a6a14/joint_reference_resolve_probe.py` → `joint-reference-resolve-probe.json`：
+
+```
+绑定位姿 pos = (0.45, -0.45, 0.0)、绕 z 90°；世界目标 = (0.189999426, 0, 0.025)
+⇒ 基座系局部目标 = (0.45, 0.260000574, 0.025)，|xy| = 0.519711746 m ≤ 可达 0.594284 m ✓
+重解 grasp 解: joint1 0.546062498 / joint2 2.310233536 / joint3 -1.192424598 /
+              joint4 0.115442695 / joint5 -0.60488275 / joint6 1.89e-07
+```
+
+门禁残差的**三级台阶**（同一口径：pad中点 − 轴·pad_offset − 目标中心）：
+
+| 用哪组解 / 哪个 pad_offset | 残差 |
+| --- | --- |
+| 继承的位姿 + 继承的 pad_offset（当前联合报告） | **0.367696068 m** |
+| **重解**的位姿 + 继承的 pad_offset | **0.018389447 m**（残差几乎全在 z） |
+| **重解**的位姿 + **重解**的 pad_offset（`finger_height_correction_m` = **0.01145198**） | **5.681e-06 m** ✓ |
+
+⇒ 修法完整且已量化：**位姿与 pad_offset 必须一起重解**（pad_offset 不是通用常数，它由该场景的
+方块尺寸/指尖配平决定：臂自己场景 0.029835769、联合场景 0.01145198）。
+也解释了 z 覆盖为何"无效"：`grasp_target[2]` 只是初值，真正决定高度的是 `balance_tip_clearance`
+的指尖离台配平（本次 `finger_tip_z_m` = 0.005829938、`tip_clearance_m` = 0.005）。
+
+**下一步（把重解接进构建，按声明而非硬编码机型）**：
+1. 在场景/机型声明里显式给出"联合模式参考姿态求解器"（如 `robots[].reference_solver:
+   {module: build_piper_baseline, baseline: config/piper_simulation_baseline.yaml}`），构建器**按声明**
+   调用它（保持"机型差异只进 profiles/config"的纪律，不在 scene_builder 里写 piper 特例）；
+2. 把结果写进联合报告的 `gripper.{home,approach,grasp,lift}_positions`（加前缀改名）与
+   `pad_offset_m`，并在报告里留 `reference_pose_source: resolved_for_joint_model` 出处；
+3. 验收：`reference_pose_check.distance_m` ≤ 声明容差（预期 ~5.681e-06）、
+   再跑 `nominal --world joint` 判 s03 三项实测。
+
 ## 12. 下一步
 
 1. `s03_pick` 三项判据口径（`pose_tolerance_m` / `min_lift_delta_m` / `require_bilateral_contact`）
