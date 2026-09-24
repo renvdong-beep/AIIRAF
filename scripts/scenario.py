@@ -1332,8 +1332,12 @@ def run_scenario(scene_dir, scenario_name, *, report_path=None, require_injected
         "not_proved": [
             "判据口径：min_stable_hold_s = 本步推进的仿真时间，max_speed_m_s = 步骤结束时实测末速；"
             "两者都不是稳定性分析（物理稳定性证据见步骤 15 的 build/acceptance/go2-loopback/report.json）。",
-            "本执行器只覆盖已交付能力（首期 stand/stop）：停靠/抓取/放置/载荷确认的步骤在声明里登记为"
-            "待交付并显式跳过，未被验证。",
+            # 待交付范围**按声明动态列出**，不写死能力名单：原文写"只覆盖 stand/stop"，而 dock/pick
+            # 交付后这句仍照旧输出 ⇒ 文案随交付漂移就变成假陈述（2026-09-24 实测踩到）。
+            "本执行器只执行声明里**可执行**的步骤；登记为待交付的步骤被显式跳过、不参与通过判定"
+            # ⚠ `pending_steps` 是**步骤 id 的字符串列表**（不是字典）；按字典写会在有待交付步骤的
+            #   场景上崩 —— 本次就是在 stand_stop（无待交付）上跑绿、差点把这个 bug 留在树里。
+            "（本场景待交付：%s）。" % (", ".join(str(item) for item in pending_steps) or "无"),
             "故障注入只交付「传感器不可用」与「能力未声明」两类；注入语义是：在故障点拒绝下发该步指令、"
             "其后只允许技能清单里 safetyClass=safety_action 的步骤继续执行。它证明「未继续自主机动、"
             "未伪造成功」，不构成真机/物理安全停机证据（真机与目标端 DEFERRED）。",
