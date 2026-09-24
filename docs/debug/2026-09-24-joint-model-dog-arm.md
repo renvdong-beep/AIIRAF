@@ -343,6 +343,35 @@ delta=[0.004229494155511382, 5.415238119581278e-06, 0.013817039392046003]`
    路径上**没有**（§9 第 2 点）：这正是最可疑的一环）；
 3. 必要时把探针与 pick 的**同一段**代码抽成共享函数，消除"两处实现"本身。
 
+### 9.5 实参观测落地：pick 拿到的入参与探针**一致**，矛盾因此收窄到"相位内/相位间的执行"
+
+给 `MujocoBackend.pick_object` 加了与既有 `IRAF_DEBUG_PICK` 同风格的实参观测（环境变量开关，
+默认关闭）。`IRAF_DEBUG_PICK=1` 跑 `nominal` 得到：
+
+```
+PICK_INPUTS {"target_id": "box_01", "duration_ms": 8000, "phase_ms_each": 1600,
+             "positions_keys": {home/approach/grasp/lift 均为 joint1..joint8},
+             "feedforward_offsets": {"home": {...joint2: 0.005229714, joint3: -0.009013975...},
+                                     "approach": {...}, "grasp": {...joint2: -0.002137427,
+                                     joint3: -0.005371549, joint5: -0.001086334...}, "lift": {...}},
+             "gripper_fields": [..., "gravity_feedforward", "pad_offset_axis", "pad_offset_m", ...]}
+```
+
+⇒ ① `duration_ms=8000`／每段 1600 ms 确实生效（此前"复跑逐位相同"不代表参数没到，
+是我把两次不同的对照混在一起比较）；② 四相位前馈**非空且已进 pick**（排除了 §9.3 的
+"前馈被静默丢"嫌疑）；③ 位置指令键与门禁口径一致。
+
+**但** pick 的门禁残差仍是 z 向 `0.013817039392046003 m`，而我的探针用**同一后端配置、同一批
+positions、同一批前馈、同样 1600 ms/段**得到 `7.551e-06 m` ⇒ 差异只能在"相位内/相位间的执行"
+（例如 `_log_pick_phase` 的副作用、`_move_trajectory` 的 settle 与实际步进方式、或 pick 在
+相位之间读了一次状态）。**下一轮的仪器化（唯一还没观测的地方）**：在 pick 的**每个相位之后**
+打印 `_grasp_alignment_evidence` 的 `center_delta_m` 与 `joint_qpos`（同一开关），并让探针用
+**同一个打印**跑一遍 —— 两份逐相位序列一比即可指出是哪一段分叉。
+
+**顺带发现（小缺陷，登记）**：本次 `nominal` 进程在报告写完之后以 `LeaseConflict: lease expired`
+（`iraf_core/authority.py:46`，由某条清理路径的 `authority.validate(lease)` 触发）异常退出、
+退出码 1 ⇒ 清理路径不应在租约已过期时再校验（应容忍 expired 或先释放再校验）。
+
 ### 9.4 A/B 对照组工装 bug（我自己踩的，记进纪律）
 
 `build/iraf-a6a14/pick_vs_probe_ab.py` 想在**同一后端**上对比"探针路径 vs pick 内部路径"，

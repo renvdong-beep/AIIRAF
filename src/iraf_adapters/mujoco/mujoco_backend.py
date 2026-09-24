@@ -891,6 +891,22 @@ class MujocoBackend:
         approach_axis, grasp_mode = self._resolve_grasp_axis(grasp_pose, gripper)
 
         duration_ms = max(1, int(duration_ms))
+        # 观测（与既有 IRAF_DEBUG_PICK 同风格，默认关闭）：把"这一段到底拿到了什么"打成一行 ——
+        # 排查"声明了参数却不起作用"这类问题时，**必须直接看实参**，不能靠对代码的推断
+        # （2026-09-24：探针与 nominal 的 s03 给出矛盾残差，四环链路读代码全部透传 ⇒ 需要实参）。
+        if os.environ.get("IRAF_DEBUG_PICK") == "1":
+            phase_ms = max(1, duration_ms // 5)
+            print("PICK_INPUTS " + json.dumps({
+                "target_id": str(target_id),
+                "duration_ms": int(duration_ms),
+                "phase_ms_each": int(phase_ms),
+                "positions_keys": {key: sorted((gripper.get(key) or {}).keys())
+                                   for key in ("home_positions", "approach_positions",
+                                               "grasp_positions", "lift_positions")},
+                "feedforward_offsets": {phase: self._pick_ctrl_offsets(phase)
+                                        for phase in ("home", "approach", "grasp", "lift")},
+                "gripper_fields": sorted(gripper.keys()),
+            }, ensure_ascii=False), flush=True)
         open_ms = max(1, duration_ms * 2 // 5)
         close_ms = max(1, duration_ms - open_ms)
         lift_ms = 0
