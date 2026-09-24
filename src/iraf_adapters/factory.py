@@ -48,6 +48,7 @@ CAPABILITY_METHODS = {
     # 未登记的能力仍会被显式拦下（避免"策略通过但无人实现"的悬空能力）。
     "stand": "stand",
     "locomote": "locomote",
+    "dock_for_handoff": "dock_for_handoff",
     "read_state": "read_state",
     "emergency_stop": "emergency_stop",
 }
@@ -62,6 +63,7 @@ MOTION_CAPABILITIES = (
     "stand",
     "stop",
     "locomote",
+    "dock_for_handoff",
     "emergency_stop",
 )
 

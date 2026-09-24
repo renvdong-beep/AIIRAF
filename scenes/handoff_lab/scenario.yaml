@@ -83,11 +83,10 @@ scenarios:
         action: dock_for_handoff
         robot: unitree_go2
         params: {}
-        # 停靠（DOG_DOCKING）属 U5/U6 集成：需要 navigate/dock 能力，本战役不交付
-        # （四足首期只有 stand/stop，locomote 都只交付拒绝路径），必须显式登记待交付，
-        # 不得因为"本体 profile 已交付"就默认该能力已具备。
-        pending_closed_by: "步骤 18"
-        pending_reason: 停靠/导航能力未验收（决策 4.B 首期只交付 stand/stop）；本步骤只声明目标序列与判据。
+        # 2026-09-24：`dock_for_handoff` 能力已声明（适配器层 9/9 + 技能层跑通）⇒ 本步骤
+        # **解除待交付登记**，恢复为可执行步骤。判据 `translation_error_max_m` / `yaw_error_max_deg`
+        # 的测量口径已于提交 224f925 补齐（取自技能 evidence 的 `final_translation_error_m` /
+        # |`final_yaw_error_deg`|）⇒ 预检不再因"判据无依据"失败。
         criteria:
           translation_error_max_m: 0.03
           yaw_error_max_deg: 2.0
@@ -150,9 +149,8 @@ scenarios:
         action: dock_for_handoff
         robot: unitree_go2
         params: {}
-        # 与 nominal.s02_dock 同因：停靠能力未验收，显式登记待交付。
-        pending_closed_by: "步骤 18"
-        pending_reason: 停靠/导航能力未验收（决策 4.B 首期只交付 stand/stop）。
+        # 2026-09-24：与 nominal.s02_dock 同因、同步解除（能力已声明）⇒ 本故障注入点恢复可执行，
+        # 故障可被真正注入（不再是"注入点待交付 ⇒ 未注入"）。
         criteria:
           translation_error_max_m: 0.03
           yaw_error_max_deg: 2.0

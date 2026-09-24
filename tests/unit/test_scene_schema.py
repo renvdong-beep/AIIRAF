@@ -165,7 +165,9 @@ class PositiveControlTests(ScenePackageFixture):
         # 步骤 17 之后：stand/stop 是已声明能力，因此不再是待交付步骤；
         # 停靠/载荷确认/放置仍未交付，必须继续显式登记（否则 scene_check 会当引用失败拦下）。
         self.assertNotIn(("nominal", "s01_verify_ready"), steps)
-        self.assertIn(("nominal", "s02_dock"), steps)
+        # 2026-09-24：`s02_dock` 已解登记（能力已声明）⇒ 待交付只剩臂侧两步
+        self.assertNotIn(("nominal", "s02_dock"), steps)
+        self.assertIn(("nominal", "s04_place_in_tray"), steps)
         self.assertIn(("nominal", "s04_place_in_tray"), steps)
         self.assertIn(("nominal", "s05_confirm_payload"), steps)
 

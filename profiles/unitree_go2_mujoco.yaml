@@ -75,7 +75,15 @@ spec:
   #       适用速度受安全策略 max_speed_mps=0.5 约束。
   # - `read_state` / `emergency_stop` 已实现但本轮不经技能层验收，故不声明
   #   （"实现即必须声明"会逼出没有技能验收支撑的声明；方向只允许 declared ⊆ implemented）。
-  capabilities: [stand, stop, locomote]
+  # `dock_for_handoff`（2026-09-24 回填）：**三层证据齐备后**才入列 ——
+  #   · 适配器层：build/iraf-a6a14/station-acceptance.json（9/9 判据全过：
+  #     平移 0.026780452 m ≤ 0.03、偏航 −0.235676284° ≤ 2.0°、末速 2.96742e-04 m/s ≤ 0.05、
+  #     全程最大倾角 5.2546° ≤ 15°、目标帧世界固定、接近真的执行过 settled_at_s=6.560 s）；
+  #   · 技能层：见本提交的证据（TaskFlow → SkillRuntime → Policy → Provider → 适配器）；
+  #   · 场景层：s02_dock 解除"待交付"登记（scenario.yaml）。
+  # 边界（诚实）：全部 simulation=true；停靠目标是**世界固定站位帧**（handoff_station_frame，0.55 m），
+  # 其坐标前提是臂基座在台面原点附近、且只按位置可达筛选（未约束工具姿态）；上板证据另计。
+  capabilities: [stand, stop, locomote, dock_for_handoff]
 
   # ---- 构建期声明（场景构建器消费；iraf_core.profile 只读它已知的键，忽略本节）----
   # 厂商模型路径与挂载点集中在 Profile，禁止散落到脚本里（铁律 5.3）。

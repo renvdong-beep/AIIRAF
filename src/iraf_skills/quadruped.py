@@ -627,6 +627,37 @@ class StandProvider:
         return {"skill": "stand", "accepted": True, "evidence": _evidence(report, self.EVIDENCE_KEYS)}
 
 
+class DockForHandoffProvider:
+    """停靠（`dock_for_handoff`）：接近参数与**验收判据全部来自声明**，本 Provider 不含任何数字。
+
+    与 `StandProvider` 同构：只做「透传声明 → 调适配器 → 按输出 schema 抽取证据」。
+    参数面为零（输入 schema `additionalProperties: false` 且无 properties）：接近速度/增益/容差/
+    超时/制动提前量/保持语义都在机型声明里，调用方覆盖它们等于绕过安全与验收边界。
+    失败（超时 / 漂出容差 / 目标帧缺失）由适配器在**执行过程中**表达并写进报告 `failure`，
+    本 Provider **如实透出**（不吞、不改写、不返回伪造成功）。
+    """
+
+    EVIDENCE_KEYS = ("simulation", "capability", "target_frame", "target_frame_world_fixed",
+                     "settled_at_s", "final_translation_error_m", "final_yaw_error_deg",
+                     "final_speed_mps")
+
+    def __init__(self, profile, backend):
+        self.profile = profile
+        self.backend = backend
+
+    def execute(self, inputs, lease):
+        if inputs:
+            raise SkillContractError(
+                "dock_for_handoff 不接受参数（接近参数与验收判据来自机型声明）：实际 %s"
+                % sorted(inputs))
+        acceptance = self.backend.dock_acceptance()      # 来自声明；本层不写数字
+        # 适配器签名是 keyword-only（`def dock_for_handoff(self, *, lease, ...)`）
+        report = self.backend.dock_for_handoff(lease=lease, **acceptance)
+        evidence = _evidence(report, self.EVIDENCE_KEYS)
+        evidence["failure"] = report.get("failure")
+        return {"skill": "dock_for_handoff", "accepted": True, "evidence": evidence}
+
+
 class LocomoteProvider:
     """速度指令：指令形状校验 → 适配器 `locomote` → 按输出 schema 抽取证据。
 

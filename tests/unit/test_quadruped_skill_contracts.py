@@ -312,7 +312,8 @@ class SkillManifestTests(unittest.TestCase):
         （"不得声明做不到的能力"）现由下面的 subset 断言接管。
         """
         declared = {str(item) for item in (self.profile["spec"].get("capabilities") or [])}
-        self.assertEqual(declared, {"stand", "stop", "locomote"})
+        # 2026-09-24：`dock_for_handoff` 在适配器层 9/9 + 技能层 10/10 后入列
+        self.assertEqual(declared, {"stand", "stop", "locomote", "dock_for_handoff"})
         implemented = {str(item) for item in UnitreeGo2Adapter.IMPLEMENTED_CAPABILITIES}
         self.assertTrue(declared <= implemented, "声明了未实现的能力: %s" % sorted(declared - implemented))
 

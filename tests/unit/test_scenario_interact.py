@@ -86,7 +86,9 @@ class Go2InteractiveTests(unittest.TestCase):
         ])
         self.assertEqual(report["schema_version"], scenario.INTERACT_SCHEMA)
         self.assertTrue(report["simulation"])
-        self.assertEqual(report["declared_capabilities"], ["locomote", "stand", "stop"])
+        # 2026-09-24：`dock_for_handoff` 入列（同一事实的第四处：交互入口的能力清单）
+        self.assertEqual(report["declared_capabilities"],
+                         ["dock_for_handoff", "locomote", "stand", "stop"])
         self.assertEqual(report["counts"]["rejected"], 0)
         self.assertTrue(all(item["status"] == "SUCCEEDED" for item in transcript))
 

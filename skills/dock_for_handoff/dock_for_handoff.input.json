@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"dock_for_handoff 输入","type":"object","additionalProperties":false,"description":"无参数：接近参数（速度/增益/容差/超时/制动提前量/保持语义）与验收判据全部来自机型声明的 dock_for_handoff 段；调用方不得在请求里覆盖，也不得自带数字。"}

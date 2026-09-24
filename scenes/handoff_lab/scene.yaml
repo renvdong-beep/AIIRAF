@@ -44,7 +44,9 @@ robots:
     #   证据：适配器四工况 build/acceptance/go2-locomote/report.json（passed=true，
     #         forward 误差 0.0659 / backward 0.0571 ≤0.10）+ 技能层
     #         build/iraf-a6a12/skill-layer-run.json（stand/locomote/stop 三步全 SUCCEEDED）
-    capabilities: [stand, stop, locomote]
+    # 2026-09-24 同步：`dock_for_handoff` 在**适配器层 9/9 验收 + 技能层跑通**后入列。
+    # 停靠目标 = 本场景的 `frames[].handoff_station_frame`（worldbody site，世界固定）。
+    capabilities: [stand, stop, locomote, dock_for_handoff]
     note: 厂家 MJCF 已探测（12 个力矩型 motor、imu site、无相机/无雷达），仅证明低层模型存在，不代表导航/停靠能力（AGENTS.md 6.8）；场景构建器按本场景声明注入相机/雷达/托盘/道具/光照，厂商文件只读。locomote 已在 MuJoCo 仿真里验收并声明（速度指令可走/转/退，受安全策略 max_speed_mps=0.5 约束；**上板部署证据另计**）；**停靠/放托盘/载荷确认仍未交付**，见 scenario.yaml 的 pending 登记（步骤 18）。
   - id: humanoid_static
     kind: humanoid
@@ -99,7 +101,10 @@ frames:
       # 站位：四足把背上的托盘停到这里，机械臂才够得着托盘。
       # 依据：工具点在托盘顶面高度（z ≈ 0.347 m）的可达水平环带 r ∈ [0.002028, 0.594284] m
       # （build/iraf-a6a14/reach_probe.py，20000 次 FK 采样，臂基座在原点）⇒ 取 0.55 m 保守内侧。
-      pos_m: [0.55, 0.0, 0.0]
+      # ⚠ 0.55 → 0.45（2026-09-24）：0.55 落在安全策略声明的 `quadruped_limits.workspace_m`
+      # （x ∈ [−0.5, 0.5]）**之外** ⇒ 声明冲突（站位必须在"允许走到的范围"内）。
+      # 0.45 同时满足：① 在工作空间矩形内；② 在臂可达环带 r ≤ 0.594284 m 内（§11.1）。
+      pos_m: [0.45, 0.0, 0.0]
       # 期望机身朝向（yaw 0 = 与出生点朝向一致，故本工况不需要转向）
       quat_wxyz: [1.0, 0.0, 0.0, 0.0]
     note: >-

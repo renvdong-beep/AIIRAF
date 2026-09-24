@@ -655,6 +655,15 @@ dock_for_handoff:
   # 不再调用 `stop` 的阻尼保持（实测：两条路径 PD 增益不同 ⇒ 那次过渡把机身再推 +15.7 mm，
   # 是停靠末态最大单项误差）；`damped_hold` = 旧行为。A/B 见 docs/debug/...§6.6。
   settle_mode: frozen_hold
+  # **验收判据**（适配器自身判定用的阈值；技能层透传，不自带数字）。
+  # 与场景步骤 `scenes/handoff_lab/scenario.yaml` 的 `s02_dock.criteria` **同值**：
+  #   · 场景侧 criteria 是**运行期判据的消费者**（运行器从技能 evidence 里取实测值判定）；
+  #   · 这里给适配器在执行中判定用（超时/漂出容差 ⇒ DOCK_DRIFTED/DOCK_TIMEOUT，写进报告与终态）。
+  # 两处不一致就会"适配器报失败而场景判通过"或反之 ⇒ 改一处必须改另一处（同一事实的第二处）。
+  acceptance:
+    translation_error_max_m: 0.03
+    yaw_error_max_deg: 2.0
+    max_speed_m_s: 0.05
 
 state:
   # 传感器按名字解析（关节名 ≠ 执行器名：go2.xml 关节 FL_hip_joint / 执行器 FL_hip）。

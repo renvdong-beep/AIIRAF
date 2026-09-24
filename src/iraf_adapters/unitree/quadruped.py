@@ -32,10 +32,12 @@ import numpy as np
 from iraf_core.authority import LeaseConflict
 
 #: 能力规范词表（平台无关；不得出现机型/厂家语义）。
-CAPABILITIES = ("emergency_stop", "locomote", "read_state", "stand", "stop")
+#: 规范能力词表（**唯一来源**：Profile/场景声明的能力必须在此词表内，否则装配期显式失败）。
+#: `dock_for_handoff` 于 2026-09-24 入列（适配器层 9/9 + 技能层 10/10 验收后）。
+CAPABILITIES = ("dock_for_handoff", "emergency_stop", "locomote", "read_state", "stand", "stop")
 
 #: 会驱动执行器（产生物理动作）的能力子集。`read_state` 不在此列：它只读不改。
-MOTION_CAPABILITIES = ("emergency_stop", "locomote", "stand", "stop")
+MOTION_CAPABILITIES = ("dock_for_handoff", "emergency_stop", "locomote", "stand", "stop")
 
 ACTIVE_STATE = "ACTIVE"
 #: 终态：一旦写入不得被回写（铁律 1.6 / 2.4）。
@@ -402,6 +404,11 @@ class QuadrupedAdapter:
 
     def locomote(self, velocity, duration_ms, lease, execution_id=None):
         raise UnsupportedCapabilityError(self._unsupported("locomote"))
+
+    def dock_for_handoff(self, *, lease, position_tolerance_m, yaw_tolerance_rad,
+                         max_final_speed_mps, execution_id=None):
+        """停靠：基类默认**显式拒绝**（未实现该能力的机型走这条路，绝不静默）。"""
+        raise UnsupportedCapabilityError(self._unsupported("dock_for_handoff"))
 
     def read_state(self):
         raise UnsupportedCapabilityError(self._unsupported("read_state"))

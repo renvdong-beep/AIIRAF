@@ -197,16 +197,28 @@ class PlanAndPreflightTests(RunnerFixture):
     def test_pending_step_criteria_are_registered_not_blocking(self):
         contract = scenario.scenario_contract()
         index = scenario.capability_index(load_yaml(self.scene_path))
-        entry = load_yaml(self.scenario_path)["scenarios"]["fault_sensor_loss"]
+        # ⚠ 2026-09-24：`s02_dock`/`f02_dock` 已解除待交付（能力已声明）⇒ 改用 nominal 里
+        # **仍**待交付的两步（臂侧 `place_object` / `accept_payload`）。
+        entry = load_yaml(self.scenario_path)["scenarios"]["nominal"]
         plan = scenario.plan_steps(entry, index, contract)
         pending = [item for item in plan if item["kind"] == scenario.STEP_SKIPPED_PENDING]
-        self.assertEqual([item["id"] for item in pending], ["f02_dock"])
+        self.assertEqual([item["id"] for item in pending],
+                         ["s04_place_in_tray", "s05_confirm_payload"])
         # 2026-09-24 起 `translation_error_max_m` / `yaw_error_max_deg` **可评测**（测量量取
         # 技能 evidence 的停靠结果量，并在 `measure_step` 里对偏航取绝对值）⇒ 待交付登记里
         # 不再把它们列为"判不了"；该步待交付的原因只剩**能力未声明**。
-        self.assertEqual(pending[0]["registration"]["unevaluable_criteria"], [])
-        # 待交付步骤不得让整条场景变成"判据无依据"的非法声明。
-        scenario.check_evaluable_criteria(plan)
+        # 臂侧那一步的判据（`pose_tolerance_m`）仍属"本执行器没有评测依据"⇒ 如实登记
+        self.assertEqual(pending[0]["registration"]["unevaluable_criteria"], ["pose_tolerance_m"])
+        # 待交付步骤不得让整条场景变成"判据无依据"的非法声明 —— 但 `nominal` 目前仍被**臂侧**
+        # `s03_pick` 挡住（其三项判据无评测依据，属"臂未接入同一模型"的跨界阻塞，见
+        # .hermes/plans/2026-09-23-dock-for-handoff.md §11）⇒ 这里断言"无依据的判据**只**在 s03_pick"，
+        # 而不是整条场景合法（那会把已知阻塞说成已解决）。
+        # 只统计**会被真正下发**的步骤（待交付步骤的判据进 registration，不算"无依据的非法声明"）
+        blocked = {step["id"]: step["unevaluable_criteria"] for step in plan
+                   if step["unevaluable_criteria"]
+                   and step["kind"] != scenario.STEP_SKIPPED_PENDING}
+        self.assertEqual(sorted(blocked), ["s03_pick"])
+        self.assertNotIn("s02_dock", blocked)
 
     def test_dispatched_step_with_unevaluable_criteria_fails_preflight(self):
         self.mutate_scenario(
@@ -223,7 +235,8 @@ class PlanAndPreflightTests(RunnerFixture):
 
     def test_unregistered_capability_fails_with_reference_code(self):
         def drop_registration(doc):
-            step = doc["scenarios"]["nominal"]["steps"][1]
+            # s02_dock 已解登记 ⇒ 打仍待交付的 s04（`place_object` 不在 piper 的 capabilities 里）
+            step = doc["scenarios"]["nominal"]["steps"][3]
             step.pop("pending_closed_by")
             step.pop("pending_reason")
 
@@ -383,7 +396,7 @@ class CliContractTests(RunnerFixture):
             item["name"]: item["pending_steps"] for item in scenes["handoff_lab"]["scenarios"]
         }
         self.assertEqual(pending["stand_stop"], [])
-        self.assertEqual(pending["nominal"], ["s02_dock", "s04_place_in_tray", "s05_confirm_payload"])
+        self.assertEqual(pending["nominal"], ["s04_place_in_tray", "s05_confirm_payload"])
 
     def test_unknown_scenario_is_reference_failure(self):
         code, message = self.error_message(
@@ -481,6 +494,28 @@ class RealSimulationTests(RunnerFixture):
 
     def test_real_uninjectable_fault_is_registered_and_gated(self):
         """注入点在待交付步骤上 ⇒ 登记为未注入；--require-injected-faults 才变成硬失败。"""
+        # ⚠ 2026-09-24：`f02_dock` 已解登记 ⇒ 本用例**显式构造**"注入点待交付"的夹具
+        # （不再依赖生产声明；否则这条负向用例会变成恒真/恒假的空用例）
+        # 待交付判定要求"能力**未声明**"与"有 pending 登记"**两者同时成立**（见 scenario.py 的
+        # 两类失败注入口径）⇒ 夹具要同时动**场景**（摘能力）与**剧本**（加登记），
+        # 只动一个都会让步骤被真正执行 ⇒ 这条负向用例变成空用例。
+        def drop_capability(scene_doc):
+            for robot in scene_doc["robots"]:
+                if robot["id"] == "unitree_go2":
+                    robot["capabilities"] = [item for item in robot["capabilities"]
+                                             if item != "dock_for_handoff"]
+
+        def restore_pending(scenario_doc):
+            # ⚠ 必须把**两处**引用同一能力的步骤都退回待交付：场景包的预检是**包级**的，
+            # 只补 fault_sensor_loss.f02_dock 会让 nominal.s02_dock 变成"未登记待交付"⇒ 退出码 3
+            #（实测踩点：初次只补一处，得到 3 != 0）。
+            entry = {"pending_closed_by": "步骤 18",
+                     "pending_reason": "夹具：把注入点退回待交付，验证「未注入」如实登记"}
+            scenario_doc["scenarios"]["fault_sensor_loss"]["steps"][1].update(entry)
+            scenario_doc["scenarios"]["nominal"]["steps"][1].update(dict(entry))
+
+        self.mutate_scene(drop_capability)
+        self.mutate_scenario(restore_pending)
         code, stdout, report_path = self.run_scenario("fault_sensor_loss")
         self.assertEqual(code, scenario.EXIT_OK, msg=stdout)
         report = json.loads(report_path.read_text(encoding="utf-8"))

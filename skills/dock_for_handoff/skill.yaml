@@ -1,0 +1,23 @@
+apiVersion: iraf.intewell.io/v1
+kind: Skill
+metadata: {name: dock_for_handoff, version: 1.0.0}
+spec:
+  # 契约先于实现（AGENTS.md 铁律 1）：输入/输出 schema、能力依赖、超时、取消、恢复、安全等级与版本
+  # 都在本文件声明；接近参数与验收判据一律来自机型声明（`dock_for_handoff` 段），技能层不自带数字。
+  verification: development
+  inputSchema: dock_for_handoff.input.json
+  outputSchema: dock_for_handoff.output.json
+  # 能力依赖：Profile 必须声明 dock_for_handoff（未声明即由 PolicyGateway 在调度前拒绝
+  # IRAF-SKILL-PROVIDER-UNAVAILABLE）。
+  requires: [dock_for_handoff]
+  preconditions: []
+  intentExamples: ["走到交接站位并停住", "四足停靠到托盘交接点", "dock for handoff"]
+  # 租约 TTL 必须覆盖一次完整停靠：适配器总时长 = timeout_s + settle_s + 0.5 = 13.5 s（仿真时间），
+  # 实测墙钟 ≈ 15 s ⇒ 取 40 s 留余量（TTL 是**墙钟**量：`stop` 曾因 TTL 2 s < 声明 3 s 被拖长后
+  # 抛 LeaseConflict，见技能 references）。
+  timeoutSeconds: 40
+  cancellation: cooperative_stop
+  recovery: [stop, request_handover]
+  safetyClass: controlled_motion
+  providers:
+    - {name: quadruped_dock_sim, type: python_adapter, entrypoint: "iraf_skills.quadruped:DockForHandoffProvider", selector: {mode: simulation}, priority: 100}

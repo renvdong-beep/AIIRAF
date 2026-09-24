@@ -199,7 +199,7 @@ class QuadrupedAdapterCases(unittest.TestCase):
             quadruped.assert_portable_surface("能力词表", quadruped.CAPABILITIES)
         )
         self.assertEqual(
-            ("emergency_stop", "locomote", "read_state", "stand", "stop"),
+            ("dock_for_handoff", "emergency_stop", "locomote", "read_state", "stand", "stop"),
             quadruped.CAPABILITIES,
         )
 
@@ -214,7 +214,8 @@ class QuadrupedAdapterCases(unittest.TestCase):
 
     def test_public_method_signatures_avoid_vendor_tokens(self):
         names = []
-        for method in ("stand", "stop", "locomote", "read_state", "emergency_stop"):
+        for method in ("stand", "stop", "locomote", "dock_for_handoff", "read_state",
+                       "emergency_stop"):
             signature = inspect.signature(getattr(quadruped.QuadrupedAdapter, method))
             names.extend(signature.parameters)
         quadruped.assert_portable_surface("公开方法参数名", names)
@@ -244,7 +245,7 @@ class QuadrupedAdapterCases(unittest.TestCase):
     def test_go2_implements_only_verified_capabilities(self):
         # `locomote` 于 2026-09-23 两层验收达标后入列（技能层报告 build/iraf-a6a12/skill-layer-run.json）
         self.assertEqual(
-            {"emergency_stop", "read_state", "stand", "stop", "locomote"},
+            {"emergency_stop", "read_state", "stand", "stop", "locomote", "dock_for_handoff"},
             set(UnitreeGo2Adapter.IMPLEMENTED_CAPABILITIES),
         )
 
@@ -254,7 +255,8 @@ class QuadrupedAdapterCases(unittest.TestCase):
         )
         self.assertTrue(report["passed"])
         self.assertEqual(
-            ["emergency_stop", "locomote"], report["undeclared_implemented_capabilities"]
+            ["dock_for_handoff", "emergency_stop", "locomote"],
+            report["undeclared_implemented_capabilities"]
         )
 
     def test_capability_contract_rejects_unimplemented_and_unknown(self):

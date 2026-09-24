@@ -195,8 +195,12 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
     #: · 回归：loopback 三基准逐位不变、10/10（两条既有路径未被污染）
     #: · **边界**：以上全部 MuJoCo 仿真（simulation=true）；**上板部署证据（A7）另计**；
     #:   转向量值无阈值；适用速度受安全策略 max_speed_mps=0.5 约束。
+    #: `dock_for_handoff`（2026-09-24 入列）：适配器层证据
+    #: `build/iraf-a6a14/station-acceptance.json`（9/9：平移 0.026780452 m ≤ 0.03、
+    #: 偏航 −0.235676284° ≤ 2.0°、末速 2.96742e-04 m/s ≤ 0.05、最大倾角 5.2546° ≤ 15°、
+    #: 目标帧世界固定、接近真的执行过）；技能层/场景层证据见 Profile 注释。
     IMPLEMENTED_CAPABILITIES = frozenset(("emergency_stop", "read_state", "stand", "stop",
-                                          "locomote"))
+                                          "locomote", "dock_for_handoff"))
 
     def __init__(self, declaration, profile, authority, *, root, mujoco, model, data, bindings):
         # 物理步进与显示渲染互斥（显示层通过 display_lock() 取同一把锁做快照，避免撕裂）
@@ -754,6 +758,34 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             raise ModelUnavailableError(
                 "首个关节 %r 的 body 没有父节点：整机质量无法按子树口径计算" % (first_joint,))
         return mpc_state.robot_subtree_mass_kg(self.model, root)
+
+    def dock_acceptance(self):
+        """`dock_for_handoff` 的**验收判据**（来自声明；技能层只透传，不得自带数字）。
+
+        与"控制容差"分开：`approach_position_tolerance_m`（0.015 m）决定**何时停止接近**，
+        本方法给出的是**终态验收**阈值（0.03 m / 2.0° / 0.05 m/s），与场景步骤 `s02_dock` 的
+        `criteria` 同值（同一事实的第二处：场景侧是运行期判据的消费者，这里是适配器自身判定用的
+        阈值 —— 两者必须一致，见 `config/go2_loopback.yaml` 的注释）。
+        """
+        section = self.declaration.get("dock_for_handoff")
+        if not isinstance(section, dict):
+            raise DeclarationError("声明缺少 dock_for_handoff 段")
+        node = section.get("acceptance")
+        if not isinstance(node, dict):
+            raise DeclarationError(
+                "声明缺少 dock_for_handoff.acceptance（验收判据必须来自声明；技能层不得自带数字）")
+        missing = [key for key in ("translation_error_max_m", "yaw_error_max_deg", "max_speed_m_s")
+                   if key not in node]
+        if missing:
+            raise DeclarationError("声明缺少 dock_for_handoff.acceptance 的键: %s" % missing)
+        values = {"position_tolerance_m": float(node["translation_error_max_m"]),
+                  "yaw_tolerance_rad": math.radians(float(node["yaw_error_max_deg"])),
+                  "max_final_speed_mps": float(node["max_speed_m_s"])}
+        for label, value in values.items():
+            if not math.isfinite(value) or value <= 0.0:
+                raise DeclarationError(
+                    "dock_for_handoff.acceptance.%s 必须是正有限数，实际 %r" % (label, value))
+        return values
 
     def gravity_mps2(self):
         """重力加速度绝对值（m/s²）：从被测模型的 `opt.gravity` 读出（不写第二份数字）。"""
