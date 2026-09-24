@@ -578,6 +578,40 @@ model` 与 loopback 报告 `stop.collapsed: true`）⇒ 没有人给它算控制
 2. 定位后重跑 `nominal --world joint`，判据同样是 s03 的三项实测 + `plant_residency.cycles ≥ 1`
    且 `failed_cycles = []` + `owner_final_base_z_m` 在声明范围内。
 
+### 11.3 段错误已修（持锁粒度）+ 驻留生效 + 新的精确卡点：参考姿态是**场景专属**的
+
+**段错误根因与修法**（faulthandler 抓到栈顶）：`quadruped.gravity_bias_torque` 内部会
+`mj_forward`（**写**派生量），而四足控制循环 `_run_control` 读 `qpos/qvel/time` 与它时**没持植物锁**
+⇒ 与对侧（臂，主线程）在同一份 MjData 上并发 `mj_forward`/`mj_step` ⇒ SIGSEGV。
+修法（刻意**按控制周期**持锁，不是整段）：`_run_control` 里三处（读 q/dq 并 `copy()`、读 `time`、
+算 `tau_ff`）加 `with self._lock:`；整段持锁会把 guest 的 `wait_until` 饿死（它只在锁外采样步数）。
+
+**修后实测**（`nominal --world joint`，exit 5，报告已落盘；`Fatal Python error` 计数 0）：
+
+```
+plant_residency: cycles=16  failed_cycles=[]  wall=26.868515  owner_final_base_z_m=0.2760156601664448
+  ⇒ 狗在臂执行期间**全程站着**（0.276 ≈ 站姿高度；对照：无人控制时 0.1 s 内塌到 0.077172）
+s01_verify_ready ✓（推进 16.00000000000201 s、末速 1.4887881152579008e-05 m/s）
+s02_dock ✓：平移 0.028125012624229208、偏航 0.5801787093348428、末速 0.00024289065500333266
+s03_pick ✗ 末端未到达目标抓取位姿: distance=0.369305m tolerance=0.005000m
+          delta=[0.2600008873862923, -0.2622663598754907, -0.001477328276297013]
+```
+
+**新卡点（精确）**：残差 0.369 m 且方向在 x/y 平面（+0.26, −0.26）⇒ 臂**够不到**联合模型里的目标。
+原因不是控制、也不是判据，而是**数据出处**：`piper_joint.yaml` 指向的联合报告把 gripper 的
+`home/approach/grasp/lift_positions` 从**臂自己场景**的报告继承了过来（`_joint_manipulation` 的改名规则
+只改名字、不改数值），而那组参考姿态是按"方块在 (0.19, 0, 0.025)"求解的；联合模型里方块的世界位置
+由 go2 场景的 props 决定 ⇒ 命令位姿落在联合模型里**另一个地方**。`grasp_pose` 本身是对的
+（由 `grasp_pose_from: report_target` 从**联合报告**的 targets[] 组装），错的是**命令位姿**。
+
+修法（下一步，构建期、按声明）：
+1. 联合构建时对**联合模型**重跑臂侧参考姿态求解器（`build_piper_baseline` 的
+   `build_reference_poses` / `solve_position_ik` 一族），把 home/approach/grasp/lift 的关节解与
+   `pad_offset_m` 写进联合报告（数值来自联合模型，不再是"继承来的"）；
+2. 若短期不便接：至少在 `_joint_manipulation` 里**显式失败**而不是静默继承（
+   "继承的参考姿态是场景专属的，联合模型必须重算"）—— 静默继承正是这次 0.369 m 的来源；
+3. 验收：s03 的三项实测（`pose_tolerance_m` ≤0.005 等）+ 驻留 `cycles ≥ 1`、`failed_cycles = []`。
+
 ## 12. 下一步
 
 1. `s03_pick` 三项判据口径（`pose_tolerance_m` / `min_lift_delta_m` / `require_bilateral_contact`）

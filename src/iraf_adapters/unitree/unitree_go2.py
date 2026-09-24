@@ -2664,25 +2664,36 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 float(balance_params["weight_balance"]),
             )
         for cycle_index in range(cycles):
-            q = np.asarray(self.data.qpos[self.qpos_adr], dtype=float)
-            dq = np.asarray(self.data.qvel[self.dof_adr], dtype=float)
+            # ⚠ 共享植物（world=joint）下，这些**读**必须与对侧的写互斥、并且要 copy：
+            #   实测两线程并发在同一份 MjData 上做 mj_forward / mj_step ⇒ **SIGSEGV**
+            #   （faulthandler 栈：quadruped.gravity_bias_torque ← unitree_go2._run_control
+            #    ← stand ← scenario 的植物驻留线程）。
+            #   持锁粒度刻意保持**每控制周期**（不是整段 _run_control）：整段持锁会把 guest
+            #   的 `wait_until` 饿死（它只在锁外采样步数 ⇒ 每周期 ≤1 ms 就够了）。
+            with self._lock:
+                q = np.asarray(self.data.qpos[self.qpos_adr], dtype=float).copy()
+                dq = np.asarray(self.data.qvel[self.dof_adr], dtype=float).copy()
             if zero_torque:
                 ctrl = np.zeros_like(q)
                 saturated = np.zeros_like(q, dtype=bool)
                 desired = np.array(q_des, dtype=float)
                 ctrl_position_nm = ctrl.copy()          # 零力矩档：位置环输出也是零
             else:
-                now = float(self.data.time)
+                with self._lock:
+                    now = float(self.data.time)
                 if target_provider is not None:
                     desired = np.asarray(target_provider(cycle_index, now), dtype=float)
                 else:
                     alpha = 1.0 if float(ramp_s) <= 0.0 else min(1.0, max(now - start, 0.0) / float(ramp_s))
                     desired = q0 + alpha * (q_des - q0)
-                tau_ff = (
-                    gravity_bias_torque(self.model, self.data, self.mujoco, self.dof_adr)
-                    if self.gravity_feedforward
-                    else np.zeros_like(q)
-                )
+                # `gravity_bias_torque` 内部会 `mj_forward`（写派生量）⇒ 必须持植物锁；
+                # 这就是崩溃栈顶那一帧（与对侧的 mj_forward/mj_step 并发）。
+                with self._lock:
+                    tau_ff = (
+                        gravity_bias_torque(self.model, self.data, self.mujoco, self.dof_adr)
+                        if self.gravity_feedforward
+                        else np.zeros_like(q)
+                    )
                 ctrl, saturated = pd_torque(
                     q, dq, desired, self.kp, self.kd, tau_ff, self.torque_lower, self.torque_upper
                 )
