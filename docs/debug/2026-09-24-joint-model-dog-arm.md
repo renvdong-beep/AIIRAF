@@ -198,7 +198,30 @@ B 联合 handoff_lab_joint.xml   （nu=20，key.ctrl 长度 20，后 8 位全零
 `tests/unit/test_joint_name_map.py::AssemblePlantWiringTests`（断言 `runtime.registry` 仍是
 `SkillRegistry` 且 `resolve("move_joint")` 非空）。
 
-## 7. 下一步
+## 7. 可见演示：狗与臂同框、同一个世界（2026-09-24 续）
+
+入口 `build/iraf-a6a14/shared_plant_demo.py`（必须显式 `--display interactive_viewer`；`auto` 不开窗）：
+
+```
+DISPLAY=:0 XAUTHORITY=<...> MUJOCO_GL=glfw PYTHONPATH=src \
+  python3 build/iraf-a6a14/shared_plant_demo.py --seconds 12 --phase both
+⇒ build/iraf-a6a14/shared-plant-demo.json（4/4 判据通过）
+```
+
+| 阶段 | 现象（实测数字） |
+| --- | --- |
+| 窗口 1：狗 `stand` × 臂 `move_joint` **同时** | 窗口开（543 帧）；狗 SUCCEEDED，base_z **0.2793580236507228**，植物推进 **15000** 步；臂 SUCCEEDED，末态误差 **0.0031713854268711206 / 0.01808743374791255 / 3.9094728232491605e-08** rad |
+| 窗口 2：狗 `locomote` 前进 0.2 m/s × 臂保持 | 窗口开（604 帧）；狗 SUCCEEDED，base 从原点走到 **(0.46809567761708076, −0.0008316464979186758, 0.2877945528530491)**；臂 joint5 仍是 **0.518087433753746**（= 它被指令的目标位形）⇒ 同一个世界里狗走、臂保持 |
+
+### 7.1 第三次踩到同一个时序坑（必须记住）
+
+guest 的请求**必须等 owner 已经开始推进**才能发：第一版让臂线程与窗口同时起跑 ⇒ 臂的等待立刻
+超时（`PlantWaitTimeout`）；第二版把延时设成 2.5 s，却又**超过了狗的 stand 墙钟**（8000 ms 仿真
+只需 ~0.7 s 墙钟）⇒ owner 已停推，臂请求被技能层判 FAILED（且我第一版没记 `error_code`/`reason`，
+只能看到 status=FAILED）。正确做法（已落地）：**owner 的仿真时长要远长于 guest 的墙钟耗时**
+（stand 30000 ms 仿真 ≈ 2.5 s 墙钟，覆盖臂 200 步），guest 在 1.2 s 后插入 ⇒ 两者真正重叠。
+
+## 8. 下一步
 
 1. `s03_pick` 三项判据口径（`pose_tolerance_m` / `min_lift_delta_m` / `require_bilateral_contact`）
    → s04/s05 → `nominal` 全场景 → 两臂轮番运输。
