@@ -1639,7 +1639,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                                   "settle_s", "timeout_s",
                                   "approach_position_tolerance_m",
                                   "approach_yaw_tolerance_rad",
-                                  "braking_lead_s") if key not in section]
+                                  "braking_lead_s", "settle_mode") if key not in section]
         if missing:
             raise DeclarationError("声明缺少 dock_for_handoff 的键: %s" % missing)
         approach_speed = float(section["approach_speed_mps"])
@@ -1687,6 +1687,16 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 "%.6f（同上：控制容差必须严于验收判据）" % (approach_yaw_tolerance_rad,
                                                           yaw_tolerance_rad))
         # 制动提前量时间（s）：静止时为 0 即退化为"误差 ≤ 控制容差"的旧行为
+        # 终态保持语义（声明）：
+        #   `damped_hold` = 交 `stop` 的阻尼保持（旧行为）；`frozen_hold` = 不另起保持，
+        #   以"站定 + 位置保持参考"的末态为准。后者有实测依据：`halt_pose=static_home` 下站定段
+        #   末速已达 2.97e-04 m/s（判据 0.05），而额外的阻尼保持因两条路径 PD 增益不同
+        #   （本路径 kp45 vs `stand` 路径 kp150）会把机身再推 **+15.7 mm**，是当前最大单项误差。
+        settle_mode = str(section["settle_mode"])
+        if settle_mode not in ("damped_hold", "frozen_hold"):
+            raise DeclarationError(
+                "dock_for_handoff.settle_mode 只支持 damped_hold / frozen_hold，实际 %r"
+                % (settle_mode,))
         braking_lead_s = float(section["braking_lead_s"])
         if not math.isfinite(braking_lead_s) or braking_lead_s < 0.0:
             raise DeclarationError(
@@ -1794,9 +1804,12 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         # 时长必须覆盖"接近超时 + 保持窗"（到达后 provider 返回精确零 ⇒ 原地保持）
         total_s = timeout_s + settle_s + 0.5
         # 走同一段 locomote（含 MPC 契约 §4 的失败路径），逐拍指令由上面的 provider 给。
+        # 到位后要**保持的世界位置** = 目标帧的 xy（与判据测的同一对量）
+        target_pose_for_hold = frame_pose()
         report = self.locomote(
             {"vx_mps": approach_speed, "vy_mps": 0.0, "wz_rad_s": 0.0},
             total_s * 1000.0, lease, execution_id=execution_id, command_provider=provider,
+            hold_pose_world=(target_pose_for_hold[0], target_pose_for_hold[1]),
         )
         samples = report.get("samples") or []
 
@@ -1806,7 +1819,14 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         settle_report = None
         settle_error = None
         final_speed = float("inf")
-        if report.get("failure") is None:
+        if report.get("failure") is None and settle_mode == "frozen_hold":
+            # 不另起保持：末速取 **locomote 段的实测末拍**（同一路实测，不是推算）
+            final_speed = float(samples[-1]["base_linear_speed_mps"]) if samples else float("inf")
+            settle_report = {"mode": "frozen_hold", "held_by": "halt+position_reference",
+                             "final_speed_mps": final_speed, "failure_reason": "",
+                             "note": "保持由站定（halt_pose=static_home）+ 位置保持参考提供；"
+                                     "未调用 stop 的阻尼保持（避免其过渡位移）"}
+        elif report.get("failure") is None:
             # ⚠ 不能把"当前关节角"当保持目标：交接瞬间是**中步态**位形（可能有一条腿在空中），
             # 实测保持窗速度 0.3117 m/s（判据 0.05）—— 那是"保持一个迈步中的位形"，不是站稳。
             # 因此交给**声明的站立位形**（`stand.pose_source = profile_home`，四足落地），
@@ -1883,7 +1903,8 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             "samples": samples,
         }
 
-    def locomote(self, velocity, duration_ms, lease, execution_id=None, command_provider=None):
+    def locomote(self, velocity, duration_ms, lease, execution_id=None, command_provider=None,
+                 hold_pose_world=None):
         """速度指令 → MPC Provider（独立进程）→ 足端力 → 关节支撑力矩（A6a-④ ⑤）。
 
         契约：`docs/debug/2026-09-23-locomote-provider-integration-spec.md` §2/§4/§6。
@@ -2107,7 +2128,16 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             # 平移通道（位置 + 速度）按声明取参考：`measured` ⇒ 该通道零误差（交给足端退让），
             # `command` ⇒ QP 用接触力把机身加速到指令速度。偏航通道独立声明（见配置注释的实测：
             # 两者都放开给 `measured` 时后退 4 s 偏航 +30.51°，偏航必须留在 MPC 闭环里）。
-            if translation_from == "measured":
+            if hold_pose_world is not None and halt_state["frozen_elapsed"] is not None:
+                # **到位后的位置保持**（停靠用）：站定一旦冻结，水平参考从"速度为零"换成
+                # "位置参考 = 指定的世界点"，由 QP 在**四足支撑**下用接触力把残余位置误差压掉。
+                # 为什么必须这样（实测，docs/debug/2026-09-24-dock-target-self-frame.md §6.5）：
+                # 到位后只把速度给零 ⇒ 机身带 ~0.06 m/s 惯性漂 11.3 mm（冻结延迟）+ 慢漂，
+                # 停靠末态卡在 0.033~0.044 m；MPC 本就有位置权限，之前是"到位即放弃位置参考"。
+                vx_ref, vy_ref = 0.0, 0.0
+                pos_des = np.array([float(hold_pose_world[0]), float(hold_pose_world[1]), z_des],
+                                   dtype=float)
+            elif translation_from == "measured":
                 vx_ref, vy_ref = float(body_velocity[0]), float(body_velocity[1])
                 pos_des = np.array([state_now[0], state_now[1], z_des], dtype=float)
             else:
@@ -2417,6 +2447,8 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             "fencing_token": int(lease.fencing_token),
             "control_source_owner": str(getattr(lease, "owner", "")),
             "command": dict(resolved),
+            "hold_pose_world": None if hold_pose_world is None else [float(hold_pose_world[0]),
+                                                                    float(hold_pose_world[1])],
             "duration_ms": seconds * 1000.0,
             "control_cycles": int(cycles),
             "ctrl_saturated_samples": int(saturated),

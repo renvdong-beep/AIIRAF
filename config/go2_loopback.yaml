@@ -651,6 +651,10 @@ dock_for_handoff:
   # 0.03955 m/s、0.05 档反而 0.08178 m/s）乘冻结延迟 ⇒ 提前发零只是把这段漂移的距离拉长。
   # 因此本键保留（适配器需要它、且是"可调但那一次标定说了不调"的显式记录），值取 0.0 = 旧行为。
   braking_lead_s: 0.0
+  # 终态保持语义：`frozen_hold` = 保持由"站定（halt_pose=static_home）+ 位置保持参考"提供，
+  # 不再调用 `stop` 的阻尼保持（实测：两条路径 PD 增益不同 ⇒ 那次过渡把机身再推 +15.7 mm，
+  # 是停靠末态最大单项误差）；`damped_hold` = 旧行为。A/B 见 docs/debug/...§6.6。
+  settle_mode: frozen_hold
 
 state:
   # 传感器按名字解析（关节名 ≠ 执行器名：go2.xml 关节 FL_hip_joint / 执行器 FL_hip）。
