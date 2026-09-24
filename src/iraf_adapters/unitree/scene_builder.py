@@ -242,10 +242,30 @@ def verify_vendor_source(root, model, label):
     if not lock_path.is_file():
         _fail(EXIT_REFERENCE, "厂商锁文件不存在: " + str(lock_path))
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
-    if lock.get("schema_version") != "iraf.vendor-source-lock/v1":
-        _fail(EXIT_DECLARATION, "厂商锁 schema_version 非法: " + str(lock.get("schema_version")))
+    schema = str(lock.get("schema_version"))
     inner = relative[len(prefix):]
-    entries = [item for item in (lock.get("files") or []) if str(item.get("path")) == inner]
+    # 厂商锁的**两套既有约定**（显式支持，不做"字段像就收"的隐式兼容；锁里必须写清 provenance）：
+    #   · `iraf.vendor-source-lock/v1`（厂商 U1）：`files[].path` 相对 `vendor/<vendor>/`
+    #   · `iraf.piper-model-source-lock/v1`（机械臂侧）：`files[].relative_path` 相对**模型目录名**，
+    #     且 `files[].path` 是**本机绝对路径**（⇒ 该锁是 host-specific，报告里如实标注）
+    if schema == "iraf.vendor-source-lock/v1":
+        key, entries = "path", [item for item in (lock.get("files") or [])
+                                if str(item.get("path")) == inner]
+        lock_meta = {"lock_schema": schema, "path_key": "path", "host_specific": False}
+    elif schema == "iraf.piper-model-source-lock/v1":
+        model_dir = inner.split("/", 1)[0]
+        key = "relative_path"
+        entries = [item for item in (lock.get("files") or [])
+                   if "%s/%s" % (model_dir, str(item.get("relative_path"))) == inner]
+        lock_meta = {
+            "lock_schema": schema, "path_key": "relative_path", "host_specific": True,
+            "note": "该锁的 files[].path 为本机绝对路径（资产目录是符号链接，未真正入库）"
+                    "⇒ 只在**本机**可复现；迁移到 U1 约定需要把资产实体入库并重写锁",
+        }
+    else:
+        _fail(EXIT_DECLARATION,
+              "厂商锁 schema_version 非法（只接受 iraf.vendor-source-lock/v1 或 "
+              "iraf.piper-model-source-lock/v1）: " + schema)
     if not entries:
         _fail(
             EXIT_VENDOR_LOCK,
@@ -265,6 +285,7 @@ def verify_vendor_source(root, model, label):
         "sha256": digest,
         "locked_sha256": locked,
         "blob_sha1": entries[0].get("blob_sha1"),
+        **lock_meta,
         "lock": str(lock_path.relative_to(root)),
         "match": True,
     }
@@ -503,8 +524,13 @@ def _attach_robots(staging, scene, root, attached_ids):
         pos = _vec3(placement.get("pos_m"), "robots.%s.placement.pos_m" % robot_id)
         quat = _quat_wxyz(placement.get("quat_wxyz"), "robots.%s.placement.quat_wxyz" % robot_id)
         child = mujoco.MjSpec.from_file(str(root / str(model["file"])))
-        # 关节初值来自 Profile 的 `spec.home`（声明式；缺键即显式失败，不猜）
-        home = (profile_spec.get("home") or {})
+        # 关节初值来自**声明的**两个来源（缺键即显式失败，不猜）：
+        #   · `spec.home`：本体标称位形（臂的 joint1..6）
+        #   · `spec.gripper.open_positions`：抓手的"张开"位形（臂的 joint7/8 在这段里声明）
+        home = dict(profile_spec.get("home") or {})
+        gripper = profile_spec.get("gripper")
+        if isinstance(gripper, dict):
+            home.update({str(k): float(v) for k, v in (gripper.get("open_positions") or {}).items()})
         joint_values = []
         for joint in child.joints:
             name = str(joint.name)
@@ -521,7 +547,9 @@ def _attach_robots(staging, scene, root, attached_ids):
                       "联合模型的关键帧不猜值" % (robot_id, name))
             joint_values.append(float(home[name]))
         prefix = "%s_" % robot_id
-        frame = spec.worldbody.add_frame(pos=_numbers(pos, "%.9f"), quat=_numbers(quat, "%.9f"))
+        # MjSpec 需要**数值列表**（`_numbers()` 是给 XML 属性用的字符串，别混用）
+        frame = spec.worldbody.add_frame(pos=[float(v) for v in pos],
+                                        quat=[float(v) for v in quat])
         spec.attach(child, prefix=prefix, frame=frame)
         keys = list(getattr(spec, "keys", []) or [])
         for key in keys:
