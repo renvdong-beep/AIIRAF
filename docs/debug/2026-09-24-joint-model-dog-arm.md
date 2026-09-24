@@ -252,7 +252,49 @@ delta=[0.0022387082780914447, 5.394919764631356e-06, 0.011904138538288277]`
 **不在实现层写默认值**。验收：同一探针的关节误差降到 ≤1e-3 rad 量级、s03_pick 的
 `distance` ≤ 0.005 m。
 
-## 9. 修法的精确配方与接线点（2026-09-24 查清，未实施）
+## 9. 重力前馈已实施（2026-09-24）：关节级下垂消除，门禁残差另有独立原因
+
+已落地（三处接线全部照 §9 原文实施）：
+- `config/piper_simulation_baseline.yaml` 新增 `gravity_feedforward: {hold_ms: 4000,
+  tolerance_rad: 0.001}`（声明量，实现层不写默认值）；
+- `scripts/build_piper_baseline.py: build()` 对 home/approach/grasp/lift 四个姿态逐个调用
+  `iraf_core.kinematics.gravity_hold_ctrl`（用**注入增益后**的场景模型），写回
+  `reference.gravity_feedforward` + 自证证据，并写进 `gripper.gravity_feedforward`
+  （键与位置指令一一对应，错位即显式失败）；
+- 生成方式按契约：该脚本把场景 JSON 打到 **stdout**（实测 `main()` 只 print，不写文件）⇒
+  `python3 scripts/build_piper_baseline.py > build/models/piper-pick-scene.json`。
+  报告现含 `reference_poses`（✓）与四相位前馈：grasp 增量
+  `{joint2: -0.002137427, joint3: -0.005371549, joint5: -0.001086334, …}`，
+  自证方法 `qfrc_bias_plus_static_hold`，静态保持残余最大 **2.9551e-05 rad**（限 0.001）✓
+
+关节级判死指标（同一条探针，改前 → 改后）：
+
+| duration_ms | max\|q − q_des\| 改前（rad） | 改后（rad） | 倍数 |
+| --- | --- | --- | --- |
+| 1600 | 0.016796437522027752 | 0.018786867883619607 | （未稳定，不比较） |
+| 4000 | 0.005316921001245409 | **0.00021921636035648895** | 24× |
+| 8000 | 0.005314844537182922 | **2.9338248136322893e-05** | 181× |
+
+⇒ §8 判死的机制（缺前馈的稳态下垂）**已被消除**。
+
+**但 s03_pick 仍未过**（`nominal` 复跑，`build/acceptance/handoff_lab/nominal/report.json`）：
+`末端未到达目标抓取位姿: distance=0.014450m tolerance=0.005000m
+delta=[0.004229494155511382, 5.415238119581278e-06, 0.013817039392046003]`
+—— 关节误差已经只有 1e-4 量级，而残差仍集中在 **z 向 13.817039392046003 mm**（改前 11.904 mm）
+⇒ **还有第二个独立原因：门禁的几何口径与模型实际几何不一致**（与下垂无关）。
+
+下一步的判死顺序（不要一次改多处）：
+1. 门禁用的是 `pad_boxes`（若声明）否则左右指腹 geom 的**中点**；先量"模型里实际 pad 中点
+   与目标中心的几何关系"（`data.geom_xpos` + `xpos[target]`，逐轴），与门禁期望的
+   `目标中心 − pad_offset_m · 接近轴`（当前 0.029835769 沿 +z）对比 ⇒ 看差异是**常数偏置**
+   （声明值与模型不符）还是**随位形变化**（口径不同：例如参考求解器的
+   `finger_height_correction_m` / `tip_clearance_m` 已经把这部分算进 `grasp_point_m`）；
+2. 若为常数偏置 ⇒ 修**声明**（`pad_offset_m`/`pad_offset_axis` 由参考姿态重算，属构建期产物），
+   不得改门禁阈值（收紧/放宽安全边界都需单独授权）。
+3. 我自己的探针里那个 `distance`（~0.0596 m）是**自建的粗糙几何**，不能当门禁代理
+   （它与门禁差 4 倍以上）⇒ 验证只能用真 `pick_object`。这条也写进纪律。
+
+## 9.1 原配方与接线点（追溯用，已实施）
 
 **结论**：Piper 抓取相位的重力前馈**没有生成过**，而仓库里已有现成配方与被验证过的消费路径。
 

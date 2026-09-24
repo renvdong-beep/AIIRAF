@@ -142,6 +142,18 @@ vision:
     # 复用别机型的标定会得到看似合理但实际错误的坐标。
     calibration_file: build/calibration/camera_to_base.json
 
+# --- 重力前馈（构建期生成，与 UR5e 同源配方）---
+# 为什么必须生成（2026-09-24 实测判死，docs/debug/2026-09-24-joint-model-dog-arm.md §8）：
+# 纯 PD 执行器在重力矩不为零的位形下停在 `ctrl − τ_g/gain` —— 实测 Piper 抓取相位的稳态
+# 关节残差 5.314844537182922e-03 rad，经串联臂放大到末端 z 向 11.904 mm，超过 5 mm 抓取门禁
+# （s03_pick 因此报「末端未到达目标抓取位姿: distance=0.012113m tolerance=0.005000m」）。
+# 生成方式：iraf_core.kinematics.gravity_hold_ctrl（qfrc_bias(qvel=0)/gainprm[0]，并做静态保持
+# **自证**：把增量加到目标 ctrl 上保持 hold_ms，要求残余关节误差 ≤ tolerance_rad）。
+# 这两个量必须在声明里给出（实现层不写默认值）。
+gravity_feedforward:
+  hold_ms: 4000
+  tolerance_rad: 0.001
+
 # --- 统一入口声明（AGENTS.md 6.4 金路径）---
 build:
   baseline_module: build_piper_baseline

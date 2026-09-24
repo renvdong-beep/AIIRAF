@@ -22,6 +22,7 @@ from build_robot_baseline import (  # noqa: E402  通用编排：与机型无关
 )
 from iraf_core.kinematics import (
     balance_tip_clearance,
+    gravity_hold_ctrl,
     lowest_mesh_point_z,
     solve_position_ik,
 )
@@ -489,6 +490,51 @@ def build(root, baseline_path, scene_path, calibration_path=None, target_id=None
             json.dumps(reference, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
         reference["pose_evidence"] = str(pose_path)
+    # ---- 重力前馈（逐相位 ctrl 增量）：见 config 里的 gravity_feedforward 段说明 ----
+    ff_cfg = baseline.get("gravity_feedforward") or {}
+    hold_ms = ff_cfg.get("hold_ms")
+    tolerance_rad = ff_cfg.get("tolerance_rad")
+    if not isinstance(hold_ms, int) or isinstance(hold_ms, bool) or hold_ms <= 0:
+        raise ValueError("基线必须声明 gravity_feedforward.hold_ms（正整数）；实现层不写默认值")
+    if not isinstance(tolerance_rad, (int, float)) or isinstance(tolerance_rad, bool) or tolerance_rad <= 0:
+        raise ValueError("基线必须声明 gravity_feedforward.tolerance_rad（正数）；实现层不写默认值")
+    # ⚠ 必须用**注入增益后**的场景模型（`scene.arm_position_kp`）算增量：增益错，增量就错。
+    ff_model_path = _resolve(root, scene_path)
+    ff_model = mujoco.MjModel.from_xml_path(str(ff_model_path))
+    feedforward = {}
+    feedforward_evidence = {}
+    for phase, key in (("home", "home_positions"), ("approach", "approach_positions"),
+                       ("grasp", "grasp_positions"), ("lift", "lift_positions")):
+        pose = reference.get(phase)
+        if pose is None:
+            continue
+        # ⚠ 两种形状：`home` 是扁平 {关节名: 值}，其余是 {"joint_positions": {...}}
+        raw = pose if phase == "home" else (pose.get("joint_positions") or {})
+        positions = {str(name): float(value) for name, value in (raw or {}).items()}
+        if not positions:
+            continue
+        compensation, evidence = gravity_hold_ctrl(
+            ff_model, list(positions), positions,
+            hold_ms=int(hold_ms), tolerance_rad=float(tolerance_rad),
+        )
+        feedforward[phase] = compensation
+        feedforward_evidence[phase] = evidence
+        # 键必须与该段位置指令一一对应：错位会让前馈静默失效（表现为"精度莫名不达标"）
+        declared_keys = set((scene.get("gripper") or {}).get(key) or {})
+        unknown = sorted(set(compensation) - declared_keys)
+        if unknown:
+            raise ValueError(
+                "重力前馈 %s 含该段位置指令里不存在的通道: %s（前馈键与位置指令必须一一对应）"
+                % (phase, unknown))
+    reference["gravity_feedforward"] = feedforward
+    reference["gravity_feedforward_evidence"] = feedforward_evidence
+    gripper_block = scene.get("gripper")
+    if not isinstance(gripper_block, dict):
+        raise ValueError("场景缺少 gripper 段，无法写入重力前馈（后端从 gripper.gravity_feedforward 取）")
+    gripper_block["gravity_feedforward"] = {
+        phase: {name: float(value) for name, value in offsets.items()}
+        for phase, offsets in feedforward.items()
+    }
     scene["model_source_lock"] = lock_report
     scene["reference_poses"] = reference
     return scene
