@@ -15,7 +15,12 @@ spec:
   # 租约 TTL 必须覆盖一次完整停靠：适配器总时长 = timeout_s + settle_s + 0.5 = 13.5 s（仿真时间），
   # 实测墙钟 ≈ 15 s ⇒ 取 40 s 留余量（TTL 是**墙钟**量：`stop` 曾因 TTL 2 s < 声明 3 s 被拖长后
   # 抛 LeaseConflict，见技能 references）。
-  timeoutSeconds: 40
+  # 租约 TTL 必须覆盖**墙钟**耗时：本机 MPC 路径实测 2.3~5× 慢于实时（4 核 + 软件渲染 + 其它负载）；
+  # 停靠的仿真时长 = timeout_s 12 + settle_s 1 + 0.5 = 13.5 s，最坏 5× ⇒ 67 s + 冷启动 5~8 s
+  # ⇒ 旧的 40 s 会被**租约过期**打断（2026-09-24 实测复现：物理结果达标 0.029178 m ≤ 0.03、
+  # 偏航 0.2284°、末速 0.000219 m/s，却因墙钟 62.00 s > 40 s 报 FAILED）。
+  # 取 120 s：覆盖最坏墙钟并留余量；安全边界仍由声明的时间/速度/容差约束，本值只放宽等待。
+  timeoutSeconds: 120
   cancellation: cooperative_stop
   recovery: [stop, request_handover]
   safetyClass: controlled_motion
