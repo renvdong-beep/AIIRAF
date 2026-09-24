@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import math
 
-__all__ = ["pose_error", "approach_command", "assert_target_is_world_fixed",
-           "DOCK_DEFAULTS_FORBIDDEN"]
+__all__ = ["pose_error", "approach_command", "stopping_distance_m",
+           "assert_target_is_world_fixed", "DOCK_DEFAULTS_FORBIDDEN"]
 
 
 class DockDeclarationError(ValueError):
@@ -99,6 +99,29 @@ def approach_command(dx_m, dy_m, yaw_error_rad, *, gain_s_inv, max_speed_mps, ma
         vx *= scale
         vy *= scale
     return (vx, vy, wz)
+
+
+def stopping_distance_m(v_measured_mps, braking_lead_s, min_distance_m):
+    """**制动提前量**：按实测速度提前多少米发零指令（= `提前量时间 × 速度`，下限 `min_distance_m`）。
+
+    为什么需要它（2026-09-24 停靠实测，docs/debug/2026-09-24-dock-target-self-frame.md §6.3）：
+    以"误差进容差即发零"的方式停步态时，机身**带着惯性滑行**：实测到位瞬间 |v| = 0.039549 m/s、
+    随后 1.01 s 内又走了 40.6 mm（之后 4 s 只再走 6 mm）⇒ 滑行超调把末态撑到 0.06 m > 判据 0.03 m。
+    滑行来源是"站定冻结要等 ≥1 个步态周期"（实测冻结时刻 ≈ 指令归零后 0.33~0.40 s）加上步态在
+    零指令附近的**速度地板**。因此把判据从"误差 ≤ 容差"改成"误差 ≤ 制动距离"，
+    让滑行把残差带到 ~0。
+
+    参数全部来自调用方（本层无默认值）：`v_measured_mps` 实测机身速度、`braking_lead_s` 提前量时间、
+    `min_distance_m` 下限（= 声明的控制容差，保证低速时仍按容差停）。
+    """
+    v = _finite(v_measured_mps, "v_measured_mps")
+    lead = _finite(braking_lead_s, "braking_lead_s")
+    floor = _positive(min_distance_m, "min_distance_m")
+    if lead < 0.0:
+        raise DockDeclarationError("braking_lead_s 必须 ≥ 0，实际 %r" % (braking_lead_s,))
+    if v < 0.0:
+        raise DockDeclarationError("v_measured_mps 必须 ≥ 0（速度模长），实际 %r" % (v_measured_mps,))
+    return max(floor, lead * v)
 
 
 def assert_target_is_world_fixed(*, frame_label, frame_kind, frame_body_id, frame_body_label,

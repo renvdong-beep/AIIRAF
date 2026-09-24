@@ -1638,7 +1638,8 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         missing = [key for key in ("target_frame", "approach_speed_mps", "gain_s_inv",
                                   "settle_s", "timeout_s",
                                   "approach_position_tolerance_m",
-                                  "approach_yaw_tolerance_rad") if key not in section]
+                                  "approach_yaw_tolerance_rad",
+                                  "braking_lead_s") if key not in section]
         if missing:
             raise DeclarationError("声明缺少 dock_for_handoff 的键: %s" % missing)
         approach_speed = float(section["approach_speed_mps"])
@@ -1685,6 +1686,11 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 "声明 dock_for_handoff.approach_yaw_tolerance_rad=%.6f 不严于调用方的验收容差 "
                 "%.6f（同上：控制容差必须严于验收判据）" % (approach_yaw_tolerance_rad,
                                                           yaw_tolerance_rad))
+        # 制动提前量时间（s）：静止时为 0 即退化为"误差 ≤ 控制容差"的旧行为
+        braking_lead_s = float(section["braking_lead_s"])
+        if not math.isfinite(braking_lead_s) or braking_lead_s < 0.0:
+            raise DeclarationError(
+                "dock_for_handoff.braking_lead_s 必须是 ≥ 0 的有限数，实际 %r" % (braking_lead_s,))
 
         target_frame = str(section["target_frame"])
         frame_id = self.mujoco.mj_name2id(self.model, self.mujoco.mjtObj.mjOBJ_SITE, target_frame)
@@ -1764,14 +1770,23 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             body = body_pose()
             dx, dy, yaw_err = dock_module.pose_error((target[0], target[1]), target[2],
                                                      (body[0], body[1]), body[2])
+            # 制动提前量：按**本拍实测机身速度**把"发零判据"放大到 lead × |v|（下限 = 控制容差），
+            # 用滑行把残差带到 ~0（滑行机制与实测数字见 `dock.stopping_distance_m` 的 docstring）。
+            speed_now = float(np.linalg.norm(np.asarray(self._body_frame_velocity(trunk_body),
+                                                        dtype=float)))
+            stop_distance = dock_module.stopping_distance_m(
+                speed_now, braking_lead_s, approach_position_tolerance_m)
             command = dock_module.approach_command(
                 dx, dy, yaw_err, gain_s_inv=gain_s_inv, max_speed_mps=approach_speed,
                 max_yaw_rate_rad_s=max(1.0e-3, min(1.0, gain_s_inv * abs(yaw_err))),
-                # 控制容差（声明）用于"到位即零"；验收容差（调用方）用于终态判定，两者不可混用
-                position_tolerance_m=approach_position_tolerance_m,
+                # 发零判据 = 制动距离（含控制容差下限）；验收容差（调用方）只用于终态判定
+                position_tolerance_m=stop_distance,
                 yaw_tolerance_rad=approach_yaw_tolerance_rad,
                 body_yaw_rad=body[2],
             )
+            if command == (0.0, 0.0, 0.0):
+                progress["stop_distance_m"] = stop_distance
+                progress["speed_at_stop_mps"] = speed_now
             if command == (0.0, 0.0, 0.0):
                 progress["reached_s"] = float(elapsed)
             return command
@@ -1844,7 +1859,10 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                          # 控制容差（声明）与验收容差（调用方）**都进报告**：两者混用时
                          # "到位误差贴着判据"这类问题才会被看见（见 §11.3 结论 2）
                          "control_position_tolerance_m": approach_position_tolerance_m,
-                         "control_yaw_tolerance_rad": approach_yaw_tolerance_rad},
+                         "control_yaw_tolerance_rad": approach_yaw_tolerance_rad,
+                         "braking_lead_s": braking_lead_s,
+                         "stop_distance_at_arrival_m": progress.get("stop_distance_m"),
+                         "speed_at_arrival_mps": progress.get("speed_at_stop_mps")},
             "criteria": {"position_tolerance_m": position_tolerance_m,
                          "yaw_tolerance_rad": yaw_tolerance_rad,
                          "max_final_speed_mps": max_final_speed_mps},

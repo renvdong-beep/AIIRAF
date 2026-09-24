@@ -99,6 +99,39 @@ class ApproachCommandTest(unittest.TestCase):
                 _cmd(0.1, 0.0, 0.0, max_speed_mps=bad)
 
 
+class StoppingDistanceTest(unittest.TestCase):
+    """制动提前量：发零判据 = max(控制容差, lead × 实测速度)（纯函数，无默认值）。
+
+    ⚠ 实测教训（build/iraf-a6a14/braking-sweep.json）：本机型上提前发零**一律更差**
+    （lead 0.5/0.8 ⇒ 末态 1.42/1.55 m 且失稳；lead 1.0~1.5 ⇒ 0.20~0.28 m），
+    因为发零后的位移由**步态速度地板 × 冻结延迟**决定，不是惯性滑行。本层保留该能力是为了
+    "可测、可证"，生产声明取 `braking_lead_s: 0.0`（= 退化为旧判据）。
+    """
+
+    def test_lead_zero_degenerates_to_control_tolerance(self):
+        self.assertAlmostEqual(dock.stopping_distance_m(0.05, 0.0, 0.015), 0.015, places=12)
+        self.assertAlmostEqual(dock.stopping_distance_m(0.5, 0.0, 0.015), 0.015, places=12)
+
+    def test_lead_scales_with_measured_speed(self):
+        self.assertAlmostEqual(dock.stopping_distance_m(0.039549, 1.0, 0.015),
+                               0.039549, places=12)
+        self.assertAlmostEqual(dock.stopping_distance_m(0.2, 1.2, 0.015), 0.24, places=12)
+
+    def test_floor_wins_at_low_speed(self):
+        # 低速时按控制容差停（地板生效）
+        self.assertAlmostEqual(dock.stopping_distance_m(0.001, 1.0, 0.015), 0.015, places=12)
+
+    def test_bad_inputs_fail_explicitly(self):
+        with self.assertRaises(DockDeclarationError):
+            dock.stopping_distance_m(0.05, -0.1, 0.015)
+        with self.assertRaises(DockDeclarationError):
+            dock.stopping_distance_m(-0.05, 1.0, 0.015)
+        with self.assertRaises(DockDeclarationError):
+            dock.stopping_distance_m(0.05, float("nan"), 0.015)
+        with self.assertRaises(DockDeclarationError):
+            dock.stopping_distance_m(0.05, 1.0, 0.0)          # 下限必须 > 0
+
+
 class TestTargetIsWorldFixed(unittest.TestCase):
     """停靠目标帧必须世界固定（自指帧会让停靠**看起来完美**却什么都没做）。
 
