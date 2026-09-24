@@ -586,6 +586,10 @@ locomote:
   # 四足同时落地的窗口（声明推算）：u ∈ [0.5,0.6) ∪ [0,0.1)（每周期两段、各 33.3 ms）；
   # 实测起点 u = 0.050/0.560/0.070/0.090/0.570 全部落在该窗口内（有效 ~2~3 拍/段）。
   halt_at_stance: true
+  # 站定后跟的位形：`static_home` = 交给静态站立位形（Profile spec.home，官方 unitree_guide 的
+  # FixedStand 同款）；`frozen_shape` = 继续跟冻结的步态形状（旧行为）。
+  # A/B 结果见 build/iraf-a6a14/halt-pose-ab.json 与 docs/debug/2026-09-24-dock-target-self-frame.md §6.5。
+  halt_pose: static_home
   # 档位选择依据（2026-09-23 实测细扫；同一 3 s / 100 Hz 工况，只改本键；报告 build/iraf-a6a7/gain*-{hold,forward,backward}.json）：
   #   档位   零指令 hold 净位移   倾角      forward 误差   倾角     偏航       |τ位置环|max  MPC载荷
   #   1.0        0.5742 m       3.12°      0.6053       9.45°   +31.94°      45.43(饱和)     9.98

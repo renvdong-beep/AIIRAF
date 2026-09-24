@@ -1927,7 +1927,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         missing = [key for key in ("provider_config", "duration_seconds",
                                    "stance_position_weight", "swing_position_weight",
                                    "velocity_ramp_s", "leg_position_gain_scale",
-                                   "halt_at_stance")
+                                   "halt_at_stance", "halt_pose")
                    if key not in section]
         if missing:
             raise DeclarationError("声明缺少 locomote 的键: %s" % missing)
@@ -1999,6 +1999,14 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             raise DeclarationError("locomote.velocity_ramp_s 必须 ≥ 0，实际 %r" % velocity_ramp_s)
         # 本路径 PD 增益缩放（见下方 `saved_gains` 处的实测依据）：必须 > 0，1.0 = 与 stand 同档。
         halt_at_stance = bool(section["halt_at_stance"])   # 见声明注释（指令归零 ⇒ 冻结在四足落地位形）
+        # 站定后跟什么位形：`frozen_shape`（冻结的步态形状，旧行为）或 `static_home`（静态站立位形）。
+        # 官方同款：`unitree_guide` 的 FSM 从 Trotting 退到 **FixedStand**（不再跟步态形状）。
+        # 实测依据：冻结形状下仍有 ≈5.3 mm/s 残余漂移（步态整流），保持窗 ~7 s ⇒ 37 mm，
+        # 是停靠末态超差的主项（docs/debug/2026-09-24-dock-target-self-frame.md §6.3）。
+        halt_pose_mode = str(section["halt_pose"])
+        if halt_pose_mode not in ("frozen_shape", "static_home"):
+            raise DeclarationError(
+                "locomote.halt_pose 只支持 frozen_shape / static_home，实际 %r" % (halt_pose_mode,))
         leg_position_gain_scale = float(section["leg_position_gain_scale"])
         if not leg_position_gain_scale > 0.0:
             raise DeclarationError(
@@ -2267,6 +2275,11 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             # 偏航 −0.44° → −3.02°。⇒ bias 在零指令下也在**部分抵消**步态整流（不是纯推力），
             # 该改动已回退（行为保持）。保持期漂移的真机制见计划 §11.4（滑行超调，不是慢爬）。
             walk_bias = (trot.get("walk") or {}).get("command_bias_mps") or (0.0, 0.0)
+            if halt_state["frozen_elapsed"] is not None and halt_pose_mode == "static_home":
+                # 站定后**不再跟冻结的步态形状**，交给静态站立位形（Profile `spec.home`）。
+                # 与 QP 的接触表自洽：冻结点是"四足实测都接触"的那一拍，home 也是四足落地位形
+                # ⇒ 两者不打架（官方 `unitree_guide` 的 Trotting → FixedStand 同款做法）。
+                return np.asarray([float(home[joint]) for joint in self.joint_order], dtype=float)
             targets = gait.gait_joint_targets(
                 trot, geometry, home, limits, elapsed, gait.amplitude_at(trot, elapsed),
                 self._body_frame_velocity(trunk_body), self._body_frame_omega(trunk_body),
@@ -2418,6 +2431,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             # 门禁是否触发过（见 docs/debug/2026-09-24-dock-target-self-frame.md §6）。
             "halt": {
                 "declared_enabled": halt_at_stance,
+                "pose": halt_pose_mode,
                 "period_s": float(trot["period_s"]),
                 "frozen_at_s": state_holder.get("halted_at_s"),
                 "zero_command_since_s": halt_state["zero_since"],
