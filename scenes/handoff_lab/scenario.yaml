@@ -99,6 +99,20 @@ scenarios:
         robot: piper
         params:
           target_id: box_01
+          # 参数来源键：由场景报告 targets[] 组装世界系 grasp_pose（见下方说明与
+          # scripts/scenario.py: resolve_param_sources）。声明里不复制坐标。
+          grasp_pose_from: report_target
+        # 输入来源（2026-09-24 落地，原"待交付"登记已解除）——`pick_object` 必填的 `grasp_pose`
+        # 是**目标体在世界系的位置 + 朝向**（不是 TCP/指尖位姿）：适配器会拿 `position` 与
+        # `data.xpos[target_body]` 在 `pose_tolerance_m` 内核对、拿 `orientation` 推出接近轴
+        # （`iraf_adapters/mujoco/mujoco_backend.py: pick_object` / `_resolve_grasp_axis`）。
+        # 声明侧唯一合法来源是**场景报告的 `targets[]`**（报告由构建器从模型写出 ⇒ 与模型同源）
+        # ⇒ 用来源键 `grasp_pose_from: report_target` 做契约适配，场景声明里不写坐标。
+        # ⚠ 更正一处我先前的误判（留痕）：曾把来源写成臂侧参考姿态求解器
+        # `scripts/build_piper_baseline.py: build_reference_poses` —— 它给的是 home/approach/
+        # grasp/lift 的**关节空间**参考姿态（TCP 轨迹用）。结论以适配器对该参数的**用法**为准，
+        # 不从名字推断。
+        # ~~以下为已解除的待交付登记（保留原文供追溯）~~
         # ⚠ 待交付（卡的**不是**判据，是本步的**输入**）：`pick_object` 的输入契约
         # （`skills/pick_object/pick_object.input.json`）还要求 `grasp_pose`
         # = {frame_id, position{x,y,z}, orientation{x,y,z,w}}（**世界系笛卡尔**）。
@@ -108,16 +122,8 @@ scenarios:
         # 指尖中点笛卡尔量（`grasp.finger_center_m`）与 `approach_direction_world`。
         # "关节空间参考 + 接近方向 → 技能输入的世界系位姿"是一次**契约适配**（属臂侧工作项），
         # 不得在这里手抄一组数字当第二份事实（AGENTS.md 5.3）。
-        # schema 要求 `步骤 NN` 形式（`^步骤 [0-9]{2}$`）⇒ 沿用交接集成那一步的编号，
-        # 具体范围由 pending_reason 说明（这才是 pending_reason 的用途）。
-        pending_closed_by: "步骤 18"
-        pending_reason: >-
-          pick_object 需要世界系 grasp_pose；声明侧只有臂参考姿态求解器的关节空间参考
-          （build_reference_poses）。需要新增"参考姿态 → 技能输入"的契约适配层（含朝向由
-          approach_direction_world/gripper_axis_world 构造并在**同一个模型**上复核指尖不碰台），
-          不得在场景声明里复制一组数字。三项判据的评测口径已于 2026-09-24 落地
-          （scripts/scenario.py 的 CRITERION_SPEC/measure_step：测量量全部取自技能证据
-          grasp_alignment.center_distance_m / lift_delta_m / bilateral_contact）。
+        # （原待交付登记已于 2026-09-24 解除：输入来源由 grasp_pose_from 解析，判据口径已落地。
+        #   解除依据是"先看适配器的用法，再定来源"——见上方的误判更正。）
         # 判据口径（2026-09-24 落地，此前 exit 2 的卡点已解除）：
         #   · 三项判据的**测量量全部来自技能证据**（不推算）——
         #     `pose_tolerance_m` ← evidence.grasp_alignment.center_distance_m（抓取点对齐误差）

@@ -361,6 +361,77 @@ def machine_declaration(robot_id, index, baseline):
 # --------------------------------------------------------------------------
 # 预检：把声明解析成执行计划（装配后端之前完成，避免"跑了一半才发现声明不可执行"）
 # --------------------------------------------------------------------------
+#: 步骤声明里允许出现的**参数来源键**（解析成技能输入后从 params 里移除）。
+PARAM_SOURCE_KEYS = ("grasp_pose_from",)
+
+
+def resolve_param_sources(step, binding, root):
+    """把步骤声明里的**参数来源键**就地解析成技能输入（失败即显式失败，不静默留空）。
+
+    支持：`grasp_pose_from: report_target` —— `pick_object` 必填的 `grasp_pose` 是**目标体在
+    世界系的位置 + 朝向**（适配器会拿 `position` 与 `data.xpos[target_body]` 在
+    `pose_tolerance_m` 内核对、拿 `orientation` 推出接近轴，见
+    `iraf_adapters/mujoco/mujoco_backend.py: pick_object / _resolve_grasp_axis`）。
+    声明侧唯一合法来源是**场景报告的 `targets[]`**（报告与模型同源、由构建器写出）⇒
+    在场景声明里手抄一组坐标就是第二份事实（AGENTS.md 5.3），故由本函数做契约适配。
+
+    ⚠ 校正一处我先前的误判：我曾以为来源是臂侧参考姿态求解器
+    （`scripts/build_piper_baseline.py: build_reference_poses`）——**不对**：那个求解器给的是
+    home/approach/grasp/lift 的**关节空间**参考姿态（TCP 轨迹用），而 `pick_object` 的输入契约要的
+    是**目标体位姿**。查证方式是读适配器对该参数的用法，而不是从名字推断。
+    """
+    params = step.get("params") or {}
+    if "grasp_pose_from" not in params:
+        return
+    source = str(params.pop("grasp_pose_from"))
+    if source != "report_target":
+        raise ScenarioError(
+            "步骤 %s 的 grasp_pose_from=%r 不受支持（可用：%s）"
+            % (step["id"], source, list(PARAM_SOURCE_KEYS)), EXIT_DECLARATION)
+    if not isinstance(binding, dict):
+        raise ScenarioError(
+            "步骤 %s 声明了 grasp_pose_from 但本体没有机型声明绑定（无法找到场景报告）"
+            % step["id"], EXIT_REFERENCE)
+    spec = ((binding.get("declaration_document") or {}).get("robot") or {}).get("backend_config") or {}
+    report_ref = spec.get("report")
+    if not isinstance(report_ref, str) or not report_ref:
+        raise ScenarioError(
+            "步骤 %s 的 grasp_pose_from=report_target 需要机型声明里的 "
+            "robot.backend_config.report（缺声明即失败，不猜来源）" % step["id"], EXIT_DECLARATION)
+    report_path = _resolve(root, report_ref)
+    if not report_path.is_file():
+        raise ScenarioError("场景报告不存在：%s（先跑构建入口生成）" % report_path, EXIT_REFERENCE)
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    target_id = str(params.get("target_id"))
+    entry = next((item for item in (report.get("targets") or [])
+                  if isinstance(item, dict) and str(item.get("id")) == target_id), None)
+    if entry is None:
+        raise ScenarioError(
+            "场景报告 %s 的 targets[] 里没有目标 %s（无法解析 grasp_pose；不猜坐标）"
+            % (report_path, target_id), EXIT_REFERENCE)
+    position = entry.get("position_m")
+    quat = entry.get("quaternion_wxyz")
+    if not (isinstance(position, list) and len(position) == 3
+            and isinstance(quat, list) and len(quat) == 4):
+        raise ScenarioError(
+            "场景报告里目标 %s 缺少 position_m(3)/quaternion_wxyz(4)：实际 %r / %r"
+            % (target_id, position, quat), EXIT_DECLARATION)
+    params["grasp_pose"] = {
+        "frame_id": "world",
+        "position": {"x": float(position[0]), "y": float(position[1]), "z": float(position[2])},
+        # 报告里的四元数按 wxyz 存（MJCF 口径）；技能输入按 xyzw
+        "orientation": {"x": float(quat[1]), "y": float(quat[2]), "z": float(quat[3]),
+                        "w": float(quat[0])},
+    }
+    step["params"] = params
+    step["param_sources"] = {
+        "grasp_pose": {"from": "report_target", "report": _rel(report_path),
+                       "target_id": target_id,
+                       "source_pose": {"position_m": [float(v) for v in position],
+                                       "quaternion_wxyz": [float(v) for v in quat]}}
+    }
+
+
 def plan_steps(entry, index, contract, registry=None):
     """分类每一步：可执行 / 待交付跳过 / 引用失败。任何未登记的能力缺口都显式失败。"""
     plan = []
@@ -839,6 +910,19 @@ def _step_record(step):
     }
 
 
+def _read_backend_state(backend):
+    """读后端状态用于步骤前后测量；**未实现 `read_state` 即返回 None**（不假装有测量）。
+
+    ⚠ 实测（2026-09-24）：`MujocoBackend`（机械臂）没有 `read_state` —— 只有四足后端有
+    ⇒ 旧实现直接 `AttributeError: 'MujocoBackend' object has no attribute 'read_state'`，
+    机械臂**第一次**被本执行器下发时就崩（此前 s03 待交付、臂从未被下发过，所以没显形）。
+    这里按"无测量"处理：依赖 `sim_time_advance_s` / `final_speed_mps` 的判据会因**缺依据**
+    而判失败（`measure_step` + `evaluate_criteria` 的既有语义），不会静默通过。
+    """
+    reader = getattr(backend, "read_state", None)
+    return reader() if callable(reader) else None
+
+
 def _dispatch_step(runtime_state, step, correlation, key):
     """一次真实的技能执行：走 SkillRuntime（TaskFlow → Policy → 租约 → Provider → 适配器）。
 
@@ -847,7 +931,7 @@ def _dispatch_step(runtime_state, step, correlation, key):
     runtime = runtime_state["runtime"]
     profile = runtime_state["profile"]
     resource_id = profile.name
-    before = runtime_state["backend"].read_state()
+    before = _read_backend_state(runtime_state["backend"])
     started = time.perf_counter()
     result = runtime.execute(
         _request(
@@ -862,7 +946,7 @@ def _dispatch_step(runtime_state, step, correlation, key):
         _context(),
     )
     wall_seconds = time.perf_counter() - started
-    after = runtime_state["backend"].read_state()
+    after = _read_backend_state(runtime_state["backend"])
     evidence = (result.get("result") or {}).get("evidence") or {}
     measured = measure_step(before, after, evidence, wall_seconds)
     checks = evaluate_criteria(step["criteria"], measured)
@@ -1067,6 +1151,13 @@ def run_scenario(scene_dir, scenario_name, *, report_path=None, require_injected
         check_model_available(binding["declaration_document"], ROOT)
         bindings[step["robot"]] = binding
 
+    # ---- 参数来源解析（声明 → 技能输入）：必须在参数契约校验**之前**做，否则
+    # `grasp_pose_from` 这种来源键会被技能 schema 当成非法字段拒掉。
+    for step in plan:
+        if step["kind"] != STEP_EXECUTED:
+            continue
+        resolve_param_sources(step, bindings.get(step["robot"]), ROOT)
+
     check_evaluable_criteria(plan)
 
     # 参数必须符合技能自身的输入契约：声明写完就跑，避免"声明合法但参数非法"的步骤被 Policy 拒绝。
@@ -1089,8 +1180,15 @@ def run_scenario(scene_dir, scenario_name, *, report_path=None, require_injected
         state = assemble(
             {
                 "root": ROOT,
+                "robot": robot_id,
                 "profile": binding["profile"],
                 "declaration": binding["declaration"],
+                # ⚠ **必须传 declaration_document**：`scene_report` 模式（机械臂）的后端配置
+                # 要从声明里的 `robot.backend_config` 构造；只传路径会让 `assemble` 退化成
+                # "声明文件本身即后端配置"，于是 `mujoco_arm` 拿到一个字符串
+                # ⇒ `'str' object has no attribute 'get'`（实测：s03_pick 解除待交付、臂第一次
+                # 被本执行器装配时才暴露；此前臂从未被装配过所以一直没显形）。
+                "declaration_document": binding.get("declaration_document"),
                 "backend": binding["backend"],
                 "safety_policy": binding["safety_policy"],
             }
