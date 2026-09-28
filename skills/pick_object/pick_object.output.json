@@ -57,6 +57,11 @@
         "constraint_activated": {
           "type": "boolean"
         },
+        "lift_peak_step": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "峰值抬升发生时的抬升段步序号（NULL = 未采到）。与 `lift_peak_delta_m` 配对，用于把'抬起后滑出'定位到具体时刻（§11.23(25)(26)）。"
+        },
         "lift_peak_delta_m": {
           "type": "number",
           "minimum": 0,
