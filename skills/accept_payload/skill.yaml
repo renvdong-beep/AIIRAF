@@ -1,0 +1,31 @@
+apiVersion: iraf.intewell.io/v1
+kind: Skill
+metadata: {name: accept_payload, version: 1.0.0}
+spec:
+  # 契约先于实现（AGENTS.md 铁律 1）：输入/输出 schema、能力依赖、超时、取消、恢复、安全等级与版本
+  # 都在本文件声明；判据阈值一律来自场景/机型声明，技能层不自带数字。
+  verification: development
+  inputSchema: accept_payload.input.json
+  outputSchema: accept_payload.output.json
+  # 能力依赖：Profile 必须声明 accept_payload（未声明即在调度前被 PolicyGateway 拒绝）。
+  requires: [accept_payload]
+  # ⚠ 前置条件留空：**只声明系统真的会发布的状态**。本步最初写了 `safety.estop == false`
+  # （照抄臂侧 place_object），运行期报「IRAF-PRECONDITION-FAILED：缺少运行时状态: safety.estop」
+  # —— 四足侧运行时不发布该状态（dock_for_handoff / stand 也都是空前置）。
+  # 本技能是**只读复核**（不产生物理动作），急停等安全边界仍由 PolicyGateway 与安全层把关。
+  preconditions: []
+  intentExamples: ["确认托盘上确实有载荷", "交接完成确认", "accept payload"]
+  # 确认步只做**一次实测采样**（无运动、无推进），墙钟远小于 1 s ⇒ 30 s 充足。
+  # ⚠ 上限还受**四足侧安全策略**约束：`profiles/safety/quadruped_lab.yaml: max_duration_ms: 30000`
+  # ⇒ 取 30 s（60000 会被策略层直接拒；本会话在 stand 上踩过同类）。
+  timeoutSeconds: 30
+  cancellation: cooperative_stop
+  recovery: [stop, request_handover]
+  # **监控类**：不产生任何物理动作（因此不进适配器的 MOTION_CAPABILITIES），只独立复核载荷落位事实。
+  safetyClass: monitoring
+  providers:
+    - name: quadruped_accept_sim
+      type: python_adapter
+      entrypoint: "iraf_skills.quadruped:AcceptPayloadProvider"
+      selector: {mode: simulation}
+      priority: 100

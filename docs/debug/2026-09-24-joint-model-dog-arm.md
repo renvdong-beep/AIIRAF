@@ -2148,6 +2148,49 @@ after_retreat: 指腹 (0.3043,-0.3127,0.0850) ｜ 载荷 (0.2742,-0.29,0.0281)
   ② anchor 按**指令**（而非实测指腹）驱动，并把节拍一致性做成声明的 `carry_cadence`。
 - s03 的抓取门禁目标 z 来自臂侧基线（在基座高度变化时暴露 8.2 mm 错位）⇒ 独立工作项。
 
+#### (42) s05 `accept_payload` 交付：整链 s01–s05 全绿（2026-09-28）
+
+计划文件 `.hermes/plans/2026-09-28-s05-accept-payload.md`（先落计划再动手；每步可验收）。
+
+**(a) 契约先行**：新增 `skills/accept_payload/{skill.yaml, input.json, output.json}`
+（`safetyClass: monitoring` ⇒ **不进 `MOTION_CAPABILITIES`**；`timeoutSeconds: 30`；`preconditions: []`）。
+输入只给两个**名字**（`payload_id` / `place_target_id`），不接受预写世界坐标。
+
+**(b) 判据口径（全是事实，不设力阈值）**：`payload_on_target` = 载荷与接收体 geom **存在接触**
+且载荷最低点**不高于**承载面（`resting_gap_m ≤ 0` ⇒ 不是悬空）。水平偏移与末速是**数字**，
+阈值来自场景判据声明（`max_accept_offset_m: 0.06` 与 s04 同口径；`max_accept_speed_mps: 0.01`
+是"已静止"工程上界，s02/s03 实测末速 0.000196922 / 0.000208312 ⇒ 留约两个数量级余量）。
+
+**(c) 独立复核，不复述 s04 证据**（计划的 R3）：s05 在**确认时刻重新采样**，并给出 s04 没有的量
+`resting_gap_m` 与 `last_speed_mps`（整链末速 = 模型里**所有自由关节**线速度上界，不写死 body 名）。
+四足侧后端是 `UnitreeGo2Adapter`（**不是** MuJoCoBackend）⇒ 测量逻辑抽成共享函数
+`src/iraf_adapters/mujoco/payload_facts.py: confirm_payload_on_target(...)`，臂侧与四足侧各自调用
+（AGENTS.md 6.3：先重构接口，不复制核心代码；锁/租约/证据组装留在各自后端）。
+
+**(d) 实测（`build/acceptance/handoff_lab/nominal/report.json`，`passed=True`、`failed_checks=0`）**
+
+| 步骤 | 结果 | 关键实测 |
+|---|---|---|
+| s01 stand | SUCCEEDED | 末速 1.4582e-05 m/s |
+| s02 dock | SUCCEEDED | 平移 0.025516453 m、偏航 0.143376133° |
+| s03 pick | SUCCEEDED | 抓取误差 0.000208312 m、提起 0.079695 m、双侧接触 1.0 |
+| s04 place_in_tray | SUCCEEDED | 载荷偏移 0.031058027 m、`released` 1.0、`payload_in_tray` 1.0 |
+| **s05 confirm_payload** | **SUCCEEDED** | **`payload_on_target` 1.0、偏移 0.031058027 m、落位间隙 −0.000215511 m、整链末速 3.5781e-05 m/s** |
+
+**(e) 本轮踩的坑（都是同类"白名单/口径/形态"问题，已记档）**
+1. 新判据名必须先过**场景契约的 enum**（`config/scene.schema.json` 的 `criteria.propertyNames`）——
+   构建门禁以 exit 2 如实拦下（fail-closed 生效）。
+2. **能力四处同步漏了"狗侧策略"**：联合世界用的是 `config/go2_joint.yaml: safety_policy =
+   profiles/safety/quadruped_lab.yaml`（不是臂侧的 `simulation_lab.yaml`）⇒ 报
+   `IRAF-POLICY-DENIED：SafetyPolicy 未允许该 Skill`。且该策略 `max_duration_ms: 30000` ⇒ 技能 TTL 必须 ≤30 s。
+3. 前置条件又写了系统**不发布**的状态：`safety.estop == false`（照抄臂侧 place_object）⇒
+   `IRAF-PRECONDITION-FAILED：缺少运行时状态: safety.estop`。四足侧运行时不发布它
+   （`dock_for_handoff`/`stand` 都是空前置）⇒ 改为 `preconditions: []`（本技能只读，边界仍由策略层把关）。
+4. provider 里 `from iraf_skills.common.motion import SkillContractError` 错：`SkillContractError`
+   **定义在 `quadruped.py` 本模块**，只有 `SkillRejected` 来自 `common.motion` ⇒ ImportError。
+5. 适配器报告把事实塞进**嵌套 `evidence`**，而 Provider 的 `_evidence()` 在**顶层**取键
+   （与 dock/stand 同口径）⇒ 报"适配器报告缺少输出必需键" ⇒ 事实提回顶层。
+
 ### 11.19 撤两条假设 + 第 9 个工装缺陷：搬运丢件的机制**仍未判死**（2026-09-28）
 
 **撤销 1：夹具（equality）不是原因。** 臂场景模型里确实有一条 `box_01_lift_constraint`

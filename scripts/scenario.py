@@ -159,12 +159,30 @@ CRITERION_SPEC = {
         "place_payload_in_tray", "==",
         "实测载荷落在接收体承载面内且与接收体接触（evidence.payload_in_tray，布尔量）",
     ),
+    # 载荷确认（`accept_payload`）的三项判据：测量量只来自**四足侧**证据（不复用臂侧放置证据，
+    # 否则等于"自己证明自己"）。阈值出处：偏移 0.06 与 s04 同口径（托盘 0.24×0.16、方块 0.05）；
+    # 末速 0.01 m/s 是"已静止"的工程上界（s02 停靠实测 0.000196922、s03 抓取 0.000208312
+    # ⇒ 留约两个数量级余量）。
+    "require_payload_confirmation": (
+        "accept_payload_on_target", "==",
+        "四足侧实测载荷落在接收体承载面上且存在接触（evidence.payload_on_target，布尔量）",
+    ),
+    "max_accept_offset_m": (
+        "accept_offset_from_target_center_m", "<=",
+        "载荷中心相对接收体中心的水平偏移（evidence.offset_from_target_center_m）",
+    ),
+    "max_accept_speed_mps": (
+        "accept_last_speed_mps", "<=",
+        "确认时刻整链末速 = 所有自由关节线速度上界（evidence.last_speed_mps）",
+    ),
 }
 #: 可在报告中出现的测量量键（顺序固定，便于逐项比对）。
 MEASUREMENT_KEYS = ("sim_time_advance_s", "final_speed_mps", "wall_seconds", "evidence_duration_s",
                     "dock_translation_error_m", "dock_yaw_error_deg",
                     "grasp_center_distance_m", "grasp_lift_delta_m", "grasp_bilateral_contact",
-                    "place_offset_from_tray_center_m", "place_released", "place_payload_in_tray")
+                    "place_offset_from_tray_center_m", "place_released", "place_payload_in_tray",
+                    "accept_payload_on_target", "accept_offset_from_target_center_m",
+                    "accept_last_speed_mps", "accept_resting_gap_m")
 
 #: 步骤分类（报告里逐项可见，避免"没跑"和"跑过了"混在一起）。
 STEP_EXECUTED = "EXECUTED"
@@ -908,6 +926,16 @@ def measure_step(before, after, evidence, wall_seconds):
             measured["place_released"] = 1.0 if evidence["released"] else 0.0
         if evidence.get("payload_in_tray") is not None:
             measured["place_payload_in_tray"] = 1.0 if evidence["payload_in_tray"] else 0.0
+        # 载荷确认结果量（`accept_payload`，由**四足侧**独立复核；同样只认技能自己给出的实测值）
+        if evidence.get("payload_on_target") is not None:
+            measured["accept_payload_on_target"] = 1.0 if evidence["payload_on_target"] else 0.0
+        if evidence.get("offset_from_target_center_m") is not None:
+            measured["accept_offset_from_target_center_m"] = float(
+                evidence["offset_from_target_center_m"])
+        if evidence.get("last_speed_mps") is not None:
+            measured["accept_last_speed_mps"] = float(evidence["last_speed_mps"])
+        if evidence.get("resting_gap_m") is not None:
+            measured["accept_resting_gap_m"] = float(evidence["resting_gap_m"])
     return measured
 
 

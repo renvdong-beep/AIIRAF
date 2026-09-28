@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "accept_payload 输入",
+  "type": "object",
+  "required": [
+    "payload_id",
+    "place_target_id"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "payload_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "description": "要确认的载荷（本场景 box_01）。只给名字：位姿在运行期由实测 FK 解析，不接受预写的世界坐标。"
+    },
+    "place_target_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "description": "预期承载该载荷的接收体（本场景 tray_01）。与 payload_id 一起构成「在哪确认」的完整口径，缺一即拒。"
+    }
+  },
+  "description": "载荷确认（DOG_CONFIRM）：由四足侧**独立复核**载荷是否落在接收体承载面上且整链静止；阈值（落位间隙、偏移、末速）全部来自声明，调用方不得覆盖。"
+}

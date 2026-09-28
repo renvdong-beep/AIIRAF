@@ -701,3 +701,49 @@ class LocomoteProvider:
         evidence = _evidence(report, self.EVIDENCE_KEYS)
         evidence["velocity"] = dict(velocity)
         return {"skill": "locomote", "accepted": True, "evidence": evidence}
+
+
+class AcceptPayloadProvider:
+    """载荷确认（`accept_payload`）：四足侧**独立复核**载荷落位与整链静止。
+
+    为什么必须独立（.hermes/plans/2026-09-28-s05-accept-payload.md 风险 R3）：s04 已经给出
+    `payload_in_tray`；若本 Provider 只是复述它，等于"自己证明自己"（AGENTS.md 1.5 的精神）。
+    后端在**确认时刻重新采样**，并给出 s04 没有的量（`resting_gap_m` / `last_speed_mps`）。
+
+    与 `DockForHandoffProvider` 同构：只做「校验入参 → 调适配器 → 按输出 schema 抽取证据」；
+    证据不成立即 `SkillRejected`（不吞、不改写、不返回伪造成功）。
+    """
+
+    #: 输出 schema（`skills/accept_payload/accept_payload.output.json`）要的 evidence 键。
+    EVIDENCE_KEYS = ("payload_on_target", "payload_low_z_m", "target_top_z_m", "resting_gap_m",
+                     "contact_geoms", "payload_center_m", "target_center_m",
+                     "offset_from_target_center_m", "last_speed_mps", "runtime_source",
+                     "phase_trace")
+
+    def __init__(self, profile, backend):
+        self.profile = profile
+        self.backend = backend
+
+    def execute(self, inputs, lease):
+        # ⚠ `SkillContractError` 定义在**本模块**（quadruped.py），只有 `SkillRejected` 来自
+        # `iraf_skills.common.motion`（照抄别处写法会 ImportError —— 本轮实测踩到）。
+        from iraf_skills.common.motion import SkillRejected
+
+        payload_id = str((inputs or {}).get("payload_id") or "")
+        place_target_id = str((inputs or {}).get("place_target_id") or "")
+        if not payload_id or not place_target_id:
+            raise SkillContractError(
+                "accept_payload 需要 payload_id 与 place_target_id（在哪确认必须写清）：实际 %s"
+                % sorted(inputs or {}))
+        if not hasattr(self.backend, "accept_payload"):
+            raise SkillRejected("后端未实现 accept_payload（能力未交付，不得伪造确认）")
+        report = self.backend.accept_payload(payload_id, place_target_id, lease)
+        evidence = _evidence(report, self.EVIDENCE_KEYS)
+        if not evidence.get("payload_on_target"):
+            raise SkillRejected(
+                "载荷未确认落在接收体上：载荷最低点 %s m、承载面 %s m、落位间隙 %s m、接触 geom %s"
+                % (evidence.get("payload_low_z_m"), evidence.get("target_top_z_m"),
+                   evidence.get("resting_gap_m"), evidence.get("contact_geoms")))
+        return {"skill": "accept_payload", "accepted": True,
+                "payload_id": payload_id, "place_target_id": place_target_id,
+                "confirmation": report.get("confirmation"), "evidence": evidence}

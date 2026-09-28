@@ -7,5 +7,5 @@ spec:
   verification: development
   simulation_only: true
   default: deny
-  allowed_skills: [move_joint, pick_object, visual_pick, place_object, stop]
+  allowed_skills: [move_joint, pick_object, visual_pick, place_object, accept_payload, stop]
   max_duration_ms: 30000

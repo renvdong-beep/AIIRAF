@@ -1666,6 +1666,33 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         """
         return self.gait_in_place(lease, duration_ms=duration_ms, execution_id=execution_id)
 
+    def accept_payload(self, payload_id, place_target_id, lease):
+        """载荷确认（四足侧）：复核载荷是否落在接收体承载面上**且整链已静止**。
+
+        为什么在**四足侧**做（§11.23(42)）：交接的接收方是四足，确认必须由接收方独立复核；
+        且**不复用臂侧 place_object 的证据**（否则等于"自己证明自己"）。
+
+        测量逻辑**不在这里复制**：与臂侧 `MuJoCoBackend.accept_payload` 共用
+        `iraf_adapters.mujoco.payload_facts.confirm_payload_on_target`（AGENTS.md 6.3）。
+        本层只负责租约校验与证据组装（四足是植物 owner，读 `self.data` 无需让位）。
+        """
+        self.authority.validate(lease)
+        from iraf_adapters.mujoco.payload_facts import confirm_payload_on_target
+
+        facts = confirm_payload_on_target(self.mujoco, self.model, self.data,
+                                          str(payload_id), str(place_target_id))
+        # ⚠ 事实必须放在报告的**顶层**：Provider 的 `_evidence(report, KEYS)` 在顶层取键
+        # （与 dock_for_handoff / stand 同口径）；塞进嵌套 `evidence` 会被判"缺少输出必需键"（本轮踩到）。
+        return {"payload_id": str(payload_id), "place_target_id": str(place_target_id),
+                "confirmation": "payload_confirmed",
+                **facts,
+                "runtime_source": "live_fk",
+                "phase_trace": [{"note": "确认时刻单帧实测（重新采样；不复用臂侧 place_object 证据）",
+                                 "payload_low_z_m": facts["payload_low_z_m"],
+                                 "target_top_z_m": facts["target_top_z_m"],
+                                 "resting_gap_m": facts["resting_gap_m"],
+                                 "last_speed_mps": facts["last_speed_mps"]}]}
+
     def dock_for_handoff(self, *, lease, position_tolerance_m, yaw_tolerance_rad,
                          max_final_speed_mps, execution_id=None):
         """闭环停靠：走到声明的**停靠目标帧**并停住。

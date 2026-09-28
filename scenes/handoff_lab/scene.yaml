@@ -113,7 +113,7 @@ robots:
     #         build/iraf-a6a12/skill-layer-run.json（stand/locomote/stop 三步全 SUCCEEDED）
     # 2026-09-24 同步：`dock_for_handoff` 在**适配器层 9/9 验收 + 技能层跑通**后入列。
     # 停靠目标 = 本场景的 `frames[].handoff_station_frame`（worldbody site，世界固定）。
-    capabilities: [stand, stop, locomote, dock_for_handoff]
+    capabilities: [stand, stop, locomote, dock_for_handoff, accept_payload]
     note: 厂家 MJCF 已探测（12 个力矩型 motor、imu site、无相机/无雷达），仅证明低层模型存在，不代表导航/停靠能力（AGENTS.md 6.8）；场景构建器按本场景声明注入相机/雷达/托盘/道具/光照，厂商文件只读。locomote 已在 MuJoCo 仿真里验收并声明（速度指令可走/转/退，受安全策略 max_speed_mps=0.5 约束；**上板部署证据另计**）；**停靠/放托盘/载荷确认仍未交付**，见 scenario.yaml 的 pending 登记（步骤 18）。
   - id: humanoid_static
     kind: humanoid

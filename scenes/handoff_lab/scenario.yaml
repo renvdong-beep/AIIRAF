@@ -157,13 +157,19 @@ scenarios:
       - id: s05_confirm_payload
         action: accept_payload
         robot: unitree_go2
-        params: {}
-        # 载荷确认（DOG_CONFIRM）依赖托盘载荷传感与交接集成（U6），本战役未交付：显式登记。
-        pending_closed_by: "步骤 18"
-        pending_reason: 载荷确认能力未验收（需要载荷传感与 U6 交接集成），本轮只声明判据。
+        params:
+          payload_id: box_01
+          place_target_id: tray_01
+        # 载荷确认（2026-09-28 §11.23(42)）：由**四足侧独立复核**载荷是否落在接收体承载面上且整链静止
+        # —— 不复用臂侧 s04 的证据（否则等于"自己证明自己"）。判据口径见 scripts/scenario.py 的 CRITERION_SPEC：
+        #   require_payload_confirmation ← evidence.payload_on_target（与接收体有接触 且 最低点不高于承载面）
+        #   max_accept_offset_m 0.06     ← 与 s04 同口径（托盘 0.24×0.16、方块 0.05）
+        #   max_accept_speed_mps 0.01    ← "已静止"工程上界（s02 停靠实测 0.000196922、s03 抓取 0.000208312；
+        #                                   整链末速取所有自由关节线速度上界 ⇒ 留约两个数量级余量）
         criteria:
           require_payload_confirmation: true
-          max_speed_m_s: 0.0
+          max_accept_offset_m: 0.06
+          max_accept_speed_mps: 0.01
     faults: []
 
   fault_sensor_loss:

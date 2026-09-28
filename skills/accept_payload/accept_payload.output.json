@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "accept_payload 输出",
+  "type": "object",
+  "required": [
+    "skill",
+    "accepted",
+    "payload_id",
+    "place_target_id",
+    "confirmation",
+    "evidence"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "skill": {
+      "const": "accept_payload"
+    },
+    "accepted": {
+      "const": true,
+      "description": "确认成立才返回 true；证据不成立必须由 Provider 抛 SkillRejected，不得返回 false 了事。"
+    },
+    "payload_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "place_target_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "confirmation": {
+      "enum": [
+        "payload_confirmed"
+      ],
+      "description": "确认口径：**只有 payload_confirmed**（实测：载荷最低点落在承载面内 + 与接收体存在接触 + 末速达静止阈值）。"
+    },
+    "evidence": {
+      "type": "object",
+      "required": [
+        "payload_on_target",
+        "payload_low_z_m",
+        "target_top_z_m",
+        "resting_gap_m",
+        "offset_from_target_center_m",
+        "last_speed_mps"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "payload_on_target": {
+          "const": true,
+          "description": "事实判据：载荷最低点落在承载面（target_top_z_m ± 声明间隙阈值）内，且与接收体存在接触。"
+        },
+        "payload_low_z_m": {
+          "type": "number",
+          "description": "实测载荷几何最低点 z。"
+        },
+        "target_top_z_m": {
+          "type": "number",
+          "description": "实测接收体承载面中心 z（运行期 FK）。"
+        },
+        "resting_gap_m": {
+          "type": "number",
+          "description": "载荷最低点相对承载面的带符号间隙（<=0 表示接触/压入；正值为悬空）。"
+        },
+        "contact_geoms": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "与载荷存在接触的 geom 名（为空即未落在接收体上，必须判失败）。"
+        },
+        "payload_center_m": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "target_center_m": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "offset_from_target_center_m": {
+          "type": "number",
+          "description": "载荷中心相对接收体中心的水平偏移（判据量，阈值来自声明）。"
+        },
+        "last_speed_mps": {
+          "type": "number",
+          "description": "本步结束时整链末速（静止确认，阈值来自声明）。"
+        },
+        "runtime_source": {
+          "type": "string",
+          "enum": [
+            "live_fk"
+          ],
+          "description": "运行期数值来源：一律实测 FK，不用构建期名义值。"
+        },
+        "phase_trace": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "确认过程的实测采样（载荷最低点/中心、承载面、接触对、末速）。"
+        }
+      }
+    }
+  }
+}

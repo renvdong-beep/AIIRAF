@@ -13,7 +13,8 @@ spec:
   # 这不是"漏写"——放行清单管"允不允许用"，能力声明管"能不能做"，两者语义不同。
   # 2026-09-24 增补 `dock_for_handoff`：适配器层 9/9 验收 + 技能层跑通后放行。
   # 语义不变：放行清单管"允不允许用"，Profile 的能力声明管"能不能做"（两者都要过）。
-  allowed_skills: [stand, stop, locomote, dock_for_handoff]
+  allowed_skills: [stand, stop, locomote, dock_for_handoff, accept_payload]
+  # 载荷确认（2026-09-28 §11.23(42)）：**监控类**（不产生物理动作）⇒ 只读事实、无运动边界放宽。
   max_duration_ms: 30000
   # 四足边界上限（本文件的**唯一**速度/工作空间事实来源）：
   # 消费点在 src/iraf_skills/quadruped.py 的 enforce_velocity_limits（调度前拒绝）

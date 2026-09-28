@@ -1395,7 +1395,9 @@
                   "require_bilateral_contact",
                   "max_offset_from_tray_center_m",
                   "require_release",
-                  "require_payload_in_tray"
+                  "require_payload_in_tray",
+                  "max_accept_offset_m",
+                  "max_accept_speed_mps"
                 ]
               },
               "additionalProperties": {

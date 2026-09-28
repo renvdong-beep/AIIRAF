@@ -1648,10 +1648,6 @@ class MujocoBackend:
                 finger_mid = (left_point + right_point) / 2.0
                 payload_now = np.asarray(self.data.xpos[payload_body], dtype=float)
                 carry_anchor_offset = payload_now - finger_mid
-                # 滑移判据的参照必须与判据里用的点**一致**：判据读追踪行的 `pad_mid_m`（指腹 **geom**
-                # 中点），而 anchor 跟随的是指腹 **body** 中点（两者相差数厘米）⇒ 这里单独按 geom 中点
-                # 记一份参照（用 start 快照里的 `pad_mid`，与同一时刻的载荷位姿配对）。
-                carry_slip_reference = payload_now - np.asarray(snapshot["pad_mid"], dtype=float)
                 self.data.mocap_pos[anchor_mocap] = payload_now.copy()
                 if carry_type == "weld":
                     # 刚性焊：anchor 的**姿态**必须等于载荷姿态（weld 不给 relpose ⇒ 两体位姿重合），
@@ -1812,6 +1808,40 @@ class MujocoBackend:
             "confirmation": "released",
             "evidence": evidence,
         }
+
+    def accept_payload(self, payload_id, place_target_id, lease):
+        """载荷确认（`accept_payload`）：复核载荷是否落在接收体承载面上**且整链已静止**。
+
+        为什么必须独立复核（.hermes/plans/2026-09-28-s05-accept-payload.md 风险 R3）：s04 已经给出
+        `payload_in_tray` 证据；若本步只是复述它，等于"自己证明自己"（AGENTS.md 1.5 的精神）。
+        本方法在**确认时刻重新采样**，并给出 s04 没有的量：带符号的 `resting_gap_m` 与整链末速。
+
+        测量逻辑**不在本层**：与四足侧 `UnitreeGo2Adapter.accept_payload` 共用
+        `iraf_adapters.mujoco.payload_facts.confirm_payload_on_target`（AGENTS.md 6.3：不复制核心代码）。
+        本层只负责**租约校验、取锁、组证据**。
+        """
+        self.authority.validate(lease)
+        from iraf_adapters.mujoco.payload_facts import confirm_payload_on_target
+
+        record = (getattr(self, "_place_targets", {}) or {}).get(str(place_target_id))
+        if record is None:
+            raise ValueError("场景报告没有接收体: " + str(place_target_id))
+        payload = (self._manipulation.get("targets") or {}).get(str(payload_id))
+        if payload is None:
+            raise ValueError("场景报告没有载荷目标: " + str(payload_id))
+        with self._data_lock:
+            facts = confirm_payload_on_target(mujoco, self.model, self.data,
+                                              str(payload["body"]), str(record["body"]))
+        # 事实放**顶层**（Provider 的 `_evidence()` 在顶层取键，与 dock_for_handoff 同口径）
+        return {"payload_id": str(payload_id), "place_target_id": str(place_target_id),
+                "confirmation": "payload_confirmed",
+                **facts,
+                "runtime_source": "live_fk",
+                "phase_trace": [{"note": "确认时刻单帧实测（重新采样；不复用 place_object 证据）",
+                                 "payload_low_z_m": facts["payload_low_z_m"],
+                                 "target_top_z_m": facts["target_top_z_m"],
+                                 "resting_gap_m": facts["resting_gap_m"],
+                                 "last_speed_mps": facts["last_speed_mps"]}]}
 
     def _any_contact_between(self, body_a, body_b):
         """两个 body 的任意 geom 之间是否**存在接触**（事实判据，不设力阈值）。"""
