@@ -505,6 +505,49 @@ def _inject_props(
 #: 附加本体位置执行器刚度口径的必需声明键（Profile `spec.model.position_gain.*`）。
 POSITION_GAIN_KEYS = ("baseline", "section", "joints_section")
 
+#: 指腹摩擦口径的必需声明键（Profile `spec.model.finger_friction.*`）。
+FINGER_FRICTION_KEYS = ("baseline", "section", "key")
+
+
+def _declared_finger_friction(root, profile_spec, robot_id):
+    """按声明取**指腹摩擦**（3 个数），未声明返回 None（不注入、不猜）。
+
+    为什么必须（2026-09-28 实测）：厂商 Piper MJCF 的指腹摩擦是 [1.0, 0.005, 0.0001]，
+    臂自己场景用基线 `scene.finger_friction`（[2.0, 0.05, 0.001]）⇒ 联合世界里摩擦只有一半，
+    抓取后的**搬运**（0.6 m 横移）会滑掉：实测 approach 段结束时方块已落回台面
+    （载荷最低点 −0.000216 m、双侧指腹接触 false），下行 IK 因此不可达。
+    """
+    declaration = (profile_spec.get("model") or {}).get("finger_friction")
+    if not declaration:
+        return None
+    for key in FINGER_FRICTION_KEYS:
+        if not declaration.get(key):
+            _fail(EXIT_DECLARATION, "robots.%s.spec.model.finger_friction 缺少 %s" % (robot_id, key))
+    baseline_path = Path(str(declaration["baseline"]))
+    if not baseline_path.is_absolute():
+        baseline_path = root / baseline_path
+    baseline_path = baseline_path.resolve()
+    if not baseline_path.is_file():
+        _fail(EXIT_REFERENCE, "robots.%s.spec.model.finger_friction.baseline 不存在: %s"
+              % (robot_id, baseline_path))
+    document = _read_yaml(baseline_path, "robots.%s.spec.model.finger_friction.baseline" % robot_id)
+    section = document.get(str(declaration["section"]))
+    if not isinstance(section, dict):
+        _fail(EXIT_REFERENCE, "robots.%s.spec.model.finger_friction.section=%s 不是字典"
+              % (robot_id, declaration["section"]))
+    raw = section.get(str(declaration["key"]))
+    if not isinstance(raw, str) or len(raw.split()) != 3:
+        _fail(EXIT_DECLARATION, "robots.%s 的 %s.%s 必须是 3 个数值的字符串（MuJoCo friction 口径）"
+              % (robot_id, declaration["section"], declaration["key"]))
+    try:
+        values = [float(item) for item in raw.split()]
+    except ValueError:
+        _fail(EXIT_DECLARATION, "robots.%s 的 %s.%s 解析失败: %r"
+              % (robot_id, declaration["section"], declaration["key"], raw))
+    if any(value < 0 for value in values) or values[0] <= 0:
+        _fail(EXIT_DECLARATION, "robots.%s 的指腹摩擦必须非负且滑动摩擦为正: %r" % (robot_id, raw))
+    return values
+
 
 def _place_targets(scene, model, injections, trunk_body):
     """承载面上的**接收体**（`props` 里带 `mount` 的道具）+ 其**标称停靠位姿**（2026-09-28，§11.12）。
@@ -779,8 +822,12 @@ def _attach_robots(staging, scene, root, attached_ids):
                           "附加本体 %s 的指爪 body %s 有 %d 个 geom，无法唯一确定指爪碰撞体"
                           "（臂侧约定是按名字引用单个 geom）" % (robot_id, body_name, len(geoms)))
                 geoms[0].name = str(geom_name)
-                for record_key in ("named_finger_geoms",):
-                    pass
+                # 指腹摩擦按声明注入（见 profiles/piper_mujoco.yaml 的 finger_friction 说明）：
+                # 与 position_gain 同一个理由 —— 联合模型里的臂必须与已验收的臂场景同一物理口径，
+                # 否则"抓起来"能过、"搬过去"会滑掉（实测）。
+                friction_value = _declared_finger_friction(root, profile_spec, robot_id)
+                if friction_value is not None:
+                    geoms[0].friction = list(friction_value)
 
         attached_robot_values.append(list(joint_values))
         records.append({"id": robot_id, "prefix": prefix, "source": str(model["file"]),

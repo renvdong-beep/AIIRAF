@@ -1142,6 +1142,24 @@ class MujocoBackend:
                 return {"tray_top": top, "payload_low_z": low, "pad_mid": midpoint,
                         "payload_center": payload_center}
 
+        phase_trace = []
+
+        def _trace(phase, snapshot, note=""):
+            contacts = (self._any_contact_between(payload_body, left_finger),
+                        self._any_contact_between(payload_body, right_finger))
+            row = {"phase": str(phase),
+                   "tray_top_m": [round(float(v), 6) for v in snapshot["tray_top"]],
+                   "payload_low_m": round(float(snapshot["payload_low_z"]), 6),
+                   "pad_mid_m": [round(float(v), 6) for v in snapshot["pad_mid"]],
+                   "payload_low_minus_pad_m": round(float(snapshot["payload_low_z"]
+                                                        - snapshot["pad_mid"][2]), 6),
+                   "finger_contacts": {"left": bool(contacts[0]), "right": bool(contacts[1])},
+                   "note": note}
+            phase_trace.append(row)
+            if os.environ.get("IRAF_DEBUG_PLACE") == "1":
+                print("PLACE_TRACE " + json.dumps(row, ensure_ascii=False), flush=True)
+            return row
+
         def _solve_and_move(target, phase, offsets_key):
             """解指腹中点到 target 的位置 IK 并执行一段（IK 未收敛即显式失败）。"""
             with self._data_lock:
@@ -1161,8 +1179,13 @@ class MujocoBackend:
 
         # ---- ① 到承载面上方
         snapshot = _snapshot()
+        start_row = _trace("start", snapshot, "进入放置段（应仍在夹持中）")
+        if not (start_row["finger_contacts"]["left"] and start_row["finger_contacts"]["right"]):
+            raise ValueError(
+                "进入放置段时双侧指腹未同时接触载荷（依据已进证据 phase_trace[0]）⇒ 拒绝继续")
         approach_target = snapshot["tray_top"] + np.asarray([0.0, 0.0, approach_offset])
         _solve_and_move(approach_target, "approach", "approach")
+        _trace("after_approach", _snapshot(), "接近段结束：载荷还在夹爪里吗？")
         # ---- ② 下行：把"载荷最低点"落到承载面（深度由实测差值给出，不写死）
         snapshot = _snapshot()
         delta_z = float(snapshot["tray_top"][2] - snapshot["payload_low_z"])
@@ -1207,6 +1230,7 @@ class MujocoBackend:
             "gripper_open_positions": {str(k): float(v) for k, v in gripper["open_positions"].items()},
             "place_mode": "declared_offset",
             "runtime_source": "live_fk",
+            "phase_trace": phase_trace,
         }
         return {
             "place_target_id": str(place_target_id),

@@ -17,7 +17,7 @@ spec:
     joint6: [-3.14, 3.14]
     joint7: [0.0, 0.035]
     joint8: [-0.035, 0.0]
-  capabilities: [move_joint, pick_object, visual_pick, stop]
+  capabilities: [move_joint, pick_object, place_object, visual_pick, stop]
   # 结构化差异声明：把关节语义、夹爪位形、Home 位姿与相机视角
   # 从脚本魔数收敛为 profile 数据，换机械臂只需替换本文件。
   joint_roles:
@@ -57,6 +57,15 @@ spec:
       baseline: config/piper_simulation_baseline.yaml
       section: scene
       joints_section: model
+    # 指腹**摩擦**也必须按声明注入（与 position_gain 同源同理由）：厂商 MJCF 的指腹摩擦是
+    # [1.0, 0.005, 0.0001]，而臂自己场景用的是基线 scene.finger_friction（[2.0, 0.05, 0.001]）
+    # ⇒ 联合世界里只有一半摩擦、十分之一滑动摩擦。实测后果（2026-09-28）：
+    # 抓取后的**搬运**（0.6 m 横移到托盘上方）会滑掉 —— 接近段结束时方块已落回台面
+    # （载荷最低点 −0.000216 m、双侧指腹接触 false），随后下行 IK 目标不可达（0.103609369 m 未收敛）。
+    finger_friction:
+      baseline: config/piper_simulation_baseline.yaml
+      section: scene
+      key: finger_friction
   home:
     joint1: 0.0
     joint2: 0.65
