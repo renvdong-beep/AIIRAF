@@ -729,7 +729,8 @@ def run_request_live(
 
 
 def run_live_mirror(backend, *, render_hz=20.0, seconds=0.0, stop_event=None, camera=None,
-                    display_mode=None, pre_roll_frames=0):
+                    display_mode=None, pre_roll_frames=0, software_gl=None,
+                    window_px=None, hold_seconds=0.0):
     """**只渲染、不推进**的实时镜像会话（供"验收运行边跑边看"用）。
 
     为什么需要它（2026-09-28，`docs/debug/2026-09-24-joint-model-dog-arm.md` §11.9）：
@@ -754,13 +755,43 @@ def run_live_mirror(backend, *, render_hz=20.0, seconds=0.0, stop_event=None, ca
         report["error"] = "只渲染会话需要 interactive_viewer（离屏降级请用 run_request_live）"
         return report
 
+    # ⚠ GL 路径与窗口尺寸必须在**创建 GL 上下文之前**定（`import mujoco.viewer` 就会建上下文）。
+    # 依据（2026-09-28 §11.23(41) 与 docs/debug/2026-09-23-go2-viewer-3d-black-screen.md）：
+    # 本机（4 核、无独显）默认 GL 路径下窗口 3D 视口几乎不亮，且 llvmpipe 在 1280×720 下每帧
+    # 要数秒 ⇒ 使用者只看到"闪一下"。两者都由**机型声明的 `render` 段**给出（`software_gl` /
+    # `width_px` / `height_px`），不在这里写默认值。
+    if software_gl:
+        os.environ["LIBGL_ALWAYS_SOFTWARE"] = "1"
+        os.environ["GALLIUM_DRIVER"] = "llvmpipe"
+    if window_px:
+        backend.model.vis.global_.offwidth = int(window_px[0])
+        backend.model.vis.global_.offheight = int(window_px[1])
+    report["gl_mode"] = ("software_llvmpipe" if software_gl else "default")
+    report["window_px"] = [int(window_px[0]), int(window_px[1])] if window_px else None
+    print("VIEWER_GL %s%s" % (report["gl_mode"],
+                              "" if not window_px else " window=%dx%d" % tuple(report["window_px"])),
+          flush=True)
+
     import mujoco.viewer
 
     snapshot = SnapshotMirror(backend.model)
     started = time.monotonic()
     with mujoco.viewer.launch_passive(backend.model, snapshot.refresh(backend)) as viewer:
         report["window_opened"] = True
-        _apply_camera(viewer, camera)
+        # 相机参数两种口径（都由声明给出）：
+        #   · 字符串 = 模型里的**固定相机名**（机型声明 `render.camera`，本机实测亮度最好：固定+软件 GL mean 95.1）
+        #   · 字典   = 自由相机初值（lookat/distance/azimuth/elevation）
+        if isinstance(camera, str) and camera:
+            camera_id = mujoco.mj_name2id(backend.model, mujoco.mjtObj.mjOBJ_CAMERA, camera)
+            if camera_id < 0:
+                report["error"] = "声明的 render.camera=%r 在模型里不存在" % camera
+            else:
+                viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FIXED
+                viewer.cam.fixedcamid = camera_id
+                report["camera"] = camera
+                print("VIEWER_CAMERA fixed %s" % camera, flush=True)
+        else:
+            _apply_camera(viewer, camera)
         for _ in range(max(0, int(pre_roll_frames))):
             if not viewer.is_running():
                 break
@@ -771,7 +802,17 @@ def run_live_mirror(backend, *, render_hz=20.0, seconds=0.0, stop_event=None, ca
             viewer.sync()
             report["frames"] += 1
             if stop_event is not None and stop_event.is_set():
+                # ⚠ 收到停止信号**不能立刻退出**（2026-09-28 §11.23(41) 实测）：退出 `with` 块
+                # 就等于关窗 ⇒ 验收一结束窗口立刻消失，使用者只看到"闪一下就不见了"。
+                # 语义修正：`hold_seconds` 内继续渲染末态（窗口保持可见），到点再关。
                 report["stopped_by"] = "stop_event"
+                hold_until = time.monotonic() + max(0.0, float(hold_seconds))
+                while viewer.is_running() and time.monotonic() < hold_until:
+                    snapshot.refresh(backend)
+                    viewer.sync()
+                    report["frames"] += 1
+                    report["hold_frames"] = report.get("hold_frames", 0) + 1
+                    time.sleep(frame_period)
                 break
             if float(seconds) and time.monotonic() - started >= float(seconds):
                 report["stopped_by"] = "seconds"

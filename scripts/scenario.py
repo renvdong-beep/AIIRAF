@@ -1028,7 +1028,7 @@ def _plant_hold_spec(binding):
 # --------------------------------------------------------------------------
 # 运行期显示（**只渲染、不推进**）：验收运行边跑边看
 # --------------------------------------------------------------------------
-def _start_run_display(runtimes, bindings, world, display, render_hz):
+def _start_run_display(runtimes, bindings, world, display, render_hz, hold_seconds=0.0):
     """按 `--display` 打开窗口镜像；**不推进**仿真（推进由 owner 驻留线程负责）。
 
     为什么不让窗口推进（2026-09-28，docs/debug/2026-09-24-joint-model-dog-arm.md §11.9）：
@@ -1054,12 +1054,25 @@ def _start_run_display(runtimes, bindings, world, display, render_hz):
                 "window_opened": False, "frames": 0}
     stop_event = threading.Event()
     box = {}
+    # **渲染声明**（机型声明的 `render` 段）：软件 GL 开关、窗口像素、固定相机。
+    # 为什么必须读声明（2026-09-28 §11.23(41)）：本机（4 核、无独显）默认 GL 路径下窗口 3D 视口
+    # 几乎不亮，llvmpipe 在大窗口下每帧数秒 ⇒ 使用者反馈"看不到 / 闪一下"。
+    # 见 docs/debug/2026-09-23-go2-viewer-3d-black-screen.md。
+    owner_binding = (bindings or {}).get(owner_id) or {}
+    render_spec = ((owner_binding.get("declaration_document") or {}).get("render") or {})
+    software_gl = bool(render_spec.get("software_gl"))
+    width_px, height_px = render_spec.get("width_px"), render_spec.get("height_px")
+    window_px = ((int(width_px), int(height_px))
+                 if isinstance(width_px, int) and isinstance(height_px, int) else None)
+    camera = (str(render_spec["camera"]) if render_spec.get("camera") else None)
 
     def loop():
         try:
             from iraf_adapters.mujoco.viewer_runner import run_live_mirror
             box["report"] = run_live_mirror(backend, render_hz=render_hz, stop_event=stop_event,
-                                            display_mode=str(display))
+                                            display_mode=str(display), camera=camera,
+                                            software_gl=software_gl, window_px=window_px,
+                                            hold_seconds=hold_seconds)
         except Exception as exc:  # noqa: BLE001 —— 显示失败不得影响验收结论，但必须留痕
             box["error"] = "%s: %s" % (type(exc).__name__, exc)
 
@@ -1067,6 +1080,7 @@ def _start_run_display(runtimes, bindings, world, display, render_hz):
     thread.start()
     time.sleep(0.5)   # 让窗口先起来（否则前几步的观察窗口很短）
     return {"display": str(display), "owner": owner_id, "render_hz": float(render_hz),
+            "software_gl": software_gl, "window_px": window_px, "camera": camera,
             "stop_event": stop_event, "thread": thread, "box": box}
 
 
@@ -1491,13 +1505,16 @@ def run_scenario(scene_dir, scenario_name, *, report_path=None, require_injected
     scene_id = str(scene.get("id"))
     # 植物驻留：联合世界下 owner 全程在线（见 _start_plant_residency 的说明）
     residency = _start_plant_residency(runtimes, bindings, world)
-    # 显示会话：只渲染、不推进（推进仍是 owner 驻留线程的事）
-    display_summary = _start_run_display(runtimes, bindings, world, display, render_hz)
+    # 显示会话：只渲染、不推进（推进仍是 owner 驻留线程的事）。`--seconds` 作为**末态留观**
+    # 传进镜像循环本身（在那里窗口还活着）⇒ 运行结束后窗口仍可见 N 秒，而不是关窗后再空等
+    # （2026-09-28 §11.23(41)：旧语义正是"闪一下就不见了"）。
+    display_summary = _start_run_display(runtimes, bindings, world, display, render_hz,
+                                         hold_seconds=seconds)
     try:
         steps = execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id,
                               residency=residency)
     finally:
-        display_summary = _stop_run_display(display_summary, seconds)
+        display_summary = _stop_run_display(display_summary, 0.0)
         residency_summary = _stop_plant_residency(residency)
     fault_records = _fault_records(faults)
 
