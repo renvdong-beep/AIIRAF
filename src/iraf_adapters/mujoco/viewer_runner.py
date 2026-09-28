@@ -728,6 +728,60 @@ def run_request_live(
     return report
 
 
+def run_live_mirror(backend, *, render_hz=20.0, seconds=0.0, stop_event=None, camera=None,
+                    display_mode=None, pre_roll_frames=0):
+    """**只渲染、不推进**的实时镜像会话（供"验收运行边跑边看"用）。
+
+    为什么需要它（2026-09-28，`docs/debug/2026-09-24-joint-model-dog-arm.md` §11.9）：
+    `run_request_live` 必须绑一个 Skill 请求，而**联合世界**的时间推进不该由窗口负责 ——
+    它由声明驱动的植物驻留线程（`scripts/scenario.py: _start_plant_residency`）推进 owner。
+    演示脚本自己造"时间推进者"会撞上安全策略的 `max_duration_ms`（实测 stand 60000 ms 被拒），
+    于是 owner 停步、guest 卡在"等待 owner 推进"。
+
+    并发契约与 `run_request_live` **完全一致**（同一 `SnapshotMirror`）：
+      1. 只读镜像副本，绝不在**别人推进**的同时直接 `sync()` 后端的 `data`；
+      2. 拷贝期间才持 `display_lock()`，且不做耗时操作；
+      3. 本函数**不**调用任何 Skill、也不调用 `backend.step()` ⇒ 不与 owner 争抢植物。
+
+    结束条件：`stop_event` 被置位，或窗口被关闭（或 `seconds>0` 且已过该时长）。
+    返回 dict：`display_mode` / `window_opened` / `frames` / `error` / `stopped_by`。
+    """
+    mode = display_mode or resolve_display_mode()
+    frame_period = 1.0 / max(1.0, float(render_hz))
+    report = {"display_mode": mode, "window_opened": False, "frames": 0,
+              "error": None, "stopped_by": None, "render_hz": float(render_hz)}
+    if mode != DISPLAY_INTERACTIVE:
+        report["error"] = "只渲染会话需要 interactive_viewer（离屏降级请用 run_request_live）"
+        return report
+
+    import mujoco.viewer
+
+    snapshot = SnapshotMirror(backend.model)
+    started = time.monotonic()
+    with mujoco.viewer.launch_passive(backend.model, snapshot.refresh(backend)) as viewer:
+        report["window_opened"] = True
+        _apply_camera(viewer, camera)
+        for _ in range(max(0, int(pre_roll_frames))):
+            if not viewer.is_running():
+                break
+            viewer.sync()
+            time.sleep(frame_period)
+        while viewer.is_running():
+            snapshot.refresh(backend)
+            viewer.sync()
+            report["frames"] += 1
+            if stop_event is not None and stop_event.is_set():
+                report["stopped_by"] = "stop_event"
+                break
+            if float(seconds) and time.monotonic() - started >= float(seconds):
+                report["stopped_by"] = "seconds"
+                break
+            time.sleep(frame_period)
+        else:
+            report["stopped_by"] = "window_closed"
+    return report
+
+
 def run_interactive_live(
     session,
     target_id,

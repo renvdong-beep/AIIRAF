@@ -896,7 +896,26 @@ s03 pick `grasp_center_distance_m = 0.0002098657943494681` / `lift = 0.079403` /
    时间推进停止，而 guest（臂）的 pick 需要更多仿真时间（36750 步 = 73.5 s 仿真）⇒ 确定性卡住
    （每次复跑同一步，正是"确定性"而非"墙钟抖动"的证据）。
 
-**修法（下一轮，属于**产品功能**而不是演示脚本 hack）**：给验收运行器加显示通路 ——
+**已落地（2026-09-28 同日）**：`scripts/scenario.py run` 新增 `--display {auto,none,interactive_viewer,offscreen_frames}`
+`--render-hz` `--seconds`，配 `viewer_runner.run_live_mirror`（**只渲染、不推进**，与 `run_request_live`
+同一套 `SnapshotMirror` 并发契约）。实测：
+
+```
+PYTHONPATH=src python3 scripts/scenario.py run --scene scenes/handoff_lab --scenario nominal \
+    --world joint --display interactive_viewer --render-hz 20 --seconds 4
+⇒ exit 0 / passed=true
+  s03 pick SUCCEEDED  grasp_center_distance_m = 0.00020960033543239453（无窗口时 0.0002098657943494681）
+                      grasp_lift_delta_m = 0.080131（无窗口 0.079403） bilateral_contact = 1.0
+  墙钟 67.5 s（无窗口 14.1 s）——**渲染只改墙钟，不改判据**
+  display: window_opened=true / frames=1742 / stopped_by=stop_event / error=null
+  plant_residency: cycles=16 / failed_cycles=[]
+```
+
+两个推论写进纪律：① 窗口**不得**推进仿真（否则成为第二个时间推进者）；
+② guest 的"等待 owner 推进超时"在 owner 由驻留线程推进时不会出现 —— 之前把 `guest_timeout_factor`
+从 30× 提到 300× 是**治错症**（已回退），真因是 owner 没人推进。
+
+**修法（已落地，属于**产品功能**而不是演示脚本 hack）**：给验收运行器加显示通路 ——
 `scripts/scenario.py run --world joint --display interactive_viewer --render-hz N --seconds S`。
 依据：runner 已经有 ① 声明驱动的**植物驻留**（`_start_plant_residency`：owner 在 guest 执行期间持续在线，
 本场景 `cycles=23`）、② `run_request_live(..., continue_stepping=False)` ——即"只渲染、不推进"的模式。

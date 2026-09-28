@@ -70,6 +70,12 @@ PYTHONPATH=src python3 scripts/scene_check.py --scene scenes/handoff_lab \
 
 ```bash
 PYTHONPATH=src python3 scripts/scenario.py list
+# 联合世界（狗+臂同一份 MJCF + 共享植物）并**边跑边看**：--display 只渲染、不推进，
+# 时间由 owner 驻留线程推进（`plant_residency`）；实测 exit 0/passed=true，渲染只改墙钟不改判据。
+DISPLAY=:0 MUJOCO_GL=glfw PYTHONPATH=src python3 scripts/scenario.py run \
+    --scene scenes/handoff_lab --scenario nominal --world joint \
+    --display interactive_viewer --render-hz 20 --seconds 4
+
 PYTHONPATH=src python3 scripts/scenario.py run --scene scenes/handoff_lab --scenario stand_stop
 PYTHONPATH=src python3 scripts/scenario.py run --scene scenes/handoff_lab --scenario fault_sensor_unavailable
 PYTHONPATH=src python3 scripts/scenario.py run --scene scenes/handoff_lab --scenario fault_sensor_loss --require-injected-faults

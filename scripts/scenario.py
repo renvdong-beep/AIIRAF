@@ -994,6 +994,71 @@ def _plant_hold_spec(binding):
     return str(plant.get("role") or ""), plant.get("hold")
 
 
+# --------------------------------------------------------------------------
+# 运行期显示（**只渲染、不推进**）：验收运行边跑边看
+# --------------------------------------------------------------------------
+def _start_run_display(runtimes, bindings, world, display, render_hz):
+    """按 `--display` 打开窗口镜像；**不推进**仿真（推进由 owner 驻留线程负责）。
+
+    为什么不让窗口推进（2026-09-28，docs/debug/2026-09-24-joint-model-dog-arm.md §11.9）：
+    joint 世界里"谁推进时间"是**声明问题**（`_start_plant_residency`）；窗口若也 step，
+    就是第二个时间推进者（会与 owner 争抢同一株植物）。而演示脚本自己造推进者会撞安全策略的
+    `max_duration_ms`（实测 stand 60000 ms 被技能层直接拒 ⇒ owner 停步 ⇒ guest 卡在
+    「等待 owner 推进」）⇒ 正解是给**验收运行本身**加显示通路，而不是在脚本里造推进者。
+    """
+    if not display or str(display) == "none":
+        return None
+    owner_id = None
+    for robot_id, binding in (bindings or {}).items():
+        role, _hold = _plant_hold_spec(binding)
+        if role == "owner":
+            owner_id = robot_id
+            break
+    if owner_id is None:
+        owner_id = next(iter(runtimes or {}), None)
+    state = (runtimes or {}).get(owner_id)
+    backend = (state or {}).get("backend")
+    if backend is None or not hasattr(backend, "model"):
+        return {"display": str(display), "error": "找不到可渲染的后端（owner=%s）" % owner_id,
+                "window_opened": False, "frames": 0}
+    stop_event = threading.Event()
+    box = {}
+
+    def loop():
+        try:
+            from iraf_adapters.mujoco.viewer_runner import run_live_mirror
+            box["report"] = run_live_mirror(backend, render_hz=render_hz, stop_event=stop_event,
+                                            display_mode=str(display))
+        except Exception as exc:  # noqa: BLE001 —— 显示失败不得影响验收结论，但必须留痕
+            box["error"] = "%s: %s" % (type(exc).__name__, exc)
+
+    thread = threading.Thread(target=loop, name="run-display", daemon=True)
+    thread.start()
+    time.sleep(0.5)   # 让窗口先起来（否则前几步的观察窗口很短）
+    return {"display": str(display), "owner": owner_id, "render_hz": float(render_hz),
+            "stop_event": stop_event, "thread": thread, "box": box}
+
+
+def _stop_run_display(summary, seconds):
+    """结束显示会话并汇总（`seconds>0` = 运行结束后窗口再留这么多秒，便于看末态）。"""
+    if not summary:
+        return None
+    if float(seconds or 0) > 0:
+        time.sleep(float(seconds))
+    summary["stop_event"].set()
+    summary["thread"].join(timeout=60.0)
+    report = dict(summary["box"].get("report") or {})
+    if summary["box"].get("error"):
+        report["error"] = summary["box"]["error"]
+    return {"display": summary["display"], "owner_backend": summary["owner"],
+            "render_hz": summary["render_hz"],
+            "thread_alive_after_stop": bool(summary["thread"].is_alive()),
+            "window_opened": report.get("window_opened"),
+            "frames": report.get("frames"), "display_mode": report.get("display_mode"),
+            "stopped_by": report.get("stopped_by"), "error": report.get("error"),
+            "note": ("只渲染、不推进：时间由 owner 驻留线程推进（见 _start_run_display）")}
+
+
 def _start_plant_residency(runtimes, bindings, world):
     """按声明让 owner 在整场执行期间持续执行其 `hold` 技能；非联合世界不启动。
 
@@ -1235,7 +1300,7 @@ def _fault_records(faults):
 
 
 def run_scenario(scene_dir, scenario_name, *, report_path=None, require_injected_faults=False,
-                 world="single"):
+                 world="single", display=None, render_hz=20.0, seconds=0.0):
     """执行一个场景并写报告；返回 (report, exit_code)。"""
     scene_dir = Path(scene_dir)
     if not scene_dir.is_dir():
@@ -1346,9 +1411,12 @@ def run_scenario(scene_dir, scenario_name, *, report_path=None, require_injected
     scene_id = str(scene.get("id"))
     # 植物驻留：联合世界下 owner 全程在线（见 _start_plant_residency 的说明）
     residency = _start_plant_residency(runtimes, bindings, world)
+    # 显示会话：只渲染、不推进（推进仍是 owner 驻留线程的事）
+    display_summary = _start_run_display(runtimes, bindings, world, display, render_hz)
     try:
         steps = execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id)
     finally:
+        display_summary = _stop_run_display(display_summary, seconds)
         residency_summary = _stop_plant_residency(residency)
     fault_records = _fault_records(faults)
 
@@ -1469,6 +1537,9 @@ def run_scenario(scene_dir, scenario_name, *, report_path=None, require_injected
         "world": str(world),
         # 植物驻留（联合世界）的实测：周期数、失败周期、owner 收尾基座高度 ⇒ 证明"owner 全程在线"
         "plant_residency": residency_summary,
+        # 运行期显示（`--display interactive_viewer`）：只渲染、不推进 ⇒ 不影响任何判据；
+        # 留痕窗口是否真开、渲染帧数、被谁结束（便于"我看到的和报告里的是一次运行"）
+        "display": display_summary,
         "pending_steps": pending_steps,
         "unregistered_steps": unregistered,
         "unverified_faults": unverified_faults,
@@ -1816,6 +1887,15 @@ def main(argv=None):
         action="store_true",
         help="任何故障未被注入即失败（退出码 5）：占位不是通过",
     )
+    run_parser.add_argument(
+        "--display", choices=("auto", "none", "interactive_viewer", "offscreen_frames"),
+        default="none",
+        help="运行期显示：none=不开窗（默认，行为与改动前一致）；"
+             "interactive_viewer=边跑边看（**只渲染、不推进**，时间由 owner 驻留线程推进）")
+    run_parser.add_argument("--render-hz", type=float, default=20.0, help="窗口渲染频率")
+    run_parser.add_argument(
+        "--seconds", type=float, default=0.0,
+        help="运行结束后窗口再保持的秒数（0=立即关闭；调试末态时给几秒）")
     ix_parser = subparsers.add_parser(
         "interact", help="S1 命令式交互：逐条命令 → 只允许已声明能力 → 走 SkillRuntime"
     )
@@ -1897,6 +1977,9 @@ def main(argv=None):
             report_path=args.report,
             require_injected_faults=args.require_injected_faults,
             world=args.world,
+            display=args.display,
+            render_hz=args.render_hz,
+            seconds=args.seconds,
         )
     except ScenarioError as exc:
         print("· " + str(exc), file=sys.stderr)
