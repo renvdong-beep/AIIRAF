@@ -956,6 +956,41 @@ display   window_opened=true / frames=1937
    是稳的；不稳的是载体定位。
 4. 判据纪律：**带显示运行的结论只能引用当次报告**，不能拿另一次的 dock 数字替代（本次就是这么发现的）。
 
+### 11.13 s04 端到端接线完成但**未通过**：三段卡点逐个暴露（2026-09-28）
+
+**已接线（代码层，能力**未**声明 ⇒ inert）**
+
+- `scripts/scenario.py: build_backend_config` 透传 `place_targets` 与 `targets[].geom`；
+- 构建器把臂侧**已声明**的 `reference_poses.pregrasp_offset_m`（0.04）写进联合报告 gripper
+  ⇒ 后端解析出 `pregrasp_offset_m`（放置的接近/抬离间隙，不新造数字）；
+- 后端 `_parse_place_targets`（id → body/geom/size_m/mount）与 `place_object` 四段实现；
+- runner 判据表与测量量表：`max_offset_from_tray_center_m` / `require_release` / `require_payload_in_tray`
+  （测量量只来自技能证据）；`config/scene.schema.json` 的判据名单同步；
+- `skills/place_object/skill.yaml`：**删掉**前置状态 `manipulation.payload_held == true`
+  —— 实测运行期报「缺少运行时状态: manipulation.payload_held」：**声明白不存在的东西是假声明**，
+  改为后端入口用**实测事实**把关（"双侧指腹必须同时接触载荷，否则拒绝放置"）。
+
+**临时启用 s04 后的三次实测（每次推掉一层卡点）**
+
+| 次 | s04 结果 | 报错 | 判读 |
+| --- | --- | --- | --- |
+| 1 | FAILED（0.0005 s） | `缺少运行时状态: manipulation.payload_held` | 前置状态是**系统不发布**的（已改实测事实） |
+| 2 | FAILED（0.0007 s） | `载荷 box_01 未声明 geom（无法量最低点）` | `geom` 没进后端配置（已透传） |
+| 3 | FAILED（5.66 s） | `放置 IK 未收敛（descend）：error=0.617962704 m target=[0.416039, 0.00061, 0.728197]` | approach 段**已收敛**，下行段目标不可达 ⇒ 见下 |
+
+第 3 次的数字判读（关键）：approach 结束后 `pad_mid` ≈ 0.45，而**同一时刻**量到的载荷最低点 ≈ **0.079**
+（≈ pick 的提起高度 0.079437）⇒ 两者相差 ~0.37 m：**方块没有被夹爪带走**（或两次快照量的不是同一个物体）。
+我的下行目标 = `pad_mid + (托盘顶面 − 载荷最低点)` = 0.45 + 0.276 = 0.728 —— 公式本身自洽（把"载荷最低点"
+抬到承载面），但前提"载荷跟着指腹走"在实测里不成立。
+
+**下一步诊断（一次即可判死）**：在每个相位打印三个快照量（托盘顶面 / 载荷最低点 / 指腹中点）与该相位结束时
+"指腹↔载荷接触对数量"，看方块是在哪一段脱离的（候选：approach 段的位移过大导致摩擦失效；
+或 pick 收尾的 hold 未保持闭爪导致开度回弹）。
+
+**纪律**：能力四处声明（profile / 场景 capabilities / 策略 allowed_skills / 适配器 CAPABILITY_METHODS）
+**已回退**，s04 保持 `SKIPPED_PENDING`，`nominal --world joint` 保持 exit 0；
+`scene_check` exit 0。实现与判据表留着（未声明 ⇒ 不会被派发），修好并验收后再声明。
+
 ### 11.12 接收体声明进报告（`place_targets`）：托盘的名义停靠位姿与可达性（2026-09-28）
 
 `place_object` 只能按**名字**引用接收体（托盘随载体运动 ⇒ 预写世界位姿必过期），但放置点仍需一个基准。

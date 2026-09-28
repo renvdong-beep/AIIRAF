@@ -740,7 +740,10 @@
                   "yaw_error_max_deg",
                   "require_payload_confirmation",
                   "timeout_s",
-                  "require_bilateral_contact"
+                  "require_bilateral_contact",
+                  "max_offset_from_tray_center_m",
+                  "require_release",
+                  "require_payload_in_tray"
                 ]
               },
               "additionalProperties": {"type": ["number", "boolean"]}

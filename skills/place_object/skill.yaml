@@ -7,8 +7,10 @@ spec:
   outputSchema: place_object.output.json
   requires: [place_object]
   preconditions:
+    # 只声明**系统真的会发布**的状态。曾写 `manipulation.payload_held == true`，
+    # 实测运行期报「缺少运行时状态: manipulation.payload_held」——声明白不存在的东西是假声明
+    # ⇒ 改为在 provider/后端用**实测事实**把关："双侧指腹必须同时接触载荷，否则拒绝放置"。
     - safety.estop == false
-    - manipulation.payload_held == true
   intentExamples: ["把方块放进托盘", "放置到狗背托盘", "place object into tray"]
   # 租约 TTL 必须覆盖**墙钟**（不是仿真时长）：与 pick_object 同口径（带窗口时 4 核软件渲染
   # 会把墙钟拉长数倍），放置比抓取多一段"下行+张开+抬离" ⇒ 取 120 s（= pick 的同值，够用）。

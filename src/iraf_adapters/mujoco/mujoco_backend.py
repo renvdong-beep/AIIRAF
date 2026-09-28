@@ -263,6 +263,7 @@ class MujocoBackend:
             authority,
             fault_injection_enabled=fault_injection_enabled,
             manipulation_config=config.get("manipulation"),
+            place_targets_config=config.get("place_targets"),
             vision_config=config.get("vision"),
             realtime=bool(config.get("realtime", False)),
             display_size=(
@@ -285,6 +286,7 @@ class MujocoBackend:
         authority,
         fault_injection_enabled=False,
         manipulation_config=None,
+        place_targets_config=None,
         vision_config=None,
         realtime=False,
         display_size=(640, 480),
@@ -372,6 +374,9 @@ class MujocoBackend:
         self._fault_delay_seconds = 0.0
         self._fault_remaining = 0
         self._manipulation = self._parse_manipulation_config(manipulation_config)
+        # 接收体（承载面上的放置目标）：来自场景报告的 `place_targets` 段（构建期声明几何 + 标称位姿）。
+        # 缺段即空表 ⇒ `place_object` 会显式拒绝（"场景报告没有接收体"），不猜、不用默认值。
+        self._place_targets = self._parse_place_targets(place_targets_config)
         # 视觉 Provider 声明（可选）：证据文件、刷新策略、检测器命令。
         # 后端不提供任何机型默认路径，未声明即"只能读请求显式给出的证据"。
         self._vision = _parse_vision_config(vision_config)
@@ -1090,6 +1095,15 @@ class MujocoBackend:
         payload_geom = payload.get("geom")
         if payload_geom is None:
             raise ValueError("载荷 %s 未声明 geom（无法量最低点）" % payload_id)
+
+        # 前置判据（**实测事实**，替代那条系统不发布的前置状态）：双侧指腹必须同时接触载荷，
+        # 否则"放置"没有任何意义（可能把台面上的方块当成熟载荷报成功）⇒ 显式拒绝。
+        left_finger = self._body_id(gripper["left_finger_body"])
+        right_finger = self._body_id(gripper["right_finger_body"])
+        if not (self._any_contact_between(payload_body, left_finger)
+                and self._any_contact_between(payload_body, right_finger)):
+            raise ValueError(
+                "当前未夹持载荷 %s（双侧指腹未同时接触）⇒ 拒绝放置（不伪造成功）" % payload_id)
 
         from iraf_core.kinematics import lowest_mesh_point_z, solve_position_ik
 
@@ -2102,6 +2116,35 @@ class MujocoBackend:
         return int(body_id)
 
     @staticmethod
+    @staticmethod
+    def _parse_place_targets(config):
+        """解析场景报告的 `place_targets` 段（接收体）：id → {body, geom, size_m, mount, nominal_*}。
+
+        只做**形状校验**：缺 body/size_m 即显式失败（`place_object` 的"载荷是否落在承载面内"
+        判据需要半尺寸；没有它就无法判定，不许用默认值顶替）。
+        """
+        if config is None:
+            return {}
+        if not isinstance(config, dict):
+            raise ValueError("place_targets 配置必须是对象")
+        raw = config.get("targets") or []
+        if not isinstance(raw, list):
+            raise ValueError("place_targets.targets 必须是数组")
+        parsed = {}
+        for item in raw:
+            if not isinstance(item, dict) or not item.get("id"):
+                raise ValueError("place_targets.targets 每项必须有 id")
+            body = item.get("body")
+            size = item.get("size_m")
+            if not body:
+                raise ValueError("接收体 %s 必须声明 body" % item.get("id"))
+            if (not isinstance(size, (list, tuple)) or len(size) != 3
+                    or not all(isinstance(v, (int, float)) for v in size)):
+                raise ValueError("接收体 %s 必须声明 size_m（3 个半尺寸）" % item.get("id"))
+            parsed[str(item["id"])] = dict(item)
+        return parsed
+
+    @staticmethod
     def _parse_manipulation_config(config):
         if config is None:
             return {"targets": {}, "gripper": None}
@@ -2120,6 +2163,8 @@ class MujocoBackend:
             targets[str(target_id)] = {
                 "body": str(item["body"]),
                 "pose_tolerance_m": tolerance,
+                # `geom`（可选）：放置段要量载荷最低点用；未声明即由 place_object 显式拒绝
+                "geom": (str(item["geom"]) if item.get("geom") else None),
             }
         raw_gripper = config.get("gripper")
         if raw_gripper is None:
@@ -2250,6 +2295,13 @@ class MujocoBackend:
             if not math.isfinite(pad_offset) or pad_offset < 0:
                 raise ValueError("pad_offset_m 必须是非负有限数")
             gripper["pad_offset_m"] = pad_offset
+            # 放置段的接近/抬离间隙（可选键，来自报告声明；缺省即"该场景不支持放置"，
+            # 由 `place_object` 显式报错，不在解析层补默认值）
+            if raw_gripper.get("pregrasp_offset_m") is not None:
+                pregrasp = float(raw_gripper["pregrasp_offset_m"])
+                if not math.isfinite(pregrasp) or pregrasp <= 0:
+                    raise ValueError("pregrasp_offset_m 必须是正有限数")
+                gripper["pregrasp_offset_m"] = pregrasp
             raw_axis = list(raw_gripper.get("pad_offset_axis") or (0.0, 0.0, 1.0))[:3]
             axis_values = [float(value) for value in raw_axis]
             if len(axis_values) != 3 or not all(

@@ -1234,6 +1234,14 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
                            "diff_vs_inherited": diff}
     inherited_pad_offset = out_gripper.get("pad_offset_m")
     out_gripper["pad_offset_m"] = float(resolution["pad_offset_m"])
+    # 放置段（`place_object`）的接近/抬离间隙：取臂侧**已声明**的 `pregrasp_offset_m`
+    # （臂报告 reference_poses 段），不新造数字；缺声明即显式失败（放置需要它）。
+    pregrasp_offset = (report.get("reference_poses") or {}).get("pregrasp_offset_m")
+    if not isinstance(pregrasp_offset, (int, float)) or float(pregrasp_offset) <= 0:
+        _fail(EXIT_REFERENCE,
+              "臂侧报告缺少 reference_poses.pregrasp_offset_m（正数）：放置段的接近间隙只能来自声明，"
+              "不在实现层写默认值（%s）" % arm_report_path)
+    out_gripper["pregrasp_offset_m"] = float(pregrasp_offset)
     # 出处标注：读到 `resolved_for_joint_model` 即表示这些数字来自**本联合模型 + 本 placement**，
     # 不是从臂自己场景继承来的（`inherited_from` 仍留痕，便于追溯）。
     out_gripper["reference_pose_source"] = "resolved_for_joint_model"

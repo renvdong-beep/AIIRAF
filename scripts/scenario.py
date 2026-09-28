@@ -143,11 +143,28 @@ CRITERION_SPEC = {
         "grasp_bilateral_contact", "==",
         "实测双侧指腹同时接触（evidence.bilateral_contact，布尔量）",
     ),
+    # 放置（`place_object`）的三项判据：测量量同样**只来自技能证据**（不推算）。
+    # 阈值出处：`max_offset_from_tray_center_m` 由接收体声明尺寸推出并写在 scenario.yaml 的注释里
+    # （托盘 0.24×0.16、方块 0.05 ⇒ 完全落入只需 |dx|≤0.095、|dy|≤0.055，取 0.06）；
+    # 另两条是布尔事实（夹爪已松开 / 载荷落在承载面内且与接收体接触）。
+    "max_offset_from_tray_center_m": (
+        "place_offset_from_tray_center_m", "<=",
+        "放置后实测载荷中心相对接收体中心的水平偏移（evidence.place_alignment.offset_from_center_m）",
+    ),
+    "require_release": (
+        "place_released", "==",
+        "实测夹爪张开后指腹与载荷不再接触（evidence.released，布尔量）",
+    ),
+    "require_payload_in_tray": (
+        "place_payload_in_tray", "==",
+        "实测载荷落在接收体承载面内且与接收体接触（evidence.payload_in_tray，布尔量）",
+    ),
 }
 #: 可在报告中出现的测量量键（顺序固定，便于逐项比对）。
 MEASUREMENT_KEYS = ("sim_time_advance_s", "final_speed_mps", "wall_seconds", "evidence_duration_s",
                     "dock_translation_error_m", "dock_yaw_error_deg",
-                    "grasp_center_distance_m", "grasp_lift_delta_m", "grasp_bilateral_contact")
+                    "grasp_center_distance_m", "grasp_lift_delta_m", "grasp_bilateral_contact",
+                    "place_offset_from_tray_center_m", "place_released", "place_payload_in_tray")
 
 #: 步骤分类（报告里逐项可见，避免"没跑"和"跑过了"混在一起）。
 STEP_EXECUTED = "EXECUTED"
@@ -675,7 +692,10 @@ def build_backend_config(root, declaration, spec):
         )
     entries = report.get("targets") or ([{"id": report.get("target_id")}] if report.get("target_id") else [])
     targets = {
-        str(item.get("id")): {"body": str(item.get("id")), "pose_tolerance_m": float(tolerance)}
+        # `geom` 随目标一起透传：`place_object` 要量载荷的**最低点**（`lowest_mesh_point_z`）
+        # 才能判"是否落到承载面"，而 geom 名只有报告里才有（不从 id/body 猜）。
+        str(item.get("id")): {"body": str(item.get("id")), "geom": item.get("geom"),
+                              "pose_tolerance_m": float(tolerance)}
         for item in entries
         if isinstance(item, dict) and item.get("id")
     }
@@ -706,6 +726,9 @@ def build_backend_config(root, declaration, spec):
     return {
         "model_path": model_path,
         "manipulation": {"targets": targets, "gripper": gripper},
+        # 接收体声明（承载面上的放置目标：托盘随载体运动 ⇒ 报告只声明几何 + 标称位姿，
+        # 运行期由后端按实测位姿解析）。缺段 = 场景没有接收体，`place_object` 会显式拒绝。
+        "place_targets": report.get("place_targets"),
         "vision": report.get("vision"),
         "realtime": realtime,
         "source_report": str(report_path),
@@ -877,6 +900,14 @@ def measure_step(before, after, evidence, wall_seconds):
         if evidence.get("bilateral_contact") is not None:
             # 布尔量统一成 1.0/0.0，使 `require_bilateral_contact: true` 能用 "==" 与 `true` 直接比
             measured["grasp_bilateral_contact"] = 1.0 if evidence["bilateral_contact"] else 0.0
+        # 放置结果量（同上：只认技能自己给出的实测值）
+        place = evidence.get("place_alignment")
+        if isinstance(place, dict) and place.get("offset_from_center_m") is not None:
+            measured["place_offset_from_tray_center_m"] = float(place["offset_from_center_m"])
+        if evidence.get("released") is not None:
+            measured["place_released"] = 1.0 if evidence["released"] else 0.0
+        if evidence.get("payload_in_tray") is not None:
+            measured["place_payload_in_tray"] = 1.0 if evidence["payload_in_tray"] else 0.0
     return measured
 
 
