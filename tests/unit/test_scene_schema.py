@@ -167,8 +167,10 @@ class PositiveControlTests(ScenePackageFixture):
         self.assertNotIn(("nominal", "s01_verify_ready"), steps)
         # 2026-09-24：`s02_dock` 已解登记（能力已声明）⇒ 待交付只剩臂侧两步
         self.assertNotIn(("nominal", "s02_dock"), steps)
-        self.assertIn(("nominal", "s04_place_in_tray"), steps)
-        self.assertIn(("nominal", "s04_place_in_tray"), steps)
+        # 2026-09-28：`s04_place_in_tray` 已解除待交付（`place_object` 能力已声明并验收，
+        # 见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.23(41)(h)）⇒ 方向仍是"收紧"：
+        # 已交付的步骤不得再出现在待交付清单里。
+        self.assertNotIn(("nominal", "s04_place_in_tray"), steps)
         self.assertIn(("nominal", "s05_confirm_payload"), steps)
 
     def test_model_layer_is_pending_not_checked_when_model_absent(self):
@@ -340,8 +342,9 @@ class NegativeScenarioTests(ScenePackageFixture):
         """用未声明能力却不登记待交付 = 静默声明了不存在的能力，必须失败。"""
 
         def mutate(doc):
-            doc["scenarios"]["nominal"]["steps"][3].pop("pending_closed_by")
-            doc["scenarios"]["nominal"]["steps"][3].pop("pending_reason")
+            # 目标用**仍待交付**的那一步（s05 = 第 5 步，索引 4）；s04 已于 2026-09-28 交付启用。
+            doc["scenarios"]["nominal"]["steps"][4].pop("pending_closed_by")
+            doc["scenarios"]["nominal"]["steps"][4].pop("pending_reason")
 
         self.mutate(self.scenario_path, mutate)
         report, exit_code = self.run_check()

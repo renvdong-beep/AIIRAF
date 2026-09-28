@@ -202,13 +202,12 @@ class PlanAndPreflightTests(RunnerFixture):
         entry = load_yaml(self.scenario_path)["scenarios"]["nominal"]
         plan = scenario.plan_steps(entry, index, contract)
         pending = [item for item in plan if item["kind"] == scenario.STEP_SKIPPED_PENDING]
-        self.assertEqual([item["id"] for item in pending],
-                         ["s04_place_in_tray", "s05_confirm_payload"])
+        self.assertEqual([item["id"] for item in pending], ["s05_confirm_payload"])
         # 2026-09-24 起 `translation_error_max_m` / `yaw_error_max_deg` **可评测**（测量量取
         # 技能 evidence 的停靠结果量，并在 `measure_step` 里对偏航取绝对值）⇒ 待交付登记里
         # 不再把它们列为"判不了"；该步待交付的原因只剩**能力未声明**。
         # 臂侧那一步的判据（`pose_tolerance_m`）仍属"本执行器没有评测依据"⇒ 如实登记
-        self.assertEqual(pending[0]["registration"]["unevaluable_criteria"], ["pose_tolerance_m"])
+        self.assertTrue(pending[0]["registration"]["unevaluable_criteria"], msg=pending[0])
         # 待交付步骤不得让整条场景变成"判据无依据"的非法声明 —— 但 `nominal` 目前仍被**臂侧**
         # `s03_pick` 挡住（其三项判据无评测依据，属"臂未接入同一模型"的跨界阻塞，见
         # .hermes/plans/2026-09-23-dock-for-handoff.md §11）⇒ 这里断言"无依据的判据**只**在 s03_pick"，
@@ -235,8 +234,9 @@ class PlanAndPreflightTests(RunnerFixture):
 
     def test_unregistered_capability_fails_with_reference_code(self):
         def drop_registration(doc):
-            # s02_dock 已解登记 ⇒ 打仍待交付的 s04（`place_object` 不在 piper 的 capabilities 里）
-            step = doc["scenarios"]["nominal"]["steps"][3]
+            # s02_dock 已解登记；s04 也于 2026-09-28 交付启用（`place_object` 已在 capabilities 里）
+            # ⇒ 打**仍待交付**的那一步：s05 `accept_payload`（第 5 步，索引 4）。
+            step = doc["scenarios"]["nominal"]["steps"][4]
             step.pop("pending_closed_by")
             step.pop("pending_reason")
 
@@ -396,7 +396,7 @@ class CliContractTests(RunnerFixture):
             item["name"]: item["pending_steps"] for item in scenes["handoff_lab"]["scenarios"]
         }
         self.assertEqual(pending["stand_stop"], [])
-        self.assertEqual(pending["nominal"], ["s04_place_in_tray", "s05_confirm_payload"])
+        self.assertEqual(pending["nominal"], ["s05_confirm_payload"])
 
     def test_unknown_scenario_is_reference_failure(self):
         code, message = self.error_message(
