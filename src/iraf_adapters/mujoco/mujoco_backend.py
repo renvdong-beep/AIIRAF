@@ -1102,11 +1102,27 @@ class MujocoBackend:
             print("PICK_LIFT_TRACE " + json.dumps(row, ensure_ascii=False), flush=True)
 
         if lift_ms and force_ok:
+            # **抬升路径**（声明；缺省 direct）：`approach_then_lift` 先竖直走到 approach 位形
+            # （构建期解出的"抓取点沿接近轴抬高 pregrasp_offset_m"的解 ⇒ 任务空间竖直段，
+            # 让载荷先离台），再走向 lift 位形。实测 direct 会把载荷沿台面拖行 2.2 cm 后拖出夹口
+            # （§11.23(26)）。
+            lift_path_mode = str(gripper.get("lift_path") or "direct")
+            if lift_path_mode not in ("approach_then_lift", "direct"):
+                raise ValueError("gripper.lift_path 只允许 approach_then_lift|direct：%r"
+                                 % (lift_path_mode,))
             self._log_pick_phase("LIFT", target_body)
-            self._move_trajectory(
-                gripper["lift_positions"], lift_ms, self._pick_ctrl_offsets("lift"),
-                sampler=_lift_sampler,
-            )
+            if lift_path_mode == "approach_then_lift" and approach_positions:
+                half = max(1, lift_ms // 2)
+                self._move_trajectory(approach_positions, half,
+                                      self._pick_ctrl_offsets("approach"),
+                                      sampler=_lift_sampler)
+                self._move_trajectory(
+                    gripper["lift_positions"], max(1, lift_ms - half),
+                    self._pick_ctrl_offsets("lift"), sampler=_lift_sampler)
+            else:
+                self._move_trajectory(
+                    gripper["lift_positions"], lift_ms, self._pick_ctrl_offsets("lift"),
+                    sampler=_lift_sampler)
             if constraint_activated and gripper.get("lift_anchor_body"):
                 self._advance_with_grasp_anchor(0, target_body, left_body, right_body, gripper["lift_anchor_body"])
             else:

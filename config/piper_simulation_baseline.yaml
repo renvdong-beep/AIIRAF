@@ -34,6 +34,16 @@ grasp:
   #   hold       = 搬运段把夹爪目标取**当前实测 qpos**（零合拢）⇒ 不会把载荷楔/挤出去；
   #   trajectory = 按放置段里的位置插值（实测会把方块沿夹口轴向挤出去：力 12 N → 2.6 N → 脱离）。
   carry_gripper: hold
+  # **抬升路径**（声明；缺省视为 direct＝单段关节空间插值，但由构建器显式写入报告）：
+  #   approach_then_lift = 先走到 `approach` 位形（构建期解出的"抓取点沿接近轴竖直抬高
+  #     `pregrasp_offset_m`"的位形 ⇒ 任务空间**竖直**段），再走向 `lift` 位形。
+  #   direct             = 一段关节空间插值（实测工具点走曲线、把方块沿台面拖行 2.2 cm 后拖出夹口，
+  #     见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.23(26)）。
+  # 当前取 direct（= s01–s03 已验收的单段行为）；`approach_then_lift` 已实现并实测：
+  # 两段（先到 approach 位形＝沿接近轴竖直 +4 cm，再到 lift 位形）**仍然丢件**
+  # （逐样本：方块在 z≈0.036 时仍与台面有 0.10~0.14 N 接触 ⇒ 角在刮台面，step ~1500 脱离，
+  #  当时双侧接触 5.74/5.71 N 正常）⇒ 见 §11.23(27)。
+  lift_path: direct
   # 双指指尖 geom 中点的目标抓取位置（世界坐标）。
   # z 不在此声明，必须由 workbench.top_z_m + target.half_size_m 推出，保证方块贴台面。
   finger_center_xy_m: [0.19, 0.0]
