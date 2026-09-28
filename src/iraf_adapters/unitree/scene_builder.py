@@ -599,7 +599,9 @@ def _place_targets(scene, model, injections, trunk_body):
         #      ⇒ 标称位姿仍取 FK（静态体不随任何载体动，FK 就是它自己的位姿）。
         # 两者都缺 ⇒ 不是接收体（跳过，保持原行为）。
         has_mount = isinstance(mount, dict)
-        if not has_mount and not ((declared.get("pose") or {}).get("pos_m")):
+        # 无 `mount` 的道具**必须显式声明 `receiving: true`** 才算接收体：
+        # 否则载荷自身（同样有 pose.pos_m）会被误当接收体（本轮实测：targets[0] 变成方块自己）。
+        if not has_mount and not bool(declared.get("receiving", False)):
             continue
         geom_name = "%s_geom" % str(record.get("body"))
         geom_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, geom_name)

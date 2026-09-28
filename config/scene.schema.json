@@ -27,7 +27,10 @@
       "pattern": "^[a-z][a-z0-9_]*$",
       "description": "场景 id，必须与目录名 scenes/<id>/ 一致（scene_check.py 强制）。"
     },
-    "description": {"type": "string", "minLength": 1},
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
     "simulation": {
       "const": true,
       "description": "仿真场景必须显式声明 true；缺失即不合法（不得默认 true，也不得用仿真结果冒充真机能力，AGENTS.md 1.7）。"
@@ -35,11 +38,17 @@
     "world_physics": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["cone", "impratio"],
+      "required": [
+        "cone",
+        "impratio"
+      ],
       "description": "**物理口径**（存在附加本体的联合世界必须声明，见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.23）。合成产物的 <option> 会从主模型（厂商四足模型 vendor/unitree_go2/.../go2.xml:4）继承 cone=elliptic impratio=100，而同一台臂在自己的世界里用的是 MuJoCo 默认 cone=pyramidal impratio=1 ⇒ 夹持/接触类结论跨世界不可移植。数值只来自本声明，构建器不写默认值；缺声明即拒绝构建（scene_builder._apply_world_physics），并要求读回实测值一致。",
       "properties": {
         "cone": {
-          "enum": ["pyramidal", "elliptic"],
+          "enum": [
+            "pyramidal",
+            "elliptic"
+          ],
           "description": "摩擦锥近似：pyramidal 内接（对角方向最差 0.707μN），elliptic 为完整 μN。"
         },
         "impratio": {
@@ -47,42 +56,81 @@
           "exclusiveMinimum": 0,
           "description": "摩擦约束阻抗与法向阻抗之比（MuJoCo 默认 1）。"
         },
-        "timestep": {"type": "number", "exclusiveMinimum": 0},
+        "timestep": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
         "gravity": {
-          "type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "number"
+          }
         }
       }
     },
     "seed": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["base", "randomization"],
+      "required": [
+        "base",
+        "randomization"
+      ],
       "description": "随机种子；randomization=true 时必须先补齐随机化验收证据（本轮声明为 false）。",
       "properties": {
-        "base": {"type": "integer", "minimum": 0},
-        "randomization": {"type": "boolean"}
+        "base": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "randomization": {
+          "type": "boolean"
+        }
       }
     },
     "terrain": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "friction", "workbench"],
+      "required": [
+        "kind",
+        "friction",
+        "workbench"
+      ],
       "properties": {
         "kind": {
-          "enum": ["flat"],
+          "enum": [
+            "flat"
+          ],
           "description": "首期只声明平地地形；地形道具随场景构建器（步骤 13）扩展，扩展前不得声明。"
         },
-        "friction": {"$ref": "#/definitions/friction"},
+        "friction": {
+          "$ref": "#/definitions/friction"
+        },
         "workbench": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["top_z_m", "half_size_m", "half_thickness_m", "friction"],
+          "required": [
+            "top_z_m",
+            "half_size_m",
+            "half_thickness_m",
+            "friction"
+          ],
           "description": "工作台几何，字段名与 config/*_simulation_baseline.yaml 的 workbench 段一致（复用既有字段名，不新造同义字段）。",
           "properties": {
-            "top_z_m": {"type": "number"},
-            "half_size_m": {"type": "number", "exclusiveMinimum": 0},
-            "half_thickness_m": {"type": "number", "exclusiveMinimum": 0},
-            "friction": {"$ref": "#/definitions/friction"}
+            "top_z_m": {
+              "type": "number"
+            },
+            "half_size_m": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "half_thickness_m": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "friction": {
+              "$ref": "#/definitions/friction"
+            }
           }
         }
       }
@@ -91,34 +139,47 @@
       "type": "array",
       "minItems": 1,
       "description": "场景内本体清单。capabilities 是**已交付能力**的声明，不是期望值：未验收的能力不得写进来。",
-      "items": {"$ref": "#/definitions/scene_robot"}
+      "items": {
+        "$ref": "#/definitions/scene_robot"
+      }
     },
     "props": {
       "type": "array",
       "description": "道具清单（盒体/托盘/支架）。几何必须是内联基元或已存在的 mesh 文件（mesh 文件不存在即引用完整性失败）。",
-      "items": {"$ref": "#/definitions/scene_prop"}
+      "items": {
+        "$ref": "#/definitions/scene_prop"
+      }
     },
     "frames": {
       "type": "array",
       "description": "世界固定参考系（导航/停靠/交接的目标帧）：注入为 worldbody 下的 site。停靠目标帧**必须**世界固定且不与机器人刚性相连 —— 挂在机器人身上的帧会让误差恒为自指量（实测：偏航恒 0、平移 = 帧本地偏置的投影，见 docs/debug/2026-09-24-dock-target-self-frame.md）。",
-      "items": {"$ref": "#/definitions/scene_world_frame"}
+      "items": {
+        "$ref": "#/definitions/scene_world_frame"
+      }
     },
     "sensors": {
       "type": "array",
       "minItems": 1,
       "description": "传感器声明。厂商 MJCF 不提供相机/雷达（实测 go2.xml 无 camera、无雷达），因此 source=scene 的传感器必须由场景构建器按本声明注入，禁止写死进厂商文件。",
-      "items": {"$ref": "#/definitions/scene_sensor"}
+      "items": {
+        "$ref": "#/definitions/scene_sensor"
+      }
     },
     "lights": {
       "type": "array",
       "minItems": 1,
       "description": "光照是检测链路的输入而不是装饰（docs/debug/2026-09-20-scene-lighting-declaration.md）：空声明会让离屏图像近全黑，因此空数组即不合法。",
-      "items": {"$ref": "#/definitions/scene_light"}
+      "items": {
+        "$ref": "#/definitions/scene_light"
+      }
     },
     "model": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["output", "builder"],
+      "required": [
+        "output",
+        "builder"
+      ],
       "description": "生成模型输出路径与构建器引用。输出必须落在 build/ 或 artifacts/ 下（AGENTS.md 5.5：构建产物不得污染源码目录）。",
       "properties": {
         "output": {
@@ -147,18 +208,26 @@
       "type": "array",
       "minItems": 3,
       "maxItems": 3,
-      "items": {"type": "number"}
+      "items": {
+        "type": "number"
+      }
     },
     "rgba": {
       "type": "array",
       "minItems": 4,
       "maxItems": 4,
-      "items": {"type": "number", "minimum": 0, "maximum": 1}
+      "items": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      }
     },
     "package_relative_path": {
       "type": "string",
       "pattern": "^(?!/)[A-Za-z0-9._][A-Za-z0-9._/-]*$",
-      "not": {"pattern": "\\.\\."},
+      "not": {
+        "pattern": "\\.\\."
+      },
       "description": "场景包内相对路径：不得是绝对路径、不得含 ..（越界即显式失败）。"
     },
     "repo_relative_path": {
@@ -166,8 +235,19 @@
       "pattern": "^(?!/)[A-Za-z0-9._][A-Za-z0-9._/-]*$",
       "not": {
         "anyOf": [
-          {"pattern": "pypi\\.org"},
-          {"enum": ["pending", "tbd", "unknown", "?", "n/a", "unverified"]}
+          {
+            "pattern": "pypi\\.org"
+          },
+          {
+            "enum": [
+              "pending",
+              "tbd",
+              "unknown",
+              "?",
+              "n/a",
+              "unverified"
+            ]
+          }
         ]
       },
       "description": "仓库相对路径（本体 profile 等），禁止绝对路径；pending/tbd/unknown 等模糊占位与本字面量 unverified 都不是路径，未交付只能写结构化的 {state: unverified, closed_by, reason}。"
@@ -175,34 +255,70 @@
     "unverified_ref": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["state", "closed_by", "reason"],
+      "required": [
+        "state",
+        "closed_by",
+        "reason"
+      ],
       "description": "尚未交付的引用必须显式占位，不得猜测路径、不得静默省略；reason 为空即不合法。",
       "properties": {
-        "state": {"const": "unverified"},
+        "state": {
+          "const": "unverified"
+        },
         "closed_by": {
           "type": "string",
           "pattern": "^步骤 [0-9]{2}$",
           "description": "关闭该缺口的那一步（plans/iraf-24h/NN-*.md）。"
         },
-        "reason": {"type": "string", "minLength": 1}
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "unverified_or_path": {
       "oneOf": [
-        {"$ref": "#/definitions/repo_relative_path"},
-        {"$ref": "#/definitions/unverified_ref"}
+        {
+          "$ref": "#/definitions/repo_relative_path"
+        },
+        {
+          "$ref": "#/definitions/unverified_ref"
+        }
       ],
       "description": "要么是已存在的仓库相对路径，要么是显式 unverified 占位（字符串与对象互斥，无重叠分支）。"
     },
     "scene_robot": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "kind", "role", "profile", "capabilities"],
+      "required": [
+        "id",
+        "kind",
+        "role",
+        "profile",
+        "capabilities"
+      ],
       "properties": {
-        "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
-        "kind": {"enum": ["arm", "quadruped", "humanoid"]},
-        "role": {"enum": ["manipulator", "carrier", "scene_entity"]},
-        "profile": {"$ref": "#/definitions/unverified_or_path"},
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "kind": {
+          "enum": [
+            "arm",
+            "quadruped",
+            "humanoid"
+          ]
+        },
+        "role": {
+          "enum": [
+            "manipulator",
+            "carrier",
+            "scene_entity"
+          ]
+        },
+        "profile": {
+          "$ref": "#/definitions/unverified_or_path"
+        },
         "manipulation_report": {
           "type": "string",
           "description": "继承 manipulation 事实（gripper/targets）的臂侧场景报告路径；仅 `--attach` 时消费。"
@@ -210,7 +326,11 @@
         "reference_solver": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["module", "entry", "baseline"],
+          "required": [
+            "module",
+            "entry",
+            "baseline"
+          ],
           "description": "联合模式的**参考姿态求解器**：继承来的 home/approach/grasp/lift_positions 是臂自己基座系下的关节解，附加本体一有 placement 就不适用（实测残差 0.367696068 m）⇒ 必须按本场景重解。缺声明即失败，不静默继承。",
           "properties": {
             "module": {
@@ -242,70 +362,142 @@
         "capabilities": {
           "type": "array",
           "uniqueItems": true,
-          "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
           "description": "该本体在本场景中声明可用的能力。分派层按能力而不是机型名选择 Provider。"
         },
-        "model_only": {"type": "boolean"},
+        "model_only": {
+          "type": "boolean"
+        },
         "evidence_level": {
           "type": "string",
           "description": "人形等静态实体必须写「仅模型」（英文键 + 中文取值，设计 §10）。"
         },
-        "note": {"type": "string"},
+        "note": {
+          "type": "string"
+        },
         "placement": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["pos_m", "quat_wxyz"],
+          "required": [
+            "pos_m",
+            "quat_wxyz"
+          ],
           "description": "联合模型里的相对位姿（世界系）：仅 `--attach <本体>` 时被消费；单本体产物不受影响。",
           "properties": {
-            "pos_m": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}},
-            "quat_wxyz": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "number"}}
+            "pos_m": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "number"
+              }
+            },
+            "quat_wxyz": {
+              "type": "array",
+              "minItems": 4,
+              "maxItems": 4,
+              "items": {
+                "type": "number"
+              }
+            }
           }
         }
       },
       "allOf": [
         {
           "description": "已交付 profile 的本体必须至少声明一项能力；未交付（unverified）的本体允许空能力数组。",
-          "if": {"properties": {"profile": {"type": "string"}}, "required": ["profile"]},
-          "then": {"properties": {"capabilities": {"minItems": 1}}}
-        },
-        {
-          "description": "静态模型（model_only=true）只能声明 static_model_only：不得声明任何运动/操作能力（决策 4.B 硬约束）。",
-          "if": {"properties": {"model_only": {"const": true}}, "required": ["model_only"]},
-          "then": {
-            "required": ["evidence_level"],
+          "if": {
             "properties": {
-              "capabilities": {"items": {"const": "static_model_only"}},
-              "evidence_level": {"const": "仅模型"}
+              "profile": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "profile"
+            ]
+          },
+          "then": {
+            "properties": {
+              "capabilities": {
+                "minItems": 1
+              }
             }
           }
         },
-      {
-        "description": "声明了 manipulation_report 的本体必须同时声明 placement 与 reference_solver：继承来的参考姿态是**场景专属**的（取决于本体的 placement 与本场景的目标几何），联合构建必须按声明重解；静默继承曾造成 0.367696068 m 的抓取残差。",
-        "if": {
-          "properties": {
-            "manipulation_report": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "manipulation_report"
-          ]
-        },
-        "then": {
-          "required": [
-            "placement",
-            "reference_solver"
-          ]
-        }
-      },
-      {
-        "description": "人形（humanoid）在本战役只能是静态模型，必须显式写 model_only=true 与 evidence_level=仅模型。",
-        "if": {"properties": {"kind": {"const": "humanoid"}}, "required": ["kind"]},
-          "then": {
-            "required": ["model_only", "evidence_level"],
+        {
+          "description": "静态模型（model_only=true）只能声明 static_model_only：不得声明任何运动/操作能力（决策 4.B 硬约束）。",
+          "if": {
             "properties": {
-              "model_only": {"const": true},
-              "evidence_level": {"const": "仅模型"}
+              "model_only": {
+                "const": true
+              }
+            },
+            "required": [
+              "model_only"
+            ]
+          },
+          "then": {
+            "required": [
+              "evidence_level"
+            ],
+            "properties": {
+              "capabilities": {
+                "items": {
+                  "const": "static_model_only"
+                }
+              },
+              "evidence_level": {
+                "const": "仅模型"
+              }
+            }
+          }
+        },
+        {
+          "description": "声明了 manipulation_report 的本体必须同时声明 placement 与 reference_solver：继承来的参考姿态是**场景专属**的（取决于本体的 placement 与本场景的目标几何），联合构建必须按声明重解；静默继承曾造成 0.367696068 m 的抓取残差。",
+          "if": {
+            "properties": {
+              "manipulation_report": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "manipulation_report"
+            ]
+          },
+          "then": {
+            "required": [
+              "placement",
+              "reference_solver"
+            ]
+          }
+        },
+        {
+          "description": "人形（humanoid）在本战役只能是静态模型，必须显式写 model_only=true 与 evidence_level=仅模型。",
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "humanoid"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "model_only",
+              "evidence_level"
+            ],
+            "properties": {
+              "model_only": {
+                "const": true
+              },
+              "evidence_level": {
+                "const": "仅模型"
+              }
             }
           }
         }
@@ -316,25 +508,44 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["type", "size_m"],
+          "required": [
+            "type",
+            "size_m"
+          ],
           "description": "内联基元几何：size_m 是半尺寸（box）/半径（sphere、cylinder）。",
           "properties": {
-            "type": {"enum": ["box", "sphere", "cylinder"]},
+            "type": {
+              "enum": [
+                "box",
+                "sphere",
+                "cylinder"
+              ]
+            },
             "size_m": {
               "type": "array",
               "minItems": 1,
-              "items": {"type": "number", "exclusiveMinimum": 0}
+              "items": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
             }
           }
         },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["type", "mesh"],
+          "required": [
+            "type",
+            "mesh"
+          ],
           "description": "mesh 几何：文件必须真实存在（场景资产的唯一事实来源是文件，不是声明）。",
           "properties": {
-            "type": {"const": "mesh"},
-            "mesh": {"$ref": "#/definitions/repo_relative_path"}
+            "type": {
+              "const": "mesh"
+            },
+            "mesh": {
+              "$ref": "#/definitions/repo_relative_path"
+            }
           }
         }
       ]
@@ -344,31 +555,49 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["pos_m", "quat_wxyz"],
+          "required": [
+            "pos_m",
+            "quat_wxyz"
+          ],
           "description": "世界坐标绝对位姿；四元数顺序固定 wxyz（与 MuJoCo qpos 一致）。",
           "properties": {
-            "pos_m": {"$ref": "#/definitions/vec3"},
+            "pos_m": {
+              "$ref": "#/definitions/vec3"
+            },
             "quat_wxyz": {
               "type": "array",
               "minItems": 4,
               "maxItems": 4,
-              "items": {"type": "number"}
+              "items": {
+                "type": "number"
+              }
             }
           }
         },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["mount"],
+          "required": [
+            "mount"
+          ],
           "description": "挂在某个本体/实体上（例如托盘挂在四足背上）：位置由被挂载实体与参考系决定，不在这里重复写绝对坐标。",
           "properties": {
             "mount": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["entity", "frame"],
+              "required": [
+                "entity",
+                "frame"
+              ],
               "properties": {
-                "entity": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
-                "frame": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"}
+                "entity": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]*$"
+                },
+                "frame": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]*$"
+                }
               }
             }
           }
@@ -378,27 +607,66 @@
     "scene_prop": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "body", "kind", "geometry", "mass_kg", "friction", "rgba", "pose"],
+      "required": [
+        "id",
+        "body",
+        "kind",
+        "geometry",
+        "mass_kg",
+        "friction",
+        "rgba",
+        "pose"
+      ],
       "properties": {
-        "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
         "body": {
           "type": "string",
           "pattern": "^[a-z][a-z0-9_]*$",
           "description": "生成模型里该道具的 body 名（抓取判据按 body 命中，不能用 id 替代）。"
         },
-        "kind": {"enum": ["box", "tray", "stand"]},
-        "geometry": {"$ref": "#/definitions/geometry"},
-        "mass_kg": {"type": "number", "exclusiveMinimum": 0},
-        "friction": {"$ref": "#/definitions/friction"},
-        "rgba": {"$ref": "#/definitions/rgba"},
-        "pose": {"$ref": "#/definitions/pose"},
-        "note": {"type": "string"}
+        "kind": {
+          "enum": [
+            "box",
+            "tray",
+            "stand"
+          ]
+        },
+        "geometry": {
+          "$ref": "#/definitions/geometry"
+        },
+        "mass_kg": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "friction": {
+          "$ref": "#/definitions/friction"
+        },
+        "rgba": {
+          "$ref": "#/definitions/rgba"
+        },
+        "pose": {
+          "$ref": "#/definitions/pose"
+        },
+        "note": {
+          "type": "string"
+        },
+        "receiving": {
+          "type": "boolean",
+          "description": "**该道具是否为放置接收体**（2026-09-28 §11.23(38)）：带 `pose.mount` 的道具默认是接收体（随载体运动）；**世界固定**的道具（如台面上的托盘）必须显式 `receiving: true`，否则不会被当作接收体 —— 也不能放宽成『任何有 pose.pos_m 的道具』，否则载荷自身会被误当接收体（实测 targets[0] 变成方块自己）。"
+        }
       }
     },
     "scene_world_frame": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "kind", "pose"],
+      "required": [
+        "id",
+        "kind",
+        "pose"
+      ],
       "description": "世界固定参考系：只有 site 一种形态（无质量、无自由关节、不参与碰撞 ⇒ 不会被推走，也不占台面）。pose 必须显式给出（世界系），不允许 `mount`。",
       "properties": {
         "id": {
@@ -406,79 +674,215 @@
           "pattern": "^[a-z][a-z0-9_]*$",
           "description": "帧名（= 生成模型里的 site 名，唯一；与既有对象重名即失败）。"
         },
-        "kind": {"const": "site"},
+        "kind": {
+          "const": "site"
+        },
         "pose": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["pos_m", "quat_wxyz"],
+          "required": [
+            "pos_m",
+            "quat_wxyz"
+          ],
           "properties": {
-            "pos_m": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}},
-            "quat_wxyz": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "number"}}
+            "pos_m": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "number"
+              }
+            },
+            "quat_wxyz": {
+              "type": "array",
+              "minItems": 4,
+              "maxItems": 4,
+              "items": {
+                "type": "number"
+              }
+            }
           }
         },
-        "note": {"type": "string"}
+        "note": {
+          "type": "string"
+        }
       }
     },
     "scene_sensor": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "kind", "source", "anchor"],
+      "required": [
+        "id",
+        "kind",
+        "source",
+        "anchor"
+      ],
       "properties": {
-        "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
-        "kind": {"enum": ["camera", "lidar", "imu"]},
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "kind": {
+          "enum": [
+            "camera",
+            "lidar",
+            "imu"
+          ]
+        },
         "source": {
-          "enum": ["vendor", "scene"],
+          "enum": [
+            "vendor",
+            "scene"
+          ],
           "description": "vendor=厂商 MJCF 自带（如 go2 的 imu site）；scene=由场景构建器按本声明注入。"
         },
         "anchor": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["object_kind", "name", "entity"],
+          "required": [
+            "object_kind",
+            "name",
+            "entity"
+          ],
           "description": "传感器挂在生成模型里的哪个对象上。object_kind=site/geom/body/camera，name 必须在生成后的模型里真实存在（--model 时校验）；entity 必须是本场景已声明的本体 id。",
           "properties": {
-            "object_kind": {"enum": ["camera", "site", "geom", "body"]},
-            "name": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$"},
-            "entity": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"}
+            "object_kind": {
+              "enum": [
+                "camera",
+                "site",
+                "geom",
+                "body"
+              ]
+            },
+            "name": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$"
+            },
+            "entity": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]*$"
+            }
           }
         },
-        "pos_m": {"$ref": "#/definitions/vec3"},
-        "look_at_m": {"$ref": "#/definitions/vec3"},
-        "fovy_deg": {"type": "number", "exclusiveMinimum": 1, "exclusiveMaximum": 179},
-        "num_rays": {"type": "integer", "minimum": 1},
-        "range_m": {"type": "number", "exclusiveMinimum": 0},
-        "mount_height_m": {"type": "number"},
-        "rate_hz": {"type": "number", "exclusiveMinimum": 0},
-        "note": {"type": "string"}
+        "pos_m": {
+          "$ref": "#/definitions/vec3"
+        },
+        "look_at_m": {
+          "$ref": "#/definitions/vec3"
+        },
+        "fovy_deg": {
+          "type": "number",
+          "exclusiveMinimum": 1,
+          "exclusiveMaximum": 179
+        },
+        "num_rays": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "range_m": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "mount_height_m": {
+          "type": "number"
+        },
+        "rate_hz": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "note": {
+          "type": "string"
+        }
       },
       "allOf": [
         {
           "description": "相机必须有安装位姿、注视点与垂直视场角（标定与内参校验需要，缺一即不可复算）。",
-          "if": {"properties": {"kind": {"const": "camera"}}, "required": ["kind"]},
-          "then": {"required": ["pos_m", "look_at_m", "fovy_deg"]}
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "camera"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "pos_m",
+              "look_at_m",
+              "fovy_deg"
+            ]
+          }
         },
         {
           "description": "雷达必须声明射线数与量程。",
-          "if": {"properties": {"kind": {"const": "lidar"}}, "required": ["kind"]},
-          "then": {"required": ["num_rays", "range_m"]}
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "lidar"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "num_rays",
+              "range_m"
+            ]
+          }
         },
         {
           "description": "IMU 必须声明采样率。",
-          "if": {"properties": {"kind": {"const": "imu"}}, "required": ["kind"]},
-          "then": {"required": ["rate_hz"]}
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "imu"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "rate_hz"
+            ]
+          }
         }
       ]
     },
     "scene_light": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "directional", "dir", "diffuse", "specular", "castshadow"],
+      "required": [
+        "name",
+        "directional",
+        "dir",
+        "diffuse",
+        "specular",
+        "castshadow"
+      ],
       "description": "字段名与 config/*_simulation_baseline.yaml 的 lights 段一致（复用既有声明式光源）。",
       "properties": {
-        "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
-        "directional": {"const": true},
-        "dir": {"$ref": "#/definitions/vec3"},
-        "diffuse": {"$ref": "#/definitions/vec3"},
-        "specular": {"$ref": "#/definitions/vec3"},
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "directional": {
+          "const": true
+        },
+        "dir": {
+          "$ref": "#/definitions/vec3"
+        },
+        "diffuse": {
+          "$ref": "#/definitions/vec3"
+        },
+        "specular": {
+          "$ref": "#/definitions/vec3"
+        },
         "castshadow": {
           "type": "boolean",
           "description": "默认 false（主光阴影会把台面染成与目标相近的色调、放大掩码）；改为 true 必须重跑视觉验收。"
@@ -490,9 +894,18 @@
       "additionalProperties": false,
       "title": "场景基线（iraf.scene-baseline/v1）",
       "description": "校验 scenes/<id>/baseline.yaml：参考姿态来源、各本体的机型基线引用与场景级验收阈值。阈值只来自声明与实测，禁止散落硬编码。",
-      "required": ["schema_version", "scene", "robots", "initial_state", "acceptance", "sensor_acceptance"],
+      "required": [
+        "schema_version",
+        "scene",
+        "robots",
+        "initial_state",
+        "acceptance",
+        "sensor_acceptance"
+      ],
       "properties": {
-        "schema_version": {"const": "iraf.scene-baseline/v1"},
+        "schema_version": {
+          "const": "iraf.scene-baseline/v1"
+        },
         "scene": {
           "$ref": "#/definitions/package_relative_path",
           "description": "必须指向本场景包自己的 scene.yaml（通常写 scene.yaml），不得指向别的包。"
@@ -503,8 +916,12 @@
           "description": "每个本体到机型基线的引用；键集合必须与 scene.yaml 的 robots[].id **完全一致**（两处声明不一致即失败）。",
           "additionalProperties": {
             "oneOf": [
-              {"$ref": "#/definitions/repo_relative_path"},
-              {"$ref": "#/definitions/unverified_ref"}
+              {
+                "$ref": "#/definitions/repo_relative_path"
+              },
+              {
+                "$ref": "#/definitions/unverified_ref"
+              }
             ]
           }
         },
@@ -514,8 +931,12 @@
           "description": "**联合世界**（多个本体装进同一份 MJCF、共享同一株植物）的机型绑定；键集合同样必须与 scene.robots[].id 完全一致。缺省不出现 ⇒ 单本体世界（默认行为逐位不变）。为什么单独一组：单本体产物与联合产物是**两个不同的模型**，验收数字不可互换（docs/debug/2026-09-24-joint-model-dog-arm.md §5/§10）。它同时声明了共享植物的角色与 owner（见各机型声明的 robot.plant 段）。",
           "additionalProperties": {
             "oneOf": [
-              {"$ref": "#/definitions/repo_relative_path"},
-              {"$ref": "#/definitions/unverified_ref"}
+              {
+                "$ref": "#/definitions/repo_relative_path"
+              },
+              {
+                "$ref": "#/definitions/unverified_ref"
+              }
             ]
           }
         },
@@ -526,25 +947,69 @@
           "additionalProperties": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["pose_source"],
+            "required": [
+              "pose_source"
+            ],
             "properties": {
               "pose_source": {
-                "enum": ["profile", "explicit", "unverified"],
+                "enum": [
+                  "profile",
+                  "explicit",
+                  "unverified"
+                ],
                 "description": "profile=参考姿态来自各本体 profile.home（不复制数字，避免两份事实）；explicit 时必须给出 joints；unverified=尚未确定，必须写 closed_by/reason。"
               },
-              "joints": {"type": "object", "minProperties": 1},
-              "closed_by": {"type": "string", "pattern": "^步骤 [0-9]{2}$"},
-              "reason": {"type": "string", "minLength": 1},
-              "note": {"type": "string"}
+              "joints": {
+                "type": "object",
+                "minProperties": 1
+              },
+              "closed_by": {
+                "type": "string",
+                "pattern": "^步骤 [0-9]{2}$"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "note": {
+                "type": "string"
+              }
             },
             "allOf": [
               {
-                "if": {"properties": {"pose_source": {"const": "explicit"}}, "required": ["pose_source"]},
-                "then": {"required": ["joints"]}
+                "if": {
+                  "properties": {
+                    "pose_source": {
+                      "const": "explicit"
+                    }
+                  },
+                  "required": [
+                    "pose_source"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "joints"
+                  ]
+                }
               },
               {
-                "if": {"properties": {"pose_source": {"const": "unverified"}}, "required": ["pose_source"]},
-                "then": {"required": ["closed_by", "reason"]}
+                "if": {
+                  "properties": {
+                    "pose_source": {
+                      "const": "unverified"
+                    }
+                  },
+                  "required": [
+                    "pose_source"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "closed_by",
+                    "reason"
+                  ]
+                }
               }
             ]
           }
@@ -562,13 +1027,34 @@
           ],
           "description": "场景级验收阈值；判据来自设计 §4（停靠 ≤30mm / ≤2deg、速度为零、抓取双指接触 + 抬升）。",
           "properties": {
-            "pose_tolerance_m": {"type": "number", "exclusiveMinimum": 0},
-            "min_lift_delta_m": {"type": "number", "exclusiveMinimum": 0},
-            "min_stable_hold_s": {"type": "number", "exclusiveMinimum": 0},
-            "dock_translation_error_max_m": {"type": "number", "exclusiveMinimum": 0},
-            "dock_yaw_error_max_deg": {"type": "number", "exclusiveMinimum": 0},
-            "max_speed_m_s": {"type": "number", "minimum": 0},
-            "timeout_s": {"type": "number", "exclusiveMinimum": 0}
+            "pose_tolerance_m": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "min_lift_delta_m": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "min_stable_hold_s": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "dock_translation_error_max_m": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "dock_yaw_error_max_deg": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "max_speed_m_s": {
+              "type": "number",
+              "minimum": 0
+            },
+            "timeout_s": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
           }
         },
         "sensor_acceptance": {
@@ -576,16 +1062,30 @@
           "additionalProperties": false,
           "title": "传感器验收阈值（步骤 14）",
           "description": "`scripts/verify_scene_sensors.py` 消费的全部阈值。**必需段**：缺段或缺键即声明非法，禁止脚本内写死默认值（AGENTS.md 1.3 / 铁律 5.3）。数值的实测依据写在 scenes/<id>/baseline.yaml 的注释里。",
-          "required": ["settle", "camera", "lidar", "imu"],
+          "required": [
+            "settle",
+            "camera",
+            "lidar",
+            "imu"
+          ],
           "properties": {
             "settle": {
               "type": "object",
               "additionalProperties": false,
               "description": "采样前的仿真推进窗口；用于证明状态可复现且准静态，不代表步态/平衡能力。",
-              "required": ["steps", "max_base_drift_m"],
+              "required": [
+                "steps",
+                "max_base_drift_m"
+              ],
               "properties": {
-                "steps": {"type": "integer", "minimum": 0},
-                "max_base_drift_m": {"type": "number", "exclusiveMinimum": 0}
+                "steps": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "max_base_drift_m": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
               }
             },
             "camera": {
@@ -599,11 +1099,27 @@
                 "min_nonblack_fraction"
               ],
               "properties": {
-                "model_vs_declaration_rel_error_max": {"type": "number", "minimum": 0},
-                "calibration_fovy_rel_error_max": {"type": "number", "exclusiveMinimum": 0},
-                "calibration_focal_rel_error_max": {"type": "number", "exclusiveMinimum": 0},
-                "resolution_tolerance_px": {"type": "integer", "minimum": 0},
-                "min_nonblack_fraction": {"type": "number", "exclusiveMinimum": 0, "maximum": 1}
+                "model_vs_declaration_rel_error_max": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "calibration_fovy_rel_error_max": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "calibration_focal_rel_error_max": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "resolution_tolerance_px": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "min_nonblack_fraction": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 1
+                }
               }
             },
             "lidar": {
@@ -623,20 +1139,51 @@
                 "elevation_rings_deg": {
                   "type": "array",
                   "minItems": 1,
-                  "items": {"type": "number", "minimum": -90, "maximum": 90}
+                  "items": {
+                    "type": "number",
+                    "minimum": -90,
+                    "maximum": 90
+                  }
                 },
                 "range_histogram_edges_m": {
                   "type": "array",
                   "minItems": 2,
                   "description": "量程直方图的边界（米）；首个边界可以是 0（从 0 m 起分箱），实现层强制严格递增。",
-                  "items": {"type": "number", "minimum": 0}
+                  "items": {
+                    "type": "number",
+                    "minimum": 0
+                  }
                 },
-                "ground_geoms": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
-                "min_points": {"type": "integer", "minimum": 1},
-                "max_miss_fraction": {"type": "number", "minimum": 0, "maximum": 1},
-                "min_ground_fraction": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
-                "workbench_geometry_tolerance_m": {"type": "number", "minimum": 0},
-                "ray_box_tolerance_m": {"type": "number", "exclusiveMinimum": 0}
+                "ground_geoms": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "min_points": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "max_miss_fraction": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "min_ground_fraction": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 1
+                },
+                "workbench_geometry_tolerance_m": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "ray_box_tolerance_m": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
               }
             },
             "imu": {
@@ -649,10 +1196,22 @@
                 "torque_max_abs_error_nm"
               ],
               "properties": {
-                "quat_norm_tolerance": {"type": "number", "minimum": 0},
-                "gyro_max_abs_error_rad_s": {"type": "number", "minimum": 0},
-                "acc_rel_error_max": {"type": "number", "exclusiveMinimum": 0},
-                "torque_max_abs_error_nm": {"type": "number", "exclusiveMinimum": 0}
+                "quat_norm_tolerance": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "gyro_max_abs_error_rad_s": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "acc_rel_error_max": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "torque_max_abs_error_nm": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
               }
             }
           }
@@ -662,23 +1221,46 @@
         "package_relative_path": {
           "type": "string",
           "pattern": "^(?!/)[A-Za-z0-9._][A-Za-z0-9._/-]*$",
-          "not": {"pattern": "\\.\\."},
+          "not": {
+            "pattern": "\\.\\."
+          },
           "description": "场景包内相对路径（副本必须保持可校验）。"
         },
         "repo_relative_path": {
           "type": "string",
           "pattern": "^(?!/)[A-Za-z0-9._][A-Za-z0-9._/-]*$",
-          "not": {"enum": ["pending", "tbd", "unknown", "?", "n/a", "unverified"]},
+          "not": {
+            "enum": [
+              "pending",
+              "tbd",
+              "unknown",
+              "?",
+              "n/a",
+              "unverified"
+            ]
+          },
           "description": "仓库相对路径；模糊占位不是路径，未交付只能写结构化的 {state: unverified, closed_by, reason}。"
         },
         "unverified_ref": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["state", "closed_by", "reason"],
+          "required": [
+            "state",
+            "closed_by",
+            "reason"
+          ],
           "properties": {
-            "state": {"const": "unverified"},
-            "closed_by": {"type": "string", "pattern": "^步骤 [0-9]{2}$"},
-            "reason": {"type": "string", "minLength": 1}
+            "state": {
+              "const": "unverified"
+            },
+            "closed_by": {
+              "type": "string",
+              "pattern": "^步骤 [0-9]{2}$"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         }
       }
@@ -688,16 +1270,27 @@
       "additionalProperties": false,
       "title": "场景脚本目录（iraf.scenario-catalog/v1）",
       "description": "校验 scenes/<id>/scenario.yaml：S2 脚本化场景（决策 6.A）。本步骤只声明与校验，执行器由步骤 18 的 scripts/scenario.py 交付；在它落地前不得在文档里声称该命令可用（AGENTS.md 6.4）。",
-      "required": ["schema_version", "scene", "simulation", "scenarios"],
+      "required": [
+        "schema_version",
+        "scene",
+        "simulation",
+        "scenarios"
+      ],
       "properties": {
-        "schema_version": {"const": "iraf.scenario-catalog/v1"},
+        "schema_version": {
+          "const": "iraf.scenario-catalog/v1"
+        },
         "scene": {
           "type": "string",
           "pattern": "^(?!/)[A-Za-z0-9._][A-Za-z0-9._/-]*$",
-          "not": {"pattern": "\\.\\."},
+          "not": {
+            "pattern": "\\.\\."
+          },
           "description": "必须指向本场景包自己的 scene.yaml。"
         },
-        "simulation": {"const": true},
+        "simulation": {
+          "const": true
+        },
         "scenarios": {
           "type": "object",
           "minProperties": 1,
@@ -705,14 +1298,29 @@
           "additionalProperties": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["description", "steps", "faults"],
+            "required": [
+              "description",
+              "steps",
+              "faults"
+            ],
             "properties": {
-              "description": {"type": "string", "minLength": 1},
-              "steps": {"type": "array", "minItems": 1, "items": {"$ref": "#/definitions/step"}},
+              "description": {
+                "type": "string",
+                "minLength": 1
+              },
+              "steps": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "$ref": "#/definitions/step"
+                }
+              },
               "faults": {
                 "type": "array",
                 "description": "故障注入项。期望终态必须来自 TaskFlow 既有状态词表，且 fake_success_forbidden 恒为 true（AGENTS.md 1.5：禁止伪造成功）。",
-                "items": {"$ref": "#/definitions/fault"}
+                "items": {
+                  "$ref": "#/definitions/fault"
+                }
               }
             }
           }
@@ -722,9 +1330,18 @@
         "step": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["id", "action", "robot", "params", "criteria"],
+          "required": [
+            "id",
+            "action",
+            "robot",
+            "params",
+            "criteria"
+          ],
           "properties": {
-            "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+            "id": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]*$"
+            },
             "action": {
               "enum": [
                 "stand",
@@ -745,13 +1362,19 @@
               "pattern": "^[a-z][a-z0-9_]*$",
               "description": "必须是 scene.yaml 里已声明的本体 id。"
             },
-            "params": {"type": "object", "description": "Skill 参数（只能收紧安全边界，不能放宽，铁律 1.3）。"},
+            "params": {
+              "type": "object",
+              "description": "Skill 参数（只能收紧安全边界，不能放宽，铁律 1.3）。"
+            },
             "pending_closed_by": {
               "type": "string",
               "pattern": "^步骤 [0-9]{2}$",
               "description": "该步用到的能力尚未交付时，必须显式登记关闭它的步骤；scene_check 会拒绝「声明了本体未具备的能力却没有待交付登记」的步骤。"
             },
-            "pending_reason": {"type": "string", "minLength": 1},
+            "pending_reason": {
+              "type": "string",
+              "minLength": 1
+            },
             "criteria": {
               "type": "object",
               "description": "该步的**成功判据**（不是「命令已发出」）。键名必须来自既有判据集合，避免同义字段扩散。",
@@ -771,23 +1394,45 @@
                   "require_payload_in_tray"
                 ]
               },
-              "additionalProperties": {"type": ["number", "boolean"]}
+              "additionalProperties": {
+                "type": [
+                  "number",
+                  "boolean"
+                ]
+              }
             }
           },
           "allOf": [
             {
               "description": "待交付登记必须成对出现（缺 reason 的占位等于没有登记）。",
-              "if": {"required": ["pending_closed_by"]},
-              "then": {"required": ["pending_reason"]}
+              "if": {
+                "required": [
+                  "pending_closed_by"
+                ]
+              },
+              "then": {
+                "required": [
+                  "pending_reason"
+                ]
+              }
             }
           ]
         },
         "fault": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["id", "at_step", "kind", "target", "expect"],
+          "required": [
+            "id",
+            "at_step",
+            "kind",
+            "target",
+            "expect"
+          ],
           "properties": {
-            "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+            "id": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]*$"
+            },
             "at_step": {
               "type": "string",
               "pattern": "^[a-z][a-z0-9_]*$",
@@ -802,11 +1447,17 @@
                 "estop"
               ]
             },
-            "target": {"type": "string", "minLength": 1},
+            "target": {
+              "type": "string",
+              "minLength": 1
+            },
             "expect": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["terminal_state", "fake_success_forbidden"],
+              "required": [
+                "terminal_state",
+                "fake_success_forbidden"
+              ],
               "properties": {
                 "terminal_state": {
                   "enum": [
@@ -819,7 +1470,9 @@
                   ],
                   "description": "TaskFlow 状态词表（docs/iraf-taskflow-policy-detailed-design.md §状态机）：非终态 SAFE_HOLD/HANDOVER_REQUIRED，终态 SUCCEEDED/FAILED/CANCELLED/SAFETY_STOP。"
                 },
-                "fake_success_forbidden": {"const": true}
+                "fake_success_forbidden": {
+                  "const": true
+                }
               }
             }
           }
