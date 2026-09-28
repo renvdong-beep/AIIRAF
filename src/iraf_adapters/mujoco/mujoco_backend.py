@@ -1036,10 +1036,69 @@ class MujocoBackend:
         with self._data_lock:
             before_lift_z = float(self.data.xpos[target_body][2])
         lifted = not lift_ms
+        # LIFT 段的**逐样本运行时追踪**（2026-09-28 §11.23(24) 的下一步）：
+        # 离线探针（含 guest 节拍仿真）已无法复现运行时的 `lifted=false`，
+        # 剩下的粒度只有"运行时抬升段逐样本"：载荷位姿 / 指腹 qpos+ctrl / 接触对与力随时间的演化，
+        # 用来回答"哪一步、哪个量先动"。stride 由 `IRAF_DEBUG_PICK_STRIDE` 给（默认 10）。
+        lift_samples = []
+        try:
+            lift_stride = max(1, int(os.environ.get("IRAF_DEBUG_PICK_STRIDE", "10")))
+        except ValueError:
+            lift_stride = 10
+        pad_geoms = [mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM,
+                                       str(gripper.get(key) or ""))
+                     for key in ("left_finger_geom", "right_finger_geom")]
+
+        def _lift_sampler(step, elapsed):
+            if os.environ.get("IRAF_DEBUG_PICK") != "1" or step % lift_stride != 0:
+                return
+            with self._data_lock:
+                contacts = []
+                for index in range(int(self.data.ncon)):
+                    contact = self.data.contact[index]
+                    geoms = {int(contact.geom1), int(contact.geom2)}
+                    if int(target_body) not in {int(self.model.geom_bodyid[g]) for g in geoms}:
+                        continue
+                    partner = next((g for g in geoms
+                                    if int(self.model.geom_bodyid[g]) != int(target_body)), None)
+                    if partner is None:
+                        continue
+                    force = np.zeros(6, dtype=float)
+                    try:
+                        mujoco.mj_contactForce(self.model, self.data, index, force)
+                    except Exception:
+                        pass
+                    contacts.append({
+                        "partner": (mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_BODY,
+                                                      int(self.model.geom_bodyid[partner]))
+                                    or ("#%d" % int(self.model.geom_bodyid[partner]))),
+                        "dist_m": round(float(contact.dist), 6),
+                        "force_n": round(float(np.linalg.norm(np.asarray(force[0:3], dtype=float))), 4)})
+                pads = [np.asarray(self.data.geom_xpos[g], dtype=float) for g in pad_geoms if g >= 0]
+                mid = (sum(pads) / len(pads)) if pads else np.zeros(3)
+                state = {}
+                for name in sorted(gripper.get("open_positions") or {}):
+                    jid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT,
+                                            self._model_name(str(name)))
+                    if jid < 0:
+                        continue
+                    act = next((i for i in range(int(self.model.nu))
+                                if int(self.model.actuator_trnid[i, 0]) == int(jid)), -1)
+                    state[str(name)] = {"qpos": round(float(self.data.qpos[int(self.model.jnt_qposadr[jid])]), 9),
+                                        "ctrl": (round(float(self.data.ctrl[act]), 9) if act >= 0 else None)}
+                row = {"step": int(step), "plant_step_index": int(self.plant.step_index),
+                       "payload_pos_m": [round(float(v), 6) for v in self.data.xpos[target_body]],
+                       "payload_quat_wxyz": [round(float(v), 9) for v in self.data.xquat[target_body]],
+                       "pad_mid_m": [round(float(v), 6) for v in mid],
+                       "gripper": state, "contacts": contacts}
+            lift_samples.append(row)
+            print("PICK_LIFT_TRACE " + json.dumps(row, ensure_ascii=False), flush=True)
+
         if lift_ms and force_ok:
             self._log_pick_phase("LIFT", target_body)
             self._move_trajectory(
-                gripper["lift_positions"], lift_ms, self._pick_ctrl_offsets("lift")
+                gripper["lift_positions"], lift_ms, self._pick_ctrl_offsets("lift"),
+                sampler=_lift_sampler,
             )
             if constraint_activated and gripper.get("lift_anchor_body"):
                 self._advance_with_grasp_anchor(0, target_body, left_body, right_body, gripper["lift_anchor_body"])
@@ -1095,6 +1154,9 @@ class MujocoBackend:
                 "grasp_mode": grasp_mode,
                 "approach_axis": [round(float(value), 9) for value in approach_axis],
                 "grasp_alignment": alignment,
+                # ⚠ LIFT 段逐样本追踪**不进 evidence**：`pick_object.output.json` 是
+                # `additionalProperties: false` 的契约（契约先行）⇒ 新字段必须先改契约才允许。
+                # 该追踪是**调试仪器**：只在 `IRAF_DEBUG_PICK=1` 时逐行打印（stdout 即产物）。
             },
         }
 
