@@ -39,7 +39,7 @@ REFERENCE_PHASE_KEYS = (
 )
 
 
-def build_reference_feedforward(model, reference, baseline, prefix=""):
+def build_reference_feedforward(model, reference, baseline, prefix="", gripper_positions=None):
     """在**给定模型**上重算四个参考姿态的重力前馈（相位 → {模型内关节名: ctrl 增量}）。
 
     为什么单独成函数（2026-09-24，联合世界）：增量 = τ_g / kp，对**执行器增益**极敏感，
@@ -61,6 +61,11 @@ def build_reference_feedforward(model, reference, baseline, prefix=""):
 
     契约（声明侧写 `feedforward_entry: build_reference_feedforward`）：
       输入 `model`     —— **运行期同款模型**（执行器增益必须与它一致；本场景即联合产物）
+           `gripper_positions` ——（可选）{相位: {**模型内**夹爪关节名: 值}}：**必须**给出。
+             为什么（2026-09-24 实测踩坑）：只设定臂关节时，夹爪 joint7/8 停在模型默认/关键帧状态，
+             闭合的指腹会**卡进 50 mm 方块**（实测指腹张开向量模长 0.020378284 m vs 张开 0.090362481 m，
+             指腹与方块重叠 −0.033339/−0.032634 m）⇒ 接触力把臂顶离姿态，量出来的是"手指卡住的动力学"，
+             不是"重力下的保持"。判别法就是量张开向量模长。
            `reference` —— `build_reference_poses` 的返回值（同一份参考姿态）
            `baseline`  —— `reference_solver.baseline` 指向的声明文档（读 hold_ms/tolerance_rad）
            `prefix`    —— 联合模型里附加本体的名字前缀（关节名 = prefix + 声明关节名）
@@ -83,11 +88,16 @@ def build_reference_feedforward(model, reference, baseline, prefix=""):
             continue
         # ⚠ 两种形状：`home` 是扁平 {关节名: 值}，其余是 {"joint_positions": {...}}
         raw = pose if phase == "home" else (pose.get("joint_positions") or {})
-        positions = {prefix + str(name): float(value) for name, value in (raw or {}).items()}
-        if not positions:
+        arm_here = {prefix + str(name): float(value) for name, value in (raw or {}).items()}
+        if not arm_here:
             continue
+        # `hold_positions`（要被**设定状态**的关节）＝ 臂关节 + 该相位的夹爪指令；
+        # 只对 `arm_here` 算补偿（夹爪通道的补偿口径由机型自己决定，不在这里静默加通道）。
+        hold_positions = dict(arm_here)
+        for name, value in ((gripper_positions or {}).get(phase) or {}).items():
+            hold_positions.setdefault(str(name), float(value))
         compensation, evidence = gravity_hold_ctrl(
-            model, list(positions), positions,
+            model, list(arm_here), hold_positions,
             hold_ms=int(hold_ms), tolerance_rad=float(tolerance_rad),
         )
         feedforward[phase] = compensation

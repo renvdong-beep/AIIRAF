@@ -225,6 +225,8 @@ def build_scene(
     bench_half = float(workbench_cfg.get("half_size_m", 0.8))
     bench_thickness = float(workbench_cfg.get("half_thickness_m", 0.025))
     arm_kp = float(scene_cfg.get("arm_position_kp", 200.0))
+    # 刚度下限系数来自声明（缺省值等于改动前的硬编码值 ⇒ 行为不变）；联合构建器读同一个键。
+    gain_ratio = float(scene_cfg.get("arm_position_kp_damping_ratio", 1.5))
     timestep = scene_cfg.get("timestep_s", 0.002)
     gravity = scene_cfg.get("gravity", "0 0 -9.81")
     finger_friction = scene_cfg.get("finger_friction", "2.0 0.05 0.001")
@@ -273,7 +275,7 @@ def build_scene(
                 # 这里既控制上限（避免过高增益在 2ms 步长下振荡），
                 # 又保证下限不低于该关节阻尼，否则关节无法收敛到目标角。
                 damping = damping_by_joint.get(name, 0.0)
-                kp_value = max(float(arm_kp), damping * 1.5)
+                kp_value = max(float(arm_kp), damping * gain_ratio)
                 actuator.set("kp", f"{kp_value:.6f}")
 
 

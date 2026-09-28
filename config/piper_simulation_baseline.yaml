@@ -71,6 +71,12 @@ scene:
   # gravity/timestep_s 决定动力学步进。
   inject_arm_position_gains: true
   arm_position_kp: 200.0
+  # 位置执行器刚度的**下限规则**：kp := max(arm_position_kp, 关节阻尼 × 本系数)。
+  # 依据（实测）：joint1 的 damping=300，若 kp 压到 200 则阻尼主导、臂到不了目标角（只能走到一半）。
+  # ⚠ 该规则**两个消费者**：臂自己场景（scripts/build_piper_pick_scene.py）与联合构建器
+  #   （scene_builder._apply_declared_position_gains）—— 联合模型里的臂必须与已验收的臂场景同一口径，
+  #   否则静态保持残余 0.029975223/0.036213257/0.206096435 rad（容差 0.001）会卡死抓取精度。
+  arm_position_kp_damping_ratio: 1.5
   timestep_s: 0.002
   gravity: "0 0 -9.81"
   finger_friction: "2.0 0.05 0.001"

@@ -502,6 +502,96 @@ def _inject_props(
     return injected, frames
 
 
+#: 附加本体位置执行器刚度口径的必需声明键（Profile `spec.model.position_gain.*`）。
+POSITION_GAIN_KEYS = ("baseline", "section", "joints_section")
+
+
+def _apply_declared_position_gains(root, child, profile_spec, robot_id):
+    """按声明把**位置执行器刚度**注入附加本体的子模型（数字与规则都来自声明，构建器不写数字）。
+
+    为什么必须（2026-09-24 实测，`docs/debug/2026-09-24-joint-model-dog-arm.md` §11.6）：
+    `--attach` 附加的是 Profile 声明的**厂商 MJCF**（kp = 10000/2000/500/50/20/5），而臂自己场景
+    注入的是**声明增益**（450/200/200/200/200/200）⇒ 两个模型里的臂**不是同一个动力学系统**：
+    厂商口径下 approach/grasp/lift 的静态保持残余 0.029975223 / 0.036213257 / 0.206096435 rad
+    （声明容差 0.001），臂场景同样四项 ≤3.8e-06 rad。臂自己场景的验收数字（抓取残差 9.39e-06 m）
+    只在**声明口径**下成立 ⇒ 联合模型必须同口径，否则"联合世界"验的不是同一台臂。
+
+    契约（Profile `spec.model.position_gain = {baseline, section, joints_section}`）：
+      · `baseline[section].inject_arm_position_gains`（bool，false ⇒ 不注入，沿用厂商口径）；
+      · `baseline[section].arm_position_kp` / `arm_position_kp_damping_ratio`；
+      · `baseline[joints_section].arm_joints`（参与注入的关节名）；
+      · 规则（与 `scripts/build_piper_pick_scene.py` 同一条，两处都读同一份声明）：
+        `kp := max(arm_position_kp, 关节阻尼 × ratio)`。
+    未声明该段 ⇒ 返回 `{"declared": False, ...}`（留痕为"沿用厂商口径"，不猜、不静默注入）。
+    """
+    declaration = (profile_spec.get("model") or {}).get("position_gain")
+    if not declaration:
+        return {"declared": False,
+                "note": "未声明 spec.model.position_gain ⇒ 沿用附加本体自带（厂商）执行器口径"}
+    for key in POSITION_GAIN_KEYS:
+        if not declaration.get(key):
+            _fail(EXIT_DECLARATION, "robots.%s.spec.model.position_gain 缺少 %s" % (robot_id, key))
+    baseline_path = Path(str(declaration["baseline"]))
+    if not baseline_path.is_absolute():
+        baseline_path = root / baseline_path
+    baseline_path = baseline_path.resolve()
+    if not baseline_path.is_file():
+        _fail(EXIT_REFERENCE, "robots.%s.spec.model.position_gain.baseline 不存在: %s"
+              % (robot_id, baseline_path))
+    document = _read_yaml(baseline_path, "robots.%s.spec.model.position_gain.baseline" % robot_id)
+    section = document.get(str(declaration["section"]))
+    if not isinstance(section, dict):
+        _fail(EXIT_REFERENCE, "robots.%s.spec.model.position_gain.section=%s 在 %s 里不是字典"
+              % (robot_id, declaration["section"], baseline_path))
+    if not section.get("inject_arm_position_gains"):
+        return {"declared": True, "baseline": str(baseline_path),
+                "inject_arm_position_gains": False,
+                "note": "声明里 inject_arm_position_gains=false ⇒ 沿用厂商执行器口径（不注入）"}
+    arm_kp = section.get("arm_position_kp")
+    ratio = section.get("arm_position_kp_damping_ratio")
+    joints_section = document.get(str(declaration["joints_section"])) or {}
+    joints = [str(item) for item in (joints_section.get("arm_joints") or [])]
+    for label, value in (("arm_position_kp", arm_kp), ("arm_position_kp_damping_ratio", ratio)):
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or float(value) <= 0:
+            _fail(EXIT_DECLARATION, "robots.%s 的执行器刚度声明 %s 必须是正数（在 %s 的 %s 段）"
+                  % (robot_id, label, baseline_path, declaration["section"]))
+    if not joints:
+        _fail(EXIT_DECLARATION, "robots.%s 的执行器刚度声明缺少关节清单（%s 的 %s.arm_joints）"
+              % (robot_id, baseline_path, declaration["joints_section"]))
+    damping = {str(joint.name): float(joint.damping)
+               for joint in (getattr(child, "joints", []) or [])}
+    applied = []
+    for actuator in (getattr(child, "actuators", []) or []):
+        name = str(getattr(actuator, "name", "") or "")
+        if name not in joints:
+            continue
+        # 位置执行器的判别：仿射偏置 biasprm[1] = −kp（厂商 MJCF 的 `<position>` 即此形状）。
+        # 不是位置执行器 ⇒ 显式失败，而不是"改了增益但没生效"。
+        # ⚠ 坑位：MjSpec 的 gainprm/biasprm 是 ndarray ⇒ 既不能用 `x or []`（真值歧义），
+        # 也不能逐元素赋值（不可变视图）⇒ 整段读成 list、改完再整体写回。
+        bias = [float(v) for v in actuator.biasprm]
+        if len(bias) < 2 or abs(bias[1]) < 1e-12:
+            _fail(EXIT_MODEL, "附加本体 %s 的关节 %s 的执行器 %s 不是位置执行器"
+                  "（biasprm[1]=%s），无法按声明注入刚度" % (robot_id, name, name, bias[:2]))
+        gain = [float(v) for v in actuator.gainprm]
+        previous = float(gain[0])
+        kp = max(float(arm_kp), float(damping.get(name, 0.0)) * float(ratio))
+        gain[0] = float(kp)
+        bias[1] = -float(kp)
+        actuator.gainprm = gain
+        actuator.biasprm = bias
+        applied.append({"joint": name, "damping": damping.get(name),
+                        "kp_before": previous, "kp_after": round(float(kp), 6)})
+    if not applied:
+        _fail(EXIT_MODEL, "附加本体 %s 声明了执行器刚度口径，但子模型里没有任何声明的关节执行器"
+              "（声明关节 %s）" % (robot_id, joints))
+    return {"declared": True, "baseline": str(baseline_path),
+            "inject_arm_position_gains": True,
+            "arm_position_kp": float(arm_kp), "arm_position_kp_damping_ratio": float(ratio),
+            "rule": "kp := max(arm_position_kp, 关节阻尼 × ratio)（与臂自己场景同一条规则）",
+            "applied": applied}
+
+
 def _attach_robots(staging, scene, root, attached_ids):
     """把**附加本体**合成进主模型（`MjSpec.attach(child, prefix, frame)`，库原生合成）。
 
@@ -536,6 +626,9 @@ def _attach_robots(staging, scene, root, attached_ids):
         child_path = root / str(model["file"])
         child = mujoco.MjSpec.from_file(str(child_path))
         child_dir = child_path.resolve().parent
+        # 执行器刚度口径（Profile 声明 → 按声明注入；未声明即留痕"沿用厂商口径"，不猜）：
+        # 联合模型里的臂必须与臂自己场景同一动力学口径，否则臂侧验收数字不可移植（§11.6）。
+        gain_record = _apply_declared_position_gains(root, child, profile_spec, robot_id)
         # 关节初值来自**声明的**两个来源（缺键即显式失败，不猜）：
         #   · `spec.home`：本体标称位形（臂的 joint1..6）
         #   · `spec.gripper.open_positions`：抓手的"张开"位形（臂的 joint7/8 在这段里声明）
@@ -620,6 +713,8 @@ def _attach_robots(staging, scene, root, attached_ids):
                         "child_dir": str(child_dir),
                         # 附加本体在**自己模型**里的名字清单（联合报告 name_map 的输入与留痕）
                         "declared_names": declared_names,
+                        # 执行器刚度口径的留痕（声明出处 / 逐关节 kp_before→kp_after / 规则）
+                        "position_gain": gain_record,
                         "home_joints": len(joint_values),
                         "keyframes_extended": len(list(getattr(spec, "keys", []) or []))})
     # ---- 关键帧：**覆写**为「主模型关键帧 + 各附加本体的声明初值」（所有本体附加完成后统一做）
@@ -857,20 +952,8 @@ def _joint_reference_resolution(root, solver, placement, robot_id, targets, mode
     if not isinstance(pad_offset, (int, float)) or isinstance(pad_offset, bool):
         _fail(EXIT_MODEL, "参考姿态求解结果缺少 finger_height_correction_m（= 该场景下的 "
               "pad_offset_m）：联合场景的 pad_offset 不是通用常数，必须随姿态一起重解")
-    feedforward = None
-    feedforward_evidence = None
-    if solver.get("feedforward_entry"):
-        ff_entry, _ff_path = _load_declared_callable(
-            root, {"module": solver["module"], "entry": solver["feedforward_entry"]},
-            robot_id, "reference_solver.feedforward_entry")
-        try:
-            feedforward, feedforward_evidence = ff_entry(model, reference, baseline_doc, prefix)
-        except Exception as error:  # noqa: BLE001 —— 含 core 的静态保持判据失败（残差即证据）
-            _fail(EXIT_MODEL, "重力前馈在联合模型上重算失败（%s）: %s"
-                  % (str(solver["feedforward_entry"]), error))
-        if not isinstance(feedforward, dict) or not feedforward:
-            _fail(EXIT_MODEL, "重力前馈重算必须返回非空字典（相位 → {模型内关节名: 增量}）")
     return {
+        "robot_id": str(robot_id),
         "solver": {"module": str(module_path), "entry": str(solver["entry"]),
                    "baseline": str(baseline_path),
                    "feedforward_entry": (str(solver["feedforward_entry"])
@@ -881,11 +964,35 @@ def _joint_reference_resolution(root, solver, placement, robot_id, targets, mode
         "local_target_m": [round(float(v), 9) for v in local],
         "local_xy_radius_m": round(float(np.linalg.norm(local[:2])), 9),
         "reference": reference,
+        "baseline_doc": baseline_doc,
         "resolved": resolved,
         "pad_offset_m": round(float(pad_offset), 9),
-        "feedforward": feedforward,
-        "feedforward_evidence": feedforward_evidence,
     }
+
+
+def _joint_reference_feedforward(root, solver, model, resolution, prefix, gripper_positions):
+    """按声明在**联合模型**上重算重力前馈；`gripper_positions` 必须给该相位的完整位置指令。
+
+    为什么与"参考姿态重解"分开：前馈要的输入是**四段位置指令的最终值**（臂关节来自重解、
+    夹爪关节来自该相位声明的开合），而"最终值"要在四段位置合并之后才确定。
+    为什么必须带夹爪（2026-09-24 实测踩坑）：只设臂关节时 joint7/8 停在默认/关键帧状态，
+    闭合的指腹卡进 50 mm 方块（张开向量模长 0.020378284 m vs 0.090362481 m）⇒ 接触力把臂顶离姿态，
+    量到的是"手指卡住的动力学"。判别法：量指腹张开向量模长。
+    """
+    if not solver.get("feedforward_entry"):
+        return None, None
+    ff_entry, _ff_path = _load_declared_callable(
+        root, {"module": solver["module"], "entry": solver["feedforward_entry"]},
+        robot_id=resolution["robot_id"], purpose="reference_solver.feedforward_entry")
+    try:
+        feedforward, evidence = ff_entry(model, resolution["reference"],
+                                        resolution["baseline_doc"], prefix, gripper_positions)
+    except Exception as error:  # noqa: BLE001 —— 含 core 的静态保持判据失败（残差即证据）
+        _fail(EXIT_MODEL, "重力前馈在联合模型上重算失败（%s）: %s"
+              % (str(solver["feedforward_entry"]), error))
+    if not isinstance(feedforward, dict) or not feedforward:
+        _fail(EXIT_MODEL, "重力前馈重算必须返回非空字典（相位 → {模型内关节名: 增量}）")
+    return feedforward, evidence
 
 
 def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, declared_names=None,
@@ -1042,10 +1149,17 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
     # 不是从臂自己场景继承来的（`inherited_from` 仍留痕，便于追溯）。
     out_gripper["reference_pose_source"] = "resolved_for_joint_model"
     feedforward_source = "inherited_from_arm_report"
-    if resolution["feedforward"]:
+    feedforward_evidence = None
+    # 前馈在**四段位置合并之后**算：`gripper_positions` 必须是该相位的完整位置指令
+    # （臂关节 = 重解值，夹爪 joint7/8 = 该相位声明的开合），否则量的是"手指卡在方块里"的动力学。
+    if reference_solver and reference_solver.get("feedforward_entry"):
+        gripper_positions = {phase: dict(out_gripper.get(positions_key) or {})
+                             for phase, positions_key in REFERENCE_POSE_PHASES}
+        feedforward, feedforward_evidence = _joint_reference_feedforward(
+            root, reference_solver, model, resolution, prefix, gripper_positions)
         gravity_feedforward = {}
         for phase, positions_key in REFERENCE_POSE_PHASES:
-            offsets = resolution["feedforward"].get(phase)
+            offsets = (feedforward or {}).get(phase)
             if not offsets:
                 continue
             declared_keys = set(out_gripper.get(positions_key) or {})
@@ -1071,12 +1185,15 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
     reference_pose_check = _reference_pose_check(
         model, out_gripper, targets,
         declared_pose_tolerance_m=report.get("pose_tolerance_m"))
+    # 侵入自检（同一次 FK）：指腹中点对了不等于姿态可用 —— 臂的其它 geom 可能已经插进方块。
+    reference_pose_clearance = _reference_pose_clearance_check(model, out_gripper, targets, prefix)
     return {"gripper": out_gripper, "targets": targets,
             "target_id": (targets[0]["id"] if targets else report.get("target_id")),
             "vision": report.get("vision"),
             "name_map": dict(sorted(name_map.items())),
             "name_map_facts": facts,
             "reference_pose_check": reference_pose_check,
+            "reference_pose_clearance_check": reference_pose_clearance,
             "reference_pose_resolution": {
                 "source": "resolved_for_joint_model",
                 "solver": resolution["solver"],
@@ -1087,7 +1204,7 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
                 "resolved_pad_offset_m": resolution["pad_offset_m"],
                 "inherited_pad_offset_m": inherited_pad_offset,
                 "feedforward_source": feedforward_source,
-                "feedforward_evidence": resolution["feedforward_evidence"],
+                "feedforward_evidence": feedforward_evidence,
                 "replaced_phases": replaced,
                 "note": ("参考姿态与 pad_offset 均由**联合模型 + 本 placement** 重解"
                          "（求解器按 `robots[].reference_solver` 声明调用）；"
@@ -1095,6 +1212,89 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
             },
             "inherited_from": str(Path(arm_report_path)), "rename_rule":
                 "改写成 <prefix>name 当且仅当 <prefix>name 在联合模型事实里、且 name 不在"}
+
+
+def _reference_pose_clearance_check(model, gripper, targets, prefix):
+    """重解姿态下"臂与目标几何是否侵入"的构建期判据（**无阈值**：接触即侵入）。
+
+    为什么必须（2026-09-24 实测）：`_reference_pose_check` 只核对**指腹中点**的位置（本场景 5.663e-06
+    通过），看不见"臂的其它 geom 已经插进方块"：
+      · `box_01_geom ↔ 未命名臂 geom` 重叠 **−0.01626 m**（0.52 m 摆放、指腹张开时）；
+      · 关键帧手指状态下 `box_01_geom ↔ piper_left/right_finger` 重叠 **−0.021008 / −0.02345 m**。
+    这种侵入会让接触力把臂顶离姿态（静态保持残余 0.0205~0.0522 rad，限 0.001），
+    而运行期只表现为"末端未到达目标抓取位姿 / 未确认已抓取"。
+
+    判据口径**与臂自己场景一致**（`scripts/build_piper_baseline.validate_grasp_pose`：
+    "张开时手指不与任何物体接触"）——因此不新造容差：**存在接触对即违反**，并把重叠量写成数字。
+    返回 `{"checked": True, "overlapping": bool, "violations": [...]}`；缺输入时 `{"skipped": 原因}`。
+    """
+    if not targets:
+        return {"skipped": "报告没有 targets[]，无法确定目标体"}
+    target = targets[0]
+    box_body = str(target.get("body") or "")
+    box_geom = str(target.get("geom") or "")
+    box_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, box_body) if box_body else -1
+    box_geom_id = (mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, box_geom)
+                   if box_geom else -1)
+    if box_id < 0 or box_geom_id < 0:
+        return {"skipped": "联合模型里找不到目标 body/geom: %r / %r" % (box_body, box_geom)}
+    positions = {str(joint): float(value)
+                 for joint, value in (gripper.get("grasp_positions") or {}).items()}
+    if not positions:
+        return {"skipped": "gripper 段没有 grasp_positions，无法做侵入检查"}
+    pads = {str(gripper.get(key) or "") for key in ("left_finger_geom", "right_finger_geom")}
+
+    def describe(geom_id):
+        """geom 的标签与归属：**必须**走 `geom_bodyid`，不能靠名字前缀。
+
+        实测坑位（2026-09-24）：联合模型里 `piper_link1..link6` 的 geom **全部没有名字**
+        （id 60–66；厂商 MJCF 只给 finger geom 命名，本构建器也只命名 finger geom），
+        于是"名字带 piper_ 前缀"的过滤把真正侵入方块的 `<未命名#66>(body=piper_link6)`
+        （与 `box_01_geom` 重叠 **−0.014516 m**）**静默跳过** —— 检查报"无接触"，实际有。
+        """
+        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, geom_id)
+        body_id = int(model.geom_bodyid[geom_id])
+        body = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body_id)
+        label = str(name) if name else "<未命名#%d>" % geom_id
+        return label, (str(body) if body else "<未命名 body#%d>" % body_id)
+
+    data = mujoco.MjData(model)
+    for joint, value in positions.items():
+        joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, joint)
+        if joint_id < 0:
+            return {"skipped": "联合模型里找不到关节 %r" % joint}
+        data.qpos[int(model.jnt_qposadr[joint_id])] = value
+    mujoco.mj_forward(model, data)
+    violations = []
+    for index in range(int(data.ncon)):
+        contact = data.contact[index]
+        ids = (int(contact.geom1), int(contact.geom2))
+        if box_geom_id not in ids:
+            continue
+        other_id = ids[1] if ids[0] == box_geom_id else ids[0]
+        label, body = describe(other_id)
+        # 只关心**附加本体**的 geom（按宿主 body 的前缀界定）；台面/道具/主本体的接触不属本判据。
+        if not body.startswith(str(prefix)):
+            continue
+        violations.append({"geom": label, "body": body, "is_pad": label in pads,
+                           "dist_m": round(float(contact.dist), 6)})
+    violations.sort(key=lambda item: item["dist_m"])
+    return {
+        "checked": True,
+        "target_body": box_body, "target_geom": box_geom,
+        "commanded_grasp": {key: round(value, 9) for key, value in positions.items()},
+        "arm_geoms_touching_target": violations,
+        "pad_touching_target": [item for item in violations if item["is_pad"]],
+        "non_pad_touching_target": [item for item in violations if not item["is_pad"]],
+        "overlapping": bool(violations),
+        "note": ("归属按 `geom_bodyid` → 宿主 body 的前缀判定（**不看 geom 名**：本场景臂的 link geom 无名，"
+                 "按名字过滤会漏掉真正侵入方块的那一个 —— 实测 `<未命名#66>(piper_link6)` 与 "
+                 "`box_01_geom` 重叠 −0.014516 m）。判据与臂自己场景一致"
+                 "（`validate_grasp_pose`：张开时手指不与任何物体接触）："
+                 "**存在接触对即几何侵入**（无阈值）。侵入会把臂顶离姿态 ⇒ 静态保持不达标，"
+                 "而运行期只表现为「未到达抓取位姿 / 未确认已抓取」；修法在求解器层"
+                 "（朝向约束 + 碰撞校验），见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.6。"),
+    }
 
 
 def _reference_pose_check(model, gripper, targets, declared_pose_tolerance_m=None):
@@ -1916,6 +2116,8 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
                                   "name_map": manipulation["name_map"],
                                   "name_map_facts": manipulation["name_map_facts"],
                                   "reference_pose_check": reference_pose_check,
+                                  "reference_pose_clearance_check":
+                                      manipulation["reference_pose_clearance_check"],
                                   "reference_pose_resolution":
                                       manipulation["reference_pose_resolution"]}
         report["manipulation_absent_reason"] = None
