@@ -1097,11 +1097,21 @@ def _start_plant_residency(runtimes, bindings, world):
             "声明的植物 owner %s 未在本场景装配（它的 hold 技能无法执行）" % owner_id, EXIT_REFERENCE)
     profile = state["profile"]
     stop_event = threading.Event()
+    # 让位闸门：owner **自己**执行场景步骤时必须停驻留（见 _yield_residency_to_step）
+    pause_event = threading.Event()
+    idle_event = threading.Event()
+    idle_event.set()
     records = []
 
     def loop():
         cycle = 0
         while not stop_event.is_set():
+            if pause_event.is_set():
+                # 让位：声明"我不在飞"，等 owner 自己的步骤跑完再继续
+                idle_event.set()
+                time.sleep(0.05)
+                continue
+            idle_event.clear()
             cycle += 1
             started = time.monotonic()
             status, error = "", ""
@@ -1116,6 +1126,7 @@ def _start_plant_residency(runtimes, bindings, world):
                 error = "" if status == "SUCCEEDED" else str((result or {}).get("reason", ""))
             except Exception as exc:  # noqa: BLE001 —— 留痕后停止驻留，让主流程看到"驻留已断"
                 status, error = "EXCEPTION", "%s: %s" % (type(exc).__name__, exc)
+            idle_event.set()
             records.append({"cycle": cycle, "status": status, "error": error,
                             "wall_seconds": time.monotonic() - started})
             if status != "SUCCEEDED":
@@ -1124,8 +1135,38 @@ def _start_plant_residency(runtimes, bindings, world):
     thread = threading.Thread(target=loop, name="plant-residency", daemon=True)
     thread.start()
     return {"owner": owner_id, "skill": skill, "duration_ms": int(duration_ms),
-            "stop_event": stop_event, "thread": thread, "records": records,
-            "state": state}
+            "stop_event": stop_event, "pause_event": pause_event, "idle_event": idle_event,
+            "thread": thread, "records": records, "state": state,
+            "paused_steps": [], "paused_seconds": 0.0}
+
+
+def _yield_residency_to_step(residency, robot_id):
+    """owner 自己执行场景步骤时让驻留**让位**；返回 {"paused": bool}。
+
+    为什么必须（2026-09-28 实测）：联合世界里 s02_dock 由 owner（四足）自己执行，而驻留线程同时在
+    跑 `stand` 循环 ⇒ **两条执行流并发驱动同一株植物、写同一批执行器**，结果取决于线程调度：
+    · 无驻留的探针 7 次逐位相同（0.028587600087094413，含 4 个忙循环加压下的 2 次）；
+    · 带驻留的 runner 三次给出 0.02812501214102655 / 0.028375962824781182 / 0.03056883116091061
+      —— 最后一次**越过声明上限 0.03**（把"机器负载"当成原因是误判，真因是这个竞态）。
+    让位后 owner 的步骤独占执行 ⇒ 结果可复现（与探针同口径）。
+    """
+    if not residency or str(robot_id) != str(residency.get("owner")):
+        return {"paused": False}
+    started = time.monotonic()
+    residency["pause_event"].set()
+    if not residency["idle_event"].wait(timeout=60.0):
+        raise ScenarioError(
+            "植物驻留未在 60 s 内让位（owner 上一轮 hold 未结束）：owner=%s"
+            % residency.get("owner"), EXIT_BACKEND)
+    residency["paused_seconds"] = float(residency.get("paused_seconds", 0.0)) + (
+        time.monotonic() - started)
+    return {"paused": True}
+
+
+def _resume_residency_after_step(residency, yield_record, step_id):
+    if residency and yield_record and yield_record.get("paused"):
+        residency["paused_steps"].append(str(step_id))
+        residency["pause_event"].clear()
 
 
 def _stop_plant_residency(residency):
@@ -1137,6 +1178,8 @@ def _stop_plant_residency(residency):
     records = residency["records"]
     summary = {"owner": residency["owner"], "skill": residency["skill"],
                "duration_ms": residency["duration_ms"], "cycles": len(records),
+               "paused_steps": list(residency.get("paused_steps") or []),
+               "paused_seconds": round(float(residency.get("paused_seconds", 0.0)), 6),
                "failed_cycles": [item for item in records if item["status"] != "SUCCEEDED"],
                "wall_seconds": round(sum(item["wall_seconds"] for item in records), 6),
                "thread_alive_after_stop": bool(residency["thread"].is_alive())}
@@ -1153,7 +1196,7 @@ def _stop_plant_residency(residency):
     return summary
 
 
-def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id):
+def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, residency=None):
     """按声明顺序执行；故障注入点拒绝下发，其后只允许声明为安全动作的步骤继续。"""
     records = []
     faults_by_step = {}
@@ -1254,7 +1297,13 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id):
             fired_faults = step_faults
             records.append(record)
             continue
-        records.append(_dispatch_step(runtime_state, step, correlation, key))
+        yield_record = _yield_residency_to_step(residency, step["robot"])
+        try:
+            executed = _dispatch_step(runtime_state, step, correlation, key)
+        finally:
+            _resume_residency_after_step(residency, yield_record, step["id"])
+        executed["plant_residency_yielded"] = bool(yield_record.get("paused"))
+        records.append(executed)
     return records
 
 
@@ -1414,7 +1463,8 @@ def run_scenario(scene_dir, scenario_name, *, report_path=None, require_injected
     # 显示会话：只渲染、不推进（推进仍是 owner 驻留线程的事）
     display_summary = _start_run_display(runtimes, bindings, world, display, render_hz)
     try:
-        steps = execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id)
+        steps = execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id,
+                              residency=residency)
     finally:
         display_summary = _stop_run_display(display_summary, seconds)
         residency_summary = _stop_plant_residency(residency)
