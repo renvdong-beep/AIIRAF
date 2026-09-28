@@ -1128,6 +1128,11 @@ class MujocoBackend:
         solver = {"iterations": 800, "step": 0.5, "tolerance_m": 1e-5}
 
         payload_geom_set = {int(item) for item in payload_geoms}
+        # "谁在载荷附近"：逐 geom 算与载荷中心的距离，报出最近的若干个（含 body 名）。
+        # 为什么需要（§11.23(13)/(14)）：接触对只在**穿透**时才出现，而"载体在贴近"这一事实
+        # 必须能看见（四足是力矩型、驻留线程在 s04 全程驱动它踏步 ⇒ 可能漂移过来撞掉载荷）。
+        neighbor_geoms = [index for index in range(int(self.model.ngeom))
+                          if int(self.model.geom_bodyid[index]) != int(payload_body)]
 
         def _snapshot():
             """实测：托盘顶面中心、载荷最低点、指腹中点，**以及接触对的身份/法向/力与载荷 6 维位姿**。
@@ -1173,7 +1178,22 @@ class MujocoBackend:
                                  or ("#%d" % body_id))
                     contact_pairs.append({"partner_geom": geom_name, "partner_body": body_name,
                                           "rows": rows})
+                neighbors = []
+                for index in neighbor_geoms:
+                    delta = np.asarray(self.data.geom_xpos[index], dtype=float) - payload_center
+                    distance = float(np.linalg.norm(delta))
+                    if distance > 0.30:
+                        continue
+                    body_id = int(self.model.geom_bodyid[index])
+                    neighbors.append({
+                        "geom": (mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, index)
+                                 or ("#%d" % index)),
+                        "body": (mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_BODY, body_id)
+                                 or ("#%d" % body_id)),
+                        "distance_m": round(distance, 6)})
+                neighbors.sort(key=lambda item: item["distance_m"])
                 return {"tray_top": top, "payload_low_z": low, "pad_mid": midpoint,
+                        "payload_neighbors": neighbors[:6],
                         "payload_center": payload_center,
                         "payload_pose": {"pos_m": [round(float(v), 6) for v in payload_center],
                                          "quat_wxyz": [round(float(v), 9) for v in payload_quat]},
@@ -1236,6 +1256,8 @@ class MujocoBackend:
                        "force_n_top": [round(value, 6) for value in forces[:2]],
                        "partner_bodies": sorted({pair["partner_body"]
                                                  for pair in snapshot["payload_contacts"]}),
+                       "nearest": [[item["body"], item["geom"], item["distance_m"]]
+                                   for item in snapshot["payload_neighbors"]],
                        "gripper": state, "note": note}
                 phase_trace.append(row)
                 if os.environ.get("IRAF_DEBUG_PLACE") == "1":
