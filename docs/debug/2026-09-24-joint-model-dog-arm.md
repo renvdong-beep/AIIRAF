@@ -813,9 +813,35 @@ lift 闭合 0.023）⇒ 修法是把它们一并传进前馈入口，而不是�
 回归测试：`tests/unit/test_joint_reference_clearance.py`（无名 geom 侵入必须报出；主本体接触不算侵入；
 缺目标时 `skipped`）。**同一个盲区也存在于臂侧** `validate_grasp_pose`（只查指尖/手指，不看 link）—— 登记为债。
 
+#### 11.7 附：抬高抓取点**不是**修法（实测否掉，2026-09-24）
+
+探针 `build/iraf-a6a14/joint_grasp_height_sweep_probe.py` → `joint-grasp-height-sweep-probe.json`
+（把目标 z 抬高 0..28 mm，每个取值量 link 侵入 / 指腹高度 / 门禁残差）：
+
+| 抬高 | pad_offset_m | link 侵入 | 指腹 z | 门禁 FK 残差 |
+| --- | --- | --- | --- | --- |
+| 0 mm | 0.011452003 | −0.014516 | 0.035430 | **5.603e-06** ✓ |
+| 4 mm | 0.007140908 | −0.014648 | 0.035122 | 3.993018e-03 ✗ |
+| 8 mm | 0.002824746 | −0.014781 | 0.034811 | 7.994479e-03 ✗ |
+| 12 mm | 0.000000000 | −0.014294 | 0.035993 | 1.1999379e-02 ✗ |
+| 20 mm | 0.000000000 | −0.010411 | 0.043984 | 1.9999265e-02 ✗ |
+| 28 mm | 0.000000000 | −0.004522 | 0.051974 | 2.7999150e-02 ✗ |
+
+两个后果一起看就否掉了这条路：
+1. **门禁口径不允许**：门禁算的是"指腹中点 − 轴·pad_offset − **方块中心**"，方块中心由物理（台面 + 半边长）决定，
+   抬高"抓取点"不能移动方块 ⇒ 抬高多少、残差就是多少（4/8/12 mm 对应 3.99e-03/7.99e-03/1.20e-02）；
+   同时 `balance_tip_clearance` 不再需要修正 ⇒ `pad_offset` 掉到 0，口径彻底失衡。
+2. **link6 也抬不出去**：即使抬 28 mm，侵入只从 −0.014516 缩到 −0.004522（仍为负）⇒ 侵入不是"高度不够"，
+   而是**姿态本身**（腕部俯仰）把 link6 送到方块里。
+
+⇒ 修法只能落在**姿态**上：让夹爪轴受**声明的** `grasp.approach_direction`（基线已声明 `[0, 0, 1]`，
+目前只被"预抓取偏移"与"指尖配平方向"消费、**没有**参与 IK 约束）约束 —— 即 UR5e 侧
+`GraspPoseSolver(pointing_direction=…)` 已经有的那种朝向约束。判据现成：`reference_pose_clearance_check.overlapping == false`
+且四姿态静态保持残余 ≤ `gravity_feedforward.tolerance_rad`。
+
 ## 12. 下一步
 
-0. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`。修完再声明 `feedforward_entry` 并判 s03。
+0. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。
 0b. **（2026-09-24 新增）** 附加本体的执行器刚度口径声明化（联合模型里的臂必须与臂自己场景同一口径：Profile 声明 → 构建器按声明注入 `kp = max(arm_position_kp, 关节阻尼×ratio)`）；验收判据 = §11.6 的静态保持残余表；通过后再把 `feedforward_entry` 加回 `reference_solver`。
 1. `s03_pick` 三项判据口径（`pose_tolerance_m` / `min_lift_delta_m` / `require_bilateral_contact`）
    → s04/s05 → `nominal` 全场景 → 两臂轮番运输。
