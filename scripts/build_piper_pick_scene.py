@@ -448,6 +448,17 @@ def build_scene(
     approach_hold = str(gripper_cfg.get("approach_hold") or "none")
     # 抬升路径语义（声明透传；缺省 direct 但**显式写入报告**，后端据此选择单段或两段回放）
     lift_path = str((config.get("grasp") or {}).get("lift_path") or "direct")
+    # 搬运段抓取约束（声明透传；缺省 enabled=false 但**显式写入报告**）
+    _carry = (config.get("grasp") or {}).get("carry_constraint") or {}
+    carry_constraint = {
+        "enabled": bool(_carry.get("enabled", False)),
+        "equality_name": str(_carry.get("equality_name") or ""),
+        "anchor_body": str(_carry.get("anchor_body") or ""),
+        "source": "piper_simulation_baseline.yaml:grasp.carry_constraint",
+    }
+    if carry_constraint["enabled"] and not (carry_constraint["equality_name"]
+                                            and carry_constraint["anchor_body"]):
+        raise ValueError("grasp.carry_constraint.enabled=true 时必须声明 equality_name 与 anchor_body")
     open_positions = dict(gripper_cfg.get("open") or DEFAULT_OPEN)
     closed_positions = dict(gripper_cfg.get("closed") or DEFAULT_CLOSED)
     lift_arm = dict(gripper_cfg.get("lift") or DEFAULT_LIFT)
@@ -503,6 +514,7 @@ def build_scene(
         "close_hold": close_hold,
         "approach_hold": approach_hold,
         "lift_path": lift_path,
+        "carry_constraint": carry_constraint,
         "closed_positions": _merge_arm_and_gripper({}, closed_positions),
         "lift_positions": _merge_arm_and_gripper(lift_arm, phase_gripper["lift"]),
         "min_lift_delta_m": float(acceptance.get("min_lift_delta_m", 0.02)),

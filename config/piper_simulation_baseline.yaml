@@ -55,6 +55,16 @@ grasp:
     open_m: 0.004         # 松开量（每侧），保证下探时不挤住载荷
     duration_ms: 2000     # 每个 regrasp 段的时长
   lift_path: direct
+  # **搬运段抓取约束**（声明；只作用于 `place_object` 的搬运段，**不**作用于 pick 的抬升）：
+  # 动机（§11.23(27)(28)(29)）：本几何下唯一撑得住抬升的是"斜夹过盈"，而它在搬运中沿夹口轴向
+  # 把载荷楔出去；纯摩擦路线已用 30+ 条量化否证穷尽。
+  # pick 侧保持**纯摩擦**（臂侧基线 `grasp.require_friction_lift: true` 是既有已验证声明，不动）；
+  # 搬运段改用**声明化的抓取约束**（MuJoCo `<connect>` 焊接 + mocap anchor），与臂侧世界同款机制。
+  # 证据留痕：`constraint_activated`（已在 pick/place 证据里）。
+  carry_constraint:
+    enabled: true
+    equality_name: box_01_lift_constraint
+    anchor_body: grasp_anchor
   # 双指指尖 geom 中点的目标抓取位置（世界坐标）。
   # z 不在此声明，必须由 workbench.top_z_m + target.half_size_m 推出，保证方块贴台面。
   finger_center_xy_m: [0.19, 0.0]

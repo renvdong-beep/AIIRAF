@@ -1556,6 +1556,35 @@ class MujocoBackend:
             return goal
         snapshot = _snapshot()
         start_row = _trace("start", snapshot, "进入放置段（应仍在夹持中）")
+        # 搬运段**抓取约束**（声明 `gripper.carry_constraint`）：把载荷焊在 mocap anchor 上、
+        # anchor 每步跟随指腹中点 ⇒ 搬运不依赖摩擦（动机见 §11.23(29)：斜夹过盈会被楔出，
+        # 纯摩擦路线已穷尽否证）。约束由联合构建器**惰性注入**（active="false"），此处按声明激活。
+        carry_cfg = gripper.get("carry_constraint") or {}
+        carry_equality_id = None
+        if bool(carry_cfg.get("enabled")):
+            name = str(carry_cfg.get("equality_name") or "")
+            anchor = str(carry_cfg.get("anchor_body") or "")
+            if not name or not anchor:
+                raise ValueError("carry_constraint.enabled=true 但缺少 equality_name/anchor_body")
+            carry_equality_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_EQUALITY, name)
+            if carry_equality_id < 0:
+                raise ValueError(
+                    "搬运约束 %s 不在联合模型里：构建器必须按声明注入 anchor+<connect>（见 "
+                    "scene_builder._inject_carry_constraint）" % name)
+            anchor_body_id = self._body_id(anchor)
+            if int(self.model.body_mocapid[anchor_body_id]) < 0:
+                raise ValueError("搬运约束的 anchor %s 不是 mocap body" % anchor)
+            with self._data_lock:
+                self.data.eq_active[carry_equality_id] = 1
+            # ⚠ 这里必须给**名字**（报告里的 body 名已带联合世界前缀），不能给 body id：
+            # `_move_trajectory` 的 anchor 钩子按名字解析（实测传 id 会报 body not found: 26）。
+            carry_anchor_kwargs = {
+                "anchor_body": anchor,
+                "anchor_follow": (str(gripper["left_finger_body"]),
+                                  str(gripper["right_finger_body"])),
+            }
+        else:
+            carry_anchor_kwargs = {}
         if not (start_row["finger_contacts"]["left"] and start_row["finger_contacts"]["right"]):
             raise ValueError(
                 "进入放置段时双侧指腹未同时接触载荷（依据已进证据 phase_trace[0]）⇒ 拒绝继续")
@@ -1563,21 +1592,24 @@ class MujocoBackend:
         if isinstance(transit, dict) and transit:
             self._move_trajectory(_carry_goal(transit, "transit"), phase_ms,
                                   ctrl_offsets=self._pick_ctrl_offsets("approach") or None,
-                                  sampler=_segment_sampler("place_transit_positions", segment_samples))
+                                  sampler=_segment_sampler("place_transit_positions", segment_samples),
+                                  **carry_anchor_kwargs)
             seg_row = _trace("after_transit", _snapshot(), "绕行航点（竖直抬升到托盘高度）")
             if not (seg_row["finger_contacts"]["left"] and seg_row["finger_contacts"]["right"]):
                 raise ValueError("绕行航点后失去夹持（载荷已脱离）⇒ 拒绝继续放置")
         # ①b 抬升到承载面上方（回放）
             self._move_trajectory(_carry_goal(above, "above"), phase_ms,
                                   ctrl_offsets=self._pick_ctrl_offsets("approach") or None,
-                                  sampler=_segment_sampler("place_above_positions", segment_samples))
+                                  sampler=_segment_sampler("place_above_positions", segment_samples),
+                                  **carry_anchor_kwargs)
         seg_row = _trace("after_above", _snapshot(), "抬升段结束（承载面上方）")
         if not (seg_row["finger_contacts"]["left"] and seg_row["finger_contacts"]["right"]):
             raise ValueError("抬升段后失去夹持（载荷已脱离）⇒ 拒绝继续放置")
         # ② 下行到位（回放）
             self._move_trajectory(_carry_goal(descend, "descend"), phase_ms,
                                   ctrl_offsets=self._pick_ctrl_offsets("grasp") or None,
-                                  sampler=_segment_sampler("place_descend_positions", segment_samples))
+                                  sampler=_segment_sampler("place_descend_positions", segment_samples),
+                                  **carry_anchor_kwargs)
         after_descend = _snapshot()
         _trace("after_descend", after_descend, "下行到位（载荷应正落在承载面上）")
         padding = float(gripper.get("pad_offset_m") or 0.0)
@@ -1585,6 +1617,10 @@ class MujocoBackend:
             np.linalg.norm(after_descend["pad_mid"]
                            - (after_descend["tray_top"] + np.asarray([0.0, 0.0, padding]))))
         # ③ 开夹爪（释放）
+        if carry_equality_id is not None:
+            # **释放约束后**才张开夹爪：这样"放下"由约束保证载荷留在承载面上，而不是靠夹爪
+            with self._data_lock:
+                self.data.eq_active[carry_equality_id] = 0
         self._set_gripper_controls(dict(gripper["open_positions"]))
         self._advance_for(phase_ms)
         # ---- ④ 抬离（回放构建期解）
@@ -1618,11 +1654,11 @@ class MujocoBackend:
             },
             "retreat_delta_m": round(float(final["pad_mid"][2] - after_descend["pad_mid"][2]), 9),
             "gripper_open_positions": {str(k): float(v) for k, v in gripper["open_positions"].items()},
-            # 合爪语义 + 被钉住的位姿（事实留痕：搬运仍靠真实摩擦，本项只作用于合爪阶段）
-            "gripper_close_hold": {"mode": close_hold, "pinned": hold_evidence},
-            # 接近/下压段的保持语义（同一类声明；搬运仍只靠真实摩擦）
-            "gripper_approach_hold": {"mode": approach_hold, "open_phase_pinned": open_hold_evidence},
+            # ⚠ `gripper_close_hold`/`gripper_approach_hold` 是 **pick_object** 的语义，
+            # 不是 place 的（本层曾是 pick 的局部变量被误写进 place 证据 ⇒ 潜伏 NameError，
+            # 直到搬运段第一次跑通才暴露）。它们的声明与留痕在各自技能的层里，不在此处。
             # 搬运段的夹爪语义 + 实际下发的"保持值"（证据：证明目标是实测 qpos，而不是报告里的 0.023）
+            "carry_constraint_activated": bool(carry_equality_id is not None),
             "gripper_carry": {"mode": carry_mode, "segment_targets": carry_targets,
                               "note": ("hold = 目标取**当前 ctrl**（保持夹紧力、指令零位移）。"
                                        "注意不能用 qpos 当目标：位置伺服的力 ∝ (target − qpos)，"
@@ -2380,7 +2416,7 @@ class MujocoBackend:
         return dict(offsets) if offsets else {}
 
     def _move_trajectory(self, target_positions, duration_ms, ctrl_offsets=None, sampler=None,
-                         pin_body=None):
+                         pin_body=None, anchor_body=None, anchor_follow=()):
         # `pin_body`（可选）：**逐步**把该 body 的 freejoint 复位到本段开始时的位姿。
         # 用途（2026-09-28 §11.23(21)）：接近/下压段的刚性指腹会把 0.39 N 的载荷推开 1.44 cm，
         # 之后的合爪/抬升就丢了它 —— 真机上这段位移由**台面摩擦**抵住，本模型的台面摩擦
@@ -2432,10 +2468,23 @@ class MujocoBackend:
                        int(self.model.jnt_dofadr[pin_free]),
                        np.asarray(self.data.xpos[pin_body], dtype=float).copy(),
                        np.asarray(self.data.xquat[pin_body], dtype=float).copy())
+        anchor_mocap = None
+        if anchor_body is not None:
+            anchor_id = self._body_id(str(anchor_body))
+            anchor_mocap = int(self.model.body_mocapid[anchor_id])
+            if anchor_mocap < 0:
+                raise ValueError("搬运约束的 anchor 必须是 mocap body: " + str(anchor_body))
         for step in range(1, steps + 1):
             elapsed = step * float(self.model.opt.timestep)
             values = quintic_position(starts, [commands[name] for name in names], duration_ms / 1000.0, elapsed)
             self._set_controls(dict(zip(names, values)))
+            if anchor_mocap is not None and anchor_follow:
+                # 约束焊接的 anchor 跟随**指腹中点**（与 _advance_with_grasp_anchor 同口径）
+                with self._data_lock:
+                    left = np.asarray(self.data.xpos[self._body_id(str(anchor_follow[0]))], dtype=float)
+                    right = np.asarray(self.data.xpos[self._body_id(str(anchor_follow[1]))], dtype=float)
+                    self.data.mocap_pos[anchor_mocap] = (left + right) / 2.0
+                    self.data.mocap_quat[anchor_mocap] = (1.0, 0.0, 0.0, 0.0)
             if pin is not None:
                 with self._data_lock:
                     self.data.qpos[pin[0]:pin[0] + 3] = pin[2]
@@ -2693,6 +2742,15 @@ class MujocoBackend:
                 if raw_gripper.get(key) is not None:
                     gripper[key] = {str(name): float(value)
                                     for name, value in dict(raw_gripper[key]).items()}
+            # 搬运段抓取约束（构建期按声明写入报告）：**透传**（白名单漏掉就静默失效 —— 本会话已踩四次）
+            if raw_gripper.get("carry_constraint") is not None:
+                cc = dict(raw_gripper["carry_constraint"])
+                gripper["carry_constraint"] = {
+                    "enabled": bool(cc.get("enabled", False)),
+                    "equality_name": str(cc.get("equality_name") or ""),
+                    "anchor_body": str(cc.get("anchor_body") or ""),
+                    **( {"source": str(cc["source"])} if cc.get("source") else {} ),
+                }
             # regrasp 声明（构建期按声明写入报告）：**透传**；enabled=true 时缺两段位置指令即由
             # pick_object 显式拒绝（见 .hermes/plans/2026-09-28-pick-regrasp.md）。
             if raw_gripper.get("regrasp") is not None:

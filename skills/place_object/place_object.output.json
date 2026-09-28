@@ -53,6 +53,10 @@
           "description": "实际下发的夹爪张开位形（模型内关节名 → 值）。",
           "additionalProperties": {"type": "number"}
         },
+        "carry_constraint_activated": {
+          "type": "boolean",
+          "description": "搬运段是否按声明启用了**抓取约束**（MuJoCo `<connect>` 焊接 + mocap anchor）。动机：本几何下唯一撑得住抬升的斜夹过盈会在搬运中把载荷楔出，纯摩擦路线已被 30+ 条量化否证穷尽；搬运段改用声明化约束，与臂侧世界同款机制（见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.23(29)）。"
+        },
         "place_mode": {
           "enum": ["declared_offset"],
           "description": "放置点推法：declared_offset = 接收体顶面中心 + 声明的法向间隙（本场景唯一的合法模式）。"

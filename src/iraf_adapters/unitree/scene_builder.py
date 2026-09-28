@@ -760,6 +760,86 @@ def _apply_world_physics(staging, scene, required):
                      "与附加本体自己世界的默认值不同 ⇒ 结论不可跨世界引用（§11.23）")}
 
 
+def _inject_carry_constraint(staging, scene, root):
+    """把**搬运段抓取约束**（mocap anchor + `<connect>` 焊接）注入合成产物。
+
+    为什么（2026-09-28 §11.23(29)，使用者裁定走"声明化搬运约束"）：本几何下唯一撑得住抬升的抓取是
+    "斜夹过盈"，而它在搬运中沿夹口轴向把载荷楔出去；纯摩擦路线已被 30+ 条量化否证穷尽。
+    与臂侧世界**同款机制**（`build/models/piper-pick-scene.xml` 里同名 `<connect ... active="false">`）：
+    约束默认**惰性**（`active="false"`），只有后端在报告声明 `gripper.carry_constraint.enabled=true`
+    且抓取力达标时才置 `eq_active=1`；证据里已留 `constraint_activated`。
+    名字与启用与否**全部来自声明**（臂侧报告的 `gripper.carry_constraint`），构建器不写死。
+    """
+    declaration = None
+    for robot in (scene.get("robots") or []):
+        report_ref = robot.get("manipulation_report")
+        if not report_ref:
+            continue
+        report_path = Path(str(report_ref))
+        if not report_path.is_absolute():
+            report_path = root / report_path
+        if not report_path.is_file():
+            continue
+        try:
+            document = json.loads(report_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        candidate = ((document.get("gripper") or {}).get("carry_constraint") or {})
+        if candidate.get("enabled"):
+            declaration = candidate
+            break
+    if not declaration:
+        return None
+    equality_name = str(declaration.get("equality_name") or "")
+    anchor_name = str(declaration.get("anchor_body") or "")
+    if not equality_name or not anchor_name:
+        _fail(EXIT_DECLARATION, "carry_constraint 声明缺少 equality_name / anchor_body")
+    # anchor 位置 = 该目标在**本场景**里的位姿（不能用臂侧报告里的坐标：那是臂自己世界的）
+    target_id = None
+    for robot in (scene.get("robots") or []):
+        report_ref = robot.get("manipulation_report")
+        if not report_ref:
+            continue
+        report_path = Path(str(report_ref))
+        if not report_path.is_absolute():
+            report_path = root / report_path
+        if report_path.is_file():
+            target_id = json.loads(report_path.read_text(encoding="utf-8")).get("target_id")
+            if target_id:
+                break
+    prop = next((item for item in (scene.get("props") or [])
+                 if item.get("id") == target_id or item.get("body") == target_id), None)
+    if prop is None or not (prop.get("pose") or {}).get("pos_m"):
+        _fail(EXIT_REFERENCE, "carry_constraint 需要目标 %r 在场景 props 里声明 pose.pos_m（anchor 位置）"
+              % (target_id,))
+    anchor_pos = [float(v) for v in prop["pose"]["pos_m"]]
+    tree = ET.parse(str(staging))
+    xml_root = tree.getroot()
+    world = xml_root.find("worldbody")
+    if world is None:
+        _fail(EXIT_MODEL, "合成产物没有 worldbody，无法注入 carry_constraint 的 anchor")
+    if xml_root.find(".//body[@name='%s']" % anchor_name) is None:
+        ET.SubElement(world, "body", {"name": anchor_name,
+                                      "pos": _numbers(anchor_pos, "%.9f"), "mocap": "true"})
+    equality = xml_root.find("equality")
+    if equality is None:
+        equality = ET.SubElement(xml_root, "equality")
+    if equality.find("connect[@name='%s']" % equality_name) is None:
+        ET.SubElement(equality, "connect", {
+            "name": equality_name,
+            "body1": anchor_name,
+            "body2": str(target_id),
+            "anchor": _numbers(anchor_pos, "%.9f"),
+            "active": "false",
+            "solref": "0.01 1",
+            "solimp": "0.9 0.95 0.01",
+        })
+    tree.write(str(staging), encoding="utf-8", xml_declaration=False)
+    return {"equality_name": equality_name, "anchor_body": anchor_name,
+            "anchor_pos_m": anchor_pos, "active": False,
+            "source": "gripper.carry_constraint（臂侧报告声明）"}
+
+
 def _read_world_physics(staging):
     """从**编译后的模型**读回生效口径（证据用：声明 ≠ 生效时要能立刻看见）。"""
     model = mujoco.MjModel.from_xml_path(str(staging))
@@ -974,7 +1054,7 @@ def _attach_robots(staging, scene, root, attached_ids):
 #: `module`（仓内脚本路径）、`entry`（求解入口函数名）、`baseline`（该求解器的声明配置）。
 #: gripper 段里的**语义开关**（非对象名，不参与前缀改写）：见 _joint_manipulation
 SEMANTIC_GRIPPER_KEYS = ("close_hold", "approach_hold", "carry_gripper", "lift_path",
-                         "regrasp")
+                         "regrasp", "carry_constraint")
 
 #: `robots[].reference_solver` 的必需键（缺键或缺文件即显式失败，不给默认值）：
 REFERENCE_SOLVER_KEYS = ("module", "entry", "baseline")
@@ -2411,6 +2491,8 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
     injections["attached_robots"] = attached_robots
     # 物理口径：联合世界必须由**声明**给出，不得继承厂商模型 <option>（§11.23）
     world_physics = _apply_world_physics(staging, scene, required=bool(attach))
+    # 搬运段抓取约束（声明驱动，惰性注入；见 _inject_carry_constraint）
+    carry_constraint_injection = _inject_carry_constraint(staging, scene, root) if attach else None
     if world_physics is not None:
         world_physics["effective"] = _read_world_physics(staging)
         # 读回比对：数值按 1e-9 容差比（声明 1 与读回 1.0 是同一个值，不能当成不一致），
@@ -2468,6 +2550,8 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
     report = {
         # 物理口径（声明 + 实测 + 不一致检查）：见 _apply_world_physics / §11.23
         "world_physics": world_physics,
+        # 搬运段抓取约束的注入事实（惰性；由后端按报告声明激活）
+        "carry_constraint": carry_constraint_injection,
         # 沿用既有场景报告契约（键集合不变，新增字段见下），emit_backend_config.py 可直接消费。
         "schema_version": REPORT_SCHEMA_VERSION,
         "report_kind": REPORT_KIND,
