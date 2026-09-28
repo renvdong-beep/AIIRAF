@@ -452,13 +452,28 @@ def build_scene(
     _carry = (config.get("grasp") or {}).get("carry_constraint") or {}
     carry_constraint = {
         "enabled": bool(_carry.get("enabled", False)),
+        # **约束类型**（2026-09-28 §11.23(41)）：`connect` = 球铰，只约束平移、**允许载荷自由旋转**
+        # ⇒ 实测载荷在夹口里翻滚/楔出（丢手前接触对只有两个指腹、力 18→42 N 抬升 5 帧后 0.1 s
+        # 下坠 11 cm）。要真正"搬运"必须约束**旋转** ⇒ `weld`（6 自由度刚性焊）。
+        "type": str(_carry.get("type") or ""),
         "equality_name": str(_carry.get("equality_name") or ""),
         "anchor_body": str(_carry.get("anchor_body") or ""),
+        # 约束刚度（solref/solimp）：**必须由声明给出**（缺声明即失败，不给实现层默认值）
+        "solref": [float(v) for v in (_carry.get("solref") or [])],
+        "solimp": [float(v) for v in (_carry.get("solimp") or [])],
         "source": "piper_simulation_baseline.yaml:grasp.carry_constraint",
     }
     if carry_constraint["enabled"] and not (carry_constraint["equality_name"]
                                             and carry_constraint["anchor_body"]):
         raise ValueError("grasp.carry_constraint.enabled=true 时必须声明 equality_name 与 anchor_body")
+    if carry_constraint["enabled"] and (len(carry_constraint["solref"]) != 2
+                                       or len(carry_constraint["solimp"]) != 3):
+        raise ValueError("grasp.carry_constraint 必须声明 solref（2 个数）与 solimp（3 个数）："
+                         "约束刚度不得由实现层硬编码")
+    if carry_constraint["enabled"] and carry_constraint["type"] not in ("connect", "weld"):
+        raise ValueError("grasp.carry_constraint.type 必须是 connect 或 weld（实际: %r）；"
+                         "connect 是球铰，只约束平移 ⇒ 载荷会在夹口里翻滚"
+                         % carry_constraint["type"])
     open_positions = dict(gripper_cfg.get("open") or DEFAULT_OPEN)
     closed_positions = dict(gripper_cfg.get("closed") or DEFAULT_CLOSED)
     lift_arm = dict(gripper_cfg.get("lift") or DEFAULT_LIFT)

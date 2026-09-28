@@ -42,6 +42,15 @@ spec:
   model:
     vendor: agilex_piper
     file: vendor/agilex_piper/piper_description/mujoco_model/piper_description.xml
+    # **自碰撞排除**（2026-09-28 §11.23(41)，实测）：厂商 MJCF 的**安装基座**是挂在 `world`
+    # 下的网格（合成时并入主世界），与首节连杆 `link1` 的网格**设计上必然重叠**（实测 6 mm）；
+    # `link1` 是铰链子体 ⇒ MuJoCo 不跳过这一对 ⇒ 在联合世界冻结的 `impratio=100 / cone=elliptic`
+    # 口径下放大成 **9.21×10⁸ N** 的接触力，把整条臂连同 joint1 的铅垂轴旋转钉死
+    # （joint1 指令 0.749801 rad 只走到 0.017582 = 2.3%，而同臂其余关节全部到位）。
+    # 只排除这一对后同一指令 Δq 0.000424 → 0.058217 rad（137 倍，与"接触全关"完全同值）。
+    # 名字用**声明名**，注入时按"前缀存在才加前缀"的同一规则解析成联合模型名。
+    self_collision_excludes:
+      - [world, link1]
     # 本体的"根" body（挂载参考系的宿主）；机械臂无挂载系 ⇒ 只声明根
     trunk_body: link1
     # 联合模型里的臂**执行器刚度口径**：值与规则都不在这里复制，从臂侧基线配置读（单一事实来源）。

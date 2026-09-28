@@ -474,6 +474,7 @@ def _inject_props(
             )
             record["mount"] = {"frame": frame_name, "entity": entity, "body": body_name}
             record["pose_source"] = "mount_frame"
+            record["has_free_joint"] = False
             record["position_m"] = pos
         else:
             position = _vec3(pose["pos_m"], "%s.pose.pos_m" % label)
@@ -485,7 +486,13 @@ def _inject_props(
                 pos=_numbers(position, "%.9f"),
                 quat=_numbers(quaternion, "%.9f"),
             )
-            ET.SubElement(body, "freejoint", name=body_name + "_free")
+            # **静态支撑体**（声明 `static: true`，2026-09-28 §11.23(41)）：注入到 worldbody 但
+            # **不带 freejoint** ⇒ 刚接到世界。为什么需要：把交接面抬到台面之上必须有支撑结构，
+            # 而带 freejoint 的台架会直接自由落体；静态体的位姿完全确定 ⇒ 构建期按名义位姿解出的
+            # 放置四段在运行期逐位有效（自由体托盘会有落体/被推动的位姿漂移）。
+            static = bool(prop.get("static", False))
+            if not static:
+                ET.SubElement(body, "freejoint", name=body_name + "_free")
             ET.SubElement(
                 body,
                 "geom",
@@ -495,7 +502,8 @@ def _inject_props(
                 friction=str(prop["friction"]),
                 **attributes,
             )
-            record["pose_source"] = "world"
+            record["pose_source"] = "world_static" if static else "world"
+            record["has_free_joint"] = (not static)
             record["position_m"] = position
             record["quaternion_wxyz"] = quaternion
         injected.append(record)
@@ -802,6 +810,24 @@ def _inject_carry_constraint(staging, scene, root):
     anchor_name = str(declaration.get("anchor_body") or "")
     if not equality_name or not anchor_name:
         _fail(EXIT_DECLARATION, "carry_constraint 声明缺少 equality_name / anchor_body")
+    # **约束类型**必须由声明给出（fail-closed，不给实现层默认值；2026-09-28 §11.23(41)）：
+    # `connect` = 球铰，只约束平移 ⇒ 实测载荷会在夹口里翻滚/楔出（丢手前接触对只有两个指腹、
+    # 力 18→42 N 抬升 5 帧后 0.1 s 下坠 11 cm）；`weld` = 6 自由度刚性焊 ⇒ 位置与姿态同时跟随。
+    constraint_type = str(declaration.get("type") or "")
+    if constraint_type not in ("connect", "weld"):
+        _fail(EXIT_DECLARATION,
+              "carry_constraint.type 必须是 connect 或 weld（实际 %r）：搬运要不要约束**旋转**"
+              "必须由声明决定，不得由构建器猜（connect 是球铰 ⇒ 载荷会翻滚）" % constraint_type)
+    # 约束刚度同样必须由声明给出（2026-09-28 §11.23(41)：原先硬编码在本函数里，违反"值进声明"）。
+    solref = declaration.get("solref")
+    solimp = declaration.get("solimp")
+    if (not isinstance(solref, (list, tuple)) or len(solref) != 2
+            or not isinstance(solimp, (list, tuple)) or len(solimp) != 3):
+        _fail(EXIT_DECLARATION,
+              "carry_constraint 必须声明 solref（2 个数）与 solimp（3 个数）："
+              "实测 solref 0.01 太软，s04 摆基座时载荷相对指腹在 xy 漂移 ~3 cm")
+    solref_text = "%.9f %.9f" % (float(solref[0]), float(solref[1]))
+    solimp_text = "%.9f %.9f %.9f" % (float(solimp[0]), float(solimp[1]), float(solimp[2]))
     # anchor 位置 = 该目标在**本场景**里的位姿（不能用臂侧报告里的坐标：那是臂自己世界的）
     target_id = None
     for robot in (scene.get("robots") or []):
@@ -832,18 +858,28 @@ def _inject_carry_constraint(staging, scene, root):
     equality = xml_root.find("equality")
     if equality is None:
         equality = ET.SubElement(xml_root, "equality")
-    if equality.find("connect[@name='%s']" % equality_name) is None:
-        ET.SubElement(equality, "connect", {
+    if equality.find("%s[@name='%s']" % (constraint_type, equality_name)) is None:
+        attributes = {
             "name": equality_name,
             "body1": anchor_name,
             "body2": str(target_id),
-            "anchor": _numbers(anchor_pos, "%.9f"),
             "active": "false",
-            "solref": "0.01 1",
-            "solimp": "0.9 0.95 0.01",
-        })
+            "solref": solref_text,      # ← 声明值（不再硬编码）
+            "solimp": solimp_text,
+        }
+        if constraint_type == "connect":
+            attributes["anchor"] = _numbers(anchor_pos, "%.9f")
+        else:
+            # `weld` 的 `anchor` 是 **body2（载荷）局部系**里的焊点 ⇒ 取载荷原点；
+            # 不给 `relpose` ⇒ body1（mocap anchor）的位姿须等于载荷位姿：后端在激活时把 anchor
+            # 摆到载荷当前位姿，之后按「腕部姿态 ⊗ 激活瞬间相对姿态」整体刚性跟随（见 §11.23(41)）。
+            attributes["anchor"] = "0 0 0"
+        ET.SubElement(equality, constraint_type, attributes)
     tree.write(str(staging), encoding="utf-8", xml_declaration=False)
     return {"equality_name": equality_name, "anchor_body": anchor_name,
+            "type": constraint_type,
+            "solref": [float(solref[0]), float(solref[1])],
+            "solimp": [float(solimp[0]), float(solimp[1]), float(solimp[2])],
             "anchor_pos_m": anchor_pos, "active": False,
             "source": "gripper.carry_constraint（臂侧报告声明）"}
 
@@ -1056,6 +1092,77 @@ def _attach_robots(staging, scene, root, attached_ids):
                                  "迁到相对表达需进一步研究 MjSpec 的资产搬迁语义")
     Path(staging).write_text(spec.to_xml(), encoding="utf-8")
     return records
+
+
+#: 附加本体**自碰撞排除**的声明键（Profile `spec.model.self_collision_excludes`）。
+#: 为什么必须有（2026-09-28 §11.23(41)，实测）：厂商 Piper MJCF 里**安装基座**是挂在 `world`
+#: 下的网格，与首节连杆 `link1` 的网格**设计上必然重叠**（本臂实测 6 mm）。该自重叠在本场景
+#: 冻结的 `impratio=100 / cone=elliptic` 口径下产生 **9.21×10⁸ N** 的接触力，把整条臂连同
+#: joint1 的铅垂轴旋转一起钉死：joint1 指令 0.749801 rad 只走到 0.017582（2.3%），而同臂其余
+#: 关节全部到位。**只排除这一对**后同一指令 Δq 从 0.000424 → 0.058217 rad（137 倍），与
+#: "接触全关"完全同值 ⇒ 根因即此。声明形状：`[[body1, body2], ...]`（名字用**声明名**，
+#: 注入时按"前缀存在才加前缀"的同一规则解析成联合模型名）。
+def _declared_self_collision_excludes(profile_spec, robot_id):
+    section = (profile_spec.get("model") or {}).get("self_collision_excludes")
+    if section is None:
+        return []
+    if not isinstance(section, list) or not section:
+        _fail(EXIT_DECLARATION,
+              "robots.%s.spec.model.self_collision_excludes 必须是非空数组（缺省即不排除）" % robot_id)
+    pairs = []
+    for item in section:
+        if (not isinstance(item, (list, tuple)) or len(item) != 2
+                or not all(isinstance(v, str) and v for v in item)):
+            _fail(EXIT_DECLARATION,
+                  "robots.%s 的 self_collision_excludes 每项必须是 [body1, body2] 两个非空字符串"
+                  % robot_id)
+        pairs.append((str(item[0]), str(item[1])))
+    return pairs
+
+
+def _inject_self_collision_excludes(staging, scene, root, attached_records):
+    """按声明把指定 body 对排除自碰撞（`<contact><exclude/>`）；未声明即**不注入**（返回 None）。"""
+    pairs = []
+    for record in attached_records or []:
+        robot_id = str(record["id"])
+        entity = resolve_robot(scene, robot_id)
+        profile_path, _source = resolve_profile(root, entity, robot_id)
+        _model_decl, profile_spec = load_build_declarations(profile_path, robot_id)
+        prefix = str(record.get("prefix") or "")
+        for body1, body2 in _declared_self_collision_excludes(profile_spec, robot_id):
+            pairs.append((body1, body2, prefix))
+    if not pairs:
+        return None
+    model = mujoco.MjModel.from_xml_path(str(staging))
+    known = {mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, i)
+             for i in range(model.nbody)}
+
+    def resolve(name, prefix):
+        """名字解析：`<prefix>name` 存在就用它，否则用原名（与 name_map 的同一规则）。
+
+        厂商模型里挂基座的 `world` 体在合成时并入主世界（名字仍是 `world`）⇒ 加前缀会不存在。
+        """
+        candidate = "%s%s" % (prefix, name)
+        if prefix and candidate in known:
+            return candidate
+        if name in known:
+            return name
+        _fail(EXIT_REFERENCE,
+              "self_collision_excludes 引用的 body %r（前缀候选 %r）不在合成模型里" % (name, candidate))
+
+    resolved = []
+    for body1, body2, prefix in pairs:
+        resolved.append((resolve(body1, prefix), resolve(body2, prefix)))
+    tree = ET.parse(str(staging))
+    xml_root = tree.getroot()
+    contact = xml_root.find("contact")
+    if contact is None:
+        contact = ET.SubElement(xml_root, "contact")
+    for body1, body2 in resolved:
+        ET.SubElement(contact, "exclude", {"body1": body1, "body2": body2})
+    tree.write(str(staging), encoding="utf-8", xml_declaration=False)
+    return {"pairs": [list(pair) for pair in resolved],
+            "source": "Profile spec.model.self_collision_excludes"}
 
 
 #: `robots[].reference_solver` 的必需键（缺键或缺文件即显式失败，不给默认值）：
@@ -2486,7 +2593,7 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
     output_path.parent.mkdir(parents=True, exist_ok=True)
     staging = output_path.with_name(output_path.stem + ".staging.xml")
     _fix_keyframe_dimensions(
-        xml_root, tree, staging, [item for item in props if "quaternion_wxyz" in item]
+        xml_root, tree, staging, [item for item in props if item.get("has_free_joint")]
     )
     # 初始位姿对齐（A′ ①）：按实测把本体最低几何点抬到支撑面。缺声明即不做（返回 None）。
     initial_alignment = _align_initial_pose(
@@ -2497,6 +2604,9 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
     if attach:
         attached_robots = _attach_robots(staging, scene, root, list(attach))
     injections["attached_robots"] = attached_robots
+    # 附加本体的**自碰撞排除**（按声明注入 `<contact><exclude>`；缺声明即不注入）
+    self_collision_excludes = _inject_self_collision_excludes(staging, scene, root, attached_robots)
+    injections["self_collision_excludes"] = self_collision_excludes
     # 物理口径：联合世界必须由**声明**给出，不得继承厂商模型 <option>（§11.23）
     world_physics = _apply_world_physics(staging, scene, required=bool(attach))
     # 搬运段抓取约束（声明驱动，惰性注入；见 _inject_carry_constraint）
