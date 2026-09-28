@@ -590,11 +590,17 @@ def _place_targets(scene, model, injections, trunk_body):
     mujoco.mj_forward(model, data)
     for record in (injections.get("props") or []):
         mount = record.get("mount")
-        if not isinstance(mount, dict):
-            continue
         prop_id = str(record.get("id"))
         declared = declaration.get(prop_id) or {}
         geometry = declared.get("geometry") or {}
+        # 接收体有两种：
+        #   ① **随载体运动**（如狗背托盘）：声明 `pose.mount` ⇒ 标称位姿 = 「载体停在站位」时的 FK；
+        #   ② **世界固定**（如交接台上的托盘，2026-09-28 §11.23(36)）：没有 `mount`、但有 `pose.pos_m`
+        #      ⇒ 标称位姿仍取 FK（静态体不随任何载体动，FK 就是它自己的位姿）。
+        # 两者都缺 ⇒ 不是接收体（跳过，保持原行为）。
+        has_mount = isinstance(mount, dict)
+        if not has_mount and not ((declared.get("pose") or {}).get("pos_m")):
+            continue
         geom_name = "%s_geom" % str(record.get("body"))
         geom_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, geom_name)
         target = {
@@ -603,11 +609,11 @@ def _place_targets(scene, model, injections, trunk_body):
             "geom": geom_name if geom_id >= 0 else None,
             "kind": str(record.get("kind")),
             "mass_kg": record.get("mass_kg"),
-            "mount": dict(mount),
+            "mount": dict(mount) if has_mount else None,
             "mount_offset_m": [round(float(v), 9) for v in (record.get("position_m") or [])],
             "size_m": ([round(float(v), 9) for v in geometry.get("size_m")]
                        if isinstance(geometry.get("size_m"), (list, tuple)) else None),
-            "pose_source": "nominal_docked_station",
+            "pose_source": ("nominal_docked_station" if has_mount else "scene_declared_pose"),
             "runtime_pose_source": "live_fk",
         }
         prop_body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, str(record.get("body")))
