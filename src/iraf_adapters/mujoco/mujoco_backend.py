@@ -1127,9 +1127,33 @@ class MujocoBackend:
         phase_ms = max(1, duration_ms // 4)
         solver = {"iterations": 800, "step": 0.5, "tolerance_m": 1e-5}
 
+        payload_geom_set = {int(item) for item in payload_geoms}
+
         def _snapshot():
-            """实测：托盘顶面中心、载荷最低点、指腹中点（都在世界系）。"""
+            """实测：托盘顶面中心、载荷最低点、指腹中点，**以及接触对的身份/法向/力与载荷 6 维位姿**。
+
+            为什么必须给到接触对粒度（2026-09-28 §11.23(8)）：只报"接触数 > 0"无法回答
+            "接触在哪、法向是什么、力多大"。实测夹持力 ≈ 11.75 N/指（压缩 1.175 mm × gain 10000）
+            而载荷仅 0.39 N ⇒ "摩擦不足"已被否掉，必须看**具体是哪两个 geom 在接触、力是多少**。
+            接触力必须在 `mj_forward` **之前**取：那是上一步求解器的结果，forward 之后不再是它。
+            """
             with self._data_lock:
+                contact_rows = {}
+                for index in range(int(self.data.ncon)):
+                    contact = self.data.contact[index]
+                    geoms = (int(contact.geom1), int(contact.geom2))
+                    if not (payload_geom_set & set(geoms)):
+                        continue
+                    partner = geoms[0] if geoms[1] in payload_geom_set else geoms[1]
+                    force = np.zeros(6, dtype=float)
+                    try:
+                        mujoco.mj_contactForce(self.model, self.data, index, force)
+                    except Exception:  # 绑定差异兜底：力读不到就显式留 0，不伪造
+                        force = np.zeros(6, dtype=float)
+                    contact_rows.setdefault(int(partner), []).append({
+                        "dist_m": round(float(contact.dist), 6),
+                        "normal": [round(float(v), 6) for v in np.asarray(contact.frame[0:3]).ravel()],
+                        "force_n": round(float(np.linalg.norm(np.asarray(force[0:3], dtype=float))), 6)})
                 mujoco.mj_forward(self.model, self.data)
                 tray_rot = np.asarray(self.data.xmat[tray_body], dtype=float).reshape(3, 3)
                 tray_center = np.asarray(self.data.xpos[tray_body], dtype=float)
@@ -1139,8 +1163,22 @@ class MujocoBackend:
                           for item in pad_points]
                 midpoint = (points[0] + points[1]) / 2.0
                 payload_center = np.asarray(self.data.xpos[payload_body], dtype=float).copy()
+                payload_quat = np.asarray(self.data.xquat[payload_body], dtype=float).copy()
+                contact_pairs = []
+                for geom_id, rows in sorted(contact_rows.items()):
+                    geom_name = (mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, geom_id)
+                                 or ("#%d" % geom_id))
+                    body_id = int(self.model.geom_bodyid[geom_id])
+                    body_name = (mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_BODY, body_id)
+                                 or ("#%d" % body_id))
+                    contact_pairs.append({"partner_geom": geom_name, "partner_body": body_name,
+                                          "rows": rows})
                 return {"tray_top": top, "payload_low_z": low, "pad_mid": midpoint,
-                        "payload_center": payload_center}
+                        "payload_center": payload_center,
+                        "payload_pose": {"pos_m": [round(float(v), 6) for v in payload_center],
+                                         "quat_wxyz": [round(float(v), 9) for v in payload_quat]},
+                        "payload_contacts": contact_pairs,
+                        "pad_span_m": round(float(np.linalg.norm(points[0] - points[1])), 6)}
 
         phase_trace = []
 
@@ -1178,6 +1216,10 @@ class MujocoBackend:
                    "payload_low_minus_pad_m": round(float(snapshot["payload_low_z"]
                                                         - snapshot["pad_mid"][2]), 6),
                    "finger_contacts": {"left": bool(contacts[0]), "right": bool(contacts[1])},
+                   # 接触对粒度（身份/法向/力）+ 载荷 6 维位姿 + 指腹间距（§11.23(8) 的下一步）
+                   "payload_contacts": snapshot["payload_contacts"],
+                   "payload_pose": snapshot["payload_pose"],
+                   "pad_span_m": snapshot["pad_span_m"],
                    "gripper_state": _gripper_state(),
                    "commanded_closed": {str(k): float(v) for k, v in
                                         (gripper.get("closed_positions") or {}).items()},
