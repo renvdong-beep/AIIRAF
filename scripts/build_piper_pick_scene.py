@@ -446,6 +446,28 @@ def build_scene(
     open_positions = dict(gripper_cfg.get("open") or DEFAULT_OPEN)
     closed_positions = dict(gripper_cfg.get("closed") or DEFAULT_CLOSED)
     lift_arm = dict(gripper_cfg.get("lift") or DEFAULT_LIFT)
+    # **每个相位的夹爪指令**必须由声明给出：`gripper.phases = {home|approach|grasp|lift} → open|closed`。
+    # 为什么必须声明（2026-09-28 §11.23(16)(17)）：此前"合爪"被硬编码在 `lift` 相位（`grasp` 仍是张开）
+    # ⇒ **边升边合**。实测在**面抓**（闭合轴垂直于载荷面）下这套时序会让 `lifted=false`
+    # （夹得住 11.4 N 但抬不起来）；而在**斜抓**下之所以"能用"，靠的是载荷对角比夹口宽造成的
+    # 意外过盈 ~4 mm —— 那 4 mm 正是搬运中把载荷楔出去的原因。声明化之后，面抓只需改这一处。
+    phase_cfg = gripper_cfg.get("phases")
+    if not isinstance(phase_cfg, dict):
+        raise ValueError(
+            "基线缺少 gripper.phases（{home|approach|grasp|lift} → open|closed）："
+            "每个相位的夹爪指令必须由声明给出，不得在构建器里硬编码（见 §11.23(17)）")
+    phase_missing = sorted(name for name in ("home", "approach", "grasp", "lift")
+                           if name not in phase_cfg)
+    if phase_missing:
+        raise ValueError("gripper.phases 缺少相位: %s" % phase_missing)
+    phase_gripper = {}
+    for phase_name, which in phase_cfg.items():
+        if which == "open":
+            phase_gripper[phase_name] = open_positions
+        elif which == "closed":
+            phase_gripper[phase_name] = closed_positions
+        else:
+            raise ValueError("gripper.phases.%s 只允许 open|closed：%r" % (phase_name, which))
     # 抬升姿态由 IK 从抓取姿态沿接近方向解算，避免写死关节角把目标甩向别处。
     if reference is not None and reference.get("lift"):
         lift_arm = dict(reference["lift"]["joint_positions"])
@@ -472,7 +494,7 @@ def build_scene(
         **{key: str(value) for key, value in _declared_geometry.items()},
         "open_positions": _merge_arm_and_gripper({}, open_positions),
         "closed_positions": _merge_arm_and_gripper({}, closed_positions),
-        "lift_positions": _merge_arm_and_gripper(lift_arm, closed_positions),
+        "lift_positions": _merge_arm_and_gripper(lift_arm, phase_gripper["lift"]),
         "min_lift_delta_m": float(acceptance.get("min_lift_delta_m", 0.02)),
         "min_normal_force_n": float(acceptance.get("min_normal_force_n", 0.2)),
         "max_force_imbalance_ratio": float(
@@ -496,13 +518,13 @@ def build_scene(
         # 参考姿态驱动 HOME_HOLD -> APPROACH -> DESCEND 三个阶段，
         # 缺失时机械臂会停在零姿态，指尖对齐门禁必然失败。
         gripper["home_positions"] = _merge_arm_and_gripper(
-            reference["home"], open_positions
+            reference["home"], phase_gripper["home"]
         )
         gripper["approach_positions"] = _merge_arm_and_gripper(
-            reference["approach"]["joint_positions"], open_positions
+            reference["approach"]["joint_positions"], phase_gripper["approach"]
         )
         gripper["grasp_positions"] = _merge_arm_and_gripper(
-            reference["grasp"]["joint_positions"], open_positions
+            reference["grasp"]["joint_positions"], phase_gripper["grasp"]
         )
 
     report = {
