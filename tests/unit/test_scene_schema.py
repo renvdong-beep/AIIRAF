@@ -171,7 +171,9 @@ class PositiveControlTests(ScenePackageFixture):
         # 见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.23(41)(h)）⇒ 方向仍是"收紧"：
         # 已交付的步骤不得再出现在待交付清单里。
         self.assertNotIn(("nominal", "s04_place_in_tray"), steps)
-        self.assertIn(("nominal", "s05_confirm_payload"), steps)
+        # 2026-09-28：s05 `accept_payload` 也交付启用（§11.23(42)，s01–s05 全绿）⇒ 待交付集合为空。
+        self.assertNotIn(("nominal", "s05_confirm_payload"), steps)
+        self.assertEqual(steps, set())
 
     def test_model_layer_is_pending_not_checked_when_model_absent(self):
         report, _ = self.run_check()
@@ -342,9 +344,15 @@ class NegativeScenarioTests(ScenePackageFixture):
         """用未声明能力却不登记待交付 = 静默声明了不存在的能力，必须失败。"""
 
         def mutate(doc):
-            # 目标用**仍待交付**的那一步（s05 = 第 5 步，索引 4）；s04 已于 2026-09-28 交付启用。
-            doc["scenarios"]["nominal"]["steps"][4].pop("pending_closed_by")
-            doc["scenarios"]["nominal"]["steps"][4].pop("pending_reason")
+            # 2026-09-28：s04/s05 都已交付 ⇒ 改为**新增一步使用未声明能力**（accept_payload 给 piper，
+            # 臂侧 Profile 未声明）⇒ 同样必须被拒（不再是"待交付登记缺失"，而是能力未声明）。
+            doc["scenarios"]["nominal"]["steps"].append({
+                "id": "s99_unregistered_probe",
+                "action": "accept_payload",
+                "robot": "piper",
+                "params": {"payload_id": "box_01", "place_target_id": "tray_01"},
+                "criteria": {"require_payload_confirmation": True},
+            })
 
         self.mutate(self.scenario_path, mutate)
         report, exit_code = self.run_check()

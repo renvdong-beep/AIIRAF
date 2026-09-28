@@ -202,12 +202,11 @@ class PlanAndPreflightTests(RunnerFixture):
         entry = load_yaml(self.scenario_path)["scenarios"]["nominal"]
         plan = scenario.plan_steps(entry, index, contract)
         pending = [item for item in plan if item["kind"] == scenario.STEP_SKIPPED_PENDING]
-        self.assertEqual([item["id"] for item in pending], ["s05_confirm_payload"])
-        # 2026-09-24 起 `translation_error_max_m` / `yaw_error_max_deg` **可评测**（测量量取
-        # 技能 evidence 的停靠结果量，并在 `measure_step` 里对偏航取绝对值）⇒ 待交付登记里
-        # 不再把它们列为"判不了"；该步待交付的原因只剩**能力未声明**。
-        # 臂侧那一步的判据（`pose_tolerance_m`）仍属"本执行器没有评测依据"⇒ 如实登记
-        self.assertTrue(pending[0]["registration"]["unevaluable_criteria"], msg=pending[0])
+        # 2026-09-28：s04/s05 都已交付启用 ⇒ nominal **不再有待交付步骤**。
+        # ⚠ "待交付步骤的判据必须如实登记进 registration"这条不变量目前**无现成例子可跑**
+        # （两个场景的步骤都已交付）⇒ 这里只断言"没有待交付"，若将来有步骤退回待交付，
+        # 该断言会立刻变红，提醒补回 registration 检查。
+        self.assertEqual(pending, [])
         # 待交付步骤不得让整条场景变成"判据无依据"的非法声明 —— 但 `nominal` 目前仍被**臂侧**
         # `s03_pick` 挡住（其三项判据无评测依据，属"臂未接入同一模型"的跨界阻塞，见
         # .hermes/plans/2026-09-23-dock-for-handoff.md §11）⇒ 这里断言"无依据的判据**只**在 s03_pick"，
@@ -216,7 +215,8 @@ class PlanAndPreflightTests(RunnerFixture):
         blocked = {step["id"]: step["unevaluable_criteria"] for step in plan
                    if step["unevaluable_criteria"]
                    and step["kind"] != scenario.STEP_SKIPPED_PENDING}
-        self.assertEqual(sorted(blocked), ["s03_pick"])
+        # 2026-09-28：臂侧已接入同一模型（s03 的判据现在都可评测）⇒ 不再有"无依据的判据"
+        self.assertEqual(sorted(blocked), [])
         self.assertNotIn("s02_dock", blocked)
 
     def test_dispatched_step_with_unevaluable_criteria_fails_preflight(self):
@@ -234,11 +234,15 @@ class PlanAndPreflightTests(RunnerFixture):
 
     def test_unregistered_capability_fails_with_reference_code(self):
         def drop_registration(doc):
-            # s02_dock 已解登记；s04 也于 2026-09-28 交付启用（`place_object` 已在 capabilities 里）
-            # ⇒ 打**仍待交付**的那一步：s05 `accept_payload`（第 5 步，索引 4）。
-            step = doc["scenarios"]["nominal"]["steps"][4]
-            step.pop("pending_closed_by")
-            step.pop("pending_reason")
+            # 2026-09-28：s04/s05 都已交付 ⇒ 没有"待交付步骤"可拆。改为**新增一步使用未声明能力**：
+            # `accept_payload` 给 piper（臂侧 Profile 未声明它）⇒ 必须被 preflight 以 references 码拒绝。
+            doc["scenarios"]["nominal"]["steps"].append({
+                "id": "s99_unregistered_probe",
+                "action": "accept_payload",
+                "robot": "piper",
+                "params": {"payload_id": "box_01", "place_target_id": "tray_01"},
+                "criteria": {"require_payload_confirmation": True},
+            })
 
         self.mutate_scenario(drop_registration)
         code, message = self.error_message(
@@ -396,7 +400,8 @@ class CliContractTests(RunnerFixture):
             item["name"]: item["pending_steps"] for item in scenes["handoff_lab"]["scenarios"]
         }
         self.assertEqual(pending["stand_stop"], [])
-        self.assertEqual(pending["nominal"], ["s05_confirm_payload"])
+        # 2026-09-28：s05 `accept_payload` 交付启用 ⇒ nominal 不再有待交付步骤（方向仍是收紧）
+        self.assertEqual(pending["nominal"], [])
 
     def test_unknown_scenario_is_reference_failure(self):
         code, message = self.error_message(

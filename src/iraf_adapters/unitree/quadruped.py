@@ -34,7 +34,10 @@ from iraf_core.authority import LeaseConflict
 #: 能力规范词表（平台无关；不得出现机型/厂家语义）。
 #: 规范能力词表（**唯一来源**：Profile/场景声明的能力必须在此词表内，否则装配期显式失败）。
 #: `dock_for_handoff` 于 2026-09-24 入列（适配器层 9/9 + 技能层 10/10 验收后）。
-CAPABILITIES = ("dock_for_handoff", "emergency_stop", "locomote", "read_state", "stand", "stop")
+#: `accept_payload`（载荷确认）于 2026-09-28 入列：四足侧**只读**复核载荷落位与整链静止，
+#: 实现 + 场景验收（s01–s05 全绿，§11.23(42)）后进词表。**不入 MOTION_CAPABILITIES**（不产生物理动作）。
+CAPABILITIES = ("accept_payload", "dock_for_handoff", "emergency_stop", "locomote",
+                "read_state", "stand", "stop")
 
 #: 会驱动执行器（产生物理动作）的能力子集。`read_state` 不在此列：它只读不改。
 MOTION_CAPABILITIES = ("dock_for_handoff", "emergency_stop", "locomote", "stand", "stop")

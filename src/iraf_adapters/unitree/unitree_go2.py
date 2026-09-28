@@ -200,8 +200,10 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
     #: `build/iraf-a6a14/station-acceptance.json`（9/9：平移 0.026780452 m ≤ 0.03、
     #: 偏航 −0.235676284° ≤ 2.0°、末速 2.96742e-04 m/s ≤ 0.05、最大倾角 5.2546° ≤ 15°、
     #: 目标帧世界固定、接近真的执行过）；技能层/场景层证据见 Profile 注释。
+    #: `accept_payload`（2026-09-28 §11.23(42) 入列）：四足侧**只读**复核载荷落位与整链静止；
+    #: 实现 + 场景验收（s01–s05 全绿）后登记 —— subset 门禁 `declared ⊆ implemented`。
     IMPLEMENTED_CAPABILITIES = frozenset(("emergency_stop", "read_state", "stand", "stop",
-                                          "locomote", "dock_for_handoff"))
+                                          "locomote", "dock_for_handoff", "accept_payload"))
 
     def __init__(self, declaration, profile, authority, *, root, mujoco, model, data, bindings,
                  plant=None):

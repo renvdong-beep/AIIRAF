@@ -198,8 +198,10 @@ class QuadrupedAdapterCases(unittest.TestCase):
         self.assertTrue(
             quadruped.assert_portable_surface("能力词表", quadruped.CAPABILITIES)
         )
+        # 2026-09-28：`accept_payload` 入列（只读类；不进 MOTION_CAPABILITIES）
         self.assertEqual(
-            ("dock_for_handoff", "emergency_stop", "locomote", "read_state", "stand", "stop"),
+            ("accept_payload", "dock_for_handoff", "emergency_stop", "locomote", "read_state",
+             "stand", "stop"),
             quadruped.CAPABILITIES,
         )
 
@@ -244,8 +246,10 @@ class QuadrupedAdapterCases(unittest.TestCase):
     # ---- 2. 能力契约 ----
     def test_go2_implements_only_verified_capabilities(self):
         # `locomote` 于 2026-09-23 两层验收达标后入列（技能层报告 build/iraf-a6a12/skill-layer-run.json）
+        # 2026-09-28：`accept_payload` 在"实现 + 场景验收（s01–s05 全绿）"后入列
         self.assertEqual(
-            {"emergency_stop", "read_state", "stand", "stop", "locomote", "dock_for_handoff"},
+            {"emergency_stop", "read_state", "stand", "stop", "locomote", "dock_for_handoff",
+             "accept_payload"},
             set(UnitreeGo2Adapter.IMPLEMENTED_CAPABILITIES),
         )
 
@@ -255,7 +259,7 @@ class QuadrupedAdapterCases(unittest.TestCase):
         )
         self.assertTrue(report["passed"])
         self.assertEqual(
-            ["dock_for_handoff", "emergency_stop", "locomote"],
+            ["accept_payload", "dock_for_handoff", "emergency_stop", "locomote"],
             report["undeclared_implemented_capabilities"]
         )
 
