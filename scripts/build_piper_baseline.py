@@ -162,29 +162,71 @@ def build_place_reference_poses(root, baseline, target_local_m, payload_half_m, 
     # (−0.65,0.54,+0.54)）⇒ 搬运时腕部翻转、载荷被甩掉（见 §11.18）。
     seed = {str(k): float(v) for k, v in (seed_positions or {}).items()}
     wrist_body = _body_id(model, model_cfg["bodies"]["wrist"])
-    for phase, target in plan.items():
-        if seed:
-            for name, value in seed.items():
-                joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, str(name))
-                if joint_id >= 0:
-                    data.qpos[int(model.jnt_qposadr[joint_id])] = float(value)
-            mujoco.mj_forward(model, data)
-        result = solve_finger_center_ik(model, data, target, arm_joints, left_geom, right_geom,
-                                        solver_cfg)
-        if float(result.position_error_m) > float(solver_cfg.get("tolerance_m", 1e-5)) * 100.0:
-            raise ValueError("放置段 %s 的 IK 未收敛: error=%.9f m target=%s"
-                             % (phase, float(result.position_error_m),
-                                [round(float(v), 6) for v in target]))
-        packed = _pack_pose(result, arm_names)
-        # 夹爪轴（腕 → 指腹中点，世界系单位向量）：给构建期做"是否翻到相反半球"的自检用
+
+    def _axis_now():
         mujoco.mj_forward(model, data)
-        pad_mid = ((np.asarray(data.geom_xpos[left_geom]) + np.asarray(data.geom_xpos[right_geom]))
-                   / 2.0)
-        axis = pad_mid - np.asarray(data.xpos[wrist_body], dtype=float)
-        norm = float(np.linalg.norm(axis))
-        packed["gripper_axis_world"] = [round(float(v), 9) for v in (axis / (norm or 1.0))]
+        pad = (np.asarray(data.geom_xpos[left_geom]) + np.asarray(data.geom_xpos[right_geom])) / 2.0
+        axis = pad - np.asarray(data.xpos[wrist_body], dtype=float)
+        norm = float(np.linalg.norm(axis)) or 1.0
+        return axis / norm
+
+    def _apply(positions):
+        for name, value in positions.items():
+            joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, str(name))
+            if joint_id >= 0:
+                data.qpos[int(model.jnt_qposadr[joint_id])] = float(value)
+        mujoco.mj_forward(model, data)
+
+    # 种子位形的夹爪轴 = **参照半球**（本函数按"与它同半球"挑解）
+    _apply(seed)
+    reference_axis = _axis_now() if seed else None
+    # 多起点：种子本身 + joint2/3/5 的小网格扰动。**为什么必须多起点**（2026-09-28, §11.18 补）：
+    # 位置型 IK 是局部求解器，从单一（哪怕已验证的）种子出发仍可能收敛到**翻转分支**（实测：单起点给出
+    # 手指朝上的解、腕部余量看似够），而多起点扫描找到同半球解：残差 5.98e-06、轴 z=-0.156、余量 +0.031492 m。
+    candidate_seeds = [("seed", seed)] if seed else [("identity", {})]
+    if seed:
+        for dj2 in (-0.4, 0.0, 0.4):
+            for dj3 in (-0.4, 0.0, 0.4):
+                for dj5 in (-0.4, 0.0, 0.4):
+                    if dj2 == dj3 == dj5 == 0.0:
+                        continue
+                    variant = dict(seed)
+                    variant["joint2"] = seed.get("joint2", 0.0) + dj2
+                    variant["joint3"] = seed.get("joint3", 0.0) + dj3
+                    variant["joint5"] = seed.get("joint5", 0.0) + dj5
+                    candidate_seeds.append(("perturb_%+.1f_%+.1f_%+.1f" % (dj2, dj3, dj5), variant))
+
+    for phase, target in plan.items():
+        # 多起点求解：保留**残差达标**且**与参照轴同半球**的解，取其中轴最接近参照的那个
+        chosen = None
+        attempts = []
+        for label, positions in candidate_seeds:
+            _apply(positions)
+            result = solve_finger_center_ik(model, data, target, arm_joints, left_geom, right_geom,
+                                           solver_cfg)
+            axis = _axis_now()
+            dot = float(np.dot(axis, reference_axis)) if reference_axis is not None else 1.0
+            attempts.append({"seed": label, "position_error_m": round(float(result.position_error_m), 9),
+                             "axis": [round(float(v), 6) for v in axis], "axis_dot": round(dot, 6)})
+            within = float(result.position_error_m) <= float(solver_cfg.get("tolerance_m", 1e-5)) * 100.0
+            if not within or dot <= 0.0:
+                continue
+            if chosen is None or dot > chosen[0]:
+                chosen = (dot, label, result, axis)
+        if chosen is None:
+            raise ValueError(
+                "放置段 %s 无可用解（多起点 %d 个：残差达标且与参照轴同半球的都没有）：%s"
+                % (phase, len(candidate_seeds), attempts[:4]))
+        _dot, chosen_label, result, axis = chosen
+        packed = _pack_pose(result, arm_names)
+        packed["gripper_axis_world"] = [round(float(v), 9) for v in axis]
+        packed["chosen_seed"] = chosen_label
+        packed["axis_dot_reference"] = round(float(_dot), 6)
+        packed["attempts"] = attempts
         out["poses"][phase] = packed
     out["seed_positions"] = seed
+    out["reference_axis_world"] = ([round(float(v), 9) for v in reference_axis]
+                                   if reference_axis is not None else None)
     return out
 
 
