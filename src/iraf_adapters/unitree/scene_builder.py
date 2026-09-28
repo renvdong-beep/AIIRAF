@@ -1071,11 +1071,24 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
         else:
             out_gripper[key] = value
     targets = []
+    # ⚠ 目标的**世界位姿必须来自联合模型的 FK**，不能照抄臂侧报告的数值：方块在联合场景里的位置由
+    # `scene.yaml` 的 props 声明决定，与臂自己场景可能不同（本场景已按使用者要求把方块移到臂旁边：
+    # 0.19 → (0.28, −0.28)）。运行期 `grasp_pose_from: report_target` 会按本报告组装世界抓取位姿 ⇒
+    # 继承旧坐标会指到另一个地方（这正是"继承场景专属数据"这一类缺陷）。
+    _target_data = mujoco.MjData(model)
+    mujoco.mj_forward(model, _target_data)
     for item in (report.get("targets") or []):
         entry = dict(item)
         for key in ("body", "geom", "material"):
             if isinstance(entry.get(key), str):
                 entry[key] = rename(entry[key])
+        body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, str(entry.get("body") or ""))
+        if body_id >= 0:
+            entry["position_m"] = [round(float(v), 9) for v in _target_data.xpos[body_id]]
+            entry["quaternion_wxyz"] = [round(float(v), 9) for v in _target_data.xquat[body_id]]
+            entry["pose_source"] = "joint_model_fk"
+        else:
+            entry["pose_source"] = "inherited_from_arm_report"
         targets.append(entry)
     # ---- 全量判定桶（A 方案 name_map 的输入）：对附加本体**自己模型里的每个对象名**套同一条规则。
     # 只对被 manipulation 引用的名字 fail-closed（上方 rename），其余只留痕 —— attach 可能丢弃对象，

@@ -53,10 +53,17 @@ robots:
     reference_solver:
       module: scripts/build_piper_baseline.py
       entry: build_reference_poses
+      # 前馈在**联合模型**上重算：增量 = τ_g / kp，且必须按相位的**完整**位置指令（含夹爪 joint7/8 开合），
+      # 否则量到的是"手指卡在方块里"的动力学。自带判据：四姿态静态保持残余 ≤
+      # config/piper_simulation_baseline.yaml: gravity_feedforward.tolerance_rad（0.001），否则构建失败。
+      # 2026-09-28：方块移到臂旁边（0.240416306 m）后重解姿态不再侵入方块 ⇒ 该判据首次可通过。
+      feedforward_entry: build_reference_feedforward
       baseline: config/piper_simulation_baseline.yaml
     placement:
       pos_m: [0.45, -0.45, 0.0]
-      quat_wxyz: [0.7071067811865476, 0.0, 0.0, 0.7071067811865475]
+      # 偏航 = 基座→方块方位角（135.000000°）：让 joint1≈0 ⇒ 夹爪面与方块面平行（§11.6 实测：
+      # 偏航偏 31.3° 时指腹斜切方块棱边并与之重叠）。站位 (0.45, 0) 仍在可达范围内（距基座 0.45 m）。
+      quat_wxyz: [0.382683432365090, 0.0, 0.0, 0.923879532511287]
     note: 既有能力（MuJoCo 仿真已验收）；本场景复用配置 config/piper_simulation_baseline.yaml，不改其语义。
   - id: unitree_go2
     kind: quadruped
@@ -99,9 +106,14 @@ props:
     friction: "2.0 0.05 0.001"
     rgba: [0.82, 0.22, 0.12, 1.0]
     pose:
-      pos_m: [0.19, 0.0, 0.025]
+      # ⚠ 2026-09-28（按使用者要求"方块要在机械臂旁边"）：从 (0.19, 0, 0.025) 移到 (0.28, −0.28, 0.025)。
+      # 依据（实测，docs/debug/2026-09-24-joint-model-dog-arm.md §11.7）：原位置离臂基座 0.519711458 m
+      #   （近可达上界 0.594284 m）⇒ 重解姿态把腕部 `piper_link6` 插进方块 −0.014516 m，接触力把臂顶离
+      #   （保持残余 0.039962049 rad）。新位置：离基座 **0.240416 m**（折叠位形，与臂自己场景 0.19 m 同量级）、
+      #   离四足走廊/站位 0.28 m（≥ 躯干半宽 0.2 m，不挡路）。
+      pos_m: [0.28, -0.28, 0.025]
       quat_wxyz: [1.0, 0.0, 0.0, 0.0]
-    note: 与 config/piper_simulation_baseline.yaml 的 target 段保持一致（抓取判据按 body 命中）。
+    note: 方块在机械臂旁边（离基座 0.240416 m）；抓取判据按 body 命中，数值由联合模型 FK 回写报告（不看继承值）。
   - id: tray_01
     body: tray_01
     kind: tray
@@ -150,7 +162,7 @@ sensors:
       name: overhead_camera
       entity: piper
     pos_m: [0.28, -0.72, 0.72]
-    look_at_m: [0.19, 0.0, 0.025]
+    look_at_m: [0.28, -0.28, 0.025]
     fovy_deg: 78
     note: 相机位姿与外参按机型独立；本场景沿用 Piper 基线已标定的视角，标定文件仍走 config/piper_simulation_baseline.yaml 的 vision 段。
   - id: payload_lidar
