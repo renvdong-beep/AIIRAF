@@ -142,10 +142,21 @@ def build_place_reference_poses(root, baseline, target_local_m, payload_half_m, 
     if base.shape != (3,):
         raise ValueError("target_local_m 必须是 3 个数值（臂基座系）")
     height = float(pad_offset_m) + float(payload_half_m)      # 指腹中点相对承载面的高度
+    # 放置段的**接近方向**（声明 `grasp.place_approach_direction`；缺省 = 竖直 [0,0,1] ⇒ 行为不变）。
+    # 为什么可能需要倾角（2026-09-28 §11.23(31)）：纯竖直接近时腕部位于载荷**外侧**约 0.26 m
+    # ⇒ 腕部半径 ≈ sqrt(0.45²+(0.286+0.26)²)=0.707 m > 可达 0.594 m ⇒ 该姿态几何不可达、
+    # IK 落到翻转分支（构建器警告 dot_with_pick_lift = -0.721795）。给接近方向加向基座一侧的倾角
+    # 可把腕部拉回可达球内。方向**由声明给出**，不在实现层写死。
+    place_direction = np.asarray(grasp_cfg.get("place_approach_direction") or [0.0, 0.0, 1.0],
+                                 dtype=float)
+    place_norm = float(np.linalg.norm(place_direction))
+    if place_norm < 1e-9:
+        raise ValueError("grasp.place_approach_direction 不能为零向量")
+    place_direction = place_direction / place_norm
     plan = {
-        "above": base + np.asarray([0.0, 0.0, height + float(clearance_m)]),
-        "descend": base + np.asarray([0.0, 0.0, height]),
-        "retreat": base + np.asarray([0.0, 0.0, height + float(clearance_m)]),
+        "above": base + place_direction * (height + float(clearance_m)),
+        "descend": base + place_direction * height,
+        "retreat": base + place_direction * (height + float(clearance_m)),
     }
     # 绕行航点（可选，由调用方按"当前位形正上方 + 托盘高度"算出）：**必须**给，否则搬运是从抓取位形
     # 到"托盘上方"的单条关节空间插值 —— 实测它在笛卡尔空间穿过载体（§11.17）。
