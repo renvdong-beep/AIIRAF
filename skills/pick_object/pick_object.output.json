@@ -57,6 +57,22 @@
         "constraint_activated": {
           "type": "boolean"
         },
+        "lift_attitude_max_deg": {
+          "type": "number",
+          "minimum": 0,
+          "description": "抬升段**载荷姿态**相对抬升起始姿态的最大偏角（度）。抓取失败时姿态会从 0° 单调增大到 100°+（载荷在夹口里\"翻滚出去\"），而接触力可能始终正常（实测双侧 5.7 N）⇒ 判读顺序必须是**先看姿态再看力**。见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.23(27)。"
+        },
+        "regrasp": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "description": "\"先抬离台、再合爪到载荷腰部\"（regrasp）的执行留痕；未启用为 null。",
+          "properties": {
+            "applied": {"type": "boolean"},
+            "pre_lift_m": {"type": "number"},
+            "depth_m": {"type": "number"},
+            "open_m": {"type": "number"}
+          }
+        },
         "lift_peak_step": {
           "type": ["integer", "null"],
           "minimum": 0,

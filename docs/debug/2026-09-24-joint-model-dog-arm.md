@@ -1698,6 +1698,37 @@ step 808–809 : z 0.023208 / 0.023260（落回台面）；此后只剩 world �
   面夹与抗转力矩），需要给 pick 时序再加一个相位（"先抬后夹"）。
 两者都不是"调参"，而是时序/路径层面的声明化改动，边界清楚。
 
+#### (29) regrasp 已实现（计划第 1–4 步）但**在第一步就失败**：唯一撑得住抬升的抓取是"斜夹过盈"
+
+**已落地（`regrasp.enabled: false` 时与改动前逐位一致，机制可声明开启）**
+1. 契约先行：`pick_object.output.json` 的 evidence 增加 `lift_attitude_max_deg` 与 `regrasp`（均可选）。
+2. 求解器：`build_reference_poses` 按 `grasp.regrasp` 解出 `pre_lift` / `regrasp` 两个位形
+   （= 抓取点沿**预抓取方向** +h 的解，与 approach/lift 同一算法；参数非法即报错）。
+3. 构建器：写入 `gripper.pre_lift_positions` / `gripper.regrasp_positions` / `gripper.regrasp`（含出处）；
+   `regrasp` 登记为语义键（不参与前缀改写）。
+4. 后端：相位表变为 …GRIP_CLOSE → **PRE_LIFT → REGRASP_OPEN → REGRASP_DESCEND → REGRASP_CLOSE** → LIFT；
+   常驻跟踪**载荷姿态偏角**（进证据 `lift_attitude_max_deg`，判读顺序"先看姿态再看力"）；
+   判据口径修正：有 regrasp 时 `lift_delta_m` 从 **PRE_LIFT 之前**起算（否则 4 cm 预抬被漏计）。
+5. 解析层透传：`pre_lift_positions`/`regrasp_positions`/`regrasp` 必须进后端配置白名单
+   —— **同一类坑第三次踩到**（`carry_gripper`、`lift_trace`、现在 regrasp）：新键不加白名单就静默消失。
+
+**实测（面抓 45° + 闭爪位 0.020 + regrasp 开）**：相位表**确实全部执行**
+（日志：HOME_HOLD→APPROACH→DESCEND→GRIP_OPEN→GRIP_CLOSE→**PRE_LIFT→REGRASP_OPEN→REGRASP_DESCEND→REGRASP_CLOSE**→LIFT），
+但方块在 **PRE_LIFT（声明 0.04 m）** 之后只升到 **z=0.0338（即只升了 9 mm）** ⇒ **第一次"压上缘"抓取连 4 cm 的竖直抬升都撑不住**
+（§11.23(27) 的翻滚机制）⇒ **regrasp 永远到不了** ⇒ 选项 ③ 在本几何下**不可行**。
+
+**战略结论（本会话最重要的判断）**
+- 本几何下（2F-85 指腹 5.2 cm vs 方块高 5 cm，台面在最下方）：
+  **唯一能撑住抬升的抓取是"斜夹过盈"**（已验证：抬 8 cm）；而它**在搬运中沿夹口轴向楔出**。
+- ⇒ "调夹持/调路径"这条线**到此为尽**（已有 30+ 条被量化否掉的假设）。
+- ⇒ 剩下的可行路线是**声明化的搬运约束**：**臂侧世界本来就有** `box_01_lift_constraint`
+  （`<connect name="box_01_lift_constraint" body1="grasp_anchor" body2="box_01" active="false">`，
+  后端在 `force_ok` 且报告带 `gripper.lift_constraint` 时置 `eq_active=1`，并配套
+  `_advance_with_grasp_anchor`），且臂侧基线明确声明 `require_friction_lift: false`
+  —— 即"**不要求纯摩擦抬升**"是**既有且已验收**的语义。把这条约束**接进联合世界**
+  （联合构建器注入 anchor + equality、报告带 `lift_constraint`）即可让搬运确定成立，
+  且它是**声明 + 证据可见**（`constraint_activated` 已在证据里）的，不是伪造成功。
+
 ### 11.19 撤两条假设 + 第 9 个工装缺陷：搬运丢件的机制**仍未判死**（2026-09-28）
 
 **撤销 1：夹具（equality）不是原因。** 臂场景模型里确实有一条 `box_01_lift_constraint`

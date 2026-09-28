@@ -43,6 +43,17 @@ grasp:
   # 两段（先到 approach 位形＝沿接近轴竖直 +4 cm，再到 lift 位形）**仍然丢件**
   # （逐样本：方块在 z≈0.036 时仍与台面有 0.10~0.14 N 接触 ⇒ 角在刮台面，step ~1500 脱离，
   #  当时双侧接触 5.74/5.71 N 正常）⇒ 见 §11.23(27)。
+  # **regrasp（先抬离台、再合爪到载荷腰部）**：见 .hermes/plans/2026-09-28-pick-regrasp.md
+  # 动机（§11.23(27)(28)）：在**台面上**腕式夹爪只压得住载荷上缘 ⇒ 对转动几乎无阻力矩
+  # ⇒ 抬升时载荷"翻滚"出夹口（实测姿态 0°→120°，接触力全程正常）。
+  # enabled: true 时 pick 相位表变为 …GRIP_CLOSE → PRE_LIFT → REGRASP_OPEN → REGRASP_DESCEND
+  # → REGRASP_CLOSE → LIFT；enabled: false 与改动前逐位一致（便于对照）。
+  regrasp:
+    enabled: false   # ← 实测：首次"压上缘"抓取连 4 cm 预抬都撑不住（只升 9 mm 就翻滚），regrasp 无法到达
+    pre_lift_m: 0.04      # 第一次竖直抬离台的高度（> 方块半高 0.025）
+    depth_m: 0.025        # 之后下探深度（到方块腰部）
+    open_m: 0.004         # 松开量（每侧），保证下探时不挤住载荷
+    duration_ms: 2000     # 每个 regrasp 段的时长
   lift_path: direct
   # 双指指尖 geom 中点的目标抓取位置（世界坐标）。
   # z 不在此声明，必须由 workbench.top_z_m + target.half_size_m 推出，保证方块贴台面。

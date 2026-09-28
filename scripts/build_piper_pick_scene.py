@@ -536,6 +536,22 @@ def build_scene(
         gripper["grasp_positions"] = _merge_arm_and_gripper(
             reference["grasp"]["joint_positions"], phase_gripper["grasp"]
         )
+        # regrasp（"先抬离台、再合爪到载荷腰部"）：三段的位置指令 + 参数。
+        # PRE_LIFT 期间夹爪仍**闭合**（用 lift 相位的夹爪命令）；"松开 open_m → 下探 → 再合"
+        # 由后端按声明逐段执行（不在构建期造夹爪数字）。见 .hermes/plans/2026-09-28-pick-regrasp.md
+        if reference.get("regrasp"):
+            rg = reference["regrasp"]
+            gripper["pre_lift_positions"] = _merge_arm_and_gripper(
+                rg["pre_lift"]["joint_positions"], phase_gripper["lift"])
+            gripper["regrasp_positions"] = _merge_arm_and_gripper(
+                rg["regrasp"]["joint_positions"], phase_gripper["lift"])
+            gripper["regrasp"] = {
+                "enabled": True,
+                "pre_lift_m": float(rg["pre_lift_m"]),
+                "depth_m": float(rg["depth_m"]),
+                "open_m": float(rg["open_m"]),
+                "source": "piper_simulation_baseline.yaml:grasp.regrasp",
+            }
 
     report = {
         "schema_version": "iraf.piper-pick-scene/v1",

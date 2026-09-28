@@ -562,6 +562,38 @@ def build_reference_poses(root, baseline, target_id=None, target_xy_override_m=N
     )
 
 
+    # —— regrasp（"先抬离台、再合爪到载荷腰部"）：按声明解两个位形。
+    # 为什么（docs/debug/2026-09-24-joint-model-dog-arm.md §11.23(27)(28) + 计划文件
+    # .hermes/plans/2026-09-28-pick-regrasp.md）：腕式夹爪在台面上只压得住载荷**上缘**
+    # ⇒ 对转动几乎没有阻力矩 ⇒ 抬升时载荷"翻滚"出夹口。先抬离台、再把夹爪下探到载荷**腰部**
+    # 合爪，才能拿到真正的面夹与抗转力矩（此时指尖不再受台面限制）。
+    # 两个位形都是"抓取点沿预抓取方向 +h"的解 —— 与 approach/lift **同一算法**，不引入新几何量。
+    regrasp_cfg = grasp_cfg.get("regrasp") or {}
+    regrasp_enabled = bool(regrasp_cfg.get("enabled", False))
+    regrasp_poses = None
+    if regrasp_enabled:
+        pre_lift_m = float(regrasp_cfg.get("pre_lift_m") or 0.0)
+        depth_m = float(regrasp_cfg.get("depth_m") or 0.0)
+        open_m = float(regrasp_cfg.get("open_m") or 0.0)
+        if not (pre_lift_m > 0.0 and depth_m > 0.0 and depth_m < pre_lift_m):
+            raise ValueError(
+                "grasp.regrasp 参数非法：要求 pre_lift_m > depth_m > 0（实际 pre_lift_m=%r depth_m=%r）"
+                % (pre_lift_m, depth_m))
+        if open_m <= 0.0:
+            raise ValueError("grasp.regrasp.open_m 必须为正数（松开量）：%r" % (open_m,))
+        pre_lift_pose = solve_finger_center_pose(
+            model, data, grasp_target_corrected + pregrasp_direction * pre_lift_m,
+            arm_joints, arm_names, left_geom, right_geom, solver_cfg)
+        regrasp_pose = solve_finger_center_pose(
+            model, data, grasp_target_corrected + pregrasp_direction * (pre_lift_m - depth_m),
+            arm_joints, arm_names, left_geom, right_geom, solver_cfg)
+        regrasp_poses = {
+            "enabled": True,
+            "pre_lift_m": pre_lift_m, "depth_m": depth_m, "open_m": open_m,
+            "pre_lift": pre_lift_pose, "regrasp": regrasp_pose,
+            "direction_world": [round(float(v), 9) for v in pregrasp_direction],
+        }
+
     home_qpos = {name: 0.0 for name in grasp["joint_positions"]}
     reference = {
         "schema_version": "iraf.piper-reference-pose/v1",
@@ -574,6 +606,17 @@ def build_reference_poses(root, baseline, target_id=None, target_xy_override_m=N
             round(float(value), 9) for value in pregrasp_direction
         ],
         "pregrasp_offset_m": offset,
+        # regrasp 位形（未启用为 None）：构建器据此写入报告 `gripper.pre_lift_positions` /
+        # `gripper.regrasp_positions` / `gripper.regrasp`。
+        "regrasp": (None if regrasp_poses is None else {
+            "enabled": True,
+            "pre_lift_m": regrasp_poses["pre_lift_m"],
+            "depth_m": regrasp_poses["depth_m"],
+            "open_m": regrasp_poses["open_m"],
+            "direction_world": regrasp_poses["direction_world"],
+            "pre_lift": regrasp_poses["pre_lift"],
+            "regrasp": regrasp_poses["regrasp"],
+        }),
 
         "tip_clearance_m": tip_clearance,
         # 指尖最低点取自 core 配平轨迹的最后一步（同一口径、可追溯）。

@@ -1035,6 +1035,56 @@ class MujocoBackend:
             constraint_activated = True
         with self._data_lock:
             before_lift_z = float(self.data.xpos[target_body][2])
+        # （判据口径的覆盖在抬升段开始处执行：此处 `regrasp_evidence` 尚未定义）
+        # —— regrasp（声明 `gripper.regrasp.enabled`）：**先抬离台、再合爪到载荷腰部**。
+        # 为什么（§11.23(27)(28) + .hermes/plans/2026-09-28-pick-regrasp.md）：腕式夹爪在台面上
+        # 只能压住载荷上缘 ⇒ 对转动几乎无阻力矩 ⇒ 抬升时载荷"翻滚"出夹口（实测姿态 0°→120°，
+        # 而接触力全程正常）。先把载荷抬离台，再把夹爪下探到载荷腰部合爪，指尖不再受台面限制，
+        # 才能拿到真正的面夹与抗转力矩。位置指令全部来自构建期求解（缺即拒绝，不在运行时现解）。
+        regrasp_cfg = gripper.get("regrasp") or {}
+        regrasp_evidence = None
+        if bool(regrasp_cfg.get("enabled")):
+            pre_lift_positions = gripper.get("pre_lift_positions")
+            regrasp_positions = gripper.get("regrasp_positions")
+            if not isinstance(pre_lift_positions, dict) or not isinstance(regrasp_positions, dict):
+                raise ValueError(
+                    "gripper.regrasp.enabled=true 但报告缺少 pre_lift_positions/regrasp_positions："
+                    "regrasp 位形必须由**声明的求解器**在构建期解出（运行时现解 IK 会落错分支，见 §11.16）")
+            open_m = float(regrasp_cfg.get("open_m") or 0.0)
+            if not open_m > 0.0:
+                raise ValueError("gripper.regrasp.open_m 必须为正数（松开量）：%r" % (open_m,))
+            regrasp_ms = max(1, int(regrasp_cfg.get("duration_ms") or phase_ms))
+            pre_lift_z = float(self.data.xpos[target_body][2])
+            self._log_pick_phase("PRE_LIFT", target_body)
+            self._move_trajectory(pre_lift_positions, regrasp_ms, self._pick_ctrl_offsets("lift"))
+            self._log_pick_phase("REGRASP_OPEN", target_body)
+            opened = {str(name): (float(value) + open_m if str(name).endswith("joint7") else
+                                  float(value) - open_m)
+                      for name, value in (gripper["closed_positions"] or {}).items()}
+            self._set_gripper_controls(opened)
+            self._advance_for(regrasp_ms)
+            self._log_pick_phase("REGRASP_DESCEND", target_body)
+            self._move_trajectory(regrasp_positions, regrasp_ms, self._pick_ctrl_offsets("lift"))
+            self._log_pick_phase("REGRASP_CLOSE", target_body)
+            self._set_gripper_controls(gripper["closed_positions"])
+            bilateral = self._advance_for(
+                regrasp_ms, contact_bodies=(target_body, left_body, right_body))
+            force_evidence = self._contact_force_evidence(target_body, left_body, right_body)
+            force_ok = (
+                bilateral
+                and force_evidence["left_normal_force_n"] >= gripper["min_normal_force_n"]
+                and force_evidence["right_normal_force_n"] >= gripper["min_normal_force_n"]
+                and force_evidence["force_imbalance_ratio"] <= gripper["max_force_imbalance_ratio"]
+            )
+            with self._data_lock:
+                after_regrasp_z = float(self.data.xpos[target_body][2])
+            regrasp_evidence = {
+                "applied": True, "pre_lift_m": float(regrasp_cfg.get("pre_lift_m") or 0.0),
+                "depth_m": float(regrasp_cfg.get("depth_m") or 0.0), "open_m": open_m,
+                "pre_lift_z_m": round(pre_lift_z, 6),
+                "after_regrasp_z_m": round(after_regrasp_z, 6),
+                "bilateral_after_regrasp": bool(bilateral), "force_ok_after_regrasp": bool(force_ok),
+            }
         lifted = not lift_ms
         # LIFT 段的**逐样本运行时追踪**（2026-09-28 §11.23(24) 的下一步）：
         # 离线探针（含 guest 节拍仿真）已无法复现运行时的 `lifted=false`，
@@ -1042,6 +1092,9 @@ class MujocoBackend:
         # 用来回答"哪一步、哪个量先动"。stride 由 `IRAF_DEBUG_PICK_STRIDE` 给（默认 10）。
         lift_samples = []
         lift_peak = {"max_z": None, "step": None}
+        # 抬升段的**载荷姿态**偏角（相对抬升起始）——抓取失败时它会从 0° 单调涨到 100°+
+        # 而接触力始终正常 ⇒ 判读必须先看姿态再看力（§11.23(27)）。
+        lift_attitude = {"ref_quat": None, "max_deg": None}
         try:
             lift_stride = max(1, int(os.environ.get("IRAF_DEBUG_PICK_STRIDE", "10")))
         except ValueError:
@@ -1057,6 +1110,14 @@ class MujocoBackend:
             if lift_peak["max_z"] is None or current_z > lift_peak["max_z"]:
                 lift_peak["max_z"] = current_z
                 lift_peak["step"] = int(step)
+            with self._data_lock:
+                quat = np.asarray(self.data.xquat[target_body], dtype=float).copy()
+            if lift_attitude["ref_quat"] is None:
+                lift_attitude["ref_quat"] = quat
+            dot = abs(float(np.dot(quat, lift_attitude["ref_quat"])))
+            deg = math.degrees(2.0 * math.acos(min(1.0, max(-1.0, dot))))
+            if lift_attitude["max_deg"] is None or deg > lift_attitude["max_deg"]:
+                lift_attitude["max_deg"] = deg
             if os.environ.get("IRAF_DEBUG_PICK") != "1" or step % lift_stride != 0:
                 return
             with self._data_lock:
@@ -1106,6 +1167,10 @@ class MujocoBackend:
             # （构建期解出的"抓取点沿接近轴抬高 pregrasp_offset_m"的解 ⇒ 任务空间竖直段，
             # 让载荷先离台），再走向 lift 位形。实测 direct 会把载荷沿台面拖行 2.2 cm 后拖出夹口
             # （§11.23(26)）。
+            if regrasp_evidence is not None:
+                # 判据口径：`lift_delta_m` 衡量"载荷离开台面多少"，不是"最后一段抬了多少"
+                # ⇒ 有 regrasp 时从 **PRE_LIFT 之前**的高度起算，否则 4 cm 预抬会被漏计。
+                before_lift_z = float(regrasp_evidence["pre_lift_z_m"])
             lift_path_mode = str(gripper.get("lift_path") or "direct")
             if lift_path_mode not in ("approach_then_lift", "direct"):
                 raise ValueError("gripper.lift_path 只允许 approach_then_lift|direct：%r"
@@ -1181,6 +1246,9 @@ class MujocoBackend:
                 "lift_peak_delta_m": (None if lift_peak["max_z"] is None
                                       else round(max(0.0, lift_peak["max_z"] - before_lift_z), 6)),
                 "lift_peak_step": lift_peak["step"],
+                "lift_attitude_max_deg": (None if lift_attitude["max_deg"] is None
+                                          else round(lift_attitude["max_deg"], 6)),
+                "regrasp": regrasp_evidence,
                 # ⚠ LIFT 段逐样本追踪**不进 evidence**：`pick_object.output.json` 是
                 # `additionalProperties: false` 的契约（契约先行）⇒ 新字段必须先改契约才允许。
                 # 该追踪是**调试仪器**：只在 `IRAF_DEBUG_PICK=1` 时逐行打印（stdout 即产物）。
@@ -2618,10 +2686,26 @@ class MujocoBackend:
             }
             # 放置四段的关节解（构建期由声明求解器解出，后端只回放；缺省即"该场景不支持放置"）
             for key in ("place_transit_positions", "place_above_positions",
-                        "place_descend_positions", "place_retreat_positions"):
+                        "place_descend_positions", "place_retreat_positions",
+                        # regrasp（先抬离台、再合爪到腰部）的两段位置指令：与放置段同样必须透传，
+                        # 否则被本解析层白名单丢掉 ⇒ 运行时只会走原相位表（本会话实测踩过一次）。
+                        "pre_lift_positions", "regrasp_positions"):
                 if raw_gripper.get(key) is not None:
                     gripper[key] = {str(name): float(value)
                                     for name, value in dict(raw_gripper[key]).items()}
+            # regrasp 声明（构建期按声明写入报告）：**透传**；enabled=true 时缺两段位置指令即由
+            # pick_object 显式拒绝（见 .hermes/plans/2026-09-28-pick-regrasp.md）。
+            if raw_gripper.get("regrasp") is not None:
+                rg = dict(raw_gripper["regrasp"])
+                if "enabled" not in rg:
+                    raise ValueError("gripper.regrasp 必须声明 enabled：%r" % (rg,))
+                gripper["regrasp"] = {
+                    "enabled": bool(rg["enabled"]),
+                    "pre_lift_m": float(rg.get("pre_lift_m") or 0.0),
+                    "depth_m": float(rg.get("depth_m") or 0.0),
+                    "open_m": float(rg.get("open_m") or 0.0),
+                    **( {"source": str(rg["source"])} if rg.get("source") else {} ),
+                }
             # 搬运段的夹爪语义（构建期按声明写入报告）：**透传**，缺失即由 place_object 显式拒绝
             # （不做实现层默认值；见 §11.23(12)）。
             if raw_gripper.get("carry_gripper") is not None:
