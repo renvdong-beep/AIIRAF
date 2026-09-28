@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["skill", "accepted", "place_target_id", "payload_id", "confirmation"],
+  "additionalProperties": false,
+  "properties": {
+    "skill": {"const": "place_object"},
+    "accepted": {"const": true},
+    "place_target_id": {"type": "string", "minLength": 1},
+    "payload_id": {"type": "string", "minLength": 1},
+    "confirmation": {
+      "enum": ["released"],
+      "description": "放置的确认口径：**只有 `released`**（夹爪张开且载荷确实落在接收体上）。不接受\"命令已发出\"或\"轨迹已执行\"作为确认。"
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["place_target_body", "payload_body", "released", "payload_in_tray"],
+      "additionalProperties": false,
+      "properties": {
+        "place_target_body": {"type": "string", "minLength": 1},
+        "payload_body": {"type": "string", "minLength": 1},
+        "released": {
+          "const": true,
+          "description": "夹爪已张开到声明的开度（末态指腹开度实测）。"
+        },
+        "payload_in_tray": {
+          "const": true,
+          "description": "载荷的**实测**位置落在接收体的承载面范围内（按声明半尺寸 + 容差判定）。为 false 时不得返回成功。"
+        },
+        "place_alignment": {
+          "type": "object",
+          "required": ["center_distance_m"],
+          "properties": {
+            "center_distance_m": {
+              "type": "number",
+              "minimum": 0,
+              "description": "下行到位时指腹中心到接收面目标点（顶面中心 + 声明间隙）的距离。"
+            },
+            "clearance_m": {
+              "type": "number",
+              "minimum": 0,
+              "description": "下行终点相对接收体顶面的法向间隙（声明值）。"
+            }
+          }
+        },
+        "retreat_delta_m": {
+          "type": "number",
+          "minimum": 0,
+          "description": "松开后抬离的高度（用于证明\"真的退开了\"，而不是停在接触面上）。"
+        },
+        "gripper_open_positions": {
+          "type": "object",
+          "description": "实际下发的夹爪张开位形（模型内关节名 → 值）。",
+          "additionalProperties": {"type": "number"}
+        },
+        "place_mode": {
+          "enum": ["declared_offset"],
+          "description": "放置点推法：declared_offset = 接收体顶面中心 + 声明的法向间隙（本场景唯一的合法模式）。"
+        }
+      }
+    }
+  }
+}

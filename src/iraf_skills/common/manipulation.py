@@ -139,3 +139,51 @@ class DisplayPickProvider:
             "target_id": inputs["target_id"],
             "evidence": result.get("evidence", {}),
         }
+
+
+class PlaceObjectProvider:
+    """只接受 Backend 以**真实仿真状态**确认的放置结果：夹爪已张开 **且** 载荷实测落在接收体上。
+
+    为什么两条都要（契约 `place_object.output.json`）：`released` 只证明"夹爪开了"，
+    载荷可能仍被带着走或掉在别处 ⇒ 必须另有 `payload_in_tray` 的**实测**判据；
+    任一条不成立即拒绝报告成功（铁律 1.5：不得返回伪造成功）。
+    """
+
+    _CONFIRMATIONS = frozenset({"released"})
+
+    def __init__(self, profile, backend):
+        self.profile = profile
+        self.backend = backend
+
+    def execute(self, inputs, lease):
+        place_target_id = inputs["place_target_id"]
+        payload_id = inputs["payload_id"]
+        if not hasattr(self.backend, "place_object"):
+            raise SkillRejected("Backend 未实现 place_object，拒绝伪造放置成功")
+        result = self.backend.place_object(
+            place_target_id=place_target_id,
+            payload_id=payload_id,
+            duration_ms=int(inputs.get("duration_ms", 1000)),
+            lease=lease,
+        )
+        if not isinstance(result, dict):
+            raise SkillRejected("Backend 未返回可验证的放置结果")
+        if (result.get("place_target_id") != place_target_id
+                or result.get("payload_id") != payload_id):
+            raise SkillRejected("Backend 放置结果与请求的接收体/载荷不匹配")
+        if result.get("released") is not True:
+            raise SkillRejected("Backend 未确认载荷已放下")
+        confirmation = result.get("confirmation")
+        if confirmation not in self._CONFIRMATIONS:
+            raise SkillRejected("Backend 放置确认类型不受信")
+        output = {"skill": "place_object", "accepted": True,
+                  "place_target_id": place_target_id, "payload_id": payload_id,
+                  "confirmation": confirmation}
+        evidence = result.get("evidence")
+        if evidence is not None:
+            if not isinstance(evidence, dict):
+                raise SkillRejected("Backend 放置证据格式无效")
+            if evidence.get("payload_in_tray") is not True:
+                raise SkillRejected("Backend 证据显示载荷不在接收体上，拒绝报告成功")
+            output["evidence"] = evidence
+        return output

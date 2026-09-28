@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["place_target_id", "payload_id"],
+  "additionalProperties": false,
+  "properties": {
+    "place_target_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "description": "放置目标（承载面上的接收体，本场景为挂在四足背上的 tray_01）。**只给名字，不给世界坐标**：托盘随载体运动，任何预写的世界位姿都会过期（运行期由 provider 按模型 FK 解析）。"
+    },
+    "payload_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "description": "当前被夹持并要放下的物体（本场景为 box_01）。用于证据里的载荷落位核对，不让实现层\"猜手里拿的是什么\"。"
+    },
+    "duration_ms": {"type": "integer", "minimum": 1, "maximum": 30000}
+  }
+}

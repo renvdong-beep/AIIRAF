@@ -926,6 +926,41 @@ guest 的行为完全不变（不需要在演示脚本里自己造时间推进�
 `scenario.yaml: s04_place_in_tray.criteria.pose_tolerance_m = 0.01`；目标帧必须用**世界固定**的
 `handoff_station_frame`（托盘帧与机身同一刚体 ⇒ 量到自指量，见 docs/debug/2026-09-24-dock-target-self-frame.md）。
 
+### 11.10 `place_object`（s04）开工：契约已落；发现一处**声明冲突**必须先定案（2026-09-28）
+
+**已落（契约先于实现，AGENTS.md 2.1；尚未声明任何能力 ⇒ 不构成假声明）**
+
+- `skills/place_object/place_object.input.json`：必填 `place_target_id`（**只给名字，不给世界坐标**：
+  托盘随载体运动，任何预写的世界位姿都会过期）+ `payload_id`（手里拿的是什么，不让实现层猜）；
+  可选 `duration_ms`。
+- `skills/place_object/place_object.output.json`：确认口径**只有 `released`**，且证据必须同时给出
+  `released` 与 **`payload_in_tray`**（实测载荷落在接收体上）—— 只有"夹爪开了"不算放下。
+- `skills/place_object/skill.yaml`：`requires: [place_object]`、`timeoutSeconds: 120`（覆盖墙钟，
+  与 pick 同口径）、`safetyClass: controlled_motion`、
+  provider `iraf_skills.common.manipulation:PlaceObjectProvider`。
+- `src/iraf_skills/common/manipulation.py`：新增 `PlaceObjectProvider`（后端未实现 `place_object`、
+  或证据显示载荷不在托盘上 ⇒ 直接 `SkillRejected`，不伪造成功）。
+
+**发现的声明冲突（必须先定案，否则 s04 的判据无法自洽）**
+
+1. 托盘是**挂在四足背上的**（`props[tray_01].mount = {entity: unitree_go2, frame: tray_frame}`）⇒
+   它的世界位姿**取决于狗停靠后的实际位姿**，构建期解出的关节解只能按**标称站位**算。
+2. 实测停靠误差 **0.02812501214102655 m ≤ 0.03（声明）**，而 `scenario.yaml` 里 s04 现写的判据是
+   `pose_tolerance_m: 0.01` —— 即"要求放置精度比载体定位精度高一个量级"，**不可能同时成立**。
+3. 两个可选定案（都要写进声明，不许实现层默认）：
+   - **A（建议）**：s04 判据改为"载荷落在托盘**承载面范围内**"——托盘声明尺寸 0.24 × 0.16 × 0.02 m、
+     方块 0.05 m，方块完全落入托盘只需 |dx| ≤ 0.095、|dy| ≤ 0.055 ⇒ 取 `max_offset_from_tray_center_m: 0.06`
+     （由声明尺寸推出并写进注释），并把实测偏移量写进证据（可见、不隐藏）；
+   - B：把停靠精度收到 ≤ 0.01 m —— 需改 `dock_for_handoff` 的验收与控制器，代价大且与"四足定位"物理不符。
+4. 落地顺序（下一轮）：① 定案 A 的阈值进 `scenario.yaml` + `scenario.py` 的判据表；
+   ② 构建期在联合报告里给 `place_targets[]`（托盘 body/geom/半尺寸/挂载 + 标称位姿 FK）与
+   由**已声明的参考姿态求解器**解出的 `place_*_positions`（approach/descend/release/retreat，
+   与 pick 的 `*_positions` 同口径）；③ 后端 `place_object` 用工位契约的现有原语
+   （`_move_trajectory` / `_set_gripper_controls` / `_advance_for` / `_joint_qpos`）执行四段，
+   证据给 `place_alignment.center_distance_m`（相对**运行期实测**的托盘位姿）、`released`、
+   `payload_in_tray`、`retreat_delta_m`；④ 能力声明（profile / 场景 / 适配器 / provider 四处同步）
+   + 成功与拒绝两条路径的回归测试；⑤ `nominal --world joint` 判 s04，再补 s05 载荷确认。
+
 ## 12. 下一步
 
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。

@@ -1,0 +1,24 @@
+apiVersion: iraf.intewell.io/v1
+kind: Skill
+metadata: {name: place_object, version: 1.0.0}
+spec:
+  verification: development
+  inputSchema: place_object.input.json
+  outputSchema: place_object.output.json
+  requires: [place_object]
+  preconditions:
+    - safety.estop == false
+    - manipulation.payload_held == true
+  intentExamples: ["把方块放进托盘", "放置到狗背托盘", "place object into tray"]
+  # 租约 TTL 必须覆盖**墙钟**（不是仿真时长）：与 pick_object 同口径（带窗口时 4 核软件渲染
+  # 会把墙钟拉长数倍），放置比抓取多一段"下行+张开+抬离" ⇒ 取 120 s（= pick 的同值，够用）。
+  timeoutSeconds: 120
+  cancellation: cooperative_stop
+  recovery: [stop, reacquire_target, request_handover]
+  safetyClass: controlled_motion
+  providers:
+    - name: common_place_sim
+      type: python_adapter
+      entrypoint: "iraf_skills.common.manipulation:PlaceObjectProvider"
+      selector: {mode: simulation}
+      priority: 100
