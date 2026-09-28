@@ -506,6 +506,82 @@ def _inject_props(
 POSITION_GAIN_KEYS = ("baseline", "section", "joints_section")
 
 
+def _place_targets(scene, model, injections, trunk_body):
+    """承载面上的**接收体**（`props` 里带 `mount` 的道具）+ 其**标称停靠位姿**（2026-09-28，§11.12）。
+
+    为什么需要：`place_object` 的输入契约只给接收体的**名字**（托盘随载体运动 ⇒ 任何预写的世界位姿都会过期）。
+    但"放置点"仍然要有一个基准，报告因此声明两件事：
+      ① **几何**（半尺寸、质量、挂载帧）——用于运行期判"载荷是否落在承载面内"；
+      ② **标称停靠位姿**（载体停在声明的交接站位时的 FK）——构建期解放置姿态的唯一可能基准。
+    运行期**必须**以实测位姿为准（证据里给 `place_alignment.center_distance_m` 与载荷偏移）；
+    本段的 `nominal_*` 只作构建基准与留痕，不当作运行期真值。
+    """
+    declaration = {str(item.get("id")): item for item in (scene.get("props") or [])
+                   if isinstance(item, dict)}
+    targets = []
+    station_record = None
+    for item in (injections.get("world_frames") or []):
+        if str(item.get("id")) == "handoff_station_frame":
+            station_record = item
+            break
+    station_pose = None
+    if station_record is not None:
+        station_pose = (list(_vec3(station_record.get("pos_m"), "frames.handoff_station_frame.pos_m")),
+                        list(_quat_wxyz(station_record.get("quat_wxyz"),
+                                        "frames.handoff_station_frame.quat_wxyz")))
+    data = mujoco.MjData(model)
+    dof_address = None
+    body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, str(trunk_body))
+    if body_id >= 0 and int(model.body_jntnum[body_id]) > 0:
+        candidate = int(model.body_jntadr[body_id])
+        if int(model.jnt_type[candidate]) == int(mujoco.mjtJoint.mjJNT_FREE):
+            dof_address = int(model.jnt_qposadr[candidate])
+    if station_pose is not None and dof_address is not None:
+        if int(getattr(model, "nkey", 0) or 0) > 0:
+            mujoco.mj_resetDataKeyframe(model, data, 0)
+        # ⚠ 站位的 z 是**地面**高度（提交声明 (0.45, 0, 0)），而载体停在那里时机身并不在地面：
+        # 名义基座高度取**关键帧实测值**（本模型 0.288372 m，来自模型 FK，不手写数字）。
+        base_height = float(data.qpos[dof_address + 2]) if int(getattr(model, "nkey", 0) or 0) else 0.0
+        data.qpos[dof_address:dof_address + 3] = [station_pose[0][0], station_pose[0][1], base_height]
+        data.qpos[dof_address + 3:dof_address + 7] = station_pose[1]
+    mujoco.mj_forward(model, data)
+    for record in (injections.get("props") or []):
+        mount = record.get("mount")
+        if not isinstance(mount, dict):
+            continue
+        prop_id = str(record.get("id"))
+        declared = declaration.get(prop_id) or {}
+        geometry = declared.get("geometry") or {}
+        geom_name = "%s_geom" % str(record.get("body"))
+        geom_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, geom_name)
+        target = {
+            "id": prop_id,
+            "body": str(record.get("body")),
+            "geom": geom_name if geom_id >= 0 else None,
+            "kind": str(record.get("kind")),
+            "mass_kg": record.get("mass_kg"),
+            "mount": dict(mount),
+            "mount_offset_m": [round(float(v), 9) for v in (record.get("position_m") or [])],
+            "size_m": ([round(float(v), 9) for v in geometry.get("size_m")]
+                       if isinstance(geometry.get("size_m"), (list, tuple)) else None),
+            "pose_source": "nominal_docked_station",
+            "runtime_pose_source": "live_fk",
+        }
+        prop_body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, str(record.get("body")))
+        if prop_body >= 0:
+            target["nominal_pose_m"] = [round(float(v), 9) for v in data.xpos[prop_body]]
+            target["nominal_quaternion_wxyz"] = [round(float(v), 9) for v in data.xquat[prop_body]]
+        targets.append(target)
+    return {"targets": targets,
+            "station_frame": (str(station_record.get("id")) if station_record else None),
+            "station_pose_m": (station_pose[0] if station_pose else None),
+            "nominal_base_height_m": (round(float(data.qpos[dof_address + 2]), 9)
+                                      if (dof_address is not None
+                                          and int(getattr(model, "nkey", 0) or 0)) else None),
+            "note": ("接收体按名字引用（托盘随载体运动）；`nominal_*` 是「载体停在交接站位」时的 FK，"
+                     "只作构建基准；运行期以实测位姿为准（证据给实测偏移）。")}
+
+
 def _apply_declared_position_gains(root, child, profile_spec, robot_id):
     """按声明把**位置执行器刚度**注入附加本体的子模型（数字与规则都来自声明，构建器不写数字）。
 
@@ -2023,6 +2099,8 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
         _fail(EXIT_MODEL, "注入未生效：" + "；".join(failures))
     os.replace(str(staging), str(output_path))
 
+    # 接收体声明（承载面：托盘随载体运动 ⇒ 只给名字 + 几何 + 标称停靠位姿；见 _place_targets）
+    place_targets = _place_targets(scene, compiled, injections, trunk_body_name)
     report = {
         # 沿用既有场景报告契约（键集合不变，新增字段见下），emit_backend_config.py 可直接消费。
         "schema_version": REPORT_SCHEMA_VERSION,
@@ -2072,6 +2150,7 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
             "vendor_referenced": vendor_sensors,
             "deferred": deferred_sensors,
         },
+        "place_targets": place_targets,
         "model_facts": facts,
         # Profile 的身份凭据随报告留痕（名称/关节数/能力/校验状态）：报告与 Profile 一起可复算。
         "profile_identity": {

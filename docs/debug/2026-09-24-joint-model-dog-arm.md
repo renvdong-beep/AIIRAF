@@ -956,6 +956,32 @@ display   window_opened=true / frames=1937
    是稳的；不稳的是载体定位。
 4. 判据纪律：**带显示运行的结论只能引用当次报告**，不能拿另一次的 dock 数字替代（本次就是这么发现的）。
 
+### 11.12 接收体声明进报告（`place_targets`）：托盘的名义停靠位姿与可达性（2026-09-28）
+
+`place_object` 只能按**名字**引用接收体（托盘随载体运动 ⇒ 预写世界位姿必过期），但放置点仍需一个基准。
+联合报告新增 `place_targets`（构建期），字段与数字：
+
+```json
+{"targets": [{"id": "tray_01", "body": "tray_01", "geom": "tray_01_geom",
+              "mount": {"frame": "tray_frame", "entity": "unitree_go2"},
+              "mount_offset_m": [0.0, 0.0, 0.057], "size_m": [0.12, 0.08, 0.01],
+              "pose_source": "nominal_docked_station", "runtime_pose_source": "live_fk",
+              "nominal_pose_m": [0.45, 0.0, 0.345372], "nominal_quaternion_wxyz": [1,0,0,0]}],
+ "station_frame": "handoff_station_frame", "station_pose_m": [0.45, 0, 0],
+ "nominal_base_height_m": 0.288372}
+```
+
+两条判读：
+1. **`nominal_pose_m` 的 z 有一个坑**：站位的声明是 (0.45, 0, 0)，其中 z 是**地面**高度；载体停在站位时
+   机身并不在地面 ⇒ 名义基座高度必须取**关键帧实测值 0.288372 m**（模型 FK，不手写数字），
+   修正前会得到 z = 0.057（明显不对，托盘不可能在地面附近）。修正后 **0.345372 m** 与设计里
+   "托盘顶面高度 z ≈ 0.347 m"一致（§11.1 的可达环带判据也是按这个高度做的）。
+2. **可达性**：托盘名义位姿距臂基座 (0.45, −0.45, 0.123) = **0.501945521 m ≤ 0.594284 m**（可达上界）
+   ⇒ 臂够得到托盘，`place_object` 在几何上可行（这一条以前没有数字，属于"装配前必须先有的判据"）。
+
+`nominal_*` 只作**构建基准**；运行期必须以**实测**位姿为准（`runtime_pose_source: live_fk`），
+证据里给实测偏移（见 §11.10 的 A 案判据 `max_offset_from_tray_center_m`）。
+
 ### 11.11 停靠误差分布已量：**独立跑确定性**，但**带负载时会漂**（2026-09-28）
 
 探针 `build/iraf-a6a14/dock_error_distribution_probe.py --runs 5`（同配置、每轮重新装配、
