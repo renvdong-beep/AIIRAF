@@ -49,6 +49,8 @@ CAPABILITY_METHODS = {
     "stand": "stand",
     "locomote": "locomote",
     "dock_for_handoff": "dock_for_handoff",
+    # 放置（2026-09-28 §11.23(41)）：把夹持中的载荷放到接收体承载面上（临时启用做验收）。
+    "place_object": "place_object",
     "read_state": "read_state",
     "emergency_stop": "emergency_stop",
 }
@@ -64,6 +66,7 @@ MOTION_CAPABILITIES = (
     "stop",
     "locomote",
     "dock_for_handoff",
+    "place_object",
     "emergency_stop",
 )
 

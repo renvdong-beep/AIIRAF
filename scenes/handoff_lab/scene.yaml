@@ -43,7 +43,7 @@ robots:
     profile: profiles/piper_mujoco.yaml
     # 场景 id（piper）与 Profile 身份（piper_mujoco）不同名 ⇒ 显式映射（硬校验，不隐式放行）
     profile_name: piper_mujoco
-    capabilities: [move_joint, pick_object, visual_pick, stop]
+    capabilities: [move_joint, pick_object, visual_pick, place_object, stop]
     # 联合模型里的**相对位姿**（世界系）：只有 `--attach piper` 时才被消费（单本体产物不变）。
     # 取值依据：① 距交接站位 `handoff_station_frame`(0.45, 0) 的水平距离 = 0.45 m
     #   ≤ 工具点在托盘高度（z≈0.347 m）的可达环带上界 0.594284 m（§11.1 实测）；

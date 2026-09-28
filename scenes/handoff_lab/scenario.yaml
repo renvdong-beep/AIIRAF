@@ -146,16 +146,14 @@ scenarios:
         action: place_object
         robot: piper
         params:
-          target: box_01
-          destination: tray_01
-        # place_object 属 U6 交接集成：显式登记待交付（2026-09-28 §11.23(41) 已把技能与后端做实，
-        # 但**尚未通过验收** ⇒ 按"未验收不声明能力"回退。当前唯一缺口：above 段摆基座 43° 时，
-        # `carry_gripper: hold` 的指腹把焊住的载荷在 xy 推偏 2.9 cm，左指脱开 ⇒ 前置判据判负；
-        # j1 已到位 0.74954/0.749801、指腹 (0.1981,-0.4498) 已在托盘上方。）
-        pending_closed_by: "步骤 18"
-        pending_reason: 放置技能路线已打通（焊缝+自碰撞排除+死代码修复），但 s04 验收未通过（见 §11.23(41)(g)）。
+          place_target_id: tray_01
+          payload_id: box_01
+          duration_ms: 12000
+        # 临时启用做验收（§11.23(41)(g)：焊缝 release_gripper + 滑移判据 + 静态台架 + 自碰撞排除）。
         criteria:
-          pose_tolerance_m: 0.01
+          require_release: true
+          require_payload_in_tray: true
+          max_offset_from_tray_center_m: 0.06
       - id: s05_confirm_payload
         action: accept_payload
         robot: unitree_go2

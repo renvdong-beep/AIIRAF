@@ -1414,6 +1414,10 @@ class MujocoBackend:
                         arm_joints_now[str(name)] = round(
                             float(self.data.qpos[int(self.model.jnt_qposadr[joint_id])]), 9)
                 return {"tray_top": top, "payload_low_z": low, "pad_mid": midpoint,
+                        # 指腹 **body** 中点（与搬运约束的 anchor 同一参照；判据不能用 geom 中点：
+                        # 夹爪张开时 geom 相对 body 摆动，实测造成 3.2 cm 的假滑移）
+                        "finger_mid": (np.asarray(self.data.xpos[left_finger], dtype=float)
+                                       + np.asarray(self.data.xpos[right_finger], dtype=float)) / 2.0,
                         "arm_joint_positions": arm_joints_now,
                         "payload_neighbors": neighbors[:6],
                         "payload_center": payload_center,
@@ -1494,6 +1498,7 @@ class MujocoBackend:
                    "tray_top_m": [round(float(v), 6) for v in snapshot["tray_top"]],
                    "payload_low_m": round(float(snapshot["payload_low_z"]), 6),
                    "pad_mid_m": [round(float(v), 6) for v in snapshot["pad_mid"]],
+                   "finger_mid_m": [round(float(v), 6) for v in snapshot["finger_mid"]],
                    "payload_low_minus_pad_m": round(float(snapshot["payload_low_z"]
                                                         - snapshot["pad_mid"][2]), 6),
                    "finger_contacts": {"left": bool(contacts[0]), "right": bool(contacts[1])},
@@ -1592,6 +1597,8 @@ class MujocoBackend:
         carry_cfg = gripper.get("carry_constraint") or {}
         carry_equality_id = None
         carry_anchor_rel_quat = None
+        carry_release_gripper = False
+        carry_max_slip_m = None
         if bool(carry_cfg.get("enabled")):
             name = str(carry_cfg.get("equality_name") or "")
             anchor = str(carry_cfg.get("anchor_body") or "")
@@ -1603,6 +1610,14 @@ class MujocoBackend:
             if carry_type not in ("connect", "weld"):
                 raise ValueError("场景报告缺少合法的 gripper.carry_constraint.type（只允许 connect / "
                                  "weld，实际 %r）：搬运是否约束旋转必须由声明决定" % carry_type)
+            # 焊缝语义（§11.23(41)(g)）：激活后是否**释放夹爪** + 释放后的滑移判据阈值。
+            # 缺声明即显式失败：释放夹爪会改变"是否握着"的判据口径，不能由实现层默认。
+            carry_release_gripper = bool(carry_cfg.get("release_gripper"))
+            carry_max_slip_m = float(carry_cfg.get("max_slip_m") or 0.0)
+            if carry_release_gripper and not carry_max_slip_m > 0:
+                raise ValueError("声明了 carry_constraint.release_gripper=true 但没有正的 "
+                                 "max_slip_m：释放夹爪后不能用指腹接触判\"是否握着\"，"
+                                 "必须给出焊缝滑移阈值")
             carry_equality_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_EQUALITY, name)
             if carry_equality_id < 0:
                 raise ValueError(
@@ -1633,6 +1648,10 @@ class MujocoBackend:
                 finger_mid = (left_point + right_point) / 2.0
                 payload_now = np.asarray(self.data.xpos[payload_body], dtype=float)
                 carry_anchor_offset = payload_now - finger_mid
+                # 滑移判据的参照必须与判据里用的点**一致**：判据读追踪行的 `pad_mid_m`（指腹 **geom**
+                # 中点），而 anchor 跟随的是指腹 **body** 中点（两者相差数厘米）⇒ 这里单独按 geom 中点
+                # 记一份参照（用 start 快照里的 `pad_mid`，与同一时刻的载荷位姿配对）。
+                carry_slip_reference = payload_now - np.asarray(snapshot["pad_mid"], dtype=float)
                 self.data.mocap_pos[anchor_mocap] = payload_now.copy()
                 if carry_type == "weld":
                     # 刚性焊：anchor 的**姿态**必须等于载荷姿态（weld 不给 relpose ⇒ 两体位姿重合），
@@ -1645,6 +1664,11 @@ class MujocoBackend:
                 else:
                     self.data.mocap_quat[anchor_mocap] = (1.0, 0.0, 0.0, 0.0)
                 self.data.eq_active[carry_equality_id] = 1
+            if carry_release_gripper:
+                # 声明 `carry_constraint.release_gripper=true`（§11.23(41)(g)）：焊缝已承担搬运
+                # ⇒ **释放夹爪**，让指腹不再与焊缝竞争（实测竞争会把载荷在 xy 推偏 2.9 cm、左指脱开）。
+                # 之后三段按 `carry_gripper: hold` 语义把这个"张开"的 ctrl 保持住（零合拢）。
+                self._set_gripper_controls(dict(gripper["open_positions"]))
             # ⚠ 这里必须给**名字**（报告里的 body 名已带联合世界前缀），不能给 body id：
             # `_move_trajectory` 的 anchor 钩子按名字解析（实测传 id 会报 body not found: 26）。
             carry_anchor_kwargs = {
@@ -1658,8 +1682,36 @@ class MujocoBackend:
                 # 刚性焊还要跟随**姿态**：anchor 姿态 = 腕部姿态 ⊗ 激活瞬间的（腕部⁻¹⊗载荷）
                 carry_anchor_kwargs["anchor_wrist"] = str(gripper["wrist_body"])
                 carry_anchor_kwargs["anchor_rel_quat"] = carry_anchor_rel_quat
+
         else:
             carry_anchor_kwargs = {}
+
+        def _carry_grip_row(row, label):
+            """搬运中"是否还握着"的判据。
+
+            焊缝激活且已按声明释放夹爪时，**不能**再看指腹接触（夹爪本就张开了）⇒ 改看**焊缝滑移**：
+            `|载荷中心 − (指腹中点 + 激活时的载荷-指腹偏移)|`。阈值 `carry_constraint.max_slip_m`
+            来自声明（缺声明即在上面的校验里显式失败）。未释放时保持原有的双侧指腹接触判据。
+            ⚠ 传入的是 `_trace` 的**追踪行**（键名 `pad_mid_m` / `payload_pose` / `finger_contacts`），
+            不是 `_snapshot` 的快照（键名 `pad_mid`）—— 混用会 KeyError（本轮实测踩到）。
+            """
+            if carry_equality_id is not None and carry_release_gripper:
+                finger_mid = row.get("finger_mid_m")
+                if finger_mid is None:
+                    raise ValueError("搬运判据需要追踪行里的 finger_mid_m")
+                # 参照必须是「指腹 body 中点 + 激活瞬间的载荷−指腹body偏移」——与 anchor 驱动同一参照。
+                # ⚠ 不能用 `pad_mid_m`（geom 中点）：夹爪张开时 geom 相对 body 摆动，
+                # 实测造成 0.031689 m 的**假滑移**（真值仅约 1 mm）。
+                slip = float(np.linalg.norm(
+                    np.asarray(row["payload_pose"]["pos_m"], dtype=float)
+                    - (np.asarray(finger_mid, dtype=float) + np.asarray(carry_anchor_offset))))
+                row["carry_slip_m"] = round(slip, 9)
+                if slip > float(carry_max_slip_m):
+                    raise ValueError("%s后焊缝滑移 %.6f m > 声明阈值 %.6f m ⇒ 载荷已脱离焊缝"
+                                     % (label, slip, float(carry_max_slip_m)))
+                return
+            if not (row["finger_contacts"]["left"] and row["finger_contacts"]["right"]):
+                raise ValueError("%s后失去夹持（载荷已脱离）⇒ 拒绝继续放置" % label)
         if not (start_row["finger_contacts"]["left"] and start_row["finger_contacts"]["right"]):
             raise ValueError(
                 "进入放置段时双侧指腹未同时接触载荷（依据已进证据 phase_trace[0]）⇒ 拒绝继续")
@@ -1671,8 +1723,7 @@ class MujocoBackend:
                                   sampler=_segment_sampler("place_transit_positions", segment_samples),
                                   **carry_anchor_kwargs)
             seg_row = _trace("after_transit", _snapshot(), "绕行航点（竖直抬升到托盘高度）")
-            if not (seg_row["finger_contacts"]["left"] and seg_row["finger_contacts"]["right"]):
-                raise ValueError("绕行航点后失去夹持（载荷已脱离）⇒ 拒绝继续放置")
+            _carry_grip_row(seg_row, "绕行航点")
         # ⚠ 结构修正（2026-09-28 §11.23(41)）：`above` / `descend` 的回放**必须在这一层**。
         # 实测（AST 对账）：`descend` 曾被嵌在"失去夹持就报错"的 `if not (双侧接触):` 体内
         # ⇒ 是**死代码、永不执行**：`after_above` 与 `after_descend` 之间植物只前进 5 步
@@ -1684,8 +1735,7 @@ class MujocoBackend:
                               sampler=_segment_sampler("place_above_positions", segment_samples),
                               **carry_anchor_kwargs)
         seg_row = _trace("after_above", _snapshot(), "抬升段结束（承载面上方）")
-        if not (seg_row["finger_contacts"]["left"] and seg_row["finger_contacts"]["right"]):
-            raise ValueError("抬升段后失去夹持（载荷已脱离）⇒ 拒绝继续放置")
+        _carry_grip_row(seg_row, "抬升段")
         # ② 下行到位（回放）
         self._move_trajectory(_carry_goal(descend, "descend"), phase_ms,
                               ctrl_offsets=self._pick_ctrl_offsets("grasp") or None,
@@ -1705,7 +1755,13 @@ class MujocoBackend:
         self._set_gripper_controls(dict(gripper["open_positions"]))
         self._advance_for(phase_ms)
         # ---- ④ 抬离（回放构建期解）
-        self._move_trajectory({str(k): float(v) for k, v in retreat.items()}, phase_ms,
+        retreat_goal = {str(k): float(v) for k, v in retreat.items()}
+        if carry_release_gripper:
+            # 已按声明释放夹爪 ⇒ 抬离段**不能**把夹爪再合上（否则会把刚放好的载荷推走，
+            # 也会让 `released`（张爪后不再接触）判据失败）。
+            for name in (gripper.get("open_positions") or {}):
+                retreat_goal[str(name)] = float(gripper["open_positions"][name])
+        self._move_trajectory(retreat_goal, phase_ms,
                               ctrl_offsets=self._pick_ctrl_offsets("lift") or None)
         final = _snapshot()
         _trace("after_retreat", final, "抬离结束（载荷应留在承载面上）")
@@ -2849,6 +2905,8 @@ class MujocoBackend:
                     "type": str(cc.get("type") or ""),
                     "equality_name": str(cc.get("equality_name") or ""),
                     "anchor_body": str(cc.get("anchor_body") or ""),
+                    "release_gripper": bool(cc.get("release_gripper", False)),
+                    "max_slip_m": float(cc.get("max_slip_m") or 0.0),
                     # 刚度声明（记录用；后端不直接使用，但白名单漏掉就会被静默丢弃 —— 本会话第 5 次）
                     **( {"solref": [float(v) for v in cc["solref"]],
                          "solimp": [float(v) for v in cc["solimp"]]}

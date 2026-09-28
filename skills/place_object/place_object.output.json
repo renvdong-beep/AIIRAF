@@ -40,21 +40,57 @@
       ],
       "additionalProperties": false,
       "properties": {
-        "place_target_body": {
-          "type": "string",
-          "minLength": 1
+        "arm_joint_positions": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "搬运各相位结束时**臂关节实测 qpos**（对象：关节名 → 弧度）。用于与报告里的 `place_*_positions` 逐关节对账 —— 2026-09-28 §11.23(39) 实测到「回放执行了但臂没位移」（指腹停在 (0.3059,-0.3126,0.0839) vs 托盘 (0.309,-0.591,0.02)），而构建期对同批位形的 FK 验证达标（残差 8.041e-06）⇒ 需要关节级证据分清是「回放没下发」还是「下发了没到位」。"
+        },
+        "carry_constraint_activated": {
+          "type": "boolean",
+          "description": "搬运段是否按声明启用了**抓取约束**（MuJoCo `<connect>` 焊接 + mocap anchor）。动机：本几何下唯一撑得住抬升的斜夹过盈会在搬运中把载荷楔出，纯摩擦路线已被 30+ 条量化否证穷尽；搬运段改用声明化约束，与臂侧世界同款机制（见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.23(29)）。"
+        },
+        "gripper_carry": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "hold",
+                "trajectory"
+              ]
+            },
+            "segment_targets": {
+              "type": "object"
+            },
+            "note": {
+              "type": "string"
+            }
+          },
+          "description": "搬运段夹爪语义的声明与逐段实际下发值（`hold` = 保持夹紧力，指令零位移）。"
+        },
+        "gripper_open_positions": {
+          "type": "object",
+          "description": "实际下发的夹爪张开位形（模型内关节名 → 值）。",
+          "additionalProperties": {
+            "type": "number"
+          }
         },
         "payload_body": {
           "type": "string",
           "minLength": 1
         },
-        "released": {
-          "const": true,
-          "description": "夹爪已张开到声明的开度（末态指腹开度实测）。"
-        },
         "payload_in_tray": {
           "const": true,
           "description": "载荷的**实测**位置落在接收体的承载面范围内（按声明半尺寸 + 容差判定）。为 false 时不得返回成功。"
+        },
+        "phase_trace": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "各相位与逐样本的实测追踪（指腹中点/载荷 6 维位姿/接触对/夹爪状态），用于失败取证。"
         },
         "place_alignment": {
           "type": "object",
@@ -74,34 +110,38 @@
             }
           }
         },
-        "retreat_delta_m": {
-          "type": "number",
-          "minimum": 0,
-          "description": "松开后抬离的高度（用于证明\"真的退开了\"，而不是停在接触面上）。"
-        },
-        "gripper_open_positions": {
-          "type": "object",
-          "description": "实际下发的夹爪张开位形（模型内关节名 → 值）。",
-          "additionalProperties": {
-            "type": "number"
-          }
-        },
-        "carry_constraint_activated": {
-          "type": "boolean",
-          "description": "搬运段是否按声明启用了**抓取约束**（MuJoCo `<connect>` 焊接 + mocap anchor）。动机：本几何下唯一撑得住抬升的斜夹过盈会在搬运中把载荷楔出，纯摩擦路线已被 30+ 条量化否证穷尽；搬运段改用声明化约束，与臂侧世界同款机制（见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.23(29)）。"
-        },
         "place_mode": {
           "enum": [
             "declared_offset"
           ],
           "description": "放置点推法：declared_offset = 接收体顶面中心 + 声明的法向间隙（本场景唯一的合法模式）。"
         },
-        "arm_joint_positions": {
-          "type": [
-            "object",
-            "null"
+        "place_target_body": {
+          "type": "string",
+          "minLength": 1
+        },
+        "released": {
+          "const": true,
+          "description": "夹爪已张开到声明的开度（末态指腹开度实测）。"
+        },
+        "retreat_delta_m": {
+          "type": "number",
+          "minimum": 0,
+          "description": "松开后抬离的高度（用于证明\"真的退开了\"，而不是停在接触面上）。"
+        },
+        "runtime_source": {
+          "type": "string",
+          "enum": [
+            "live_fk"
           ],
-          "description": "搬运各相位结束时**臂关节实测 qpos**（对象：关节名 → 弧度）。用于与报告里的 `place_*_positions` 逐关节对账 —— 2026-09-28 §11.23(39) 实测到「回放执行了但臂没位移」（指腹停在 (0.3059,-0.3126,0.0839) vs 托盘 (0.309,-0.591,0.02)），而构建期对同批位形的 FK 验证达标（残差 8.041e-06）⇒ 需要关节级证据分清是「回放没下发」还是「下发了没到位」。"
+          "description": "运行期数值来源：证据里的位姿一律取自**实测 FK**，不用构建期名义值。"
+        },
+        "segment_samples": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "运动过程中的采样行（与 phase_trace 同结构的运动期子集）。"
         }
       }
     }

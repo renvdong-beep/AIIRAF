@@ -2106,6 +2106,40 @@ after_retreat: 指腹 (0.3043,-0.3127,0.0850) ｜ 载荷 (0.2742,-0.29,0.0281)
 3. 新键 `solref/solimp/carry_constraint.type` 三次被"白名单/透传"静默丢掉（`mujoco_backend` 解析、
    臂侧报告生成器、构建器注入）⇒ 这是本会话第 5 次同类坑。
 
+**(h) s04 **通过**（同一轮内收口，2026-09-28）**
+
+按 (g) 的候选 ① 落地：把"焊缝激活后释放夹爪"做成**声明化语义键**（缺声明即显式失败），并把
+"是否还握着"的判据从"指腹接触"换成**焊缝滑移**：
+
+- `config/piper_simulation_baseline.yaml: grasp.carry_constraint.release_gripper: true / max_slip_m: 0.005`
+  ⇒ 臂侧生成器与后端白名单同步透传（同一类"新键被静默丢掉"坑第 5/6 次，这次一次做全三层）。
+- 后端行为：焊缝激活后**立即释放夹爪**（`open_positions`），随后三段按 `carry_gripper: hold`
+  把"张开"的 ctrl 保持住（零合拢）；抬离段的夹爪目标也强制为张开（否则会把刚放好的载荷推走，
+  并让 `released` 判据失败）。
+- 判据：`|载荷中心 − (指腹 **body** 中点 + 激活瞬间的载荷−指腹body偏移)| ≤ max_slip_m`。
+  ⚠ 仪器坑两次（都记下）：① 判据误用 `pad_mid`（geom 中点）而不是 `finger_mid`（body 中点）
+  ⇒ 夹爪张开时 geom 相对 body 摆动，量出 **0.031689 m 的假滑移**（真值约 1 mm）；
+  ② 判据读的是**追踪行**（键 `finger_mid_m`）而不是快照（键 `pad_mid`）⇒ 混用直接 KeyError。
+  为此在快照与追踪行里都补了 `finger_mid`（指腹 body 中点，与 anchor 驱动同一参照）。
+- 契约门禁：第一次跑到结尾时被 `place_object.output.json` 的 `additionalProperties: false` 拦下
+  （`gripper_carry` / `phase_trace` / `runtime_source` / `segment_samples` 四个诊断键从未进过契约）
+  ⇒ 按"契约先行"补进 output 契约。
+
+**实测结果（build/acceptance/handoff_lab/nominal/report.json，`passed=True`、`failed_checks=0`）**
+
+| 步骤 | 结果 | 关键实测 |
+|---|---|---|
+| s01 stand | SUCCEEDED | 末速 1.4582e-05 m/s |
+| s02 dock | SUCCEEDED | 平移 0.025516453 m、偏航 0.143376133° |
+| s03 pick | SUCCEEDED | 抓取误差 0.000208312 m、提起 0.079305 m、双侧接触 1.0 |
+| **s04 place_in_tray** | **SUCCEEDED** | **载荷中心偏移 0.033436339 m（≤0.06）**、`released` 1.0、`payload_in_tray` 1.0 |
+
+搬运全程（transit → above → descend → retreat）滑移判据持续通过；下行到位时载荷最低点 0.1242 m
+≈ 承载面 0.12 m，抬离后落定 **low ≈ 0.1198 m**（在托盘上）⇒ "臂把方块放到托盘"在本几何下**可行且已验证**。
+
+⇒ 至此"狗站稳 → 走到交接站位 → 臂从台面抓起方块 → 放进托盘"整链在联合世界贯通。
+剩余显式待交付：**s05 `accept_payload`（载荷确认，需载荷传感）**。
+
 **(g) 本轮结束时 s04 的剩余缺口（已量化，未通过）**
 - 残差现象：即便 joint1 已修好，**above 段 3 s 内载荷相对指腹在 xy 漂移 ~3 cm**（z 稳定 −0.0297）
   ⇒ 指腹的刚性位置伺服与焊缝**互相竞争**：`hold` 保持夹紧 ⇒ 夹口把载荷推偏；夹硬焊缝 ⇒ 节拍陈旧

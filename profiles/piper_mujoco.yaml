@@ -17,7 +17,7 @@ spec:
     joint6: [-3.14, 3.14]
     joint7: [0.0, 0.035]
     joint8: [-0.035, 0.0]
-  capabilities: [move_joint, pick_object, visual_pick, stop]
+  capabilities: [move_joint, pick_object, visual_pick, place_object, stop]
   # 结构化差异声明：把关节语义、夹爪位形、Home 位姿与相机视角
   # 从脚本魔数收敛为 profile 数据，换机械臂只需替换本文件。
   joint_roles:
