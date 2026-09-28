@@ -404,14 +404,21 @@ class NegativeScenarioTests(ScenePackageFixture):
 
 class ModelLayerTests(ScenePackageFixture):
     def write_model(self, drop=None):
-        """写一份含 include 的最小生成模型：证明锚点校验真的在看生成后的模型。"""
+        """写一份含 include 的最小生成模型：证明锚点校验真的在看生成后的模型。
+
+        ⚠ 道具 body 必须**从场景声明里派生**，不能写死清单：生产场景新增道具（如
+        `handoff_stand`）后，写死的清单会让本用例**假失败**并掩盖真实回归（2026-09-28 踩到，
+        当时表现为 `model_failures: 生成模型里找不到道具 handoff_stand 的 body handoff_stand`）。
+        """
+        document = load_yaml(self.scene_path)
+        bodies = [str(item.get("body")) for item in (document.get("props") or [])
+                  if isinstance(item, dict) and item.get("body")]
         child = self.package / "vendor_part.xml"
         child.write_text(
             "<?xml version='1.0'?>\n<mujoco>\n"
             '  <site name="imu" pos="0 0 0.05"/>\n'
-            '  <body name="box_01"/>\n'
-            '  <body name="tray_01"/>\n'
-            "</mujoco>\n",
+            + "".join('  <body name="%s"/>\n' % name for name in bodies)
+            + "</mujoco>\n",
             encoding="utf-8",
         )
         parent = self.package / "generated.xml"
