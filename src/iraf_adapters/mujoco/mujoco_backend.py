@@ -1201,9 +1201,46 @@ class MujocoBackend:
                     state[str(name)] = entry
             return state
 
-        def _trace(phase, snapshot, note=""):
+        def _trace(phase, snapshot, note="", compact=False):
             contacts = (self._any_contact_between(payload_body, left_finger),
                         self._any_contact_between(payload_body, right_finger))
+            if compact:
+                # 逐样本追踪（`IRAF_DEBUG_PLACE_STRIDE=1`）用紧凑行：只留"丢手瞬间谁先动"需要的量。
+                # 为什么需要它（§11.23(11)）：每 20 次迭代 ≈ 0.36 s 仿真，正好是丢件事件的尺度
+                # ⇒ 只看得到"前后"，看不到"过程"，无法区分"指令侧先动"还是"载荷先掉"。
+                forces = sorted((hit["force_n"] for pair in snapshot["payload_contacts"]
+                                 for hit in pair["rows"]), reverse=True)
+                state = {}
+                with self._data_lock:
+                    for name in sorted(gripper.get("open_positions") or {}):
+                        joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT,
+                                                     self._model_name(str(name)))
+                        if joint_id < 0:
+                            continue
+                        qpos = float(self.data.qpos[int(self.model.jnt_qposadr[joint_id])])
+                        actuator = next((index for index in range(int(self.model.nu))
+                                         if int(self.model.actuator_trnid[index, 0]) == int(joint_id)),
+                                        -1)
+                        state[str(name)] = {
+                            "qpos": round(qpos, 9),
+                            "ctrl": (round(float(self.data.ctrl[actuator]), 9)
+                                     if actuator >= 0 else None)}
+                row = {"phase": str(phase), "plant_step_index": int(self.plant.step_index),
+                       "pad_mid_z_m": round(float(snapshot["pad_mid"][2]), 9),
+                       "payload_low_m": round(float(snapshot["payload_low_z"]), 9),
+                       "payload_low_minus_pad_m": round(float(snapshot["payload_low_z"]
+                                                             - snapshot["pad_mid"][2]), 9),
+                       "payload_quat_w": snapshot["payload_pose"]["quat_wxyz"][0],
+                       "pad_span_m": snapshot["pad_span_m"],
+                       "contacts": {"left": bool(contacts[0]), "right": bool(contacts[1])},
+                       "force_n_top": [round(value, 6) for value in forces[:2]],
+                       "partner_bodies": sorted({pair["partner_body"]
+                                                 for pair in snapshot["payload_contacts"]}),
+                       "gripper": state, "note": note}
+                phase_trace.append(row)
+                if os.environ.get("IRAF_DEBUG_PLACE") == "1":
+                    print("PLACE_TRACE " + json.dumps(row, ensure_ascii=False), flush=True)
+                return row
             row = {"phase": str(phase),
                    # 共享植物下 guest 的**推进节拍**必须可观测（2026-09-28）：同一个
                    # `_advance_for(0)` 在 owner 是"推 1 步"，在 guest 是"等 owner 推进"，
@@ -1232,10 +1269,17 @@ class MujocoBackend:
         # 运动过程采样（`IRAF_DEBUG_PLACE=1` 时逐 20 步打印；同时进证据 phase_trace）：
         # 用来定位"在哪一段、哪一刻丢件"。**必须在控制路径内采样**（第 10 个工装缺陷的纪律）。
         def _segment_sampler(segment_name, sink):
+            # 采样步长：默认 20（≈0.36 s 仿真/次），丢件取证时用环境变量降到 1（逐样本）。
+            try:
+                stride = max(1, int(os.environ.get("IRAF_DEBUG_PLACE_STRIDE", "20")))
+            except ValueError:
+                stride = 20
+
             def _hook(step, elapsed):
-                if os.environ.get("IRAF_DEBUG_PLACE") != "1" or step % 20 != 0:
+                if os.environ.get("IRAF_DEBUG_PLACE") != "1" or step % stride != 0:
                     return
-                row = _trace("%s@step%d" % (segment_name, step), _snapshot(), "运动过程")
+                row = _trace("%s@step%d" % (segment_name, step), _snapshot(), "运动过程",
+                             compact=(stride == 1))
                 sink.append(row)
             return _hook
 
