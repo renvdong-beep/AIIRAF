@@ -1144,6 +1144,25 @@ class MujocoBackend:
 
         phase_trace = []
 
+        def _gripper_state():
+            """夹爪实测：关节角 + 执行器 ctrl（判"指令是否被复位/是否真的在夹"用）。"""
+            state = {}
+            with self._data_lock:
+                for name in sorted(gripper.get("open_positions") or {}):
+                    model_name = self._model_name(str(name))
+                    joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT,
+                                                 model_name)
+                    if joint_id < 0:
+                        continue
+                    entry = {"qpos": round(float(self.data.qpos[int(self.model.jnt_qposadr[joint_id])]), 6)}
+                    actuator = next((index for index in range(int(self.model.nu))
+                                     if int(self.model.actuator_trnid[index, 0]) == int(joint_id)),
+                                    -1)
+                    if actuator >= 0:
+                        entry["ctrl"] = round(float(self.data.ctrl[actuator]), 6)
+                    state[str(name)] = entry
+            return state
+
         def _trace(phase, snapshot, note=""):
             contacts = (self._any_contact_between(payload_body, left_finger),
                         self._any_contact_between(payload_body, right_finger))
@@ -1154,6 +1173,9 @@ class MujocoBackend:
                    "payload_low_minus_pad_m": round(float(snapshot["payload_low_z"]
                                                         - snapshot["pad_mid"][2]), 6),
                    "finger_contacts": {"left": bool(contacts[0]), "right": bool(contacts[1])},
+                   "gripper_state": _gripper_state(),
+                   "commanded_closed": {str(k): float(v) for k, v in
+                                        (gripper.get("closed_positions") or {}).items()},
                    "note": note}
             phase_trace.append(row)
             if os.environ.get("IRAF_DEBUG_PLACE") == "1":
@@ -1177,21 +1199,39 @@ class MujocoBackend:
             self._move_trajectory(positions, phase_ms, ctrl_offsets=ctrl_offsets or None)
             return positions
 
-        # ---- ① 到承载面上方
+        # ---- 搬运：**分段航点**，不许 0.6 m 直线穿越载体（2026-09-24 实测：直线接近会与
+        #      载体深穿透 ⇒ 高摩擦下求解器发散，after_approach 的托盘位姿 z = −8959 m）。
+        #      并且间隙必须用**载荷最低点**做基准（不是指腹）：指腹到载荷最低点的距离实测 ≈0.0548 m，
+        #      而声明的接近间隙 `pregrasp_offset_m` 只有 0.04 ⇒ 若按"指腹抬 0.04"算，
+        #      方块其实已经被塞进托盘区域（穿模来源）。
         snapshot = _snapshot()
         start_row = _trace("start", snapshot, "进入放置段（应仍在夹持中）")
         if not (start_row["finger_contacts"]["left"] and start_row["finger_contacts"]["right"]):
             raise ValueError(
                 "进入放置段时双侧指腹未同时接触载荷（依据已进证据 phase_trace[0]）⇒ 拒绝继续")
-        approach_target = snapshot["tray_top"] + np.asarray([0.0, 0.0, approach_offset])
-        _solve_and_move(approach_target, "approach", "approach")
-        _trace("after_approach", _snapshot(), "接近段结束：载荷还在夹爪里吗？")
-        # ---- ② 下行：把"载荷最低点"落到承载面（深度由实测差值给出，不写死）
+        pad_to_low = float(snapshot["pad_mid"][2] - snapshot["payload_low_z"])
+        if pad_to_low <= 0:
+            raise ValueError("指腹中点低于载荷最低点（pad_to_low=%.6f m）⇒ 夹持几何异常，拒绝放置"
+                             % pad_to_low)
+        # 目标高度统一按"载荷最低点相对承载面"的口径算：接近 = 承载面 + 声明的接近间隙
+        approach_z = float(snapshot["tray_top"][2] + approach_offset + pad_to_low)
+        place_z = float(snapshot["tray_top"][2] + pad_to_low)
+        transit_target = np.asarray([snapshot["pad_mid"][0], snapshot["pad_mid"][1], approach_z])
+        _solve_and_move(transit_target, "lift_to_transit", "approach")
+        seg_row = _trace("after_lift_to_transit", _snapshot(), "竖直抬升段结束（不横移）")
+        if not (seg_row["finger_contacts"]["left"] and seg_row["finger_contacts"]["right"]):
+            raise ValueError("竖直抬升段后失去夹持（载荷已脱离）⇒ 拒绝继续放置")
+        lateral_target = np.asarray([snapshot["tray_top"][0], snapshot["tray_top"][1], approach_z])
+        _solve_and_move(lateral_target, "move_above_tray", "approach")
+        seg_row = _trace("after_move_above_tray", _snapshot(), "横移段结束（在托盘正上方）")
+        if not (seg_row["finger_contacts"]["left"] and seg_row["finger_contacts"]["right"]):
+            raise ValueError("横移段后失去夹持（载荷已脱离）⇒ 拒绝继续放置")
+        # ---- 下行：把"载荷最低点"落到承载面（深度由实测差值给出，不写死）
         snapshot = _snapshot()
-        delta_z = float(snapshot["tray_top"][2] - snapshot["payload_low_z"])
-        descend_target = snapshot["pad_mid"] + np.asarray([0.0, 0.0, delta_z])
+        descend_target = np.asarray([snapshot["tray_top"][0], snapshot["tray_top"][1], place_z])
         _solve_and_move(descend_target, "descend", "grasp")
         after_descend = _snapshot()
+        _trace("after_descend", after_descend, "下行到位（载荷应正落在承载面上）")
         alignment_distance = float(
             np.linalg.norm(after_descend["pad_mid"]
                            - (after_descend["tray_top"] + np.asarray([0.0, 0.0, pad_offset]))))
