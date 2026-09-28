@@ -956,7 +956,32 @@ display   window_opened=true / frames=1937
    是稳的；不稳的是载体定位。
 4. 判据纪律：**带显示运行的结论只能引用当次报告**，不能拿另一次的 dock 数字替代（本次就是这么发现的）。
 
-###### 11.16 夹持能力工装：**五次工装缺陷** + 一条结构性结论（2026-09-28）
+####### 11.17 放置段改成"构建期解 + 后端回放"：**求解与回放都对了**，缺一个**绕行航点**（2026-09-28）
+
+**已落地（本轮）**
+- 求解器侧：`scripts/build_piper_baseline.py: build_place_reference_poses(root, baseline,
+  target_local_m, payload_half_m, pad_offset_m, clearance_m)` —— 在**臂基座系**里对承载面中心解出
+  `above / descend / retreat` 三段关节解（同一套 IK；未收敛即显式失败）。
+- 构建器：`reference_solver.place_entry` 声明 → 构建期按接收体**名义**位姿算出局部承载面中心并调用 →
+  写进联合报告 `gripper.place_{above,descend,retreat}_positions` + `manipulation.reference_pose_resolution.place_reference`
+  （`target_local_m = [0.318198052, -0.318198052, 0.355372]`、`payload_half_m = 0.025`、
+  `pad_offset_m = 0.028931693`、`clearance_m = 0.04`、IK 残差 5.7e-06 / 9.7e-06 / 9.8e-06）。
+- schema：`reference_solver.place_entry` 入名单；后端解析层保留三个 `place_*_positions` 键
+  （第一版被过滤掉 ⇒ 运行时报"缺少放置段关节解"，是 fail-closed 生效）。
+- 后端：`place_object` 改为**回放**这三段（`_move_trajectory`），不再运行时现解 IK；删除未用的 `_solve_and_move`。
+
+**FK 对账（决定性）**：把报告里的两段关节解**原样**设进**联合模型**，指腹中点落在
+`above = (0.450001, -4e-06, 0.449299)`、`descend = (0.449999, -1e-06, 0.409313)`
+—— 与目标（承载面 0.355 + 0.0939 / + 0.0539）**逐位吻合** ⇒ **求解器与回放链路无误**。
+
+**运行时仍失败，但原因已换**：`after_above` 时指腹停在 `(0.162255, -0.10067, 0.444723)`、
+托盘位姿被推走 `(0.416018, 0.001198) → (0.381773, 0.069152)` ⇒ 从抓取位形到"托盘上方"的**单条关节空间
+五次插值**在笛卡尔空间划出的弧线**穿过了载体**（四足在 (0.42, 0.008) 附近）⇒ 撞上、臂被挡住、狗被推走。
+⇒ **下一步（明确）**：给求解器再加一个**绕行航点 `transit`**（在**抓取点正上方、托盘高度**处），
+后端按 `lift → transit → above → descend → 释放 → retreat` 五段回放；并可在构建期用联合模型做
+"每段位形不与载体接触"的 FK 自检（航点是关节解 ⇒ 可 FK，这正是构建期求解的优势）。
+
+### 11.16 夹持能力工装：**五次工装缺陷** + 一条结构性结论（2026-09-28）
 
 工装：`build/iraf-a6a14/grip_capacity_probe.py`（扫闭爪指令 → 量夹持力 → 抬升到脱落）。
 

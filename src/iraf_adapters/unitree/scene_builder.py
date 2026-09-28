@@ -1118,8 +1118,75 @@ def _joint_reference_feedforward(root, solver, model, resolution, prefix, grippe
     return feedforward, evidence
 
 
+def _joint_place_resolution(root, solver, resolution, place_targets, arm_report, out_gripper,
+                            rename):
+    """按声明解出**放置四段**（关节空间）并写进报告的 gripper 段。
+
+    为什么构建期（§11.16）：已验证的 pick 能抬 88 mm 靠的是**构建期求解器**给的关节空间位形，
+    后端只回放；运行时现解 IK 会落错分支、轨迹中途把载荷打掉。放置照同一条路做。
+
+    局部目标 = 接收体**承载面中心**在**臂基座系**里的坐标（用 placement 的旋转把世界坐标换过去），
+    参数（载荷半高 / pad_offset / 净间隙）全部来自声明或已解出的量，函数内不写死数字。
+    """
+    targets = (place_targets or {}).get("targets") or []
+    if not targets:
+        _fail(EXIT_REFERENCE, "场景报告没有 place_targets：无法解放置段（接收体必须声明 body/size_m）")
+    entry, module_path = _load_declared_callable(
+        root, {"module": solver["module"], "entry": solver["place_entry"]},
+        resolution["robot_id"], "reference_solver.place_entry")
+    baseline_path = Path(str(solver["baseline"]))
+    if not baseline_path.is_absolute():
+        baseline_path = root / baseline_path
+    baseline_doc = _read_yaml(baseline_path.resolve(), "reference_solver.baseline")
+    placement = resolution["placement"]
+    rotation = _quat_to_matrix(placement["quat_wxyz"])
+    base_pos = np.asarray(placement["pos_m"], dtype=float)
+    # 臂基座的高度取**模型实测**（放置目标在基座系里，z 必须相对同一个原点）
+    record = None
+    for item in targets:
+        if item.get("nominal_pose_m") is None or item.get("size_m") is None:
+            continue
+        top_world = np.asarray(item["nominal_pose_m"], dtype=float) + np.asarray(
+            [0.0, 0.0, float(item["size_m"][2])], dtype=float)
+        local = rotation.T @ (top_world - base_pos)
+        pad_offset = float(resolution["pad_offset_m"])
+        clearance = float(out_gripper.get("pregrasp_offset_m") or 0.0)
+        payload_half = (arm_report.get("target_half_size_m")
+                        if isinstance(arm_report.get("target_half_size_m"), (int, float)) else None)
+        if payload_half is None:
+            _fail(EXIT_REFERENCE, "臂侧报告缺少 target_half_size_m：放置段需要载荷半高，不给默认值")
+        try:
+            poses = entry(root, baseline_doc, [float(v) for v in local], float(payload_half),
+                          pad_offset, clearance)
+        except Exception as error:  # noqa: BLE001
+            _fail(EXIT_MODEL, "放置段求解失败（%s）: %s" % (solver["place_entry"], error))
+        written = {}
+        for phase, pose in (poses.get("poses") or {}).items():
+            positions = {rename(name): float(value)
+                         for name, value in (pose.get("joint_positions") or {}).items()}
+            key = "place_%s_positions" % str(phase)
+            merged = dict(out_gripper.get("lift_positions") or {})
+            merged.update(positions)
+            out_gripper[key] = merged
+            written[key] = {"replaced_joints": sorted(positions),
+                            "position_error_m": pose.get("position_error_m")}
+        record = {"source": "resolved_for_joint_model",
+                  "solver": {"module": str(module_path), "entry": str(solver["place_entry"]),
+                             "baseline": str(baseline_path.resolve())},
+                  "place_target_id": item.get("id"),
+                  "target_local_m": [round(float(v), 9) for v in local],
+                  "payload_half_m": float(payload_half), "pad_offset_m": pad_offset,
+                  "clearance_m": clearance, "written": written,
+                  "note": ("放置四段的关节解由**声明的求解器**按上述局部目标解出（构建期），"
+                           "后端只回放；运行期以实测接收体位姿判据（见 place_object 证据）。")}
+        break
+    if record is None:
+        _fail(EXIT_REFERENCE, "place_targets 里没有任何带 nominal_pose_m 与 size_m 的接收体")
+    return record
+
+
 def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, declared_names=None,
-                        reference_solver=None, placement=None, robot_id=None):
+                        reference_solver=None, placement=None, robot_id=None, place_targets=None):
     """联合报告的 manipulation 事实：继承**臂自己报告**的声明事实，并按**可判定规则**改写名字。
 
     改名规则（不猜）：某个名字 `n` 改写成 `<prefix>n` **当且仅当** `<prefix>n` 出现在联合模型的
@@ -1292,6 +1359,11 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
     # 出处标注：读到 `resolved_for_joint_model` 即表示这些数字来自**本联合模型 + 本 placement**，
     # 不是从臂自己场景继承来的（`inherited_from` 仍留痕，便于追溯）。
     out_gripper["reference_pose_source"] = "resolved_for_joint_model"
+    # ---- 放置四段（**构建期**解出关节空间解，后端只回放；理由见 §11.16）----
+    place_record = None
+    if reference_solver and reference_solver.get("place_entry") and place_targets:
+        place_record = _joint_place_resolution(
+            root, reference_solver, resolution, place_targets, report, out_gripper, rename)
     feedforward_source = "inherited_from_arm_report"
     feedforward_evidence = None
     # 前馈在**四段位置合并之后**算：`gripper_positions` 必须是该相位的完整位置指令
@@ -1347,6 +1419,8 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
                 "local_xy_radius_m": resolution["local_xy_radius_m"],
                 "resolved_pad_offset_m": resolution["pad_offset_m"],
                 "inherited_pad_offset_m": inherited_pad_offset,
+                "place_reference_source": (place_record or {}).get("source"),
+                "place_reference": place_record,
                 "feedforward_source": feedforward_source,
                 "feedforward_evidence": feedforward_evidence,
                 "replaced_phases": replaced,
@@ -2247,7 +2321,8 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
         manipulation = _joint_manipulation(root, arm_report, prefix, facts, compiled,
                                            arm_declared_names,
                                            reference_solver=arm_reference_solver,
-                                           placement=arm_placement, robot_id=robot_id)
+                                           placement=arm_placement, robot_id=robot_id,
+                                           place_targets=place_targets)
         reference_pose_check = manipulation.get("reference_pose_check")
         report["gripper"] = manipulation["gripper"]
         report["targets"] = manipulation["targets"]

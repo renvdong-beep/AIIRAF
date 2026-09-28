@@ -105,6 +105,65 @@ def build_reference_feedforward(model, reference, baseline, prefix="", gripper_p
     return feedforward, feedforward_evidence
 
 
+def build_place_reference_poses(root, baseline, target_local_m, payload_half_m, pad_offset_m,
+                                clearance_m):
+    """按**臂基座系**里的接收体目标解出放置四段（关节空间），供后端**回放**。
+
+    为什么是构建期解而不是运行期 IK（2026-09-28，docs/debug/2026-09-24-joint-model-dog-arm.md §11.16）：
+    已验证的 `pick_object` 之所以能把方块抬 88 mm，是因为它的每一段位形都由**构建期求解器**
+    按目标几何解出（`grasp_positions → lift_positions`），后端只做 `_move_trajectory` 回放；
+    而运行时"现解 IK"（`pad_mid + Δ`）会落到别的分支、轨迹中途把方块打掉。放置段照同一条路做。
+
+    输入（都由声明/报告给出，函数内不写死任何数字）：
+      `target_local_m` —— 接收体**承载面中心**在臂基座系里的坐标；
+      `payload_half_m` —— 载荷的半高（方块半边长，来自场景/基线声明）；
+      `pad_offset_m`   —— 指腹中点相对抓取点的高度（= 本场景已解出的 `finger_height_correction_m`）；
+      `clearance_m`    —— 接近/抬离的净间隙（取声明的 `grasp.pregrasp_offset_m`）。
+    输出：`{"above": {...}, "descend": {...}, "retreat": {...}}`，每段是与
+    `build_reference_poses` 同形状的 `_pack_pose` 结果（`joint_positions` 为臂关节解）。
+    """
+    model_cfg = baseline["model"]
+    source = _resolve(root, model_cfg["source"])
+    arm_names = list(model_cfg.get("arm_joints") or ["joint%d" % i for i in range(1, 7)])
+    target_cfg = baseline.get("target") or {}
+    grasp_cfg = baseline.get("grasp") or {}
+    workdir = Path(tempfile.mkdtemp(prefix="piper-place-"))
+    probe_scene = workdir / "probe-scene.xml"
+    build_scene(source, probe_scene, target_id=target_cfg.get("id", "box_01"),
+                half_size=float(target_cfg.get("half_size_m", 0.03)), config=baseline)
+    model = mujoco.MjModel.from_xml_path(str(probe_scene))
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    arm_joints = _joint_ids(model, arm_names)
+    left_geom = _geom_id(model, model_cfg["finger_geoms"]["left"])
+    right_geom = _geom_id(model, model_cfg["finger_geoms"]["right"])
+    solver_cfg = grasp_cfg.get("solver") or {}
+    base = np.asarray(target_local_m, dtype=float)
+    if base.shape != (3,):
+        raise ValueError("target_local_m 必须是 3 个数值（臂基座系）")
+    height = float(pad_offset_m) + float(payload_half_m)      # 指腹中点相对承载面的高度
+    plan = {
+        "above": base + np.asarray([0.0, 0.0, height + float(clearance_m)]),
+        "descend": base + np.asarray([0.0, 0.0, height]),
+        "retreat": base + np.asarray([0.0, 0.0, height + float(clearance_m)]),
+    }
+    out = {"schema_version": "iraf.piper-reference-pose/v1",
+           "place_mode": "declared_offset",
+           "target_local_m": [round(float(v), 9) for v in base],
+           "payload_half_m": float(payload_half_m), "pad_offset_m": float(pad_offset_m),
+           "clearance_m": float(clearance_m), "solver": dict(solver_cfg),
+           "poses": {}}
+    for phase, target in plan.items():
+        result = solve_finger_center_ik(model, data, target, arm_joints, left_geom, right_geom,
+                                        solver_cfg)
+        if float(result.position_error_m) > float(solver_cfg.get("tolerance_m", 1e-5)) * 100.0:
+            raise ValueError("放置段 %s 的 IK 未收敛: error=%.9f m target=%s"
+                             % (phase, float(result.position_error_m),
+                                [round(float(v), 6) for v in target]))
+        out["poses"][phase] = _pack_pose(result, arm_names)
+    return out
+
+
 def load_baseline(path):
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     if not isinstance(data, dict):

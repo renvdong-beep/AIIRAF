@@ -1182,66 +1182,47 @@ class MujocoBackend:
                 print("PLACE_TRACE " + json.dumps(row, ensure_ascii=False), flush=True)
             return row
 
-        def _solve_and_move(target, phase, offsets_key):
-            """解指腹中点到 target 的位置 IK 并执行一段（IK 未收敛即显式失败）。"""
-            with self._data_lock:
-                result = solve_position_ik(self.model, self.data, target, arm_joints,
-                                           pad_points, **solver)
-            if float(result.position_error_m) > float(solver["tolerance_m"]) * 100.0:
-                raise ValueError(
-                    "放置 IK 未收敛（%s）：error=%.9f m target=%s"
-                    % (phase, float(result.position_error_m),
-                       [round(float(v), 6) for v in target]))
-            # 解出的键是**模型名**（联合世界里与声明名不同）⇒ 原样透传，交给 _move_trajectory 解析
-            positions = {str(name): float(value)
-                         for name, value in dict(result.joint_positions).items()}
-            ctrl_offsets = self._pick_ctrl_offsets(offsets_key)
-            self._move_trajectory(positions, phase_ms, ctrl_offsets=ctrl_offsets or None)
-            return positions
-
-        # ---- 搬运：**分段航点**，不许 0.6 m 直线穿越载体（2026-09-24 实测：直线接近会与
-        #      载体深穿透 ⇒ 高摩擦下求解器发散，after_approach 的托盘位姿 z = −8959 m）。
-        #      并且间隙必须用**载荷最低点**做基准（不是指腹）：指腹到载荷最低点的距离实测 ≈0.0548 m，
-        #      而声明的接近间隙 `pregrasp_offset_m` 只有 0.04 ⇒ 若按"指腹抬 0.04"算，
-        #      方块其实已经被塞进托盘区域（穿模来源）。
+        # ---- 搬运：**回放构建期解出的关节空间解**（不再运行时现解 IK，理由见 §11.16）
+        #      构建期由声明的求解器按接收体名义位姿解出 above/descend/retreat 三段；
+        #      后端只做 `_move_trajectory` 回放 —— 与已验证的 pick 完全同一条路。
+        above = gripper.get("place_above_positions")
+        descend = gripper.get("place_descend_positions")
+        retreat = gripper.get("place_retreat_positions")
+        missing = [name for name, value in (("place_above_positions", above),
+                                            ("place_descend_positions", descend),
+                                            ("place_retreat_positions", retreat))
+                   if not isinstance(value, dict) or not value]
+        if missing:
+            raise ValueError("场景报告缺少放置段关节解 %s：放置四段必须由**声明的求解器**在构建期解出"
+                             "（运行时现解 IK 会落错分支并把载荷打掉，见 §11.16）" % missing)
         snapshot = _snapshot()
         start_row = _trace("start", snapshot, "进入放置段（应仍在夹持中）")
         if not (start_row["finger_contacts"]["left"] and start_row["finger_contacts"]["right"]):
             raise ValueError(
                 "进入放置段时双侧指腹未同时接触载荷（依据已进证据 phase_trace[0]）⇒ 拒绝继续")
-        pad_to_low = float(snapshot["pad_mid"][2] - snapshot["payload_low_z"])
-        if pad_to_low <= 0:
-            raise ValueError("指腹中点低于载荷最低点（pad_to_low=%.6f m）⇒ 夹持几何异常，拒绝放置"
-                             % pad_to_low)
-        # 目标高度统一按"载荷最低点相对承载面"的口径算：接近 = 承载面 + 声明的接近间隙
-        approach_z = float(snapshot["tray_top"][2] + approach_offset + pad_to_low)
-        place_z = float(snapshot["tray_top"][2] + pad_to_low)
-        transit_target = np.asarray([snapshot["pad_mid"][0], snapshot["pad_mid"][1], approach_z])
-        _solve_and_move(transit_target, "lift_to_transit", "approach")
-        seg_row = _trace("after_lift_to_transit", _snapshot(), "竖直抬升段结束（不横移）")
+        # ① 抬升到承载面上方（回放）
+        self._move_trajectory({str(k): float(v) for k, v in above.items()}, phase_ms,
+                              ctrl_offsets=self._pick_ctrl_offsets("approach") or None)
+        seg_row = _trace("after_above", _snapshot(), "抬升段结束（承载面上方）")
         if not (seg_row["finger_contacts"]["left"] and seg_row["finger_contacts"]["right"]):
-            raise ValueError("竖直抬升段后失去夹持（载荷已脱离）⇒ 拒绝继续放置")
-        lateral_target = np.asarray([snapshot["tray_top"][0], snapshot["tray_top"][1], approach_z])
-        _solve_and_move(lateral_target, "move_above_tray", "approach")
-        seg_row = _trace("after_move_above_tray", _snapshot(), "横移段结束（在托盘正上方）")
-        if not (seg_row["finger_contacts"]["left"] and seg_row["finger_contacts"]["right"]):
-            raise ValueError("横移段后失去夹持（载荷已脱离）⇒ 拒绝继续放置")
-        # ---- 下行：把"载荷最低点"落到承载面（深度由实测差值给出，不写死）
-        snapshot = _snapshot()
-        descend_target = np.asarray([snapshot["tray_top"][0], snapshot["tray_top"][1], place_z])
-        _solve_and_move(descend_target, "descend", "grasp")
+            raise ValueError("抬升段后失去夹持（载荷已脱离）⇒ 拒绝继续放置")
+        # ② 下行到位（回放）
+        self._move_trajectory({str(k): float(v) for k, v in descend.items()}, phase_ms,
+                              ctrl_offsets=self._pick_ctrl_offsets("grasp") or None)
         after_descend = _snapshot()
         _trace("after_descend", after_descend, "下行到位（载荷应正落在承载面上）")
+        padding = float(gripper.get("pad_offset_m") or 0.0)
         alignment_distance = float(
             np.linalg.norm(after_descend["pad_mid"]
-                           - (after_descend["tray_top"] + np.asarray([0.0, 0.0, pad_offset]))))
-        # ---- ③ 开夹爪（释放）
+                           - (after_descend["tray_top"] + np.asarray([0.0, 0.0, padding]))))
+        # ③ 开夹爪（释放）
         self._set_gripper_controls(dict(gripper["open_positions"]))
         self._advance_for(phase_ms)
-        # ---- ④ 抬离
-        retreat_target = after_descend["pad_mid"] + np.asarray([0.0, 0.0, approach_offset])
-        _solve_and_move(retreat_target, "retreat", "lift")
+        # ---- ④ 抬离（回放构建期解）
+        self._move_trajectory({str(k): float(v) for k, v in retreat.items()}, phase_ms,
+                              ctrl_offsets=self._pick_ctrl_offsets("lift") or None)
         final = _snapshot()
+        _trace("after_retreat", final, "抬离结束（载荷应留在承载面上）")
 
         # ---- 判据（事实，不设阈值）
         left_id = self._body_id(gripper["left_finger_body"])
@@ -2259,6 +2240,11 @@ class MujocoBackend:
                     str(key): float(value) for key, value in closed_positions.items()
                 },
             }
+            # 放置四段的关节解（构建期由声明求解器解出，后端只回放；缺省即"该场景不支持放置"）
+            for key in ("place_above_positions", "place_descend_positions", "place_retreat_positions"):
+                if raw_gripper.get(key) is not None:
+                    gripper[key] = {str(name): float(value)
+                                    for name, value in dict(raw_gripper[key]).items()}
             for key in ("approach_positions", "grasp_positions"):
                 if raw_gripper.get(key) is not None:
                     gripper[key] = {str(name): float(value) for name, value in dict(raw_gripper[key]).items()}

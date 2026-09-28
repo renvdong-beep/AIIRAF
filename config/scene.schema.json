@@ -200,6 +200,10 @@
               "type": "string",
               "description": "求解入口，契约：entry(root, baseline_doc, target_xy_override_m=[x,y], target_z_override_m=z) → {home, approach, grasp, lift} + finger_height_correction_m（= 该场景下的 pad_offset_m）。"
             },
+            "place_entry": {
+              "type": "string",
+              "description": "可选入口，契约：place_entry(root, baseline_doc, target_local_m, payload_half_m, pad_offset_m, clearance_m) → {poses: {above/descend/retreat: 关节解}}；构建期解出**放置四段**的关节空间解（后端只回放），理由见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.16。"
+            },
             "feedforward_entry": {
               "type": "string",
               "description": "可选入口，契约：feedforward_entry(model, reference, baseline_doc, prefix) → ({相位: {模型内关节名: ctrl 增量}}, 证据)；用于在**运行期同款模型**上重算重力前馈（两个模型的执行器增益不同 ⇒ 继承值按增益比例失真）。"
