@@ -67,7 +67,7 @@ worlds/handoff_lab/             # handoff_lab.xml、托盘、物体、障碍、�
 profiles/robots/piper_lab.yaml
 profiles/robots/unitree_go2_edu.yaml
 profiles/safety/handoff_lab.yaml
-skills/{detect_object,pick_object,place_object,navigate,dock_for_handoff}/
+skills/{detect_object,pick_object,place_object,navigate,dock_for_handoff,accept_payload}/
 tests/simulation/handoff/
 ```
 
