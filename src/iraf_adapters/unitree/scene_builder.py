@@ -1200,6 +1200,16 @@ def _joint_place_resolution(root, solver, resolution, place_targets, arm_report,
     if not baseline_path.is_absolute():
         baseline_path = root / baseline_path
     baseline_doc = _read_yaml(baseline_path.resolve(), "reference_solver.baseline")
+    # 搬运段的**夹爪语义**：必须由声明给出（缺声明即失败）。它决定后端是否会在搬运中合拢夹口
+    # 从而把载荷挤出夹口（§11.23(12)：hold = 目标取当前实测 qpos；trajectory = 按位置插值，
+    # 实测会把方块沿夹口轴向挤出去：力 12 N → 2.6 N → 脱离）。**不给实现层默认值。**
+    carry_mode = (baseline_doc.get("grasp") or {}).get("carry_gripper")
+    if carry_mode not in ("hold", "trajectory"):
+        _fail(EXIT_REFERENCE,
+              "基线缺少 grasp.carry_gripper（只允许 hold / trajectory）：搬运段的夹爪语义必须由声明给出，"
+              "不得在实现层写默认值（见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.23(12)）")
+    out_gripper["carry_gripper"] = {"mode": str(carry_mode),
+                                    "source": "%s:grasp.carry_gripper" % baseline_path.name}
     placement = resolution["placement"]
     rotation = _quat_to_matrix(placement["quat_wxyz"])
     base_pos = np.asarray(placement["pos_m"], dtype=float)

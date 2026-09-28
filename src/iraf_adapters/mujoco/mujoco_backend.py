@@ -1298,6 +1298,46 @@ class MujocoBackend:
         if missing:
             raise ValueError("场景报告缺少放置段关节解 %s：放置四段必须由**声明的求解器**在构建期解出"
                              "（运行时现解 IK 会落错分支并把载荷打掉，见 §11.16）" % missing)
+        # 搬运段的**夹爪语义**：必须由场景报告给出（构建期按声明写入），缺声明即显式失败。
+        # 为什么不能有实现层默认值（2026-09-28 §11.23(12)）：把夹爪关节当轨迹插值（当前 qpos → 0.023）
+        # 会让夹口**整段合拢**，把载荷沿夹口轴向**楔/挤出去**（实测力 12 N → 2.6 N → 脱离，
+        # 而载荷只重 0.39 N、摩擦容量 ≳46 N ⇒ 不是摩擦问题）。`hold` = 目标取当前实测 qpos（零合拢）。
+        carry = gripper.get("carry_gripper")
+        if not isinstance(carry, dict) or str((carry or {}).get("mode") or "") not in ("hold", "trajectory"):
+            raise ValueError(
+                "场景报告缺少合法的 gripper.carry_gripper.mode（只允许 hold / trajectory）："
+                "搬运段的夹爪语义必须由声明给出，不得在实现层写默认值（见 §11.23(12)："
+                "把夹爪当轨迹会合拢夹口并挤出载荷）")
+        carry_mode = str(carry["mode"])
+        carry_targets = {}
+
+        def _carry_goal(positions, segment):
+            """搬运段目标：`hold` 时把夹爪关节目标换成**当前 ctrl**（保持夹紧力，不改变指令）。
+
+            为什么是 ctrl 而不是 qpos（2026-09-28，本轮我自己的设计错误，place24 实测暴露）：
+            位置伺服的力 ∝ (target − qpos)。把 target 设成**当前 qpos** ⇒ 误差为 0 ⇒ **夹持力为 0**
+            ⇒ 载荷在搬运中滑落（place24 实测：`qpos == ctrl == 0.024215`，方块照样掉）。
+            正确语义是**保持夹紧力**：target 取**当前 ctrl**（= 抓取段已经把载荷夹住的那个指令，
+            不插值 ⇒ 指令零位移、压缩量保持 ⇒ 11.75 N 一直存在）。
+            """
+            goal = {str(k): float(v) for k, v in positions.items()}
+            if carry_mode != "hold":
+                return goal
+            with self._data_lock:
+                for name in sorted(gripper.get("open_positions") or {}):
+                    joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT,
+                                                 self._model_name(str(name)))
+                    if joint_id < 0:
+                        continue
+                    actuator = next((index for index in range(int(self.model.nu))
+                                     if int(self.model.actuator_trnid[index, 0]) == int(joint_id)),
+                                    -1)
+                    if actuator < 0:
+                        continue
+                    held = float(self.data.ctrl[actuator])
+                    goal[str(name)] = held
+                    carry_targets.setdefault(segment, {})[str(name)] = round(held, 9)
+            return goal
         snapshot = _snapshot()
         start_row = _trace("start", snapshot, "进入放置段（应仍在夹持中）")
         if not (start_row["finger_contacts"]["left"] and start_row["finger_contacts"]["right"]):
@@ -1305,21 +1345,21 @@ class MujocoBackend:
                 "进入放置段时双侧指腹未同时接触载荷（依据已进证据 phase_trace[0]）⇒ 拒绝继续")
         # ①a 绕行航点（抓取点正上方、托盘高度）：先竖直抬升，避免"直插托盘上方"的弧线穿过载体
         if isinstance(transit, dict) and transit:
-            self._move_trajectory({str(k): float(v) for k, v in transit.items()}, phase_ms,
+            self._move_trajectory(_carry_goal(transit, "transit"), phase_ms,
                                   ctrl_offsets=self._pick_ctrl_offsets("approach") or None,
                                   sampler=_segment_sampler("place_transit_positions", segment_samples))
             seg_row = _trace("after_transit", _snapshot(), "绕行航点（竖直抬升到托盘高度）")
             if not (seg_row["finger_contacts"]["left"] and seg_row["finger_contacts"]["right"]):
                 raise ValueError("绕行航点后失去夹持（载荷已脱离）⇒ 拒绝继续放置")
         # ①b 抬升到承载面上方（回放）
-            self._move_trajectory({str(k): float(v) for k, v in above.items()}, phase_ms,
+            self._move_trajectory(_carry_goal(above, "above"), phase_ms,
                                   ctrl_offsets=self._pick_ctrl_offsets("approach") or None,
                                   sampler=_segment_sampler("place_above_positions", segment_samples))
         seg_row = _trace("after_above", _snapshot(), "抬升段结束（承载面上方）")
         if not (seg_row["finger_contacts"]["left"] and seg_row["finger_contacts"]["right"]):
             raise ValueError("抬升段后失去夹持（载荷已脱离）⇒ 拒绝继续放置")
         # ② 下行到位（回放）
-            self._move_trajectory({str(k): float(v) for k, v in descend.items()}, phase_ms,
+            self._move_trajectory(_carry_goal(descend, "descend"), phase_ms,
                                   ctrl_offsets=self._pick_ctrl_offsets("grasp") or None,
                                   sampler=_segment_sampler("place_descend_positions", segment_samples))
         after_descend = _snapshot()
@@ -1362,6 +1402,11 @@ class MujocoBackend:
             },
             "retreat_delta_m": round(float(final["pad_mid"][2] - after_descend["pad_mid"][2]), 9),
             "gripper_open_positions": {str(k): float(v) for k, v in gripper["open_positions"].items()},
+            # 搬运段的夹爪语义 + 实际下发的"保持值"（证据：证明目标是实测 qpos，而不是报告里的 0.023）
+            "gripper_carry": {"mode": carry_mode, "segment_targets": carry_targets,
+                              "note": ("hold = 目标取**当前 ctrl**（保持夹紧力、指令零位移）。"
+                                       "注意不能用 qpos 当目标：位置伺服的力 ∝ (target − qpos)，"
+                                       "target=qpos ⇒ 夹持力为 0 ⇒ 载荷滑落（place24 实测，§11.23(13)）")},
             "place_mode": "declared_offset",
             "runtime_source": "live_fk",
             "phase_trace": phase_trace,
@@ -2365,6 +2410,14 @@ class MujocoBackend:
                 if raw_gripper.get(key) is not None:
                     gripper[key] = {str(name): float(value)
                                     for name, value in dict(raw_gripper[key]).items()}
+            # 搬运段的夹爪语义（构建期按声明写入报告）：**透传**，缺失即由 place_object 显式拒绝
+            # （不做实现层默认值；见 §11.23(12)）。
+            if raw_gripper.get("carry_gripper") is not None:
+                carry = dict(raw_gripper["carry_gripper"])
+                if str(carry.get("mode") or "") not in ("hold", "trajectory"):
+                    raise ValueError("carry_gripper.mode 只允许 hold / trajectory：%r" % (carry.get("mode"),))
+                gripper["carry_gripper"] = {"mode": str(carry["mode"]),
+                                            **({"source": str(carry["source"])} if carry.get("source") else {})}
             for key in ("approach_positions", "grasp_positions"):
                 if raw_gripper.get(key) is not None:
                     gripper[key] = {str(name): float(value) for name, value in dict(raw_gripper[key]).items()}

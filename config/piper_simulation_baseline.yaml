@@ -30,6 +30,10 @@ target:
   rgba: "0.82 0.22 0.12 1"
 
 grasp:
+  # 搬运段的**夹爪语义**（必须声明，缺声明即显式失败）：见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.23(12)。
+  #   hold       = 搬运段把夹爪目标取**当前实测 qpos**（零合拢）⇒ 不会把载荷楔/挤出去；
+  #   trajectory = 按放置段里的位置插值（实测会把方块沿夹口轴向挤出去：力 12 N → 2.6 N → 脱离）。
+  carry_gripper: hold
   # 双指指尖 geom 中点的目标抓取位置（世界坐标）。
   # z 不在此声明，必须由 workbench.top_z_m + target.half_size_m 推出，保证方块贴台面。
   finger_center_xy_m: [0.19, 0.0]
