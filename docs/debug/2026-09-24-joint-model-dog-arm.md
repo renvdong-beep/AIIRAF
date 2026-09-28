@@ -1870,6 +1870,28 @@ s02 状态 FAILED：Provider output does not match schema: None is not of type '
    ③ 重新评估交接面：把交接**面**仍留在背上、但**打开方向**改为侧向（对臂更友好）——需要
       位姿型 IK 的朝向约束（§11.8：Piper 缺 `flange_site`/`spread_axis` 两处声明）。
 
+#### (35) 第 1 件完成：停靠失败改成**显式结论**（不再被 schema 报错掩盖）
+
+**改动（契约先行 + 实现）**
+1. `skills/dock_for_handoff/dock_for_handoff.output.json`：`final_speed_mps` 类型改为
+   `["number","null"]` 并加说明（null = 未测得）
+   —— 原因：接近段失败时后端只会留下 `inf` ⇒ 写进证据是 `None` ⇒ **旧契约只允许 number**
+   ⇒ 报成 `Provider output does not match schema: None is not of type 'number'`，把真实原因盖住。
+2. `src/iraf_skills/quadruped.py`（`DockForHandoffProvider.execute`）：拿到后端报告后**先看
+   `report["failure"]`**，非空即 `raise SkillRejected("停靠未完成（<decision>）：<reason>")`
+   ⇒ 失败原因**直接可见**；未失败才组装证据。
+3. ⚠ 顺带修掉一处**潜伏 NameError**：新代码用了 `SkillRejected` 而该模块**没有导入**它
+   （只在停靠失败时才触发 ⇒ 绿路径测不出来）⇒ 已加
+   `from iraf_skills.common.motion import SkillRejected` 并做导入自检。
+   （同类坑本会话第三次：`close_hold`、`lift_trace`、现在是 `SkillRejected` —— 共同点是
+   **只在失败路径/首次跑通时才执行**的分支，静态检查与绿路径都覆盖不到。）
+
+**验证**：`nominal --world joint` 仍全绿（`passed=True`；s01 末速 1.4887881120651461e-05、
+s02 停靠 0.028569272841750617、s03 抓取 0.0002101559338561355）；模块导入自检通过。
+
+**下一步（按计划）**：把侧挂托盘**做轻**（纯声明）后复测 s01/s02 —— 若停靠恢复正常，
+就能把托盘挂回 `pannier_frame` 一路跑到 s04。
+
 ### 11.19 撤两条假设 + 第 9 个工装缺陷：搬运丢件的机制**仍未判死**（2026-09-28）
 
 **撤销 1：夹具（equality）不是原因。** 臂场景模型里确实有一条 `box_01_lift_constraint`

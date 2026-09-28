@@ -50,6 +50,9 @@ from pathlib import Path
 
 import yaml
 
+# 技能层拒绝（与其它 Provider 同一异常类型；`dock_for_handoff` 的"显式结论"要用它）
+from iraf_skills.common.motion import SkillRejected  # noqa: E402
+
 #: 声明边界的必需键（点号路径的最后一段）。缺键 = 干净的中文失败，不是运行到一半 KeyError。
 LIMIT_KEYS = (
     "max_speed_mps",
@@ -653,8 +656,18 @@ class DockForHandoffProvider:
         acceptance = self.backend.dock_acceptance()      # 来自声明；本层不写数字
         # 适配器签名是 keyword-only（`def dock_for_handoff(self, *, lease, ...)`）
         report = self.backend.dock_for_handoff(lease=lease, **acceptance)
+        # **显式结论**（2026-09-28 §11.23(34)）：停靠未完成时后端只把 `failure` 放进报告、
+        # 终态量取不到实数（`final_speed_mps` 会是 None）⇒ 若直接返回，契约会以
+        # "Provider output does not match schema: None is not of type 'number'" 报错，
+        # **把真实原因（接近失败）盖住**（本轮实测踩到）。⇒ 这里显式拒绝并带上后端给出的原因。
+        failure = report.get("failure") or None
+        if failure is not None:
+            detail = failure.get("reason") if isinstance(failure, dict) else str(failure)
+            raise SkillRejected("停靠未完成（%s）：%s"
+                                % (failure.get("decision") if isinstance(failure, dict)
+                                   else "DOCK_FAILED", detail))
         evidence = _evidence(report, self.EVIDENCE_KEYS)
-        evidence["failure"] = report.get("failure")
+        evidence["failure"] = None
         return {"skill": "dock_for_handoff", "accepted": True, "evidence": evidence}
 
 
