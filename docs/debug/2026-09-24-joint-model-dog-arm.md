@@ -871,9 +871,46 @@ Piper 侧缺的只有两处**声明**（缺即显式失败，不给默认值）�
 `manipulation.reference_pose_clearance_check.overlapping == false`（当前 `piper_link6 dist_m -0.014516`）
 **且**四姿态静态保持残余 ≤ `gravity_feedforward.tolerance_rad`（0.001，当前 0.039962049）。
 
+### 11.9 联合世界的**带窗口演示**：卡在"owner 谁来推进"，不是管线（2026-09-28）
+
+目标（使用者要求）：方块在臂旁边 → 狗站稳 → piper 从台面抓起 → 放到狗背上。
+
+已验证（**无窗口**，走验收链路）：`nominal --world joint` ⇒ exit 0 / passed=true，
+s01 stand 1.488788112060832e-05 m/s、s02 dock 0.02812501214102655 m / 0.5801787035003824°、
+s03 pick `grasp_center_distance_m = 0.0002098657943494681` / `lift = 0.079403` / `bilateral = 1.0`、
+`plant_residency cycles=23 / failed_cycles=[]`（提交 `ed2035c`）。
+
+带窗口演示（`build/iraf-a6a14/joint_handoff_demo.py`，三段：stand → dock → **同一世界里抓取**）：
+
+| 段 | 结果 | 数字 |
+| --- | --- | --- |
+| A 狗 stand | SUCCEEDED | base_xyz [−0.006983, 0, 0.279358]，窗口 frames 296 |
+| B 狗 dock | SUCCEEDED | 0.028375962824781182 m / −0.4095659107671862°，frames 772 |
+| C 臂 pick（guest） | **FAILED** | reason「等待 owner(unitree_go2) 推进到**第 36751 步**超时（0.060 s，当前 36750 步）」；臂已走到 approach 一半（joint3 0.001852 → −0.120904） |
+
+**判死过程（两步，避免把症状当原因）**：
+1. 先把 `guest_timeout_factor` 30× → 300×（每步 0.060 s → 0.600 s）复跑：**仍停在同一第 36750 步**
+   ⇒ 超时不是原因，owner 是**真的停止推进**了。故该系数已**回退**到 30.0（不无理由放宽安全余量）。
+2. 真因：窗口演示里 owner（狗）只被一条 `stand` 请求驱动，而**请求时长受安全策略 `max_duration_ms` 限制**
+   （实测 60000 ms 直接被技能层拒：狗一步没动）⇒ 30 s 仿真时间用完，`run_request_live` 返回、
+   时间推进停止，而 guest（臂）的 pick 需要更多仿真时间（36750 步 = 73.5 s 仿真）⇒ 确定性卡住
+   （每次复跑同一步，正是"确定性"而非"墙钟抖动"的证据）。
+
+**修法（下一轮，属于**产品功能**而不是演示脚本 hack）**：给验收运行器加显示通路 ——
+`scripts/scenario.py run --world joint --display interactive_viewer --render-hz N --seconds S`。
+依据：runner 已经有 ① 声明驱动的**植物驻留**（`_start_plant_residency`：owner 在 guest 执行期间持续在线，
+本场景 `cycles=23`）、② `run_request_live(..., continue_stepping=False)` ——即"只渲染、不推进"的模式。
+两者拼起来即可让**真正的验收运行**（stand → dock → pick）边跑边看，且 owner 由驻留线程推进、
+guest 的行为完全不变（不需要在演示脚本里自己造时间推进者）。
+
+**放到狗背上（s04）**：`place_object` 能力未交付（`SKIPPED_PENDING`），判据已在
+`scenario.yaml: s04_place_in_tray.criteria.pose_tolerance_m = 0.01`；目标帧必须用**世界固定**的
+`handoff_station_frame`（托盘帧与机身同一刚体 ⇒ 量到自指量，见 docs/debug/2026-09-24-dock-target-self-frame.md）。
+
 ## 12. 下一步
 
-0. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。
+0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
+0a. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。
 0b. **（2026-09-24 新增）** 附加本体的执行器刚度口径声明化（联合模型里的臂必须与臂自己场景同一口径：Profile 声明 → 构建器按声明注入 `kp = max(arm_position_kp, 关节阻尼×ratio)`）；验收判据 = §11.6 的静态保持残余表；通过后再把 `feedforward_entry` 加回 `reference_solver`。
 1. `s03_pick` 三项判据口径（`pose_tolerance_m` / `min_lift_delta_m` / `require_bilateral_contact`）
    → s04/s05 → `nominal` 全场景 → 两臂轮番运输。
