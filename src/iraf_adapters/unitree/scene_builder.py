@@ -24,9 +24,11 @@
 """
 
 import copy
+import importlib.util
 import json
 import os
 import shutil
+import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -688,7 +690,206 @@ def _attach_robots(staging, scene, root, attached_ids):
     return records
 
 
-def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, declared_names=None):
+#: `robots[].reference_solver` 的必需键（缺键或缺文件即显式失败，不给默认值）：
+#: `module`（仓内脚本路径）、`entry`（求解入口函数名）、`baseline`（该求解器的声明配置）。
+REFERENCE_SOLVER_KEYS = ("module", "entry", "baseline")
+
+#: 参考姿态的四个相位 → 联合报告里的**位置指令键**（求解器输出键与报告键的对应关系）。
+REFERENCE_POSE_PHASES = (
+    ("home", "home_positions"),
+    ("approach", "approach_positions"),
+    ("grasp", "grasp_positions"),
+    ("lift", "lift_positions"),
+)
+
+
+def _quat_to_matrix(quat_wxyz):
+    """wxyz 四元数 → 3×3 旋转矩阵（纯代数换算，不引入任何机型语义）。
+
+    只用于把世界目标换算到**臂基座系**：`local = Rᵀ·(world − t)`。
+    """
+    quat = np.asarray([float(item) for item in quat_wxyz], dtype=float)
+    norm = float(np.linalg.norm(quat))
+    if norm < 1e-12:
+        _fail(EXIT_DECLARATION, "placement.quat_wxyz 是零四元数，无法求旋转矩阵")
+    w, x, y, z = quat / norm
+    return np.asarray([
+        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+    ], dtype=float)
+
+
+def _load_declared_callable(root, declaration, robot_id, purpose):
+    """按**声明**把仓内脚本文件当模块加载，并取回声明的入口函数（构建器不 import 任何机型专有模块）。
+
+    为什么要动态加载而不是直接 import（AGENTS.md 6.3 "机型差异只进 profiles/config"）：
+    本模块是平台无关的场景构建器，机型差异只能来自声明；把 `module` 声明成仓内路径、
+    运行时加载，既保证"按声明调用"，又让本模块的名字表里不出现任何机型/脚本名。
+
+    实测坑位：仓内脚本之间用 `from build_robot_baseline import …` 这种**平级导入**
+    （脚本以 `python3 scripts/xxx.py` 运行时 `sys.path[0]` 就是脚本目录），
+    因此加载前必须把**声明模块所在目录**放进 `sys.path`，否则被加载模块自身导入失败。
+    """
+    module_value = str(declaration.get("module") or "")
+    entry_value = str(declaration.get("entry") or "")
+    if not module_value or not entry_value:
+        _fail(EXIT_DECLARATION, "robots.%s.%s 缺少 module/entry 声明" % (robot_id, purpose))
+    module_path = Path(module_value)
+    if not module_path.is_absolute():
+        module_path = root / module_path
+    module_path = module_path.resolve()
+    if not module_path.is_file():
+        _fail(EXIT_REFERENCE, "robots.%s.%s 声明的模块不存在: %s"
+              % (robot_id, purpose, module_path))
+    module_dir = str(module_path.parent)
+    if module_dir not in sys.path:
+        sys.path.insert(0, module_dir)
+    module_name = "iraf_declared_%s_%s" % (str(purpose).replace(".", "_"), robot_id)
+    spec = importlib.util.spec_from_file_location(module_name, str(module_path))
+    if spec is None or spec.loader is None:
+        _fail(EXIT_REFERENCE, "robots.%s.%s 声明的模块无法作为 Python 模块加载: %s"
+              % (robot_id, purpose, module_path))
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception as error:  # noqa: BLE001 —— 统一转成构建失败，带中文原因与出处
+        _fail(EXIT_MODEL, "robots.%s.%s 声明的模块加载失败（%s）: %s"
+              % (robot_id, purpose, module_path, error))
+    entry = getattr(module, entry_value, None)
+    if not callable(entry):
+        _fail(EXIT_DECLARATION, "robots.%s.%s 声明的入口 %s 在模块 %s 里不存在或不可调用"
+              % (robot_id, purpose, entry_value, module_path))
+    return entry, module_path
+
+
+def _joint_reference_resolution(root, solver, placement, robot_id, targets, model, prefix):
+    """在**臂基座系**重解参考姿态：目标换算 → **按声明**调用求解器 → 校验输出。
+
+    背景（`docs/debug/2026-09-24-joint-model-dog-arm.md` §11.3–§11.5）：
+    臂侧报告里的 `home/approach/grasp/lift_positions` 是在**臂自己基座系**里解出的关节解，
+    而 MJCF 的 qpos 是**局部量** ⇒ 附加本体一旦有 `placement`（本场景 (0.45, −0.45, 0) 绕 z 90°），
+    直接照搬会让指腹落到别处（实测残差 0.367696068 m，运行期表现为"末端未到达目标抓取位姿"）。
+    把目标换算到基座系后重解 ⇒ 0.018389447 m；再把 `pad_offset_m` 一起重解 ⇒ 5.681e-06 m
+    （pad_offset 不是通用常数：它由该场景的方块尺寸与指尖配平决定）。
+
+    求解器契约（声明方 = 场景的 `robots[].reference_solver`）：
+      · `entry(root, baseline_doc, target_xy_override_m=[x, y], target_z_override_m=z)`
+        → 形如 `{home: {...}, approach: {joint_positions: {...}}, grasp:…, lift:…}`
+        且含 `finger_height_correction_m`（= 该模型/该场景下的 `pad_offset_m`）；
+      · 可选 `feedforward_entry(model, reference, baseline_doc, prefix)`
+        → `({相位: {模型内关节名: ctrl 增量}}, 证据)`，用于在**运行期同款模型**上重算重力前馈
+        （两个模型的执行器增益不同 ⇒ 继承前馈会按增益比例失真）。
+      · `baseline` 是求解器自己的声明配置路径（本场景 `config/piper_simulation_baseline.yaml`）。
+
+    **摆放松弛度**：目标按"基座系 xy + 世界 z"表达 ⇒ 只对**绕 z 的偏航摆放**自洽
+    （有倾斜分量时"世界 z"不再是基座系的 z）。本函数显式检查这一点并失败，
+    而不是把一个近似当成正确（要支持倾斜摆放需扩展契约）。
+    """
+    if not isinstance(solver, dict):
+        _fail(EXIT_DECLARATION, "robots.%s.reference_solver 必须是对象" % robot_id)
+    missing = [key for key in REFERENCE_SOLVER_KEYS if not solver.get(key)]
+    if missing:
+        _fail(EXIT_DECLARATION, "robots.%s.reference_solver 缺少必需键 %s"
+              % (robot_id, missing))
+    if not isinstance(placement, dict):
+        _fail(EXIT_REFERENCE, "robots.%s 缺少 placement，无法把目标换算到臂基座系" % robot_id)
+    pos = _vec3(placement.get("pos_m"), "robots.%s.placement.pos_m" % robot_id)
+    quat = _quat_wxyz(placement.get("quat_wxyz"), "robots.%s.placement.quat_wxyz" % robot_id)
+    rotation = _quat_to_matrix(quat)
+    if (abs(float(rotation[2, 0])) > 1e-9 or abs(float(rotation[2, 1])) > 1e-9
+            or abs(float(rotation[2, 2]) - 1.0) > 1e-9):
+        _fail(EXIT_DECLARATION,
+              "robots.%s.placement 含倾斜分量（R[2,:] = %s）：参考姿态求解器契约把目标表达为"
+              "「基座系 xy + 世界 z」，只对绕 z 的偏航摆放自洽 ⇒ 需先扩展契约再构建"
+              % (robot_id, [round(float(v), 9) for v in rotation[2]]))
+    if not targets:
+        _fail(EXIT_REFERENCE, "报告没有 targets[]，无法确定要重解哪个目标点的参考姿态")
+    target = targets[0]
+    body = str(target.get("body") or "")
+    body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body) if body else -1
+    if body_id < 0:
+        _fail(EXIT_REFERENCE, "联合模型里找不到目标 body %r，无法重解参考姿态" % body)
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    target_world = np.asarray(data.xpos[body_id], dtype=float)
+    local = rotation.T @ (target_world - np.asarray(pos, dtype=float))
+
+    entry, module_path = _load_declared_callable(root, solver, robot_id, "reference_solver")
+    baseline_path = Path(str(solver["baseline"]))
+    if not baseline_path.is_absolute():
+        baseline_path = root / baseline_path
+    baseline_path = baseline_path.resolve()
+    if not baseline_path.is_file():
+        _fail(EXIT_REFERENCE, "robots.%s.reference_solver.baseline 不存在: %s"
+              % (robot_id, baseline_path))
+    baseline_doc = _read_yaml(baseline_path, "robots.%s.reference_solver.baseline" % robot_id)
+    try:
+        reference = entry(root, baseline_doc,
+                          target_xy_override_m=[float(local[0]), float(local[1])],
+                          target_z_override_m=float(target_world[2]))
+    except Exception as error:  # noqa: BLE001 —— 统一转成构建失败，带中文原因
+        _fail(EXIT_MODEL, "robots.%s.reference_solver.entry(%s) 求解失败: %s"
+              % (robot_id, str(solver["entry"]), error))
+    if not isinstance(reference, dict):
+        _fail(EXIT_MODEL, "robots.%s.reference_solver.entry 必须返回字典，实际 %r"
+              % (robot_id, type(reference).__name__))
+
+    resolved = {}
+    for phase, positions_key in REFERENCE_POSE_PHASES:
+        pose = reference.get(phase)
+        if pose is None:
+            _fail(EXIT_MODEL, "参考姿态求解结果缺少相位 %s（契约要求 home/approach/grasp/lift）"
+                  % phase)
+        raw = pose if phase == "home" else (pose.get("joint_positions") if isinstance(pose, dict)
+                                           else None)
+        if not isinstance(raw, dict) or not raw:
+            _fail(EXIT_MODEL, "参考姿态相位 %s 的位置形状非法（home 需扁平字典，其余需 "
+                  "joint_positions 字典）：%r" % (phase, pose))
+        values = {}
+        for name, value in raw.items():
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                _fail(EXIT_MODEL, "参考姿态相位 %s 的关节 %s 不是数值：%r" % (phase, name, value))
+            values[str(name)] = float(value)
+        resolved[phase] = {"positions": values, "requested_key": positions_key}
+    pad_offset = reference.get("finger_height_correction_m")
+    if not isinstance(pad_offset, (int, float)) or isinstance(pad_offset, bool):
+        _fail(EXIT_MODEL, "参考姿态求解结果缺少 finger_height_correction_m（= 该场景下的 "
+              "pad_offset_m）：联合场景的 pad_offset 不是通用常数，必须随姿态一起重解")
+    feedforward = None
+    feedforward_evidence = None
+    if solver.get("feedforward_entry"):
+        ff_entry, _ff_path = _load_declared_callable(
+            root, {"module": solver["module"], "entry": solver["feedforward_entry"]},
+            robot_id, "reference_solver.feedforward_entry")
+        try:
+            feedforward, feedforward_evidence = ff_entry(model, reference, baseline_doc, prefix)
+        except Exception as error:  # noqa: BLE001 —— 含 core 的静态保持判据失败（残差即证据）
+            _fail(EXIT_MODEL, "重力前馈在联合模型上重算失败（%s）: %s"
+                  % (str(solver["feedforward_entry"]), error))
+        if not isinstance(feedforward, dict) or not feedforward:
+            _fail(EXIT_MODEL, "重力前馈重算必须返回非空字典（相位 → {模型内关节名: 增量}）")
+    return {
+        "solver": {"module": str(module_path), "entry": str(solver["entry"]),
+                   "baseline": str(baseline_path),
+                   "feedforward_entry": (str(solver["feedforward_entry"])
+                                         if solver.get("feedforward_entry") else None)},
+        "placement": {"pos_m": [float(v) for v in pos],
+                      "quat_wxyz": [float(v) for v in quat]},
+        "target_world_m": [round(float(v), 9) for v in target_world],
+        "local_target_m": [round(float(v), 9) for v in local],
+        "local_xy_radius_m": round(float(np.linalg.norm(local[:2])), 9),
+        "reference": reference,
+        "resolved": resolved,
+        "pad_offset_m": round(float(pad_offset), 9),
+        "feedforward": feedforward,
+        "feedforward_evidence": feedforward_evidence,
+    }
+
+
+def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, declared_names=None,
+                        reference_solver=None, placement=None, robot_id=None):
     """联合报告的 manipulation 事实：继承**臂自己报告**的声明事实，并按**可判定规则**改写名字。
 
     改名规则（不猜）：某个名字 `n` 改写成 `<prefix>n` **当且仅当** `<prefix>n` 出现在联合模型的
@@ -800,13 +1001,71 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
         "note": ("conflict（同名对象在主本体与附加本体里都存在）**不进 name_map**：映射有歧义，"
                  "需人工裁定；missing 只留痕，被 manipulation 直接引用的名字已在 rename() 里显式失败。"),
     }
-    # ---- FK 自检（构建期，防"静默继承场景专属参考姿态"）----
+    # ---- 按声明重解参考姿态（联合模式）----
+    # 为什么必须（§11.3/§11.4 实测 0.367696068 m）：继承来的 `*_positions` 是在**臂自己基座系**
+    # 里解出的关节解（MJCF 的 qpos 是局部量）⇒ 换基座位姿后照搬，指腹会落到别处，
+    # 运行期表现为"末端未到达目标抓取位姿"。求解器**不在本模块内**：由场景声明给出
+    # （`robots[].reference_solver`），本模块只做"目标换算到臂基座系 + 按声明调用 + 覆写报告"，
+    # 名字表里不出现任何机型/脚本名（AGENTS.md 6.3）。
+    # 缺声明 ⇒ 显式失败，**不**回退到静默继承（静默继承正是这次 0.368903942 m 的来源）。
+    if not reference_solver:
+        _fail(EXIT_DECLARATION,
+              "附加本体 %s 声明了 manipulation_report（继承臂侧 gripper/targets）⇒ 必须同时声明 "
+              "`reference_solver`（联合模式参考姿态求解器）：继承来的参考姿态是**场景专属**的"
+              "（取决于附加本体的 placement 与本场景的目标几何），联合模型必须重解；"
+              "静默继承曾造成 0.367696068 m 的抓取残差" % robot_id)
+    resolution = _joint_reference_resolution(
+        root, reference_solver, placement, robot_id, targets, model, prefix)
+    replaced = {}
+    for phase, positions_key in REFERENCE_POSE_PHASES:
+        positions = dict(resolution["resolved"][phase]["positions"])
+        merged = dict(out_gripper.get(positions_key) or {})
+        if not merged:
+            _fail(EXIT_REFERENCE, "臂侧报告的 gripper 缺少 %s，无法在它之上覆写重解结果"
+                  % positions_key)
+        diff = []
+        for name, value in positions.items():
+            model_name = rename(name)  # 复用同一条改名规则（不存在即显式失败）
+            previous = merged.get(model_name)
+            if previous is None or abs(float(previous) - float(value)) > 0.0:
+                diff.append({"joint": model_name,
+                             "inherited": (None if previous is None else float(previous)),
+                             "resolved": float(value)})
+            merged[model_name] = float(value)
+        out_gripper[positions_key] = merged
+        replaced[phase] = {"positions_key": positions_key,
+                           "replaced_joints": [item["joint"] for item in diff],
+                           "diff_vs_inherited": diff}
+    inherited_pad_offset = out_gripper.get("pad_offset_m")
+    out_gripper["pad_offset_m"] = float(resolution["pad_offset_m"])
+    # 出处标注：读到 `resolved_for_joint_model` 即表示这些数字来自**本联合模型 + 本 placement**，
+    # 不是从臂自己场景继承来的（`inherited_from` 仍留痕，便于追溯）。
+    out_gripper["reference_pose_source"] = "resolved_for_joint_model"
+    feedforward_source = "inherited_from_arm_report"
+    if resolution["feedforward"]:
+        gravity_feedforward = {}
+        for phase, positions_key in REFERENCE_POSE_PHASES:
+            offsets = resolution["feedforward"].get(phase)
+            if not offsets:
+                continue
+            declared_keys = set(out_gripper.get(positions_key) or {})
+            unknown = sorted(set(offsets) - declared_keys)
+            if unknown:
+                _fail(EXIT_MODEL,
+                      "重算的重力前馈 %s 含该段位置指令里不存在的通道 %s（前馈键必须与位置指令"
+                      "一一对应：前缀漏掉会让前馈静默失效，表现为「精度莫名不达标」）"
+                      % (phase, unknown))
+            gravity_feedforward[phase] = {str(name): float(value)
+                                          for name, value in offsets.items()}
+        out_gripper["gravity_feedforward"] = gravity_feedforward
+        feedforward_source = "resolved_for_joint_model"
+    # FK 自检（构建期，防"静默继承场景专属参考姿态"）----
     # 为什么必须（2026-09-24 实测，docs/debug/2026-09-24-joint-model-dog-arm.md §11.3/§11.4）：
-    # 继承来的 `*_positions` 是**在臂自己基座系里求解的关节解**（MJCF 的 qpos 是局部量）；
+    # 上一轮继承来的 `*_positions` 是**在臂自己基座系里求解的关节解**（MJCF 的 qpos 是局部量）；
     # 换到联合模型的基座位姿后直接照搬，指腹会落到别处（实测残差 0.368903942 m），而构建期
     # 毫无提示 ⇒ 一直藏到运行期、以"末端未到达目标抓取位姿"的形式出现。
-    # 这里用**联合模型 + 继承位姿**做一次 FK，把残差与判读写进报告（阈值取目标自己声明的
-    # `pose_tolerance_m`，不新造数字）。
+    # 这里用**联合模型 + 报告里的命令位姿**做一次 FK，把残差与判读写进报告（阈值取目标自己声明的
+    # `pose_tolerance_m`，不新造数字）；重解生效后该残差应回到 µm 量级。
     # 声明容差的来源：臂侧报告的**顶层** `pose_tolerance_m`（该报告里 target 条目本身不带它；
     # 运行期门禁用的是机型声明的 `target_tolerance_m`，两者同值 0.005 ⇒ 取臂报告这一处即可）。
     reference_pose_check = _reference_pose_check(
@@ -818,6 +1077,22 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
             "name_map": dict(sorted(name_map.items())),
             "name_map_facts": facts,
             "reference_pose_check": reference_pose_check,
+            "reference_pose_resolution": {
+                "source": "resolved_for_joint_model",
+                "solver": resolution["solver"],
+                "placement": resolution["placement"],
+                "target_world_m": resolution["target_world_m"],
+                "local_target_m": resolution["local_target_m"],
+                "local_xy_radius_m": resolution["local_xy_radius_m"],
+                "resolved_pad_offset_m": resolution["pad_offset_m"],
+                "inherited_pad_offset_m": inherited_pad_offset,
+                "feedforward_source": feedforward_source,
+                "feedforward_evidence": resolution["feedforward_evidence"],
+                "replaced_phases": replaced,
+                "note": ("参考姿态与 pad_offset 均由**联合模型 + 本 placement** 重解"
+                         "（求解器按 `robots[].reference_solver` 声明调用）；"
+                         "`resolved` 的关节解是**臂基座系**下的关节角，MJCF qpos 也是局部量 ⇒ 可直接命令。"),
+            },
             "inherited_from": str(Path(arm_report_path)), "rename_rule":
                 "改写成 <prefix>name 当且仅当 <prefix>name 在联合模型事实里、且 name 不在"}
 
@@ -1602,6 +1877,8 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
         prefix = None
         robot_id = None
         arm_declared_names = None
+        arm_reference_solver = None
+        arm_placement = None
         for attached in attach:
             entity = resolve_robot(scene, attached)
             candidate = entity.get("manipulation_report")
@@ -1609,6 +1886,9 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
                 arm_report = root / str(candidate)
                 prefix = "%s_" % attached
                 robot_id = attached
+                # 联合模式参考姿态求解器与绑定位姿**都来自声明**（构建器只按声明调用）。
+                arm_reference_solver = entity.get("reference_solver")
+                arm_placement = entity.get("placement")
                 for record in attached_robots:
                     if str(record.get("id")) == str(attached):
                         arm_declared_names = record.get("declared_names")
@@ -1617,7 +1897,10 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
             _fail(EXIT_DECLARATION,
                   "使用 --attach 时必须在本体声明 `manipulation_report`（继承 gripper/targets 的"
                   "来源；缺声明即失败，不猜）")
-        manipulation = _joint_manipulation(root, arm_report, prefix, facts, compiled, arm_declared_names)
+        manipulation = _joint_manipulation(root, arm_report, prefix, facts, compiled,
+                                           arm_declared_names,
+                                           reference_solver=arm_reference_solver,
+                                           placement=arm_placement, robot_id=robot_id)
         reference_pose_check = manipulation.get("reference_pose_check")
         report["gripper"] = manipulation["gripper"]
         report["targets"] = manipulation["targets"]
@@ -1625,12 +1908,16 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
         report["vision"] = manipulation["vision"]
         # `name_map`：声明名 → 联合模型名的**机械**产物（臂后端据此按 Profile 名解析对象）；
         # `name_map_facts`：四个判定桶的留痕（mapped/identical/conflicts/missing）。
+        # `reference_pose_resolution`：参考姿态/pad_offset/重力前馈的**重解留痕**（求解器出处、
+        # 绑定位姿、基座系目标、与继承值的差）；缺它说明这些数字是继承来的 —— 本构建已不允许。
         report["manipulation"] = {"attached_robot": str(robot_id),
                                   "inherited_from": manipulation["inherited_from"],
                                   "rename_rule": manipulation["rename_rule"],
                                   "name_map": manipulation["name_map"],
                                   "name_map_facts": manipulation["name_map_facts"],
-                                  "reference_pose_check": reference_pose_check}
+                                  "reference_pose_check": reference_pose_check,
+                                  "reference_pose_resolution":
+                                      manipulation["reference_pose_resolution"]}
         report["manipulation_absent_reason"] = None
     output_path.with_suffix(".json").write_text(
         json.dumps(report, ensure_ascii=True, indent=2) + "\n", encoding="utf-8"

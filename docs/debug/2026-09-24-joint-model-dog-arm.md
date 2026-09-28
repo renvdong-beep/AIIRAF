@@ -678,8 +678,64 @@ s03_pick ✗ 末端未到达目标抓取位姿: distance=0.369305m tolerance=0.0
 3. 验收：`reference_pose_check.distance_m` ≤ 声明容差（预期 ~5.681e-06）、
    再跑 `nominal --world joint` 判 s03 三项实测。
 
+
+### 11.6 参考姿态重解已接进构建（2026-09-24 续）：0.367696068 m → 5.663e-06 m，卡点转移到**臂动力学口径**
+
+**改动（全部按声明，构建器内不出现机型/脚本名）**
+
+- `scenes/handoff_lab/scene.yaml`：`robots[piper].reference_solver: {module: scripts/build_piper_baseline.py, entry: build_reference_poses, baseline: config/piper_simulation_baseline.yaml}`。
+- `config/scene.schema.json`：增 `reference_solver` 定义 + **fail-closed 规则**（声明了 `manipulation_report` 就必须同时声明 `placement` 与 `reference_solver`：静默继承即构建失败）。
+- `src/iraf_adapters/unitree/scene_builder.py`：`_load_declared_callable`（按声明动态加载仓内脚本；加载前把脚本目录放进 `sys.path` —— 实测平级导入坑）、`_joint_reference_resolution`（世界目标 → 臂基座系、按声明调用、校验四相位 + `finger_height_correction_m`、摆放含倾斜即显式失败）、`_joint_manipulation` 覆写四段 `*_positions` 与 `pad_offset_m` 并写 `reference_pose_source` / `manipulation.reference_pose_resolution`。
+- `scripts/build_piper_baseline.py`：抽出公开入口 `build_reference_feedforward(model, reference, baseline, prefix)`；**臂场景产物逐位不变**（`build/iraf-a6a14/piper-pick-scene-before.*` 对比重建结果，JSON/XML/pose 三份 diff 全空）。
+- `tests/unit/test_joint_name_map.py`：新增两条回归 —— 缺 `reference_solver` ⇒ 显式失败；重解值**逐关节**覆写继承值并留痕。
+
+**实测（`build/scenes/handoff_lab/handoff_lab_joint.json`）**
+
+- `manipulation.reference_pose_check.distance_m` = **5.663e-06 m**（容差 0.005，`within_declared_tolerance: true`）；上一版 0.367696068 m。
+- `resolved_pad_offset_m` = **0.011452003**（继承 0.029835769）；`local_target_m` = [0.45, 0.26, 0.025]、`local_xy_radius_m` = **0.519711458** ≤ 可达 0.594284 m；approach/grasp/lift 各 6 个关节被替换，home 无差（两侧都是零位）。
+- 与探针 5.681e-06 的差（1.8e-08）有明确出处：构建器取**模型里 `box_01` 的 xpos**（0.19, 0, 0.025，与运行期门禁同源），探针取臂侧报告的 `position_m`（0.189999426）。
+- `scripts/scene_check.py --scene scenes/handoff_lab` ⇒ exit 0 / `passed: true`。
+
+**`nominal --world joint` 复跑：s03 仍红，但原因换了**
+
+```
+s01_verify_ready SUCCEEDED
+s02_dock         SUCCEEDED  （0.028125012624229208 m / 0.5801787093348428 deg，与上一轮逐位相同）
+s03_pick         FAILED     distance=0.274949m tolerance=0.005000m
+                 delta=[0.24114787436338767, 0.09218743459485515, 0.09458519690813935]
+                 末态 qpos joint5=-1.0358268081644664 joint6=-0.5718125594197493
+                 （命令 joint5=-0.6048826552919585 joint6=1.892254047965281e-07）
+```
+
+上一轮 delta 是 [0.26, −0.2623, −0.0015]（纯 xy 错位 = 继承旧解），本轮残差换向 ⇒ **位姿重解确实生效**（构建期 FK 已证 5.663e-06），剩下的是**跟踪/保持**问题。
+
+**机制判死（探针 `build/iraf-a6a14/joint-reference-feedforward-probe.json`）**
+
+联合模型里的臂来自 **Profile 声明的厂商 MJCF**（`--attach` 用 `spec.model.file`），臂自己场景注入的是**声明增益**（`scene.arm_position_kp: 200.0`，逐关节取 `max(kp, damping×1.5)`）：
+
+| 关节 | 联合模型 kp | 臂自己场景 kp | 关节阻尼 |
+| --- | --- | --- | --- |
+| joint1 | 10000 | 450 | 300 |
+| joint2 | 2000 | 200 | 100 |
+| joint3 | 500 | 200 | 20 |
+| joint4 | 50 | 200 | — |
+| joint5 | 20 | 200 | — |
+| joint6 | 5 | 200 | — |
+
+⇒ **两个模型里的臂不是同一个动力学系统**。静态保持残余（`gravity_hold_ctrl` 同口径，hold 4000 ms、容差 `tolerance_rad` 0.001）：
+
+| 模型 | home | approach | grasp | lift |
+| --- | --- | --- | --- | --- |
+| 联合模型 | 1.102e-06 ✓ | 0.029975223 ✗ | 0.036213257 ✗ | 0.206096435 ✗ |
+| 臂自己场景 | 2.8763e-05 ✓ | 3.812e-06 ✓ | 3.809e-06 ✓ | 3.816e-06 ✓ |
+
+门禁预测（联合模型 + 重解姿态 + 正确前馈，保持 1600 ms = s03 每段时长）：grasp 命令时 5.681e-06 m ⇒ **7.165929e-03 m**；approach 0.030983737、lift 0.045533780。
+
+**因此本轮故意不把 `feedforward_entry` 加进声明**：它在联合模型上会因静态保持判据失败而让构建直接失败（数值见上表），从而掩盖"位姿重解已生效"这一已验证成果。顺序应当是：先声明化**执行器刚度口径**（联合模型里附加本体的执行器必须与已验收的臂场景同一口径），再把前馈重算接进声明 —— 两者都用现成判据验收：四个参考姿态在联合模型上的静态保持残余 ≤ 声明 `tolerance_rad`。
+
 ## 12. 下一步
 
+0. **（2026-09-24 新增）** 附加本体的执行器刚度口径声明化（联合模型里的臂必须与臂自己场景同一口径：Profile 声明 → 构建器按声明注入 `kp = max(arm_position_kp, 关节阻尼×ratio)`）；验收判据 = §11.6 的静态保持残余表；通过后再把 `feedforward_entry` 加回 `reference_solver`。
 1. `s03_pick` 三项判据口径（`pose_tolerance_m` / `min_lift_delta_m` / `require_bilateral_contact`）
    → s04/s05 → `nominal` 全场景 → 两臂轮番运输。
 2. 联合产物的资产相对化（消 host-specific）；债 S4（臂厂商资产入库 + 重写锁 + 许可证 BOM）；S3。

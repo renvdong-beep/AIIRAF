@@ -186,6 +186,30 @@
           "type": "string",
           "description": "继承 manipulation 事实（gripper/targets）的臂侧场景报告路径；仅 `--attach` 时消费。"
         },
+        "reference_solver": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["module", "entry", "baseline"],
+          "description": "联合模式的**参考姿态求解器**：继承来的 home/approach/grasp/lift_positions 是臂自己基座系下的关节解，附加本体一有 placement 就不适用（实测残差 0.367696068 m）⇒ 必须按本场景重解。缺声明即失败，不静默继承。",
+          "properties": {
+            "module": {
+              "type": "string",
+              "description": "仓内脚本路径（构建器按声明动态加载；模块/机型名不写进构建器，AGENTS.md 6.3）。"
+            },
+            "entry": {
+              "type": "string",
+              "description": "求解入口，契约：entry(root, baseline_doc, target_xy_override_m=[x,y], target_z_override_m=z) → {home, approach, grasp, lift} + finger_height_correction_m（= 该场景下的 pad_offset_m）。"
+            },
+            "feedforward_entry": {
+              "type": "string",
+              "description": "可选入口，契约：feedforward_entry(model, reference, baseline_doc, prefix) → ({相位: {模型内关节名: ctrl 增量}}, 证据)；用于在**运行期同款模型**上重算重力前馈（两个模型的执行器增益不同 ⇒ 继承值按增益比例失真）。"
+            },
+            "baseline": {
+              "type": "string",
+              "description": "求解器自己的声明配置路径（机型数字的唯一事实来源；本文件不复制）。"
+            }
+          }
+        },
         "profile_name": {
           "type": "string",
           "description": "场景 id 与 Profile 身份不同名时的**显式映射**（值必须等于 Profile 的 metadata.name，仍是硬校验）。"
@@ -230,9 +254,28 @@
             }
           }
         },
-        {
-          "description": "人形（humanoid）在本战役只能是静态模型，必须显式写 model_only=true 与 evidence_level=仅模型。",
-          "if": {"properties": {"kind": {"const": "humanoid"}}, "required": ["kind"]},
+      {
+        "description": "声明了 manipulation_report 的本体必须同时声明 placement 与 reference_solver：继承来的参考姿态是**场景专属**的（取决于本体的 placement 与本场景的目标几何），联合构建必须按声明重解；静默继承曾造成 0.367696068 m 的抓取残差。",
+        "if": {
+          "properties": {
+            "manipulation_report": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "manipulation_report"
+          ]
+        },
+        "then": {
+          "required": [
+            "placement",
+            "reference_solver"
+          ]
+        }
+      },
+      {
+        "description": "人形（humanoid）在本战役只能是静态模型，必须显式写 model_only=true 与 evidence_level=仅模型。",
+        "if": {"properties": {"kind": {"const": "humanoid"}}, "required": ["kind"]},
           "then": {
             "required": ["model_only", "evidence_level"],
             "properties": {

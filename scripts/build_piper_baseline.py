@@ -29,6 +29,71 @@ from iraf_core.kinematics import (
 
 DEFAULT_BASELINE = "config/piper_simulation_baseline.yaml"
 
+#: 四个参考相位 → 场景报告里对应的**位置指令键**（两处必须枚举一致：
+#: 相位名用于参考姿态字典，位置键用于 `gripper.*_positions`）。
+REFERENCE_PHASE_KEYS = (
+    ("home", "home_positions"),
+    ("approach", "approach_positions"),
+    ("grasp", "grasp_positions"),
+    ("lift", "lift_positions"),
+)
+
+
+def build_reference_feedforward(model, reference, baseline, prefix=""):
+    """在**给定模型**上重算四个参考姿态的重力前馈（相位 → {模型内关节名: ctrl 增量}）。
+
+    为什么单独成函数（2026-09-24，联合世界）：增量 = τ_g / kp，对**执行器增益**极敏感，
+    而"臂自己场景"与"联合模型里的臂"是两个模型：
+
+    | 关节 | 联合模型（Profile 声明的厂商 MJCF） | 臂自己场景（注入声明增益） |
+    | --- | --- | --- |
+    | joint1 | 10000 | 450 |
+    | joint2 | 2000 | 200 |
+    | joint3 | 500 | 200 |
+    | joint4 | 50 | 200 |
+    | joint5 | 20 | 200 |
+    | joint6 | 5 | 200 |
+
+    ⇒ 直接继承臂侧前馈会按增益比例失真（实测最大差 0.016225157 rad，在 joint5）。
+    把本函数暴露成**公开入口**，使联合构建器能按声明
+    （`scenes/<id>/scene.yaml: robots[].reference_solver.feedforward_entry`）在**运行期同款模型**上重算，
+    与 pad_offset 的重解同一个理由：场景专属数据不得静默继承。
+
+    契约（声明侧写 `feedforward_entry: build_reference_feedforward`）：
+      输入 `model`     —— **运行期同款模型**（执行器增益必须与它一致；本场景即联合产物）
+           `reference` —— `build_reference_poses` 的返回值（同一份参考姿态）
+           `baseline`  —— `reference_solver.baseline` 指向的声明文档（读 hold_ms/tolerance_rad）
+           `prefix`    —— 联合模型里附加本体的名字前缀（关节名 = prefix + 声明关节名）
+      输出 ({相位: {**模型内**关节名: 增量}}, 证据字典)。键必须是模型内关节名：
+      后端按报告键直接寻址执行器，前缀漏掉会让前馈静默失效（表现为"精度莫名不达标"）。
+    """
+    ff_cfg = baseline.get("gravity_feedforward") or {}
+    hold_ms = ff_cfg.get("hold_ms")
+    tolerance_rad = ff_cfg.get("tolerance_rad")
+    if not isinstance(hold_ms, int) or isinstance(hold_ms, bool) or hold_ms <= 0:
+        raise ValueError("基线必须声明 gravity_feedforward.hold_ms（正整数）；实现层不写默认值")
+    if not isinstance(tolerance_rad, (int, float)) or isinstance(tolerance_rad, bool) or tolerance_rad <= 0:
+        raise ValueError("基线必须声明 gravity_feedforward.tolerance_rad（正数）；实现层不写默认值")
+    prefix = str(prefix or "")
+    feedforward = {}
+    feedforward_evidence = {}
+    for phase, _key in REFERENCE_PHASE_KEYS:
+        pose = reference.get(phase)
+        if pose is None:
+            continue
+        # ⚠ 两种形状：`home` 是扁平 {关节名: 值}，其余是 {"joint_positions": {...}}
+        raw = pose if phase == "home" else (pose.get("joint_positions") or {})
+        positions = {prefix + str(name): float(value) for name, value in (raw or {}).items()}
+        if not positions:
+            continue
+        compensation, evidence = gravity_hold_ctrl(
+            model, list(positions), positions,
+            hold_ms=int(hold_ms), tolerance_rad=float(tolerance_rad),
+        )
+        feedforward[phase] = compensation
+        feedforward_evidence[phase] = evidence
+    return feedforward, feedforward_evidence
+
 
 def load_baseline(path):
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
@@ -507,34 +572,16 @@ def build(root, baseline_path, scene_path, calibration_path=None, target_id=None
         )
         reference["pose_evidence"] = str(pose_path)
     # ---- 重力前馈（逐相位 ctrl 增量）：见 config 里的 gravity_feedforward 段说明 ----
-    ff_cfg = baseline.get("gravity_feedforward") or {}
-    hold_ms = ff_cfg.get("hold_ms")
-    tolerance_rad = ff_cfg.get("tolerance_rad")
-    if not isinstance(hold_ms, int) or isinstance(hold_ms, bool) or hold_ms <= 0:
-        raise ValueError("基线必须声明 gravity_feedforward.hold_ms（正整数）；实现层不写默认值")
-    if not isinstance(tolerance_rad, (int, float)) or isinstance(tolerance_rad, bool) or tolerance_rad <= 0:
-        raise ValueError("基线必须声明 gravity_feedforward.tolerance_rad（正数）；实现层不写默认值")
     # ⚠ 必须用**注入增益后**的场景模型（`scene.arm_position_kp`）算增量：增益错，增量就错。
+    # 实现在公开入口 `build_reference_feedforward`（联合构建器按声明复用同一个入口，
+    # 避免"同一套前馈算法两处各写一遍"）；本处传 prefix="" ⇒ 键就是模型内关节名，行为逐位不变。
     ff_model_path = _resolve(root, scene_path)
     ff_model = mujoco.MjModel.from_xml_path(str(ff_model_path))
-    feedforward = {}
-    feedforward_evidence = {}
-    for phase, key in (("home", "home_positions"), ("approach", "approach_positions"),
-                       ("grasp", "grasp_positions"), ("lift", "lift_positions")):
-        pose = reference.get(phase)
-        if pose is None:
+    feedforward, feedforward_evidence = build_reference_feedforward(ff_model, reference, baseline)
+    for phase, key in REFERENCE_PHASE_KEYS:
+        compensation = feedforward.get(phase)
+        if not compensation:
             continue
-        # ⚠ 两种形状：`home` 是扁平 {关节名: 值}，其余是 {"joint_positions": {...}}
-        raw = pose if phase == "home" else (pose.get("joint_positions") or {})
-        positions = {str(name): float(value) for name, value in (raw or {}).items()}
-        if not positions:
-            continue
-        compensation, evidence = gravity_hold_ctrl(
-            ff_model, list(positions), positions,
-            hold_ms=int(hold_ms), tolerance_rad=float(tolerance_rad),
-        )
-        feedforward[phase] = compensation
-        feedforward_evidence[phase] = evidence
         # 键必须与该段位置指令一一对应：错位会让前馈静默失效（表现为"精度莫名不达标"）
         declared_keys = set((scene.get("gripper") or {}).get(key) or {})
         unknown = sorted(set(compensation) - declared_keys)

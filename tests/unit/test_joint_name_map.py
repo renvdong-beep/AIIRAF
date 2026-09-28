@@ -43,27 +43,90 @@ TINY_MODEL = """
 class JointNameMapBuildTests(unittest.TestCase):
     """构建器侧：声明名清单 → name_map（机械规则 + 四桶留痕）。"""
 
-    def _report(self, model, declared_names):
+    #: 桩求解器：只提供**声明契约**要求的形状（不碰真模型），使本测试聚焦 name_map。
+    #: 契约见 `scene_builder._joint_reference_resolution`：entry(...) → {home, approach, grasp, lift}
+    #: + finger_height_correction_m（= 该场景下的 pad_offset_m）。
+    STUB_SOLVER = '''
+def build_reference_poses(root, baseline, target_xy_override_m=None, target_z_override_m=None):
+    return {
+        "home": {"joint1": 0.0},
+        "approach": {"joint_positions": {"joint1": 0.1}},
+        "grasp": {"joint_positions": {"joint1": 0.2}},
+        "lift": {"joint_positions": {"joint1": 0.3}},
+        "finger_height_correction_m": 0.0115,
+    }
+'''
+
+    ARM_GRIPPER = {
+        "wrist_body": "link1",
+        "left_finger_body": "left_finger",
+        "left_finger_geom": "left_finger_geom",
+        "open_positions": {"joint1": 0.0},
+        # 四段位置指令用真模型里存在的关节名（`TINY_MODEL` 只有 piper_joint1）：
+        # 不存在的名字会被 rename() fail-closed 挡下，那是另一条（已测）判据。
+        "home_positions": {"joint1": 0.0},
+        "approach_positions": {"joint1": 0.9},
+        "grasp_positions": {"joint1": 0.8},
+        "lift_positions": {"joint1": 0.7},
+        "pad_offset_m": 0.0298,
+    }
+
+    def _report(self, model, declared_names, solver=True):
         from iraf_adapters.unitree.scene_builder import _joint_manipulation
 
         with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "stub_solver.py").write_text(self.STUB_SOLVER, encoding="utf-8")
+            # 求解器的 baseline 声明也必须**存在**（缺即失败，不给默认值）：桩里只写空文档。
+            (Path(tmp) / "stub_baseline.yaml").write_text("scene: {}\n", encoding="utf-8")
             arm_report = Path(tmp) / "arm.json"
             arm_report.write_text(json.dumps({
                 "target_id": "box_01",
-                "gripper": {
-                    "wrist_body": "link1",
-                    "left_finger_body": "left_finger",
-                    "left_finger_geom": "left_finger_geom",
-                    "open_positions": {"joint1": 0.0},
-                },
+                "gripper": dict(self.ARM_GRIPPER),
                 "targets": [{"id": "box_01", "body": "box_01", "geom": "box_01_geom"}],
                 "vision": None,
             }, ensure_ascii=False), encoding="utf-8")
+            declaration = ({"module": "stub_solver.py", "entry": "build_reference_poses",
+                            "baseline": "stub_baseline.yaml"} if solver else None)
             return _joint_manipulation(Path(tmp), arm_report, "piper_", {"bodies": [], "geoms": []},
-                                       model, declared_names)
+                                       model, declared_names,
+                                       reference_solver=declaration,
+                                       placement={"pos_m": [0.45, -0.45, 0.0],
+                                                  "quat_wxyz": [1.0, 0.0, 0.0, 0.0]},
+                                       robot_id="piper")
 
     def setUp(self):
         self.model = mujoco.MjModel.from_xml_string(TINY_MODEL)
+
+    def test_missing_reference_solver_fails_closed(self):
+        """缺 `reference_solver` ⇒ 显式失败：继承来的参考姿态是场景专属的，不得静默继承。
+
+        这是 0.367696068 m（`docs/debug/2026-09-24-joint-model-dog-arm.md` §11.3）那一类缺陷的回归：
+        继承的 `*_positions` 是臂自己基座系下的关节解，附加本体一有 placement 就不适用。
+        """
+        with self.assertRaises(SceneBuildError) as ctx:
+            self._report(self.model, {"bodies": [], "geoms": [], "sites": [], "joints": ["joint1"]},
+                         solver=False)
+        self.assertIn("reference_solver", str(ctx.exception))
+
+    def test_resolved_poses_replace_inherited_ones(self):
+        """声明了求解器 ⇒ 报告里的四段位置被**重解值**覆写，并标注出处与 pad_offset。"""
+        result = self._report(self.model,
+                              {"bodies": [], "geoms": [], "sites": [], "joints": ["joint1"]})
+        gripper = result["gripper"]
+        self.assertEqual(gripper.get("reference_pose_source"), "resolved_for_joint_model")
+        self.assertAlmostEqual(gripper["pad_offset_m"], 0.0115)
+        # 继承值 joint1（approach 0.9 / grasp 0.8 / lift 0.7）被重解值（0.1 / 0.2 / 0.3）取代。
+        self.assertAlmostEqual(gripper["grasp_positions"]["piper_joint1"], 0.2)
+        self.assertAlmostEqual(gripper["lift_positions"]["piper_joint1"], 0.3)
+        self.assertAlmostEqual(gripper["approach_positions"]["piper_joint1"], 0.1)
+        resolution = result["reference_pose_resolution"]
+        self.assertEqual(resolution["resolved_pad_offset_m"], 0.0115)
+        self.assertEqual(resolution["inherited_pad_offset_m"], 0.0298)
+        # 四个相位都被重解结果覆写（home 的解与继承值相同 ⇒ 差为空，但仍留痕）
+        self.assertEqual(sorted(resolution["replaced_phases"]),
+                         ["approach", "grasp", "home", "lift"])
+        self.assertEqual(len(resolution["replaced_phases"]["grasp"]["diff_vs_inherited"]), 1)
+        self.assertEqual(resolution["replaced_phases"]["home"]["diff_vs_inherited"], [])
 
     def test_mapped_names_enter_map_and_conflicts_do_not(self):
         """只有"加前缀才存在"的名字进表；主/附加本体同名（base_link）只能留痕，不静默选一个。"""

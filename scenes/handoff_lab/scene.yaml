@@ -39,6 +39,21 @@ robots:
     # 继承 manipulation 事实的来源（臂自己的场景报告）：联合报告据此得到 gripper/targets，
     # 名字按"仅当加前缀后存在于联合模型"的规则改写（见 scene_builder._joint_manipulation）。
     manipulation_report: build/models/piper-pick-scene.json
+    # 联合模式的**参考姿态求解器**（构建器只按此声明调用；构建器内不出现机型/脚本名，AGENTS.md 6.3）。
+    # 为什么必须有：继承来的 home/approach/grasp/lift_positions 是在**臂自己基座系**里解出的关节解
+    #   （MJCF 的 qpos 是局部量），附加本体一旦有 placement 就直接不适用
+    #   （实测残差 0.367696068 m；把目标换算到基座系重解 ⇒ 0.018389447 m；连 pad_offset 一起重解
+    #    ⇒ 5.681e-06 m。见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.5）。
+    # 契约（见 `src/iraf_adapters/unitree/scene_builder.py: _joint_reference_resolution`）：
+    #   · entry(root, baseline_doc, target_xy_override_m=[x,y], target_z_override_m=z)
+    #       → {home, approach, grasp, lift}（home 为扁平字典，其余为 {joint_positions: {...}}）
+    #         且含 finger_height_correction_m —— 即该场景下的 `pad_offset_m`（不是通用常数：
+    #         它由本场景的方块尺寸与指尖离台配平决定）。
+    # 机型数字不写在这里：`baseline` 指向臂侧基线配置（单一事实来源）。
+    reference_solver:
+      module: scripts/build_piper_baseline.py
+      entry: build_reference_poses
+      baseline: config/piper_simulation_baseline.yaml
     placement:
       pos_m: [0.45, -0.45, 0.0]
       quat_wxyz: [0.7071067811865476, 0.0, 0.0, 0.7071067811865475]
