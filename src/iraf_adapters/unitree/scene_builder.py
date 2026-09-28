@@ -973,7 +973,7 @@ def _attach_robots(staging, scene, root, attached_ids):
 #: `robots[].reference_solver` 的必需键（缺键或缺文件即显式失败，不给默认值）：
 #: `module`（仓内脚本路径）、`entry`（求解入口函数名）、`baseline`（该求解器的声明配置）。
 #: gripper 段里的**语义开关**（非对象名，不参与前缀改写）：见 _joint_manipulation
-SEMANTIC_GRIPPER_KEYS = ("close_hold", "carry_gripper")
+SEMANTIC_GRIPPER_KEYS = ("close_hold", "approach_hold", "carry_gripper")
 
 #: `robots[].reference_solver` 的必需键（缺键或缺文件即显式失败，不给默认值）：
 REFERENCE_SOLVER_KEYS = ("module", "entry", "baseline")

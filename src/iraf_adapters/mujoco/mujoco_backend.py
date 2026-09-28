@@ -930,13 +930,27 @@ class MujocoBackend:
             self._log_pick_phase("HOME_HOLD", target_body)
             self._move_trajectory(home_positions, phase_ms, self._pick_ctrl_offsets("home"))
             self.dump_pick_phase("HOME_HOLD", phase_ms, target_body, left_body, right_body, approach_axis)
+        # 接近/下压段是否保持载荷（声明；缺省视为 none 但**显式进证据**）：
+        # 刚性指腹下压会推开轻载荷（运行期实测 1.44 cm），真机由台面摩擦抵住。
+        raw_approach_hold = gripper.get("approach_hold")
+        if isinstance(raw_approach_hold, dict):
+            approach_hold = str(raw_approach_hold.get("mode") or "none")
+        elif raw_approach_hold is None:
+            approach_hold = "none"
+        else:
+            approach_hold = str(raw_approach_hold)
+        if approach_hold not in ("pin_payload", "none"):
+            raise ValueError("gripper.approach_hold 只允许 pin_payload|none：%r" % (approach_hold,))
+        pin_target = target_body if approach_hold == "pin_payload" else None
         if approach_positions:
             self._log_pick_phase("APPROACH", target_body)
-            self._move_trajectory(approach_positions, phase_ms, self._pick_ctrl_offsets("approach"))
+            self._move_trajectory(approach_positions, phase_ms, self._pick_ctrl_offsets("approach"),
+                                  pin_body=pin_target)
             self.dump_pick_phase("APPROACH", phase_ms, target_body, left_body, right_body, approach_axis)
         if grasp_positions:
             self._log_pick_phase("DESCEND", target_body)
-            self._move_trajectory(grasp_positions, phase_ms, self._pick_ctrl_offsets("grasp"))
+            self._move_trajectory(grasp_positions, phase_ms, self._pick_ctrl_offsets("grasp"),
+                                  pin_body=pin_target)
             self.dump_pick_phase("DESCEND", phase_ms, target_body, left_body, right_body, approach_axis)
         # 对齐门禁必须用目标实际姿态推出的接近轴换算抓取点：
         # 目标倾斜时仍按固定竖直轴减 pad_offset 会把抓取点算错半个高度。
@@ -957,7 +971,13 @@ class MujocoBackend:
             )
         self._log_pick_phase("GRIP_OPEN", target_body)
         self._set_gripper_controls(gripper["open_positions"])
-        self._advance_for(open_ms)
+        # 「重新张开」也会推走载荷（运行期实测：DESCEND 之后张到 0.035 把载荷推开 ~2 cm，
+        # 随后合爪就对不上 ⇒ `lifted=false`）⇒ 同一条"保持"声明也覆盖这一段（§11.23(21)(22)）。
+        if pin_target is not None:
+            open_hold_evidence = self._advance_pinned(open_ms, target_body)
+        else:
+            open_hold_evidence = None
+            self._advance_for(open_ms)
         self._log_pick_phase("GRIP_CLOSE", target_body)
         self._set_gripper_controls(gripper["closed_positions"])
         # 合爪语义：`close_hold`（声明；缺省视为 none 但**显式记进证据**，不静默）。
@@ -1443,6 +1463,8 @@ class MujocoBackend:
             "gripper_open_positions": {str(k): float(v) for k, v in gripper["open_positions"].items()},
             # 合爪语义 + 被钉住的位姿（事实留痕：搬运仍靠真实摩擦，本项只作用于合爪阶段）
             "gripper_close_hold": {"mode": close_hold, "pinned": hold_evidence},
+            # 接近/下压段的保持语义（同一类声明；搬运仍只靠真实摩擦）
+            "gripper_approach_hold": {"mode": approach_hold, "open_phase_pinned": open_hold_evidence},
             # 搬运段的夹爪语义 + 实际下发的"保持值"（证据：证明目标是实测 qpos，而不是报告里的 0.023）
             "gripper_carry": {"mode": carry_mode, "segment_targets": carry_targets,
                               "note": ("hold = 目标取**当前 ctrl**（保持夹紧力、指令零位移）。"
@@ -2200,7 +2222,12 @@ class MujocoBackend:
         offsets = (gripper.get("gravity_feedforward") or {}).get(str(phase))
         return dict(offsets) if offsets else {}
 
-    def _move_trajectory(self, target_positions, duration_ms, ctrl_offsets=None, sampler=None):
+    def _move_trajectory(self, target_positions, duration_ms, ctrl_offsets=None, sampler=None,
+                         pin_body=None):
+        # `pin_body`（可选）：**逐步**把该 body 的 freejoint 复位到本段开始时的位姿。
+        # 用途（2026-09-28 §11.23(21)）：接近/下压段的刚性指腹会把 0.39 N 的载荷推开 1.44 cm，
+        # 之后的合爪/抬升就丢了它 —— 真机上这段位移由**台面摩擦**抵住，本模型的台面摩擦
+        # （~0.4 N）小于下压产生的侧向合力。该行为由声明 `gripper.approach_hold` 打开，并进证据。
         """以五次多项式从实际关节状态平滑移动到目标状态。
 
         `ctrl_offsets` 是逐段伺服前馈（ctrl 通道名 → 增量）：重力矩不为零的
@@ -2235,10 +2262,28 @@ class MujocoBackend:
                 joint_id = int(self.model.actuator_trnid[actuator, 0])
                 starts.append(float(self.data.qpos[self.model.jnt_qposadr[joint_id]]))
         steps = max(1, int(math.ceil((int(duration_ms) / 1000.0) / self.model.opt.timestep)))
+        pin = None
+        if pin_body is not None:
+            pin_free = next((index for index in range(int(self.model.njnt))
+                             if int(self.model.jnt_bodyid[index]) == int(pin_body)
+                             and int(self.model.jnt_type[index]) == int(mujoco.mjtJoint.mjJNT_FREE)),
+                            None)
+            if pin_free is None:
+                raise ValueError("pin_body 指定了没有 freejoint 的 body，无法保持其位姿")
+            with self._data_lock:
+                pin = (int(self.model.jnt_qposadr[pin_free]),
+                       int(self.model.jnt_dofadr[pin_free]),
+                       np.asarray(self.data.xpos[pin_body], dtype=float).copy(),
+                       np.asarray(self.data.xquat[pin_body], dtype=float).copy())
         for step in range(1, steps + 1):
             elapsed = step * float(self.model.opt.timestep)
             values = quintic_position(starts, [commands[name] for name in names], duration_ms / 1000.0, elapsed)
             self._set_controls(dict(zip(names, values)))
+            if pin is not None:
+                with self._data_lock:
+                    self.data.qpos[pin[0]:pin[0] + 3] = pin[2]
+                    self.data.qpos[pin[0] + 3:pin[0] + 7] = pin[3]
+                    self.data.qvel[pin[1]:pin[1] + 6] = 0.0
             self._advance_for(0)
             # 可选采样回调（默认 None ⇒ 行为逐位不变）：用于**在控制路径内**观察运动过程的量。
             # 为什么必须在这里采样（2026-09-28 第 10 个工装缺陷）：从外面写 data.qpos 再 mj_step
