@@ -57,6 +57,11 @@
         "constraint_activated": {
           "type": "boolean"
         },
+        "lift_peak_delta_m": {
+          "type": "number",
+          "minimum": 0,
+          "description": "抬升段**过程中**载荷相对抬升前高度的**峰值**增量（m）。判据仍用结束时刻的 `lift_delta_m`（'结束时载荷是否还在夹口里'）；本项是**诊断量**：只取结束值会把'夹住→抬起→中途滑出'与'从未夹住'在报告里表达成同一个数（实测两者都≈0）。见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.23(25)。"
+        },
         "lift_delta_m": {
           "type": "number",
           "minimum": 0

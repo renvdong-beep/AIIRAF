@@ -1041,6 +1041,7 @@ class MujocoBackend:
         # 剩下的粒度只有"运行时抬升段逐样本"：载荷位姿 / 指腹 qpos+ctrl / 接触对与力随时间的演化，
         # 用来回答"哪一步、哪个量先动"。stride 由 `IRAF_DEBUG_PICK_STRIDE` 给（默认 10）。
         lift_samples = []
+        lift_peak = {"max_z": None, "step": None}
         try:
             lift_stride = max(1, int(os.environ.get("IRAF_DEBUG_PICK_STRIDE", "10")))
         except ValueError:
@@ -1050,6 +1051,12 @@ class MujocoBackend:
                      for key in ("left_finger_geom", "right_finger_geom")]
 
         def _lift_sampler(step, elapsed):
+            # 常驻（不受 IRAD_DEBUG 开关影响）：抬升段的**峰值载荷高度**（判据盲区，见 §11.23(25)）
+            with self._data_lock:
+                current_z = float(self.data.xpos[target_body][2])
+            if lift_peak["max_z"] is None or current_z > lift_peak["max_z"]:
+                lift_peak["max_z"] = current_z
+                lift_peak["step"] = int(step)
             if os.environ.get("IRAF_DEBUG_PICK") != "1" or step % lift_stride != 0:
                 return
             with self._data_lock:
@@ -1154,6 +1161,10 @@ class MujocoBackend:
                 "grasp_mode": grasp_mode,
                 "approach_axis": [round(float(value), 9) for value in approach_axis],
                 "grasp_alignment": alignment,
+                # 峰值抬升（诊断量；判据仍用 lift_delta_m = 结束时刻）
+                "lift_peak_delta_m": (None if lift_peak["max_z"] is None
+                                      else round(max(0.0, lift_peak["max_z"] - before_lift_z), 6)),
+                "lift_peak_step": lift_peak["step"],
                 # ⚠ LIFT 段逐样本追踪**不进 evidence**：`pick_object.output.json` 是
                 # `additionalProperties: false` 的契约（契约先行）⇒ 新字段必须先改契约才允许。
                 # 该追踪是**调试仪器**：只在 `IRAF_DEBUG_PICK=1` 时逐行打印（stdout 即产物）。
