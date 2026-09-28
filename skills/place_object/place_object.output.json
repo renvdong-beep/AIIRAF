@@ -1,24 +1,53 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "required": ["skill", "accepted", "place_target_id", "payload_id", "confirmation"],
+  "required": [
+    "skill",
+    "accepted",
+    "place_target_id",
+    "payload_id",
+    "confirmation"
+  ],
   "additionalProperties": false,
   "properties": {
-    "skill": {"const": "place_object"},
-    "accepted": {"const": true},
-    "place_target_id": {"type": "string", "minLength": 1},
-    "payload_id": {"type": "string", "minLength": 1},
+    "skill": {
+      "const": "place_object"
+    },
+    "accepted": {
+      "const": true
+    },
+    "place_target_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "payload_id": {
+      "type": "string",
+      "minLength": 1
+    },
     "confirmation": {
-      "enum": ["released"],
+      "enum": [
+        "released"
+      ],
       "description": "放置的确认口径：**只有 `released`**（夹爪张开且载荷确实落在接收体上）。不接受\"命令已发出\"或\"轨迹已执行\"作为确认。"
     },
     "evidence": {
       "type": "object",
-      "required": ["place_target_body", "payload_body", "released", "payload_in_tray"],
+      "required": [
+        "place_target_body",
+        "payload_body",
+        "released",
+        "payload_in_tray"
+      ],
       "additionalProperties": false,
       "properties": {
-        "place_target_body": {"type": "string", "minLength": 1},
-        "payload_body": {"type": "string", "minLength": 1},
+        "place_target_body": {
+          "type": "string",
+          "minLength": 1
+        },
+        "payload_body": {
+          "type": "string",
+          "minLength": 1
+        },
         "released": {
           "const": true,
           "description": "夹爪已张开到声明的开度（末态指腹开度实测）。"
@@ -29,7 +58,9 @@
         },
         "place_alignment": {
           "type": "object",
-          "required": ["center_distance_m"],
+          "required": [
+            "center_distance_m"
+          ],
           "properties": {
             "center_distance_m": {
               "type": "number",
@@ -51,15 +82,26 @@
         "gripper_open_positions": {
           "type": "object",
           "description": "实际下发的夹爪张开位形（模型内关节名 → 值）。",
-          "additionalProperties": {"type": "number"}
+          "additionalProperties": {
+            "type": "number"
+          }
         },
         "carry_constraint_activated": {
           "type": "boolean",
           "description": "搬运段是否按声明启用了**抓取约束**（MuJoCo `<connect>` 焊接 + mocap anchor）。动机：本几何下唯一撑得住抬升的斜夹过盈会在搬运中把载荷楔出，纯摩擦路线已被 30+ 条量化否证穷尽；搬运段改用声明化约束，与臂侧世界同款机制（见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.23(29)）。"
         },
         "place_mode": {
-          "enum": ["declared_offset"],
+          "enum": [
+            "declared_offset"
+          ],
           "description": "放置点推法：declared_offset = 接收体顶面中心 + 声明的法向间隙（本场景唯一的合法模式）。"
+        },
+        "arm_joint_positions": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "搬运各相位结束时**臂关节实测 qpos**（对象：关节名 → 弧度）。用于与报告里的 `place_*_positions` 逐关节对账 —— 2026-09-28 §11.23(39) 实测到「回放执行了但臂没位移」（指腹停在 (0.3059,-0.3126,0.0839) vs 托盘 (0.309,-0.591,0.02)），而构建期对同批位形的 FK 验证达标（残差 8.041e-06）⇒ 需要关节级证据分清是「回放没下发」还是「下发了没到位」。"
         }
       }
     }

@@ -1386,7 +1386,17 @@ class MujocoBackend:
                                  or ("#%d" % body_id)),
                         "distance_m": round(distance, 6)})
                 neighbors.sort(key=lambda item: item["distance_m"])
+                arm_joints_now = {}
+                for name in self._arm_joint_names():
+                    # ⚠ 必须过 `_model_name`：profile 里的关节名是无前缀的（joint1），
+                    # 联合模型里是 `piper_joint1`；直接用原名查会全部落空（本轮实测踩到）。
+                    joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT,
+                                                 self._model_name(str(name)))
+                    if joint_id >= 0:
+                        arm_joints_now[str(name)] = round(
+                            float(self.data.qpos[int(self.model.jnt_qposadr[joint_id])]), 9)
                 return {"tray_top": top, "payload_low_z": low, "pad_mid": midpoint,
+                        "arm_joint_positions": arm_joints_now,
                         "payload_neighbors": neighbors[:6],
                         "payload_center": payload_center,
                         "payload_pose": {"pos_m": [round(float(v), 6) for v in payload_center],
@@ -1470,6 +1480,8 @@ class MujocoBackend:
                                                         - snapshot["pad_mid"][2]), 6),
                    "finger_contacts": {"left": bool(contacts[0]), "right": bool(contacts[1])},
                    # 接触对粒度（身份/法向/力）+ 载荷 6 维位姿 + 指腹间距（§11.23(8) 的下一步）
+                   # 臂关节实测 qpos（与报告 place_*_positions 逐关节对账用；见 §11.23(39)）
+                   "arm_joint_positions": snapshot.get("arm_joint_positions"),
                    "payload_contacts": snapshot["payload_contacts"],
                    "payload_pose": snapshot["payload_pose"],
                    "pad_span_m": snapshot["pad_span_m"],
