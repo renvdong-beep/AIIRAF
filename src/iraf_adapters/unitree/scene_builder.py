@@ -1150,7 +1150,11 @@ def _joint_place_resolution(root, solver, resolution, place_targets, arm_report,
             [0.0, 0.0, float(item["size_m"][2])], dtype=float)
         local = rotation.T @ (top_world - base_pos)
         pad_offset = float(resolution["pad_offset_m"])
-        clearance = float(out_gripper.get("pregrasp_offset_m") or 0.0)
+        # 放置段的净间隙：优先用基线声明的 `grasp.place_clearance_m`（与 pick 的 pregrasp_offset 分开），
+        # 缺声明则回退到 pregrasp_offset_m（行为与改动前一致，不新造数字）。
+        place_clearance = ((baseline_doc.get("grasp") or {}).get("place_clearance_m"))
+        clearance = float(place_clearance if isinstance(place_clearance, (int, float))
+                          else (out_gripper.get("pregrasp_offset_m") or 0.0))
         payload_half = (arm_report.get("target_half_size_m")
                         if isinstance(arm_report.get("target_half_size_m"), (int, float)) else None)
         if payload_half is None:

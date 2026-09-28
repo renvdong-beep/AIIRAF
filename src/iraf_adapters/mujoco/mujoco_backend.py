@@ -1182,6 +1182,17 @@ class MujocoBackend:
                 print("PLACE_TRACE " + json.dumps(row, ensure_ascii=False), flush=True)
             return row
 
+        # 运动过程采样（`IRAF_DEBUG_PLACE=1` 时逐 20 步打印；同时进证据 phase_trace）：
+        # 用来定位"在哪一段、哪一刻丢件"。**必须在控制路径内采样**（第 10 个工装缺陷的纪律）。
+        def _segment_sampler(segment_name, sink):
+            def _hook(step, elapsed):
+                if os.environ.get("IRAF_DEBUG_PLACE") != "1" or step % 20 != 0:
+                    return
+                row = _trace("%s@step%d" % (segment_name, step), _snapshot(), "运动过程")
+                sink.append(row)
+            return _hook
+
+        segment_samples = []
         # ---- 搬运：**回放构建期解出的关节空间解**（不再运行时现解 IK，理由见 §11.16）
         #      构建期由声明的求解器按接收体名义位姿解出 above/descend/retreat 三段；
         #      后端只做 `_move_trajectory` 回放 —— 与已验证的 pick 完全同一条路。
@@ -1204,19 +1215,22 @@ class MujocoBackend:
         # ①a 绕行航点（抓取点正上方、托盘高度）：先竖直抬升，避免"直插托盘上方"的弧线穿过载体
         if isinstance(transit, dict) and transit:
             self._move_trajectory({str(k): float(v) for k, v in transit.items()}, phase_ms,
-                                  ctrl_offsets=self._pick_ctrl_offsets("approach") or None)
+                                  ctrl_offsets=self._pick_ctrl_offsets("approach") or None,
+                                  sampler=_segment_sampler("place_transit_positions", segment_samples))
             seg_row = _trace("after_transit", _snapshot(), "绕行航点（竖直抬升到托盘高度）")
             if not (seg_row["finger_contacts"]["left"] and seg_row["finger_contacts"]["right"]):
                 raise ValueError("绕行航点后失去夹持（载荷已脱离）⇒ 拒绝继续放置")
         # ①b 抬升到承载面上方（回放）
-        self._move_trajectory({str(k): float(v) for k, v in above.items()}, phase_ms,
-                              ctrl_offsets=self._pick_ctrl_offsets("approach") or None)
+            self._move_trajectory({str(k): float(v) for k, v in above.items()}, phase_ms,
+                                  ctrl_offsets=self._pick_ctrl_offsets("approach") or None,
+                                  sampler=_segment_sampler("place_above_positions", segment_samples))
         seg_row = _trace("after_above", _snapshot(), "抬升段结束（承载面上方）")
         if not (seg_row["finger_contacts"]["left"] and seg_row["finger_contacts"]["right"]):
             raise ValueError("抬升段后失去夹持（载荷已脱离）⇒ 拒绝继续放置")
         # ② 下行到位（回放）
-        self._move_trajectory({str(k): float(v) for k, v in descend.items()}, phase_ms,
-                              ctrl_offsets=self._pick_ctrl_offsets("grasp") or None)
+            self._move_trajectory({str(k): float(v) for k, v in descend.items()}, phase_ms,
+                                  ctrl_offsets=self._pick_ctrl_offsets("grasp") or None,
+                                  sampler=_segment_sampler("place_descend_positions", segment_samples))
         after_descend = _snapshot()
         _trace("after_descend", after_descend, "下行到位（载荷应正落在承载面上）")
         padding = float(gripper.get("pad_offset_m") or 0.0)
@@ -1260,6 +1274,7 @@ class MujocoBackend:
             "place_mode": "declared_offset",
             "runtime_source": "live_fk",
             "phase_trace": phase_trace,
+            "segment_samples": segment_samples,
         }
         return {
             "place_target_id": str(place_target_id),
@@ -2008,7 +2023,7 @@ class MujocoBackend:
         offsets = (gripper.get("gravity_feedforward") or {}).get(str(phase))
         return dict(offsets) if offsets else {}
 
-    def _move_trajectory(self, target_positions, duration_ms, ctrl_offsets=None):
+    def _move_trajectory(self, target_positions, duration_ms, ctrl_offsets=None, sampler=None):
         """以五次多项式从实际关节状态平滑移动到目标状态。
 
         `ctrl_offsets` 是逐段伺服前馈（ctrl 通道名 → 增量）：重力矩不为零的
@@ -2048,6 +2063,11 @@ class MujocoBackend:
             values = quintic_position(starts, [commands[name] for name in names], duration_ms / 1000.0, elapsed)
             self._set_controls(dict(zip(names, values)))
             self._advance_for(0)
+            # 可选采样回调（默认 None ⇒ 行为逐位不变）：用于**在控制路径内**观察运动过程的量。
+            # 为什么必须在这里采样（2026-09-28 第 10 个工装缺陷）：从外面写 data.qpos 再 mj_step
+            # 会被位置伺服的 ctrl 立刻拉回 ⇒ 看起来"没动"，量到的全是伪像。
+            if sampler is not None:
+                sampler(step, elapsed)
         # 位置执行器有自身阻尼和力矩限制，轨迹结束后必须留出稳定时间。
         # 多目标场景中 joint1 要带着整臂绕基座旋转，其阻尼(300)远高于
         # 近端关节(2~100)，收敛时间按秒计：实测需要约 16 秒才能到目标角，
