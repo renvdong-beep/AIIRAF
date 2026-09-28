@@ -106,7 +106,7 @@ def build_reference_feedforward(model, reference, baseline, prefix="", gripper_p
 
 
 def build_place_reference_poses(root, baseline, target_local_m, payload_half_m, pad_offset_m,
-                                clearance_m):
+                                clearance_m, transit_local_m=None, seed_positions=None):
     """按**臂基座系**里的接收体目标解出放置四段（关节空间），供后端**回放**。
 
     为什么是构建期解而不是运行期 IK（2026-09-28，docs/debug/2026-09-24-joint-model-dog-arm.md §11.16）：
@@ -147,20 +147,44 @@ def build_place_reference_poses(root, baseline, target_local_m, payload_half_m, 
         "descend": base + np.asarray([0.0, 0.0, height]),
         "retreat": base + np.asarray([0.0, 0.0, height + float(clearance_m)]),
     }
+    # 绕行航点（可选，由调用方按"当前位形正上方 + 托盘高度"算出）：**必须**给，否则搬运是从抓取位形
+    # 到"托盘上方"的单条关节空间插值 —— 实测它在笛卡尔空间穿过载体（§11.17）。
+    if transit_local_m is not None:
+        plan["transit"] = np.asarray(transit_local_m, dtype=float)
     out = {"schema_version": "iraf.piper-reference-pose/v1",
            "place_mode": "declared_offset",
            "target_local_m": [round(float(v), 9) for v in base],
            "payload_half_m": float(payload_half_m), "pad_offset_m": float(pad_offset_m),
            "clearance_m": float(clearance_m), "solver": dict(solver_cfg),
            "poses": {}}
+    # 种子位形（**必须**给，且应当是已验证的 pick 抬升位形）：位置型 IK 是局部求解器，
+    # 从零位起解会落到**翻转分支**（实测：夹爪轴从朝下 (−0.59,0.59,−0.54) 变成朝上
+    # (−0.65,0.54,+0.54)）⇒ 搬运时腕部翻转、载荷被甩掉（见 §11.18）。
+    seed = {str(k): float(v) for k, v in (seed_positions or {}).items()}
+    wrist_body = _body_id(model, model_cfg["bodies"]["wrist"])
     for phase, target in plan.items():
+        if seed:
+            for name, value in seed.items():
+                joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, str(name))
+                if joint_id >= 0:
+                    data.qpos[int(model.jnt_qposadr[joint_id])] = float(value)
+            mujoco.mj_forward(model, data)
         result = solve_finger_center_ik(model, data, target, arm_joints, left_geom, right_geom,
                                         solver_cfg)
         if float(result.position_error_m) > float(solver_cfg.get("tolerance_m", 1e-5)) * 100.0:
             raise ValueError("放置段 %s 的 IK 未收敛: error=%.9f m target=%s"
                              % (phase, float(result.position_error_m),
                                 [round(float(v), 6) for v in target]))
-        out["poses"][phase] = _pack_pose(result, arm_names)
+        packed = _pack_pose(result, arm_names)
+        # 夹爪轴（腕 → 指腹中点，世界系单位向量）：给构建期做"是否翻到相反半球"的自检用
+        mujoco.mj_forward(model, data)
+        pad_mid = ((np.asarray(data.geom_xpos[left_geom]) + np.asarray(data.geom_xpos[right_geom]))
+                   / 2.0)
+        axis = pad_mid - np.asarray(data.xpos[wrist_body], dtype=float)
+        norm = float(np.linalg.norm(axis))
+        packed["gripper_axis_world"] = [round(float(v), 9) for v in (axis / (norm or 1.0))]
+        out["poses"][phase] = packed
+    out["seed_positions"] = seed
     return out
 
 

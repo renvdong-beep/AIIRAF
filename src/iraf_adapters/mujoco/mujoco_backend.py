@@ -1185,6 +1185,7 @@ class MujocoBackend:
         # ---- 搬运：**回放构建期解出的关节空间解**（不再运行时现解 IK，理由见 §11.16）
         #      构建期由声明的求解器按接收体名义位姿解出 above/descend/retreat 三段；
         #      后端只做 `_move_trajectory` 回放 —— 与已验证的 pick 完全同一条路。
+        transit = gripper.get("place_transit_positions")
         above = gripper.get("place_above_positions")
         descend = gripper.get("place_descend_positions")
         retreat = gripper.get("place_retreat_positions")
@@ -1200,7 +1201,14 @@ class MujocoBackend:
         if not (start_row["finger_contacts"]["left"] and start_row["finger_contacts"]["right"]):
             raise ValueError(
                 "进入放置段时双侧指腹未同时接触载荷（依据已进证据 phase_trace[0]）⇒ 拒绝继续")
-        # ① 抬升到承载面上方（回放）
+        # ①a 绕行航点（抓取点正上方、托盘高度）：先竖直抬升，避免"直插托盘上方"的弧线穿过载体
+        if isinstance(transit, dict) and transit:
+            self._move_trajectory({str(k): float(v) for k, v in transit.items()}, phase_ms,
+                                  ctrl_offsets=self._pick_ctrl_offsets("approach") or None)
+            seg_row = _trace("after_transit", _snapshot(), "绕行航点（竖直抬升到托盘高度）")
+            if not (seg_row["finger_contacts"]["left"] and seg_row["finger_contacts"]["right"]):
+                raise ValueError("绕行航点后失去夹持（载荷已脱离）⇒ 拒绝继续放置")
+        # ①b 抬升到承载面上方（回放）
         self._move_trajectory({str(k): float(v) for k, v in above.items()}, phase_ms,
                               ctrl_offsets=self._pick_ctrl_offsets("approach") or None)
         seg_row = _trace("after_above", _snapshot(), "抬升段结束（承载面上方）")
@@ -2241,7 +2249,8 @@ class MujocoBackend:
                 },
             }
             # 放置四段的关节解（构建期由声明求解器解出，后端只回放；缺省即"该场景不支持放置"）
-            for key in ("place_above_positions", "place_descend_positions", "place_retreat_positions"):
+            for key in ("place_transit_positions", "place_above_positions",
+                        "place_descend_positions", "place_retreat_positions"):
                 if raw_gripper.get(key) is not None:
                     gripper[key] = {str(name): float(value)
                                     for name, value in dict(raw_gripper[key]).items()}

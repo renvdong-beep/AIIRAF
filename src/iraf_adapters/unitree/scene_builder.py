@@ -1119,7 +1119,7 @@ def _joint_reference_feedforward(root, solver, model, resolution, prefix, grippe
 
 
 def _joint_place_resolution(root, solver, resolution, place_targets, arm_report, out_gripper,
-                            rename):
+                            rename, model, prefix="", carrier_trunk=""):
     """按声明解出**放置四段**（关节空间）并写进报告的 gripper 段。
 
     为什么构建期（§11.16）：已验证的 pick 能抬 88 mm 靠的是**构建期求解器**给的关节空间位形，
@@ -1155,9 +1155,53 @@ def _joint_place_resolution(root, solver, resolution, place_targets, arm_report,
                         if isinstance(arm_report.get("target_half_size_m"), (int, float)) else None)
         if payload_half is None:
             _fail(EXIT_REFERENCE, "臂侧报告缺少 target_half_size_m：放置段需要载荷半高，不给默认值")
+        # 绕行航点的局部目标 = **当前抬升段的指腹中点 xy** + 承载面高度（+ 高度 + 间隙）。
+        # 指腹中点用**联合模型 FK** 从报告的 lift_positions 实测得到（不抄数字）。
+        lift_positions = {rename(name): float(value)
+                          for name, value in (out_gripper.get("lift_positions") or {}).items()}
+        pad_geoms = [str(out_gripper.get(k) or "")
+                     for k in ("left_finger_geom", "right_finger_geom")]
+        transit_world = None
+        lift_axis_world = None
+        if lift_positions and all(pad_geoms):
+            data = mujoco.MjData(model)
+            mujoco.mj_forward(model, data)
+            for name, value in lift_positions.items():
+                joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+                if joint_id >= 0:
+                    data.qpos[int(model.jnt_qposadr[joint_id])] = value
+            mujoco.mj_forward(model, data)
+            points = []
+            for name in pad_geoms:
+                geom_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, name)
+                if geom_id < 0:
+                    points = []
+                    break
+                points.append(np.asarray(data.geom_xpos[geom_id], dtype=float))
+            if points:
+                transit_world = (points[0] + points[1]) / 2.0
+                wrist_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY,
+                                             str(out_gripper.get("wrist_body") or ""))
+                if wrist_id >= 0:
+                    axis = transit_world - np.asarray(data.xpos[wrist_id], dtype=float)
+                    norm = float(np.linalg.norm(axis))
+                    if norm > 1e-9:
+                        lift_axis_world = [float(v) for v in (axis / norm)]
+        transit_local = None
+        if transit_world is not None:
+            lift_local = rotation.T @ (transit_world - base_pos)
+            transit_local = [float(lift_local[0]), float(lift_local[1]),
+                             float(local[2] + float(payload_half) + pad_offset + clearance)]
+        # IK 种子 = 已验证的 pick **抬升位形**（把模型名还原成声明名：报告里是 piper_jointN）
+        seed_positions = {}
+        for name, value in (out_gripper.get("lift_positions") or {}).items():
+            declared = str(name)[len(str(prefix)):] if prefix and str(name).startswith(str(prefix)) else str(name)
+            seed_positions[declared] = float(value)
         try:
             poses = entry(root, baseline_doc, [float(v) for v in local], float(payload_half),
-                          pad_offset, clearance)
+                          pad_offset, clearance,
+                          **({"transit_local_m": transit_local} if transit_local else {}),
+                          seed_positions=seed_positions)
         except Exception as error:  # noqa: BLE001
             _fail(EXIT_MODEL, "放置段求解失败（%s）: %s" % (solver["place_entry"], error))
         written = {}
@@ -1170,10 +1214,89 @@ def _joint_place_resolution(root, solver, resolution, place_targets, arm_report,
             out_gripper[key] = merged
             written[key] = {"replaced_joints": sorted(positions),
                             "position_error_m": pose.get("position_error_m")}
+        # 航点间隙自检：把每段关节解设进**联合模型**做 FK，检查**臂的 geom**是否与**载体的 geom**
+        # 接触（载体 = 名字不带该附加本体前缀的 body；台面/道具不算"载体"）。违规即显式失败 ——
+        # 航点是关节解 ⇒ 构建期能 FK，这正是"构建期求解"相对"运行时现解"的优势（§11.17）。
+        prefix = str(prefix or "")
+        carrier_root = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY,
+                                            str(carrier_trunk))) if carrier_trunk else -1
+
+        def _in_carrier_subtree(body_id):
+            """该 body 是否属于**载体**（主本体的躯干子树）。
+
+            判定必须按**运动学子树**走，不能按"名字里没前缀"：后者会把 `world`（台面）也算成载体 ——
+            实测第一版就把"臂底座 ↔ world"这条**正常固定接触**报成了撞载体（fail-closed 生效但过宽）。
+            道具（方块/托盘）挂在躯干下 ⇒ 也算载体子树；而"载荷压在托盘上"是**预期**接触（载荷不是臂的 geom）。
+            """
+            if carrier_root < 0:
+                return False
+            current = int(body_id)
+            while current > 0:
+                if current == carrier_root:
+                    return True
+                current = int(model.body_parentid[current])
+            return False
+
+        waypoint_contacts = []
+        data = mujoco.MjData(model)
+        for phase_name, pose in (poses.get("poses") or {}).items():
+            data.qpos[:] = 0.0
+            mujoco.mj_forward(model, data)
+            for joint_name, joint_value in (pose.get("joint_positions") or {}).items():
+                joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT,
+                                             rename(str(joint_name)))
+                if joint_id >= 0:
+                    data.qpos[int(model.jnt_qposadr[joint_id])] = float(joint_value)
+            mujoco.mj_forward(model, data)
+            for index in range(int(data.ncon)):
+                contact = data.contact[index]
+                bodies = [int(model.geom_bodyid[contact.geom1]), int(model.geom_bodyid[contact.geom2])]
+                names = [str(mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, item) or "")
+                         for item in bodies]
+                arm_hit = [name for name in names if name.startswith(prefix)]
+                carrier_hit = [name for name in names
+                               if _in_carrier_subtree(bodies[names.index(name)])]
+                if arm_hit and carrier_hit:
+                    waypoint_contacts.append({"phase": str(phase_name), "arm_body": arm_hit[0],
+                                              "other_body": carrier_hit[0],
+                                              "dist_m": round(float(contact.dist), 6)})
+        if waypoint_contacts:
+            _fail(EXIT_MODEL, "放置航点与载体/场景发生接触（构建期 FK 自检）：%s ⇒ 会撞上并推走载体，"
+                  "需调整航点或摆放（见 §11.17）" % waypoint_contacts[:3])
+        # 夹爪轴半球**诊断**：每段的"腕→指腹"轴与**pick 抬升段**的轴比对（对照必须是被验证过的那一段，
+        # 不能拿放置段自己当基准 —— 第一版就是拿 transit 自比 ⇒ 全部"通过"、什么也没发现）。
+        # 轴翻到相反半球说明位置型 IK 落到了翻转分支；**根因可能是"该放置姿态在几何上不可达"**
+        # （实测本场景：托盘顶面 0.449 m 处要求腕部再高 0.05 m ⇒ 0.67 m > 可达 0.594 m ⇒ IK 只能翻夹爪）。
+        # 这里只**记录**不失败：place_object 能力尚未声明 ⇒ 这些解 inert；真正的门禁是运行期判据。
+        axes = {str(name): pose.get("gripper_axis_world")
+                for name, pose in (poses.get("poses") or {}).items()}
+        axes_flipped = []
+        if lift_axis_world is not None:
+            for name, axis in axes.items():
+                if not axis:
+                    continue
+                dot = sum(float(a) * float(b) for a, b in zip(axis, lift_axis_world))
+                if dot < 0.0:
+                    axes_flipped.append({"phase": name, "dot_with_pick_lift": round(dot, 6),
+                                         "axis": axis})
+        if axes_flipped:
+            note = ("放置航点的夹爪轴相对 **pick 抬升段**翻到了相反半球（dot<0）：%s ⇒ 位置型 IK 落到了"
+                    "翻转分支；本场景的根因是**该姿态几何不可达**（托盘顶面 0.449 m 处要求腕部再高约 0.05 m"
+                    "⇒ 0.67 m > 可达 0.594 m，见 §11.18）⇒ 需要改场景/托盘高度或加朝向约束；"
+                    "本段解在他处仍 inert（place_object 未声明）。" % axes_flipped[:3])
+            print("[scene_builder] 警告：" + note, flush=True)
         record = {"source": "resolved_for_joint_model",
                   "solver": {"module": str(module_path), "entry": str(solver["place_entry"]),
                              "baseline": str(baseline_path.resolve())},
                   "place_target_id": item.get("id"),
+                  "seed_positions": {str(k): round(float(v), 9) for k, v in seed_positions.items()},
+                  "gripper_axes": axes,
+                  "transit_local_m": ([round(float(v), 9) for v in transit_local]
+                                      if transit_local else None),
+                  "waypoint_contacts": waypoint_contacts,
+                  "lift_axis_world": ([round(float(v), 9) for v in lift_axis_world]
+                                      if lift_axis_world is not None else None),
+                  "axes_flipped_vs_pick_lift": axes_flipped,
                   "target_local_m": [round(float(v), 9) for v in local],
                   "payload_half_m": float(payload_half), "pad_offset_m": pad_offset,
                   "clearance_m": clearance, "written": written,
@@ -1186,7 +1309,8 @@ def _joint_place_resolution(root, solver, resolution, place_targets, arm_report,
 
 
 def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, declared_names=None,
-                        reference_solver=None, placement=None, robot_id=None, place_targets=None):
+                        reference_solver=None, placement=None, robot_id=None, place_targets=None,
+                        carrier_trunk=None):
     """联合报告的 manipulation 事实：继承**臂自己报告**的声明事实，并按**可判定规则**改写名字。
 
     改名规则（不猜）：某个名字 `n` 改写成 `<prefix>n` **当且仅当** `<prefix>n` 出现在联合模型的
@@ -1363,7 +1487,8 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
     place_record = None
     if reference_solver and reference_solver.get("place_entry") and place_targets:
         place_record = _joint_place_resolution(
-            root, reference_solver, resolution, place_targets, report, out_gripper, rename)
+            root, reference_solver, resolution, place_targets, report, out_gripper, rename,
+            model, prefix=prefix, carrier_trunk=carrier_trunk)
     feedforward_source = "inherited_from_arm_report"
     feedforward_evidence = None
     # 前馈在**四段位置合并之后**算：`gripper_positions` 必须是该相位的完整位置指令
@@ -2322,7 +2447,8 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
                                            arm_declared_names,
                                            reference_solver=arm_reference_solver,
                                            placement=arm_placement, robot_id=robot_id,
-                                           place_targets=place_targets)
+                                           place_targets=place_targets,
+                                           carrier_trunk=trunk_body_name)
         reference_pose_check = manipulation.get("reference_pose_check")
         report["gripper"] = manipulation["gripper"]
         report["targets"] = manipulation["targets"]
