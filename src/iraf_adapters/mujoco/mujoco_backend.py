@@ -1167,6 +1167,11 @@ class MujocoBackend:
             contacts = (self._any_contact_between(payload_body, left_finger),
                         self._any_contact_between(payload_body, right_finger))
             row = {"phase": str(phase),
+                   # 共享植物下 guest 的**推进节拍**必须可观测（2026-09-28）：同一个
+                   # `_advance_for(0)` 在 owner 是"推 1 步"，在 guest 是"等 owner 推进"，
+                   # 而 owner 由驻留线程推进 ⇒ 两次控制更新之间植物可能前进很多步。
+                   # 上一轮就是这么发现"20 ms 内下落 9.8 cm"这种物理不可能的读数的。
+                   "plant_step_index": int(self.plant.step_index),
                    "tray_top_m": [round(float(v), 6) for v in snapshot["tray_top"]],
                    "payload_low_m": round(float(snapshot["payload_low_z"]), 6),
                    "pad_mid_m": [round(float(v), 6) for v in snapshot["pad_mid"]],

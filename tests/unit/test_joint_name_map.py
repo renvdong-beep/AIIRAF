@@ -83,6 +83,9 @@ def build_reference_poses(root, baseline, target_xy_override_m=None, target_z_ov
                 "target_id": "box_01",
                 "gripper": dict(self.ARM_GRIPPER),
                 "targets": [{"id": "box_01", "body": "box_01", "geom": "box_01_geom"}],
+                # 放置段的接近/抬离间隙来自臂侧**声明**（scene_builder 缺声明即 fail-closed）：
+                # 桩报告必须像真报告一样给出它，否则测的是"声明纪律"而不是被测行为。
+                "reference_poses": {"pregrasp_offset_m": 0.04},
                 "vision": None,
             }, ensure_ascii=False), encoding="utf-8")
             declaration = ({"module": "stub_solver.py", "entry": "build_reference_poses",

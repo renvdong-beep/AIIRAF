@@ -4,6 +4,19 @@ description: 交接实验室场景（Piper 机械臂 + 宇树 Go2 + 人形静态
 # 仿真场景必须显式声明（AGENTS.md 1.7）：任何基于本场景的结论都不得表述为真机/实时能力。
 simulation: true
 
+# 物理口径（存在附加本体的联合世界必须声明；缺声明即拒绝构建，见 §11.23）：
+# 合成产物的 <option> 会从**主模型**（厂商 Go2 模型 vendor/unitree_go2/.../go2.xml:4）
+# 继承 `cone=elliptic impratio=100`，而同一台 Piper 在**自己的世界**里用的是 MuJoCo 默认
+# （cone=pyramidal impratio=1）——之前"夹持能搬 0.20 m 以上"就是在后者量的 ⇒ 跨世界不可移植。
+# 【本轮 A/B 实测】改声明会**真实改变**结论：声明为 pyramidal/1（臂世界默认）后，s03 pick 直接
+# 失败、s02 停靠误差 0.028569272 → 0.026639029 —— 证明"跨世界口径"确实有因果。
+# 因此本场景**冻结为现行通过 s01–s03 的那一组**（= 厂商 Go2 模型的取值），把它从隐式继承变成显式声明；
+# 单本体世界（piper 自己世界，无 <option> ⇒ pyramidal/1）与这里的差异是**已登记的债**：
+# 单本体侧的夹持/接触结论在引用到联合世界前必须在同一口径下重测。
+world_physics:
+  cone: elliptic
+  impratio: 100
+
 seed:
   base: 20260920
   randomization: false

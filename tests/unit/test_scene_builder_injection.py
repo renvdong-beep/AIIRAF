@@ -301,7 +301,10 @@ class InjectionTests(SceneBuilderFixture):
         mujoco.mj_forward(model, data)
         body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "box_01")
         self.assertGreaterEqual(body_id, 0)
-        for axis, expected in enumerate([0.19, 0.0, 0.025]):
+        # 期望值来自场景声明（方块已按使用者要求移到"臂旁边"：(0.28, -0.28, 0.025)）——
+        # 这里必须与 scenes/handoff_lab/scene.yaml 的 props 声明一致；改成硬编码字面量是债，
+        # 更彻底的做法是测试直接读声明（见 docs/debug/... §11.23 的遗留项）。
+        for axis, expected in enumerate([0.28, -0.28, 0.025]):
             self.assertAlmostEqual(float(data.xpos[body_id][axis]), expected, places=6)
         # 厂商 12 关节 + 躯干 freejoint + 注入自由道具 box_01 的 freejoint = 14
         self.assertEqual(report["model_facts"]["njnt"], 14)

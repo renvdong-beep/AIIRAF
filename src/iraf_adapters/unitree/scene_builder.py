@@ -711,6 +711,68 @@ def _apply_declared_position_gains(root, child, profile_spec, robot_id):
             "applied": applied}
 
 
+#: 场景级**物理口径**声明的允许键（`scene.yaml: world_physics`）。
+WORLD_PHYSICS_KEYS = ("cone", "impratio", "timestep", "gravity")
+
+
+def _apply_world_physics(staging, scene, required):
+    """把声明的物理口径写进合成产物的 `<option>`，并从**编译后的模型**读回实测值。
+
+    为什么必须显式声明（2026-09-28，docs/debug/2026-09-24-joint-model-dog-arm.md §11.23）：
+    合成产物继承的是**主模型（四足厂商模型）**的 `<option>`
+    （`vendor/unitree_go2/unitree_robots/go2/go2.xml:4` → `cone="elliptic" impratio="100"`），
+    而同一台臂在**自己的世界**里用的是 MuJoCo 默认（`cone=pyramidal impratio=1`）
+    ⇒ 夹持/接触类结论**跨世界不可移植**（本轮 s04 丢件就是这么来的：能搬 0.20 m 是在臂世界量的）。
+    数值全部来自声明，构建器里不写任何默认值：缺声明即拒绝构建（fail-closed）。
+    """
+    declaration = dict(((scene or {}).get("world_physics") or {}))
+    if not declaration:
+        if required:
+            _fail(EXIT_DECLARATION,
+                  "联合世界（存在附加本体）必须在 scene.yaml 声明 `world_physics`"
+                  "（至少 cone/impratio）：不得继承厂商模型的隐式 `<option>` —— 否则同一份"
+                  "夹持/接触结论在单本体世界与联合世界里不可比（见 §11.23）")
+        return None
+    unknown = sorted(key for key in declaration if key not in WORLD_PHYSICS_KEYS)
+    if unknown:
+        _fail(EXIT_DECLARATION, "world_physics 含未知键 %s（允许：%s）"
+              % (unknown, list(WORLD_PHYSICS_KEYS)))
+    tree = ET.parse(str(staging))
+    root = tree.getroot()
+    option = root.find("option")
+    if option is None:
+        option = ET.Element("option")
+        compiler = root.find("compiler")
+        root.insert((list(root).index(compiler) + 1) if compiler is not None else 0, option)
+    for key, value in declaration.items():
+        if isinstance(value, (list, tuple)):
+            option.set(str(key), " ".join("%.9g" % float(item) for item in value))
+        elif isinstance(value, str):
+            # 枚举型（cone=pyramidal/elliptic）按声明原文写，不做数值转换
+            option.set(str(key), value)
+        else:
+            option.set(str(key), "%.9g" % float(value))
+    tree.write(str(staging), encoding="utf-8", xml_declaration=False)
+    return {"declared": {str(key): (list(value) if isinstance(value, (list, tuple)) else value)
+                         for key, value in declaration.items()},
+            "source": "scene.yaml:world_physics",
+            "note": ("物理口径必须声明而不是继承：合成产物的 <option> 来自主模型（厂商四足模型），"
+                     "与附加本体自己世界的默认值不同 ⇒ 结论不可跨世界引用（§11.23）")}
+
+
+def _read_world_physics(staging):
+    """从**编译后的模型**读回生效口径（证据用：声明 ≠ 生效时要能立刻看见）。"""
+    model = mujoco.MjModel.from_xml_path(str(staging))
+    # `opt.cone` 读回是整数枚举 ⇒ 归一到与声明同名的字符串（否则 "pyramidal" vs 0 会误报不一致）
+    try:
+        cone_name = str(mujoco.mjtCone(model.opt.cone).name).split("_")[-1].lower()
+    except Exception:  # pragma: no cover - 绑定差异兜底
+        cone_name = str(model.opt.cone)
+    return {"cone": cone_name, "cone_name": cone_name,
+            "impratio": float(model.opt.impratio), "timestep": float(model.opt.timestep),
+            "gravity": [float(value) for value in model.opt.gravity]}
+
+
 def _attach_robots(staging, scene, root, attached_ids):
     """把**附加本体**合成进主模型（`MjSpec.attach(child, prefix, frame)`，库原生合成）。
 
@@ -2327,6 +2389,30 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
     if attach:
         attached_robots = _attach_robots(staging, scene, root, list(attach))
     injections["attached_robots"] = attached_robots
+    # 物理口径：联合世界必须由**声明**给出，不得继承厂商模型 <option>（§11.23）
+    world_physics = _apply_world_physics(staging, scene, required=bool(attach))
+    if world_physics is not None:
+        world_physics["effective"] = _read_world_physics(staging)
+        # 读回比对：数值按 1e-9 容差比（声明 1 与读回 1.0 是同一个值，不能当成不一致），
+        # 枚举/数组分别比；不一致即显式失败（声明 ≠ 生效是最危险的静默失效）。
+        mismatch = {}
+        for key, declared_value in world_physics["declared"].items():
+            effective_value = world_physics["effective"].get(key)
+            if isinstance(declared_value, (list, tuple)):
+                ok = (isinstance(effective_value, (list, tuple))
+                      and len(effective_value) == len(declared_value)
+                      and all(abs(float(a) - float(b)) <= 1e-9
+                              for a, b in zip(declared_value, effective_value)))
+            elif isinstance(declared_value, (int, float)) and not isinstance(declared_value, bool):
+                ok = (isinstance(effective_value, (int, float))
+                      and abs(float(declared_value) - float(effective_value)) <= 1e-9)
+            else:
+                ok = str(declared_value) == str(effective_value)
+            if not ok:
+                mismatch[str(key)] = [declared_value, effective_value]
+        world_physics["mismatch"] = mismatch
+        if mismatch:
+            _fail(EXIT_MODEL, "声明的物理口径未生效：%s" % mismatch)
     try:
         compiled, facts = _model_facts(staging)
     except Exception as exc:  # MuJoCo 编译失败即显式失败，不落半成品
@@ -2360,6 +2446,8 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
     # 接收体声明（承载面：托盘随载体运动 ⇒ 只给名字 + 几何 + 标称停靠位姿；见 _place_targets）
     place_targets = _place_targets(scene, compiled, injections, trunk_body_name)
     report = {
+        # 物理口径（声明 + 实测 + 不一致检查）：见 _apply_world_physics / §11.23
+        "world_physics": world_physics,
         # 沿用既有场景报告契约（键集合不变，新增字段见下），emit_backend_config.py 可直接消费。
         "schema_version": REPORT_SCHEMA_VERSION,
         "report_kind": REPORT_KIND,

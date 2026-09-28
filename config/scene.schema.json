@@ -32,6 +32,27 @@
       "const": true,
       "description": "仿真场景必须显式声明 true；缺失即不合法（不得默认 true，也不得用仿真结果冒充真机能力，AGENTS.md 1.7）。"
     },
+    "world_physics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cone", "impratio"],
+      "description": "**物理口径**（存在附加本体的联合世界必须声明，见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.23）。合成产物的 <option> 会从主模型（厂商四足模型 vendor/unitree_go2/.../go2.xml:4）继承 cone=elliptic impratio=100，而同一台臂在自己的世界里用的是 MuJoCo 默认 cone=pyramidal impratio=1 ⇒ 夹持/接触类结论跨世界不可移植。数值只来自本声明，构建器不写默认值；缺声明即拒绝构建（scene_builder._apply_world_physics），并要求读回实测值一致。",
+      "properties": {
+        "cone": {
+          "enum": ["pyramidal", "elliptic"],
+          "description": "摩擦锥近似：pyramidal 内接（对角方向最差 0.707μN），elliptic 为完整 μN。"
+        },
+        "impratio": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "摩擦约束阻抗与法向阻抗之比（MuJoCo 默认 1）。"
+        },
+        "timestep": {"type": "number", "exclusiveMinimum": 0},
+        "gravity": {
+          "type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}
+        }
+      }
+    },
     "seed": {
       "type": "object",
       "additionalProperties": false,
