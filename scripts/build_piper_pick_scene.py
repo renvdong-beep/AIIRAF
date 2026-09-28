@@ -443,6 +443,8 @@ def build_scene(
     ET.ElementTree(root).write(output, encoding="unicode", xml_declaration=True)
     mujoco.MjModel.from_xml_path(str(output))
 
+    # 合爪语义（声明透传；缺省视为 none 但**显式写入报告**，后端据此决定是否在合爪期间保持载荷）
+    close_hold = str(gripper_cfg.get("close_hold") or "none")
     open_positions = dict(gripper_cfg.get("open") or DEFAULT_OPEN)
     closed_positions = dict(gripper_cfg.get("closed") or DEFAULT_CLOSED)
     lift_arm = dict(gripper_cfg.get("lift") or DEFAULT_LIFT)
@@ -493,6 +495,9 @@ def build_scene(
     gripper = {
         **{key: str(value) for key, value in _declared_geometry.items()},
         "open_positions": _merge_arm_and_gripper({}, open_positions),
+        # 裸字符串即可：`_joint_manipulation` 通过 SEMANTIC_GRIPPER_KEYS 跳过语义开关
+        # （早期版本会把顶层字符串一律当"名字"做前缀改写，导致构建 fail-closed）。
+        "close_hold": close_hold,
         "closed_positions": _merge_arm_and_gripper({}, closed_positions),
         "lift_positions": _merge_arm_and_gripper(lift_arm, phase_gripper["lift"]),
         "min_lift_delta_m": float(acceptance.get("min_lift_delta_m", 0.02)),

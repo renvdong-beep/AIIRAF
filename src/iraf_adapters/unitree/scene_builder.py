@@ -972,6 +972,10 @@ def _attach_robots(staging, scene, root, attached_ids):
 
 #: `robots[].reference_solver` 的必需键（缺键或缺文件即显式失败，不给默认值）：
 #: `module`（仓内脚本路径）、`entry`（求解入口函数名）、`baseline`（该求解器的声明配置）。
+#: gripper 段里的**语义开关**（非对象名，不参与前缀改写）：见 _joint_manipulation
+SEMANTIC_GRIPPER_KEYS = ("close_hold", "carry_gripper")
+
+#: `robots[].reference_solver` 的必需键（缺键或缺文件即显式失败，不给默认值）：
 REFERENCE_SOLVER_KEYS = ("module", "entry", "baseline")
 
 #: 参考姿态的四个相位 → 联合报告里的**位置指令键**（求解器输出键与报告键的对应关系）。
@@ -1444,6 +1448,11 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
         _fail(EXIT_REFERENCE, "臂侧场景报告缺少 gripper 段，无法继承: %s" % arm_report_path)
     out_gripper = {}
     for key, value in gripper.items():
+        if key in SEMANTIC_GRIPPER_KEYS:
+            # **语义开关**（不是对象名）：原样继承，不参与前缀改写 ——
+            # 否则会被当成名字去联合模型里查，必然 fail-closed（实测 close_hold: pin_payload）。
+            out_gripper[key] = value
+            continue
         if isinstance(value, str):
             out_gripper[key] = rename(value)
         elif isinstance(value, dict) and value and all(isinstance(item, dict) for item in value.values()):

@@ -960,10 +960,27 @@ class MujocoBackend:
         self._advance_for(open_ms)
         self._log_pick_phase("GRIP_CLOSE", target_body)
         self._set_gripper_controls(gripper["closed_positions"])
-        bilateral = self._advance_for(
-            close_ms,
-            contact_bodies=(target_body, left_body, right_body),
-        )
+        # 合爪语义：`close_hold`（声明；缺省视为 none 但**显式记进证据**，不静默）。
+        #   `pin_payload` = 合爪期间把载荷保持在它的位姿（等价真机"指腹柔顺 + 台面摩擦抵住推力"）；
+        #   `none`        = 不做任何保持（合爪的侧向合力会推移载荷，见 §11.23(19)(20)）。
+        raw_close_hold = gripper.get("close_hold")
+        if isinstance(raw_close_hold, dict):
+            close_hold = str(raw_close_hold.get("mode") or "none")
+        elif raw_close_hold is None:
+            close_hold = "none"      # 未声明 ⇒ 不做保持（并**显式进证据**，不静默）
+        else:
+            close_hold = str(raw_close_hold)
+        hold_evidence = None
+        if close_hold == "pin_payload":
+            hold_evidence = self._advance_pinned(close_ms, target_body)
+            bilateral = self._has_bilateral_contact(target_body, left_body, right_body)
+        elif close_hold == "none":
+            bilateral = self._advance_for(
+                close_ms,
+                contact_bodies=(target_body, left_body, right_body),
+            )
+        else:
+            raise ValueError("gripper.close_hold 只允许 pin_payload|none：%r" % (close_hold,))
         force_evidence = self._contact_force_evidence(
             target_body, left_body, right_body
         )
@@ -1424,6 +1441,8 @@ class MujocoBackend:
             },
             "retreat_delta_m": round(float(final["pad_mid"][2] - after_descend["pad_mid"][2]), 9),
             "gripper_open_positions": {str(k): float(v) for k, v in gripper["open_positions"].items()},
+            # 合爪语义 + 被钉住的位姿（事实留痕：搬运仍靠真实摩擦，本项只作用于合爪阶段）
+            "gripper_close_hold": {"mode": close_hold, "pinned": hold_evidence},
             # 搬运段的夹爪语义 + 实际下发的"保持值"（证据：证明目标是实测 qpos，而不是报告里的 0.023）
             "gripper_carry": {"mode": carry_mode, "segment_targets": carry_targets,
                               "note": ("hold = 目标取**当前 ctrl**（保持夹紧力、指令零位移）。"
@@ -2282,6 +2301,43 @@ class MujocoBackend:
             if contact_bodies and self._has_bilateral_contact(*contact_bodies):
                 bilateral = True
         return bilateral
+
+    def _advance_pinned(self, duration_ms, payload_body):
+        """推进 `duration_ms`，**每步把载荷钉在它当前的位姿**（`qpos`/`qvel` 复位）。
+
+        用途（2026-09-28，docs/debug/2026-09-24-joint-model-dog-arm.md §11.23(19)(20)）：
+        合爪阶段用。本模型的指腹是**刚性 mesh**、台面摩擦只有 ~0.4 N，而两条接触法向只差 4.7°
+        （`dot=-0.9966`）⇒ 合爪产生的 ~1 N 侧向合力会把 0.39 N 的载荷推离夹口轴线（运行期实测被推 1.44 cm），
+        之后的竖直抬升就丢掉它（`lifted=false`）。真机上这一推力由**指腹柔顺 + 平行颚**吸收、
+        且台面摩擦会抵住它 ⇒ 这里显式声明"合爪期间保持载荷位姿"，**合爪结束即释放**
+        （搬运仍靠真实摩擦，不做任何辅助）。语义由 `gripper.close_hold` 声明，并进证据。
+        """
+        payload_free = None
+        for index in range(int(self.model.njnt)):
+            if (int(self.model.jnt_bodyid[index]) == int(payload_body)
+                    and int(self.model.jnt_type[index]) == int(mujoco.mjtJoint.mjJNT_FREE)):
+                payload_free = index
+                break
+        if payload_free is None:
+            raise ValueError("载荷 body 没有 freejoint，无法在合爪期间保持位姿")
+        qadr = int(self.model.jnt_qposadr[payload_free])
+        dadr = int(self.model.jnt_dofadr[payload_free])
+        with self._data_lock:
+            pose = (np.asarray(self.data.xpos[payload_body], dtype=float).copy(),
+                    np.asarray(self.data.xquat[payload_body], dtype=float).copy())
+        steps = max(1, int(math.ceil((float(duration_ms) / 1000.0) / self.model.opt.timestep)))
+        for _ in range(steps):
+            if self._cancel_event.is_set():
+                break
+            with self._data_lock:
+                self.data.qpos[qadr:qadr + 3] = pose[0]
+                self.data.qpos[qadr + 3:qadr + 7] = pose[1]
+                self.data.qvel[dadr:dadr + 6] = 0.0
+            # 一步推进：owner 走 `step_once`；guest 等 owner 推进 1 步（共享植物契约不变）
+            self._advance_for(0)
+        return {"pinned_pose_pos_m": [round(float(v), 9) for v in pose[0]],
+                "pinned_pose_quat_wxyz": [round(float(v), 9) for v in pose[1]],
+                "pinned_steps": steps}
 
     def _advance_with_grasp_anchor(self, duration_ms, target_body, left_body, right_body, anchor_name):
         anchor_body = self._body_id(anchor_name)

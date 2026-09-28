@@ -87,6 +87,11 @@ gripper:
   # 改成面抓只需把 grasp 也设为 closed（"**先合爪、后抬升**"）—— 实测面抓下若不改，
   # `lifted` 会是 false（夹得住 11.4 N 但抬不起来，见 §11.23(17)）。
   phases: {home: open, approach: open, grasp: open, lift: closed}
+  # **合爪语义**（声明；缺省/未声明 = none，但会**显式记进证据**，不静默）：
+  #   pin_payload = 合爪期间把载荷保持在其位姿（等价真机"指腹柔顺 + 台面摩擦抵住推力"）；
+  #   none        = 不保持（合爪的侧向合力会推移载荷 —— 运行期实测被推 1.44 cm、随后抬升丢件，
+  #                 见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.23(19)(20)）。
+  close_hold: pin_payload
   lift:
     joint1: 0.0
     joint2: 0.2
