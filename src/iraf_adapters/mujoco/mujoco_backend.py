@@ -1056,6 +1056,176 @@ class MujocoBackend:
             },
         }
 
+    def place_object(self, place_target_id, payload_id, duration_ms, lease):
+        """把当前夹持的载荷放到接收体（承载面）上：下行至**接触**→开夹爪→抬离。
+
+        设计要点（2026-09-28，docs/debug/2026-09-24-joint-model-dog-arm.md §11.12/§11.10）：
+        · 接收体随载体运动 ⇒ 命令只给**名字**，位姿在**运行期实测**（`data.xpos/xmat`），
+          不使用报告里的 `nominal_*`（那是构建基准）；
+        · 下行终点**不写死深度**：以"载荷最低点落到承载面"为条件（`lowest_mesh_point_z`
+          实测载荷几何的最低点，托盘顶面由 FK 给出）⇒ 不需要方块半尺寸之类的额外声明；
+        · 判据全是**事实**（无阈值）：`released` = 张开后指腹与载荷**不再接触**；
+          `payload_in_tray` = 载荷 XY 落在接收体声明的半尺寸内 **且** 与接收体存在接触（放住了）；
+        · 任一步不成立即显式失败，不返回伪造成功（AGENTS.md 1.5）。
+        """
+        self.authority.validate(lease)
+        place_targets = getattr(self, "_place_targets", {}) or {}
+        record = place_targets.get(str(place_target_id))
+        if record is None:
+            raise ValueError("场景报告没有接收体: " + str(place_target_id))
+        gripper = self._manipulation.get("gripper")
+        payload = (self._manipulation.get("targets") or {}).get(str(payload_id))
+        if payload is None:
+            raise ValueError("场景报告没有载荷目标: " + str(payload_id))
+        if gripper is None:
+            raise RuntimeError("MuJoCo Backend 未配置夹爪信息（来源：场景 report 的 gripper 段）")
+        if record.get("size_m") is None:
+            raise ValueError("接收体 %s 未声明 size_m（无法判「载荷是否落在承载面内」）" % place_target_id)
+        pad_offset = float(gripper.get("pad_offset_m") or 0.0)
+        approach_offset = float(gripper.get("pregrasp_offset_m") or 0.0)
+        if pad_offset <= 0 or approach_offset <= 0:
+            raise ValueError("接收体放置需要报告声明 gripper.pad_offset_m 与 gripper.pregrasp_offset_m")
+        tray_body = self._body_id(record["body"])
+        payload_body = self._body_id(payload["body"])
+        payload_geom = payload.get("geom")
+        if payload_geom is None:
+            raise ValueError("载荷 %s 未声明 geom（无法量最低点）" % payload_id)
+
+        from iraf_core.kinematics import lowest_mesh_point_z, solve_position_ik
+
+        half_x, half_y = (float(record["size_m"][0]), float(record["size_m"][1]))
+        half_z = float(record["size_m"][2])
+        def _geom_id(name):
+            return int(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, str(name)))
+
+        pad_points = [
+            {"kind": "geom", "id": _geom_id(gripper["left_finger_geom"])},
+            {"kind": "geom", "id": _geom_id(gripper["right_finger_geom"])},
+        ]
+        payload_geoms = [_geom_id(payload_geom)]
+        if any(item["id"] < 0 for item in pad_points) or payload_geoms[0] < 0:
+            raise ValueError("指腹/载荷 geom 未在模型中解析到（名字口径不一致）")
+        # 臂关节 id：声明名 → 模型名（`_model_name` 走 name_map，联合世界下 joint1 → piper_joint1）
+        arm_joints = [int(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT,
+                                            self._model_name(name)))
+                      for name in self._arm_joint_names()]
+        duration_ms = max(1, int(duration_ms))
+        phase_ms = max(1, duration_ms // 4)
+        solver = {"iterations": 800, "step": 0.5, "tolerance_m": 1e-5}
+
+        def _snapshot():
+            """实测：托盘顶面中心、载荷最低点、指腹中点（都在世界系）。"""
+            with self._data_lock:
+                mujoco.mj_forward(self.model, self.data)
+                tray_rot = np.asarray(self.data.xmat[tray_body], dtype=float).reshape(3, 3)
+                tray_center = np.asarray(self.data.xpos[tray_body], dtype=float)
+                top = tray_center + tray_rot @ np.asarray([0.0, 0.0, half_z], dtype=float)
+                low = float(lowest_mesh_point_z(self.model, self.data, payload_geoms))
+                points = [np.asarray(self.data.geom_xpos[item["id"]], dtype=float)
+                          for item in pad_points]
+                midpoint = (points[0] + points[1]) / 2.0
+                payload_center = np.asarray(self.data.xpos[payload_body], dtype=float).copy()
+                return {"tray_top": top, "payload_low_z": low, "pad_mid": midpoint,
+                        "payload_center": payload_center}
+
+        def _solve_and_move(target, phase, offsets_key):
+            """解指腹中点到 target 的位置 IK 并执行一段（IK 未收敛即显式失败）。"""
+            with self._data_lock:
+                result = solve_position_ik(self.model, self.data, target, arm_joints,
+                                           pad_points, **solver)
+            if float(result.position_error_m) > float(solver["tolerance_m"]) * 100.0:
+                raise ValueError(
+                    "放置 IK 未收敛（%s）：error=%.9f m target=%s"
+                    % (phase, float(result.position_error_m),
+                       [round(float(v), 6) for v in target]))
+            # 解出的键是**模型名**（联合世界里与声明名不同）⇒ 原样透传，交给 _move_trajectory 解析
+            positions = {str(name): float(value)
+                         for name, value in dict(result.joint_positions).items()}
+            ctrl_offsets = self._pick_ctrl_offsets(offsets_key)
+            self._move_trajectory(positions, phase_ms, ctrl_offsets=ctrl_offsets or None)
+            return positions
+
+        # ---- ① 到承载面上方
+        snapshot = _snapshot()
+        approach_target = snapshot["tray_top"] + np.asarray([0.0, 0.0, approach_offset])
+        _solve_and_move(approach_target, "approach", "approach")
+        # ---- ② 下行：把"载荷最低点"落到承载面（深度由实测差值给出，不写死）
+        snapshot = _snapshot()
+        delta_z = float(snapshot["tray_top"][2] - snapshot["payload_low_z"])
+        descend_target = snapshot["pad_mid"] + np.asarray([0.0, 0.0, delta_z])
+        _solve_and_move(descend_target, "descend", "grasp")
+        after_descend = _snapshot()
+        alignment_distance = float(
+            np.linalg.norm(after_descend["pad_mid"]
+                           - (after_descend["tray_top"] + np.asarray([0.0, 0.0, pad_offset]))))
+        # ---- ③ 开夹爪（释放）
+        self._set_gripper_controls(dict(gripper["open_positions"]))
+        self._advance_for(phase_ms)
+        # ---- ④ 抬离
+        retreat_target = after_descend["pad_mid"] + np.asarray([0.0, 0.0, approach_offset])
+        _solve_and_move(retreat_target, "retreat", "lift")
+        final = _snapshot()
+
+        # ---- 判据（事实，不设阈值）
+        left_id = self._body_id(gripper["left_finger_body"])
+        right_id = self._body_id(gripper["right_finger_body"])
+        # `released` = 张开后指腹与载荷**不再接触**（事实判据，不设力阈值）
+        released = not (self._any_contact_between(payload_body, left_id)
+                        or self._any_contact_between(payload_body, right_id))
+        payload_in_footprint = (
+            abs(float(final["payload_center"][0]) - float(final["tray_top"][0])) <= half_x
+            and abs(float(final["payload_center"][1]) - float(final["tray_top"][1])) <= half_y)
+        resting = self._payload_rests_on_target(payload_body, tray_body)
+        offset_from_center = float(np.linalg.norm(
+            np.asarray([final["payload_center"][0] - final["tray_top"][0],
+                        final["payload_center"][1] - final["tray_top"][1]], dtype=float)))
+        evidence = {
+            "place_target_body": record["body"],
+            "payload_body": payload["body"],
+            "released": bool(released),
+            "payload_in_tray": bool(payload_in_footprint and resting),
+            "place_alignment": {
+                "center_distance_m": round(alignment_distance, 9),
+                "clearance_m": round(float(approach_offset), 9),
+                "offset_from_center_m": round(offset_from_center, 9),
+            },
+            "retreat_delta_m": round(float(final["pad_mid"][2] - after_descend["pad_mid"][2]), 9),
+            "gripper_open_positions": {str(k): float(v) for k, v in gripper["open_positions"].items()},
+            "place_mode": "declared_offset",
+            "runtime_source": "live_fk",
+        }
+        return {
+            "place_target_id": str(place_target_id),
+            "payload_id": str(payload_id),
+            "released": bool(released and evidence["payload_in_tray"]),
+            "confirmation": "released",
+            "evidence": evidence,
+        }
+
+    def _any_contact_between(self, body_a, body_b):
+        """两个 body 的任意 geom 之间是否**存在接触**（事实判据，不设力阈值）。"""
+        with self._data_lock:
+            mujoco.mj_forward(self.model, self.data)
+            for index in range(int(self.data.ncon)):
+                contact = self.data.contact[index]
+                bodies = {int(self.model.geom_bodyid[contact.geom1]),
+                          int(self.model.geom_bodyid[contact.geom2])}
+                if int(body_a) in bodies and int(body_b) in bodies:
+                    return True
+        return False
+
+    def _payload_rests_on_target(self, payload_body, target_body):
+        """载荷是否与接收体**存在接触**（"放住了"的事实判据，不设力阈值）。"""
+        with self._data_lock:
+            mujoco.mj_forward(self.model, self.data)
+            for index in range(int(self.data.ncon)):
+                contact = self.data.contact[index]
+                bodies = {int(self.model.geom_bodyid[contact.geom1]),
+                          int(self.model.geom_bodyid[contact.geom2])}
+                if int(payload_body) in bodies and int(target_body) in bodies:
+                    return True
+        return False
+
     def _log_pick_phase(self, phase, target_body):
         if os.environ.get("IRAF_DEBUG_PICK") != "1":
             return
