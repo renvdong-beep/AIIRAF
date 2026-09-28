@@ -53,6 +53,12 @@ robots:
     reference_solver:
       module: scripts/build_piper_baseline.py
       entry: build_reference_poses
+      # 放置四段（构建期解出、后端回放；见 §11.16/§11.17/§11.18）。
+      # ⚠ 这是**构建期**声明，与"能力声明"无关：它只让构建期解出放置航点并做自检，
+      # 不会让任何东西在运行期执行（能力仍由 profile/场景 capabilities/策略/适配器四处决定）。
+      # ⚠ 回退"临时启用"时**不要**用 `git checkout -- scenes/handoff_lab/scene.yaml`：本文件同时承载
+      # 能力列表与本声明，整体回退会把本声明一起删掉（这个坑我踩了两次）。请只改 `capabilities:` 那一行。
+      place_entry: build_place_reference_poses
       # 前馈在**联合模型**上重算：增量 = τ_g / kp，且必须按相位的**完整**位置指令（含夹爪 joint7/8 开合），
       # 否则量到的是"手指卡在方块里"的动力学。自带判据：四姿态静态保持残余 ≤
       # config/piper_simulation_baseline.yaml: gravity_feedforward.tolerance_rad（0.001），否则构建失败。
