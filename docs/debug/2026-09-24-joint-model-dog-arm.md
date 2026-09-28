@@ -839,6 +839,38 @@ lift 闭合 0.023）⇒ 修法是把它们一并传进前馈入口，而不是�
 `GraspPoseSolver(pointing_direction=…)` 已经有的那种朝向约束。判据现成：`reference_pose_clearance_check.overlapping == false`
 且四姿态静态保持残余 ≤ `gravity_feedforward.tolerance_rad`。
 
+### 11.8 朝向约束的落点已定位（侦察，2026-09-24）：core 已有位姿型 IK，Piper 缺两处声明
+
+§11.7 的修法是"把夹爪轴约束到声明的接近方向"。侦察结论（**不需要在 Piper 侧另写求解器**）：
+
+| 已有 | 位置 | 口径 |
+| --- | --- | --- |
+| `iraf_core.kinematics.solve_pose_ik(model, data, target_position, target_rotation, arm_joints, points, flange_site, …)` | core，与机型无关 | 位置误差取 `points` 的世界系算术平均（与 `solve_position_ik` **同一口径**）、姿态误差取**法兰 site** 的旋转向量，拼成 6 维做阻尼最小二乘；残差可接受性由调用方门禁判定 |
+| `GraspPoseSolver`（`scripts/build_robot_baseline.py:144`） | 通用编排层 | 只做接线：① 臂关节 id/夹持区 geom/法兰 site；② 由**模型实测的局部轴**推出目标旋转（`v_point_local`/`v_spread_local` → `R = W·Lᵀ`），避免假设"法兰 x 轴 = 开合轴"；③ 求解后按同一口径量中点与两轴 |
+
+Piper 侧缺的只有两处**声明**（缺即显式失败，不给默认值）：
+
+1. **法兰 site**：`solve_pose_ik` 要一个 MuJoCo site 作为工具坐标系，而厂商 Piper MJCF **没有 site**
+   （Profile 只声明了 `spec.model.bodies.wrist = link6`，那是 body 不是 site）。UR5e 侧是
+   `scripts/assemble_ur5e_2f85.py` 在装配期注入法兰 site + 基线声明 `flange_site` ⇒ Piper 侧照同一口径：
+   Profile 声明 `spec.model.flange_site`，由场景/探测构建器在 `link6` 处注入（**不能在已编译模型上补 site**）。
+2. **张开轴（开合轴）**：UR5e 基线声明 `grasp.spread_axis: [1,0,0]`，Piper 基线**只声明了**
+   `grasp.approach_direction: [0.0, 0.0, 1.0]`（目前只被"预抓取偏移"与"指尖配平方向"消费，**没进 IK**）。
+   本场景方块是轴对齐的（`props[box_01].pose.quat_wxyz = [1,0,0,0]`），而臂自己场景实测的张开向量是
+   `[0.000729041, 0.09035789, 0.000546168]`（≈ 世界 y，face-on）⇒ 联合路径要的张开轴可由**目标自身声明的
+   姿态**机械推出（`targets[].quaternion_wxyz` 的一条轴），而不是在代码里写死方向。
+
+**为什么必须做成"联合路径可选启用"**：同一条 `reference_solver.baseline`
+（`config/piper_simulation_baseline.yaml`）也被**臂自己场景**使用，而臂侧已验收的数字（抓取残差 9.39e-06 m、
+`pad_offset_m 0.029835769`、`validate_grasp_pose` 全过）都建立在**位置型**解上；把 Piper 求解器整体换成
+位姿型会让臂侧产物与验收数字全部改变。故取向：`reference_solver` 声明里给可选 `args`（如
+`axis_constraint: {pointing: approach_direction, spread_axis: target_axis_y, orientation_tolerance_rad: …}`），
+构建器按声明把它透传给求解器入口；**不声明则逐位不变**（臂侧零影响）。
+
+验收判据（两条同时绿才算修好，都是现成的）：
+`manipulation.reference_pose_clearance_check.overlapping == false`（当前 `piper_link6 dist_m -0.014516`）
+**且**四姿态静态保持残余 ≤ `gravity_feedforward.tolerance_rad`（0.001，当前 0.039962049）。
+
 ## 12. 下一步
 
 0. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。
