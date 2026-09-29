@@ -28,7 +28,15 @@ def main():
         # ⚠ 判"整轮通过"**只能看顶层**：报告里每个步骤都有 `"passed": true/false`，
         # 用 `"passed": true` 会抓错（本轮实测：run 3 步骤 s03 失败却仍被判 "passed=True"）。
         # 顶层判据：`"failed_checks": []`（空数组 = 无失败项）。
-        row["passed"] = bool(re.search(r'"failed_checks": \[\]', text))
+        # ⚠ 三态而不是两态（2026-09-29 实测教训）：日志里既没有 `"failed_checks": []` 也没有失败项，
+        # 说明**这一轮的日志被逐样本追踪打印淹没/截断**（不是物理失败）⇒ 记 None，绝不当作失败。
+        # 权威判据是**进程退出码**（run 8 实测 exit=0 = 通过，却被旧脚本算成失败 ⇒ 通过率被低估）。
+        if re.search(r'"failed_checks": \[\]', text):
+            row["passed"] = True
+        elif re.search(r'"failed_checks": \[\n', text):
+            row["passed"] = False
+        else:
+            row["passed"] = None
         head = re.search(r"PICK/REGRASP 摘要", text)
         row["summary"] = bool(head)
         m = re.search(r"grasped=(\S+) confirmation=(\S+) lifted=(\S+) lift_delta_m=(\S+)", text)
@@ -55,8 +63,11 @@ def main():
             row.get("pad_minus_payload_z_m")))
         if not row.get("passed"):
             print("       FAIL: %s" % (row.get("failed_check") or "(未捕获)"))
-    ok = [row for row in rows if row.get("passed")]
-    print("\n通过 %d/%d" % (len(ok), len(rows)))
+    ok = [row for row in rows if row.get("passed") is True]
+    failed = [row for row in rows if row.get("passed") is False]
+    unknown = [row for row in rows if row.get("passed") is None]
+    print("\n通过 %d/%d（失败 %d，日志不完整 %d —— 后者以进程退出码为准）"
+          % (len(ok), len(rows), len(failed), len(unknown)))
     return 0
 
 
