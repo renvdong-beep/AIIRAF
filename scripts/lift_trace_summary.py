@@ -64,6 +64,12 @@ def main():
     print("  指腹 z 升 %.6f；载荷 z 升 %.6f" % (
         last["pad_mid_m"][2] - first["pad_mid_m"][2],
         last["payload_pos_m"][2] - first["payload_pos_m"][2]))
+    max_tilt = max(_quat_tilt_deg(first.get("payload_quat_wxyz", [1, 0, 0, 0]),
+                                  row.get("payload_quat_wxyz", [1, 0, 0, 0])) for row in rows)
+    max_wrist = max(_quat_tilt_deg(first.get("wrist_quat_wxyz", [1, 0, 0, 0]),
+                                   row.get("wrist_quat_wxyz", [1, 0, 0, 0])) for row in rows)
+    print("  抬升段最大：载荷倾角 %.2f° / 腕部倾角 %.2f°（相差大 ⇒ 载荷在夹口里滑转）"
+          % (max_tilt, max_wrist))
     print("  载荷倾角 首帧→末帧 %.2f°" % _quat_tilt_deg(
         first.get("payload_quat_wxyz", [1, 0, 0, 0]), last.get("payload_quat_wxyz", [1, 0, 0, 0])))
     return 0
