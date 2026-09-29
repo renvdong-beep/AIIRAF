@@ -1133,9 +1133,35 @@ class MujocoBackend:
                     pre_lift_anchor_kwargs["anchor_wrist"] = str(gripper["wrist_body"])
                     pre_lift_anchor_kwargs["anchor_rel_quat"] = _quat_mul(_quat_conj(wrist_q),
                                                                         payload_q)
+            # **预抬段逐样本取证**（2026-09-29 §11.23(48) 标定第 3 步）：三量同图 ——
+            # ① anchor 的 mocap 位置 ② 指腹中点 ③ 载荷中心。段首/段末两点无法区分
+            # "anchor 摆错位" / "焊缝把载荷顶到别处" / "预抬位形把指腹送到别处"。
+            pre_lift_samples = []
+            _pre_stride = max(1, int(os.environ.get("IRAF_DEBUG_PICK_STRIDE", "10")))
+
+            def _pre_lift_sampler(step, elapsed):
+                with self._data_lock:
+                    _mocap = (int(self.model.body_mocapid[anchor_id])
+                              if pre_lift_equality is not None else -1)
+                    _anchor = ([round(float(v), 6) for v in self.data.mocap_pos[_mocap]]
+                               if _mocap >= 0 else None)
+                    _pad = (np.asarray(self.data.xpos[self._body_id(str(gripper["left_finger_body"]))],
+                                       dtype=float)
+                            + np.asarray(self.data.xpos[self._body_id(str(gripper["right_finger_body"]))],
+                                         dtype=float)) / 2.0
+                    _pay = np.asarray(self.data.xpos[target_body], dtype=float).copy()
+                _row = {"step": int(step), "anchor_mocap_m": _anchor,
+                        "pad_mid_m": [round(float(v), 6) for v in _pad],
+                        "payload_m": [round(float(v), 6) for v in _pay],
+                        "payload_minus_anchor_m": ([round(float(v), 6) for v in (_pay - np.asarray(_anchor, dtype=float))]
+                                                   if _anchor is not None else None)}
+                pre_lift_samples.append(_row)
+                if len(pre_lift_samples) % _pre_stride == 0:
+                    print("PRE_LIFT_TRACE " + json.dumps(_row, ensure_ascii=False), flush=True)
+
             self._log_pick_phase("PRE_LIFT", target_body)
             self._move_trajectory(pre_lift_positions, regrasp_ms, self._pick_ctrl_offsets("lift"),
-                                  **pre_lift_anchor_kwargs)
+                                  sampler=_pre_lift_sampler, **pre_lift_anchor_kwargs)
             # **预抬结束处的观测**（2026-09-29 §11.23(48) 标定用）：只有闭合后一个点分不清
             # 「预抬抬多/抬少」与「目标公式偏」 ⇒ 这里量：载荷实际抬升量（对比声明 pre_lift_m）、
             # 载荷相对指腹的竖向与横向偏移（夹持几何的直接证据）。
