@@ -2272,6 +2272,42 @@ unsupported = [key for key in record["criteria"] if key not in CRITERION_SPEC]
 不得把红色的场景留在仓库里）。整链在回退后的布置上仍 **s01–s05 全绿**
 （s04 偏移 0.02376498 m、`carry_cadence_steps` 130）。
 
+#### (46) 甲案落地：预检按**技能 output schema** 判定判据可评测性（并立刻查出一处契约缺口）
+
+**(a) 问题（§11.23(44)）**：`plan_steps` 的 `unsupported` 只查"判据名在不在 `CRITERION_SPEC`" ⇒
+给 `ss01 stand` 配 `pose_tolerance_m`（只属于 pick/place）会被当成可评测，直到运行期才以退出码 5 红，
+而不是预检退出码 2。
+
+**(b) 实现（与计划的偏差 + 理由）**：计划里写"把 `CRITERION_SPEC` 条目扩成 4 元组"，
+实际改为**新增并列表** `CRITERION_EVIDENCE_PATHS`（判据 → 证据路径元组；`None` = 来自后端状态/墙钟）。
+理由：现有消费点 `basis, operator, detail = CRITERION_SPEC[name]` 是 **3 元组解包**，改形状会牵动
+判据校验、契约导出（`evaluable_criteria`）与报告多处；并列表 + **两张表的完备性门禁**
+（`_validate_criterion_tables()`，差集非空即退出码 2）同样做到"单一来源 + fail-closed"。
+新增 `_skill_provides_evidence(action, paths, registry)`：从 `SkillRegistry` 的 manifest 取
+`output_schema`（**已经是 dict**），递归查 `properties.evidence.properties`。
+
+**(c) 我自己踩的坑（已修）**：`evidence` 本身**就是** `properties` 字典，我却多查了一层 `properties`
+⇒ 所有判据都判 False ⇒ `nominal` 的 `s02_dock` 被预检**误拒**（"声明了本执行器没有评测依据的判据
+['translation_error_max_m', 'yaw_error_max_deg']"）。顶层包一层后逐项正确：
+`dock→final_translation_error_m=True`、`dock→final_yaw_error_deg=True`、
+`stand→pose_tolerance_m=False`（应为 False ✓）、`pick→pose_tolerance_m=True`、
+`place→place_alignment.offset_from_center_m=True`、`accept→last_speed_mps=True`。
+
+**(d) 顺带查出的契约缺口**（甲案立刻见效）：判据 `max_offset_from_tray_center_m` 的测量来源是
+`evidence.place_alignment.offset_from_center_m`，后端一直在发这个键，但
+`skills/place_object/place_object.output.json` 的 `place_alignment` **没声明它**、也没写
+`additionalProperties: false` ⇒ 一直静默通过。已补该键为必需项并把 `additionalProperties` 收紧为
+`false`（与顶层同口径）。
+
+**(e) 验收（计划里的 4 条全部达成）**
+| 验收项 | 结果 |
+|---|---|
+| `ss01 stand` + `pose_tolerance_m` ⇒ 预检退出码 2、消息含判据名 | ✓（用例转绿） |
+| 现有场景预检通过、`nominal --world joint` 仍 s01–s05 全绿 | ✓（`stand_stop` / `fault_sensor_unavailable` / `nominal` 均退出码 0；`passed=True`）|
+| 新增"技能 schema 里没有该路径"负向用例 | ✓（`min_lift_delta_m` 配给 `stand` ⇒ 退出码 2）|
+| 用例注释说明"判据作用域来自技能输出契约" | ✓ |
+| 相关单测子集（146 项） | ✓ 全绿（含起点遗留的那条，现已真正修绿）|
+
 ### 11.19 撤两条假设 + 第 9 个工装缺陷：搬运丢件的机制**仍未判死**（2026-09-28）
 
 **撤销 1：夹具（equality）不是原因。** 臂场景模型里确实有一条 `box_01_lift_constraint`

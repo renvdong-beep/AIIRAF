@@ -129,7 +129,8 @@
         "place_alignment": {
           "type": "object",
           "required": [
-            "center_distance_m"
+            "center_distance_m",
+            "offset_from_center_m"
           ],
           "properties": {
             "center_distance_m": {
@@ -141,8 +142,14 @@
               "type": "number",
               "minimum": 0,
               "description": "下行终点相对接收体顶面的法向间隙（声明值）。"
+            },
+            "offset_from_center_m": {
+              "type": "number",
+              "minimum": 0,
+              "description": "放置后实测载荷中心相对接收体承载面中心的**水平偏移**（场景判据 `max_offset_from_tray_center_m` 的测量来源）。"
             }
-          }
+          },
+          "additionalProperties": false
         },
         "place_mode": {
           "enum": [

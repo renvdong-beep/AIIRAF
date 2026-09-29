@@ -176,6 +176,67 @@ CRITERION_SPEC = {
         "确认时刻整链末速 = 所有自由关节线速度上界（evidence.last_speed_mps）",
     ),
 }
+#: 判据 -> **该判据的测量量从哪来**（2026-09-28 §11.23(46)，甲案）。
+#: 取值含义：
+#:   · `None`            ⇒ 来自**后端状态/墙钟**（任何步骤都可评测）；
+#:   · **候选路径元组**  ⇒ 元素形如 `("grasp_alignment", "center_distance_m")`，表示证据里的字段路径；
+#:                          只要该步骤**技能的 output schema** 里存在其中一条，即视为"该技能产得出这条判据"。
+#: 为什么需要它：`plan_steps` 原先只检查"判据名在不在 `CRITERION_SPEC`"⇒ 给 `stand` 配 `pose_tolerance_m`
+#: （只属于 pick/place）会被当成可评测，直到运行期才以退出码 5 报判据未满足，而不是预检退出码 2。
+#: 与 `CRITERION_SPEC` 的完备性由 `_validate_criterion_tables()` 守住（缺登记即显式失败）。
+CRITERION_EVIDENCE_PATHS = {
+    "min_stable_hold_s": None,                 # 后端状态：本步推进的仿真时间
+    "max_speed_m_s": None,                     # 后端状态：末速
+    "timeout_s": None,                         # 墙钟
+    "translation_error_max_m": (("final_translation_error_m",),),
+    "yaw_error_max_deg": (("final_yaw_error_deg",),),
+    # `pose_tolerance_m` 有两个合法来源：抓取（pick_object）与放置（place_object）各给一份对齐量
+    "pose_tolerance_m": (("grasp_alignment", "center_distance_m"),
+                         ("place_alignment", "center_distance_m")),
+    "min_lift_delta_m": (("lift_delta_m",),),
+    "require_bilateral_contact": (("bilateral_contact",),),
+    "max_offset_from_tray_center_m": (("place_alignment", "offset_from_center_m"),),
+    "require_release": (("released",),),
+    "require_payload_in_tray": (("payload_in_tray",),),
+    "require_payload_confirmation": (("payload_on_target",),),
+    "max_accept_offset_m": (("offset_from_target_center_m",),),
+    "max_accept_speed_mps": (("last_speed_mps",),),
+}
+
+
+def _validate_criterion_tables():
+    """两张表必须**同步**（fail-closed）：否则新增判据时会出现"词表里有、证据来源没登记"的静默盲区。"""
+    spec, paths = set(CRITERION_SPEC), set(CRITERION_EVIDENCE_PATHS)
+    if spec != paths:
+        raise ScenarioError(
+            "判据表不同步：CRITERION_SPEC 与 CRITERION_EVIDENCE_PATHS 的差集 = %s / %s"
+            % (sorted(spec - paths), sorted(paths - spec)), EXIT_DECLARATION)
+
+
+def _skill_provides_evidence(action, paths, registry):
+    """该步骤技能的 output schema 能否产出这些证据路径之一；返回 True/False/None（None = 无法判定）。"""
+    if registry is None:
+        return None
+    skill = registry.resolve(str(action), "")
+    if skill is None:
+        return None
+    schema = (skill.manifest.output_schema or {})
+    evidence = (((schema.get("properties") or {}).get("evidence") or {}).get("properties") or {})
+
+    def has(path):
+        # ⚠ `evidence` **本身**就是 `properties` 字典（`...evidence.properties`）⇒ 顶层用包装包一层，
+        # 否则会多查一层 `properties` 而把所有判据都判成 False（本轮实测踩到：`nominal` 被预检误拒）。
+        node = {"properties": evidence}
+        for part in path:
+            properties = node.get("properties") if isinstance(node, dict) else None
+            if not isinstance(properties, dict) or part not in properties:
+                return False
+            node = properties[part]
+        return True
+
+    return any(has(list(path)) for path in paths)
+
+
 #: 可在报告中出现的测量量键（顺序固定，便于逐项比对）。
 MEASUREMENT_KEYS = ("sim_time_advance_s", "final_speed_mps", "wall_seconds", "evidence_duration_s",
                     "dock_translation_error_m", "dock_yaw_error_deg",
@@ -489,6 +550,7 @@ def resolve_param_sources(step, binding, root):
 
 
 def plan_steps(entry, index, contract, registry=None):
+    _validate_criterion_tables()
     """分类每一步：可执行 / 待交付跳过 / 引用失败。任何未登记的能力缺口都显式失败。"""
     plan = []
     for step in entry.get("steps") or []:
@@ -525,7 +587,24 @@ def plan_steps(entry, index, contract, registry=None):
                 % (record["id"], unknown),
                 EXIT_DECLARATION,
             )
-        unsupported = [key for key in record["criteria"] if key not in CRITERION_SPEC]
+        # 判据的"不可评测"有两个来源（§11.23(46)）：
+        #   ① 判据名不在词表 `CRITERION_SPEC` 里；
+        #   ② 判据在词表里，但**该步骤技能产不出**它要的证据（例如给 stand 配 pose_tolerance_m）。
+        # 两者都必须进 `unsupported`：待交付步骤登记它，会被下发的步骤则在预检显式失败（退出码 2）。
+        unsupported = []
+        for key in record["criteria"]:
+            if key not in CRITERION_SPEC:
+                unsupported.append(key)
+                continue
+            paths = CRITERION_EVIDENCE_PATHS.get(key, "MISSING")
+            if paths == "MISSING":
+                raise ScenarioError(
+                    "判据 %s 未在 CRITERION_EVIDENCE_PATHS 登记证据来源（两张表必须同步）" % key,
+                    EXIT_DECLARATION)
+            if paths is None:
+                continue                      # 来自后端状态/墙钟 ⇒ 任何步骤都可评测
+            if _skill_provides_evidence(record["action"], paths, registry) is False:
+                unsupported.append(key)
         if record["pending_closed_by"]:
             # **声明了待交付就是待交付**：该步不执行、不参与通过判定 —— 即使能力已经声明。
             # 为什么需要这条（2026-09-24 实测 s03_pick）：它的能力 `pick_object` 确实已声明，

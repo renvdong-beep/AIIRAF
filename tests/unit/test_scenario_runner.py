@@ -220,6 +220,10 @@ class PlanAndPreflightTests(RunnerFixture):
         self.assertNotIn("s02_dock", blocked)
 
     def test_dispatched_step_with_unevaluable_criteria_fails_preflight(self):
+        # 2026-09-28（甲案，§11.23(46)）：判据的"可评测性"现在按**该步骤技能的 output schema** 判定
+        # （`CRITERION_EVIDENCE_PATHS` 给出判据的 evidence 路径，`_skill_provides_evidence()` 查 schema）。
+        # `pose_tolerance_m` 的合法来源是 pick/place 的 `grasp_alignment/place_alignment.center_distance_m`
+        # ⇒ 给 `stand` 配它，预检即以退出码 2 拒绝（此前只查"判据名在不在词表"，会漏过、到运行期才红）。
         self.mutate_scenario(
             lambda doc: doc["scenarios"]["stand_stop"]["steps"][0].__setitem__(
                 "criteria", {"pose_tolerance_m": 0.005}
@@ -231,6 +235,20 @@ class PlanAndPreflightTests(RunnerFixture):
         self.assertEqual(code, scenario.EXIT_DECLARATION, msg=message)
         self.assertIn("没有评测依据的判据", message)
         self.assertIn("pose_tolerance_m", message)
+
+    def test_criterion_the_skill_cannot_produce_is_rejected(self):
+        """第二条负向用例（§11.23(46)）：判据与路径都合法，但**这个技能产不出** ⇒ 预检同样必须拒绝。"""
+        self.mutate_scenario(
+            lambda doc: doc["scenarios"]["stand_stop"]["steps"][0].__setitem__(
+                "criteria", {"min_lift_delta_m": 0.02}          # 只有 pick_object 产出 lift_delta_m
+            )
+        )
+        code, message = self.error_message(
+            "run", "--scene", str(self.package), "--scenario", "stand_stop"
+        )
+        self.assertEqual(code, scenario.EXIT_DECLARATION, msg=message)
+        self.assertIn("没有评测依据的判据", message)
+        self.assertIn("min_lift_delta_m", message)
 
     def test_unregistered_capability_fails_with_reference_code(self):
         def drop_registration(doc):
