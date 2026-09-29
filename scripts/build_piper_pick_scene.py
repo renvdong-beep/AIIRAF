@@ -448,6 +448,11 @@ def build_scene(
     approach_hold = str(gripper_cfg.get("approach_hold") or "none")
     # 抬升路径语义（声明透传；缺省 direct 但**显式写入报告**，后端据此选择单段或两段回放）
     lift_path = str((config.get("grasp") or {}).get("lift_path") or "direct")
+    # 抬升段夹爪语义（声明透传；**缺声明即失败**）：closed = 继续合拢（历史行为）；hold = 保持抓取瞬间的 ctrl
+    lift_gripper = str((config.get("grasp") or {}).get("lift_gripper") or "")
+    if lift_gripper not in ("hold", "closed"):
+        raise ValueError("grasp.lift_gripper 必须是 hold|closed（缺声明即失败，不给默认值），实际: %r"
+                         % (lift_gripper,))
     # **放下后的落稳窗**（2026-09-29 §11.23(47)）：声明透传；**缺声明即失败**（后端据此在抬离后
     # 先让载荷落稳再判"已放下"）。为什么不能给默认值：它是判据时序的一部分，猜一个数就等于
     # 把"载荷是否已静止在承载面上"这件事交给运气（世界固定托盘那次恰好落在承载面上，掩盖了很久）。
@@ -562,6 +567,7 @@ def build_scene(
         "close_hold": close_hold,
         "approach_hold": approach_hold,
         "lift_path": lift_path,
+        "lift_gripper": lift_gripper,
         "carry_constraint": carry_constraint,
         "place_settle_ms": place_settle_ms,
         # 放置点纠偏声明（**语义字典**：含字符串 mode + 数值上限）⇒ 必须**原样**透传：

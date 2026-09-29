@@ -1204,6 +1204,19 @@ class MujocoBackend:
             if lift_path_mode not in ("approach_then_lift", "direct"):
                 raise ValueError("gripper.lift_path 只允许 approach_then_lift|direct：%r"
                                  % (lift_path_mode,))
+            # **抬升段夹爪语义**（§11.23(48)）：`hold` ⇒ 目标取**抓取瞬间实测的 ctrl**，
+            # 不再下发 `closed`（实测抬升段持续合拢 3.89 mm，配合"上缘夹持"把载荷翻滚出 50.59°）。
+            lift_positions = gripper["lift_positions"]
+            if str(gripper.get("lift_gripper") or "closed") == "hold":
+                lift_positions = {str(k): float(v) for k, v in lift_positions.items()}
+                with self._data_lock:
+                    for name in (gripper.get("open_positions") or {}):
+                        jid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT,
+                                                self._model_name(str(name)))
+                        act = next((i for i in range(int(self.model.nu))
+                                    if int(self.model.actuator_trnid[i, 0]) == int(jid)), -1)
+                        if jid >= 0 and act >= 0 and str(name) in lift_positions:
+                            lift_positions[str(name)] = float(self.data.ctrl[act])
             self._log_pick_phase("LIFT", target_body)
             if lift_path_mode == "approach_then_lift" and approach_positions:
                 half = max(1, lift_ms // 2)
@@ -1211,11 +1224,11 @@ class MujocoBackend:
                                       self._pick_ctrl_offsets("approach"),
                                       sampler=_lift_sampler)
                 self._move_trajectory(
-                    gripper["lift_positions"], max(1, lift_ms - half),
+                    lift_positions, max(1, lift_ms - half),
                     self._pick_ctrl_offsets("lift"), sampler=_lift_sampler)
             else:
                 self._move_trajectory(
-                    gripper["lift_positions"], lift_ms, self._pick_ctrl_offsets("lift"),
+                    lift_positions, lift_ms, self._pick_ctrl_offsets("lift"),
                     sampler=_lift_sampler)
             if constraint_activated and gripper.get("lift_anchor_body"):
                 self._advance_with_grasp_anchor(0, target_body, left_body, right_body, gripper["lift_anchor_body"])
@@ -3180,6 +3193,14 @@ class MujocoBackend:
                     raise ValueError(
                         "夹爪配置的 place_settle_ms 必须是正整数（毫秒）：实际 %r" % (settle_ms,))
                 gripper["place_settle_ms"] = int(settle_ms)
+            # **抬升段夹爪语义**（字符串开关）：必须**原样**透传（落到通用"名字改写"分支会被当成
+            # 对象名去查、必然 fail-closed）。
+            lift_gripper = raw_gripper.get("lift_gripper")
+            if lift_gripper is not None:
+                if str(lift_gripper) not in ("hold", "closed"):
+                    raise ValueError("夹爪配置的 lift_gripper 必须是 hold|closed：实际 %r"
+                                     % (lift_gripper,))
+                gripper["lift_gripper"] = str(lift_gripper)
             # **放置点纠偏**（语义字典：字符串 mode + 数值上限）⇒ 必须**原样**透传：
             # 落到通用"名字改写/浮点转换"分支会把 mode 当名字、或 float("measure_only") 崩掉。
             # 声明合法性由共享函数 `resolve_place_pose_correction` 统一校验（唯一口径）。
