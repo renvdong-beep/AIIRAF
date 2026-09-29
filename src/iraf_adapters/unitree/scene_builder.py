@@ -1305,10 +1305,15 @@ def _joint_reference_resolution(root, solver, placement, robot_id, targets, mode
         _fail(EXIT_REFERENCE, "robots.%s.reference_solver.baseline 不存在: %s"
               % (robot_id, baseline_path))
     baseline_doc = _read_yaml(baseline_path, "robots.%s.reference_solver.baseline" % robot_id)
+    # ⚠ **三个分量必须同口径**：全部是**臂基座系**的局部坐标（`local`，见上）。
+    # 实测踩点（2026-09-28 §11.23(45)）：原先 z 传的是 `target_world[2]` ⇒ 基座在 z=0 时两种写法
+    # 等价、这个错处一直休眠；把基座抬到 0.15 后，s03 立刻报"末端未到达目标抓取位姿
+    # distance=0.150208 m"，z 偏差恰好等于基座高度（FK 实测指腹在 0.20392、方块 0.025、
+    # 设计差应为 pad_offset 0.0289，实际 0.17892 ⇒ 多出 0.150）。
     try:
         reference = entry(root, baseline_doc,
                           target_xy_override_m=[float(local[0]), float(local[1])],
-                          target_z_override_m=float(target_world[2]))
+                          target_z_override_m=float(local[2]))
     except Exception as error:  # noqa: BLE001 —— 统一转成构建失败，带中文原因
         _fail(EXIT_MODEL, "robots.%s.reference_solver.entry(%s) 求解失败: %s"
               % (robot_id, str(solver["entry"]), error))

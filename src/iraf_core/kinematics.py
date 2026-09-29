@@ -510,6 +510,7 @@ def gravity_hold_ctrl(
     hold_positions,
     hold_ms=4000,
     tolerance_rad=1e-3,
+    max_passes=None,
     use_keyframe=True,
 ):
     """求每个臂关节"抵消重力所需的 ctrl 增量"（伺服前馈）。
@@ -576,41 +577,53 @@ def gravity_hold_ctrl(
     data.qfrc_applied[:] = 0.0
     mujoco.mj_forward(model, data)
 
-    bias = np.asarray(data.qfrc_bias, dtype=float)
     dof_adr = [int(model.jnt_dofadr[joint]) for joint in joint_ids]
-    compensation = {
-        str(name): float(bias[dof_adr[index]] / gains[index])
-        for index, name in enumerate(arm_joints)
-    }
-    gravity_torque = {
-        str(name): round(float(bias[dof_adr[index]]), 6)
-        for index, name in enumerate(arm_joints)
-    }
-
-    for index, name in enumerate(arm_joints):
-        data.ctrl[actuator_ids[index]] = float(hold_positions[name]) + float(
-            compensation[str(name)]
-        )
     steps = max(1, int(round(float(hold_ms) / 1000.0 / float(model.opt.timestep))))
-    for _ in range(steps):
-        mujoco.mj_step(model, data)
-    mujoco.mj_forward(model, data)
-    residual = {
-        str(name): round(
-            float(data.qpos[qpos_adr[index]]) - float(hold_positions[name]), 9
-        )
-        for index, name in enumerate(arm_joints)
-    }
-    worst = max(abs(value) for value in residual.values())
+    # **定点迭代**（2026-09-28 §11.23(45)）：单次前馈按**指令位形**算 τ_g，而 PD 会停在
+    # `ctrl − τ_g/gain` ⇒ 若落点与指令位形差得多（本场景把臂基座抬高后位形更伸展），残差会超过
+    # 声明容差（实测 joint2 −0.003480159 rad > 0.001）。做法：在**落点**重新算 τ_g 并**累加**补偿，
+    # 迭代到收敛为止（首轮即收敛时与改动前**逐位一致**）。迭代上限由声明给出，不写默认值。
+    if not isinstance(max_passes, int) or isinstance(max_passes, bool) or max_passes <= 0:
+        raise KinematicsError("重力前馈必须声明 max_passes（正整数）；实现层不写默认值")
+    compensation = {str(name): 0.0 for name in arm_joints}
+    gravity_torque = {}
+    residual, worst, pass_trace = {}, float("inf"), []
+    for attempt in range(1, int(max_passes) + 1):
+        bias = np.asarray(data.qfrc_bias, dtype=float)
+        if attempt == 1:
+            gravity_torque = {
+                str(name): round(float(bias[dof_adr[index]]), 6)
+                for index, name in enumerate(arm_joints)
+            }
+        # ⚠ **替换**而不是累加（本轮实测：累加会发散 0.0035→0.0092→0.0160→0.0239）。
+        # 平衡关系 kp·(t + c − q) = τ_g(q) ⇒ 残差 r = q − t = c − τ_g(q)/kp ⇒ 令 r = 0 得
+        # c_{n+1} = τ_g(q_n)/kp；而落点处 `qfrc_bias` 正是 τ_g(q_n)（qvel=0）⇒ 每轮**重算并替换**。
+        for index, name in enumerate(arm_joints):
+            compensation[str(name)] = float(bias[dof_adr[index]] / gains[index])
+            data.ctrl[actuator_ids[index]] = (float(hold_positions[name])
+                                              + float(compensation[str(name)]))
+        for _ in range(steps):
+            mujoco.mj_step(model, data)
+        mujoco.mj_forward(model, data)
+        residual = {
+            str(name): round(float(data.qpos[qpos_adr[index]]) - float(hold_positions[name]), 9)
+            for index, name in enumerate(arm_joints)
+        }
+        worst = max(abs(value) for value in residual.values())
+        pass_trace.append({"pass": attempt, "worst_residual_rad": round(float(worst), 9)})
+        if worst <= float(tolerance_rad):
+            break
     if worst > float(tolerance_rad):
         raise KinematicsError(
-            "重力前馈验证未通过: 静态保持 %dms 后最大关节误差 %.9f rad（限 %.9f rad）"
-            "，残余=%s" % (hold_ms, worst, tolerance_rad, residual)
+            "重力前馈验证未通过: 静态保持 %dms × 最多 %d 轮后最大关节误差 %.9f rad（限 %.9f rad）"
+            "，残余=%s，每轮=%s" % (hold_ms, max_passes, worst, tolerance_rad, residual, pass_trace)
         )
     return (
         {name: round(float(value), 9) for name, value in compensation.items()},
         {
-            "method": "qfrc_bias_plus_static_hold",
+            "method": "qfrc_bias_static_hold_fixed_point_replace",
+            "passes": len(pass_trace),
+            "pass_trace": pass_trace,
             "gravity_torque_nm": gravity_torque,
             "actuator_gain": {
                 str(name): round(gains[index], 3)

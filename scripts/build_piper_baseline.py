@@ -73,6 +73,9 @@ def build_reference_feedforward(model, reference, baseline, prefix="", gripper_p
       后端按报告键直接寻址执行器，前缀漏掉会让前馈静默失效（表现为"精度莫名不达标"）。
     """
     ff_cfg = baseline.get("gravity_feedforward") or {}
+    max_passes = ff_cfg.get("max_passes")
+    if not isinstance(max_passes, int) or isinstance(max_passes, bool) or max_passes <= 0:
+        raise ValueError("基线必须声明 gravity_feedforward.max_passes（正整数）；实现层不写默认值")
     hold_ms = ff_cfg.get("hold_ms")
     tolerance_rad = ff_cfg.get("tolerance_rad")
     if not isinstance(hold_ms, int) or isinstance(hold_ms, bool) or hold_ms <= 0:
@@ -99,6 +102,7 @@ def build_reference_feedforward(model, reference, baseline, prefix="", gripper_p
         compensation, evidence = gravity_hold_ctrl(
             model, list(arm_here), hold_positions,
             hold_ms=int(hold_ms), tolerance_rad=float(tolerance_rad),
+            max_passes=int(max_passes),
         )
         feedforward[phase] = compensation
         feedforward_evidence[phase] = evidence
@@ -505,6 +509,14 @@ def build_reference_poses(root, baseline, target_id=None, target_xy_override_m=N
     # 指腹 geom 中心并不是抓取点：指尖比它再低约 50mm。
     # 直接用方块中心作为指尖中心会让指尖扎进工作台，因此按指尖离台间隙自动配平抓取高度。
     # 配平算法本体在 core（与机型无关，UR5e 侧同一份实现）。
+    #
+    # ⚠ **支撑面必须取"目标自身所在的平面"**（2026-09-28 §11.23(45)）：原先写死臂自己场景的
+    # `top_z` ⇒ 一旦调用方用 `target_z_override_m` 把目标搬到别的高度（联合场景里基座被抬高后
+    # 目标相对臂基座变成 −0.125 m，落在台面之下），配平会把目标**拉回台面附近**：实测 grasp 位形的
+    # 指腹中点比方块中心高 +0.17892（应为 pad_offset 0.0289）⇒ s03 报"未确认目标已抓取"。
+    # 默认情况（无覆盖）下 `grasp_target[2] - half_size == top_z` ⇒ **逐位不变**。
+    support_z = float(grasp_target[2]) - half_size
+
     def solve_for_clearance(target):
         return solve_finger_center_ik(
             model, data, target, arm_joints, left_geom, right_geom, solver_cfg
@@ -517,7 +529,7 @@ def build_reference_poses(root, baseline, target_id=None, target_xy_override_m=N
         base_target,
         direction,
         (left_geom, right_geom),
-        top_z,
+        support_z,
         tip_clearance,
         iterations=int(grasp_cfg.get("clearance_iterations", 8)),
     )
@@ -527,7 +539,7 @@ def build_reference_poses(root, baseline, target_id=None, target_xy_override_m=N
             "指尖离台间隙配平未收敛: tip_z=%.9f required=%.9f（轨迹 %d 步）"
             % (
                 float(last.get("tip_z_m", float("nan"))),
-                top_z + tip_clearance,
+                support_z + tip_clearance,
                 len(clearance_trace),
             )
         )
@@ -554,10 +566,10 @@ def build_reference_poses(root, baseline, target_id=None, target_xy_override_m=N
     pregrasp_direction = pregrasp_direction / pregrasp_norm
 
     approach_target = grasp_target_corrected + pregrasp_direction * offset
-    if float(approach_target[2]) <= top_z:
+    if float(approach_target[2]) <= support_z:
         raise ValueError(
             "预抓取位置未离开工作台: "
-            f"approach_z={float(approach_target[2]):.9f} workbench_top_z={top_z:.9f}"
+            f"approach_z={float(approach_target[2]):.9f} support_z={support_z:.9f}"
         )
     approach = solve_finger_center_pose(
         model, data, approach_target, arm_joints, arm_names, left_geom, right_geom, solver_cfg
@@ -636,7 +648,8 @@ def build_reference_poses(root, baseline, target_id=None, target_xy_override_m=N
         "clearance_trace": clearance_trace,
         "grasp_point_m": [round(float(value), 9) for value in base_target],
         "finger_center_m": grasp["finger_center_m"],
-        "target_z_m": top_z + half_size,
+        # 回写**实际**使用的目标 z（有 `target_z_override_m` 时就是它；默认情况等价于 top_z + half_size）
+        "target_z_m": float(grasp_target[2]),
         "lift_offset_m": lift_offset,
         "home": home_qpos,
         "approach": approach,
