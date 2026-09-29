@@ -172,11 +172,15 @@ class WorldFixedFramesTests(SceneBuilderFixture):
         self.assertTrue(report["injections"]["mount_frames"])
 
     def test_production_scene_declares_the_station_frame(self):
-        # 生产声明侧：站位帧确实在场景里，且注入为 world site（与上面的"无声明"路径成对）
+        # 生产声明侧：站位帧确实在场景里，且注入为 world site（与上面的"无声明"路径成对）。
+        # ⚠ 期望值**从声明派生**（2026-09-29）：写死 `["handoff_station_frame"]` 之后，
+        # 新增第二个停靠站位（B 站）立刻变成假失败并掩盖真实回归 —— 与 body 数/nbody 同一条纪律。
         report = self.build()
-        self.assertEqual([item["id"] for item in report["injections"]["world_frames"]],
-                         ["handoff_station_frame"])
-        self.assertIn("handoff_station_frame", report["model_facts"]["sites"])
+        scene = _load(self.scene_path)
+        expected = [str(frame["id"]) for frame in (scene.get("frames") or [])]
+        self.assertEqual([item["id"] for item in report["injections"]["world_frames"]], expected)
+        for frame_id in expected:
+            self.assertIn(frame_id, report["model_facts"]["sites"])
 
     def test_duplicate_name_fails_explicitly(self):
         # 与既有 site（托盘挂载参考系）重名 ⇒ 退出码 2，不静默改名
@@ -223,7 +227,20 @@ class InjectionTests(SceneBuilderFixture):
         # ⚠ body 数**从声明派生**（2026-09-29）：写死 20 之后，新增 `arm_pedestal` 这种合法改动
         # 立刻变成假失败（实测 21 != 20）并掩盖真实回归 —— 与本文件"道具清单也按声明派生"同一纪律。
         self.assertEqual(facts["ncam"], 1)
-        self.assertEqual(facts["nsite"], 4)
+        # nsite 也**从声明派生**（2026-09-29）：写死 4 之后，新增第二个停靠站位（B 站）
+        # 立刻变成假失败（5 != 4）并掩盖真实回归 —— 与 body 数同一条纪律。
+        expected_sites = 1  # 厂商自带的 imu site
+        expected_sites += len([frame for frame in (scene.get("frames") or [])])   # 场景 frames:
+        # ⚠ 只算**场景注入**的站点型传感器：`source: vendor` 的那条（imu）本身引用厂商 site，
+        # 已计入上面的 1 ⇒ 不加这个过滤会多算一次（实测 6 != 5，同一坑的第二种形态）。
+        expected_sites += len([sensor for sensor in scene["sensors"]
+                               if sensor["anchor"]["object_kind"] != "camera"
+                               and str(sensor.get("source")) != "vendor"])        # 场景注入的站点
+        mount_frames = {str((prop.get("pose") or {}).get("mount", {}).get("frame"))
+                        for prop in scene["props"] if (prop.get("pose") or {}).get("mount")}
+        mount_frames.discard("None")
+        expected_sites += len(mount_frames)                                       # 道具的挂载参考帧
+        self.assertEqual(facts["nsite"], expected_sites)
         self.assertEqual(facts["nbody"], 18 + len(scene["props"]))
         self.assertEqual(facts["nu"], 12)  # 四足 12 个力矩型 motor，未被改写
         self.assertEqual([item["name"] for item in report["sensors"]["injected"]], ["overhead_camera", "payload_lidar_site"])

@@ -1696,7 +1696,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                                  "last_speed_mps": facts["last_speed_mps"]}]}
 
     def dock_for_handoff(self, *, lease, position_tolerance_m, yaw_tolerance_rad,
-                         max_final_speed_mps, execution_id=None):
+                         max_final_speed_mps, station=None, execution_id=None):
         """闭环停靠：走到声明的**停靠目标帧**并停住。
 
         判据**由调用方传入**（场景步骤的 `criteria`；本方法不设默认值）：
@@ -1794,7 +1794,12 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             raise DeclarationError(
                 "dock_for_handoff.braking_lead_s 必须是 ≥ 0 的有限数，实际 %r" % (braking_lead_s,))
 
-        target_frame = str(section["target_frame"])
+        # ---- 目标**站位**解析（声明驱动；2026-09-29 加入：双臂轮转演示需要第二个站位）
+        # 形状与门禁见 `dock.resolve_dock_station`（纯函数、可单测）：
+        #   target_frame（默认站位的帧，旧行为不变）+ 可选 stations{站名→帧名} + default_station。
+        # 调用方**只能给站名**（不得给坐标/数字，见 skills/dock_for_handoff 输入契约）。
+        target_frame, station_name = dock_module.resolve_dock_station(section, station)
+
         frame_id = self.mujoco.mj_name2id(self.model, self.mujoco.mjtObj.mjOBJ_SITE, target_frame)
         frame_kind = "site"
         if frame_id < 0:
@@ -1961,6 +1966,10 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             "execution_id": report.get("execution_id"),
             "fencing_token": report.get("fencing_token"),
             "target_frame": target_frame,
+            # 站位名（声明 `dock_for_handoff.stations` 的键；未登记 stations 时为 None）。
+            # 为什么记它：站名才是"走到哪个站"的语义，帧名是它在场景里的实现；
+            # 两者都留痕 ⇒ 报告可自证"这一步停的是 A 站还是 B 站"。
+            "station": station_name,
             "target_frame_kind": frame_kind,
             # 目标帧的所属 body 与「是否世界固定」进报告：自指帧会让误差恒为偏置投影
             # （实测 3.632386e-05 m），必须能一眼看出目标帧挂在谁身上（见 dock 门禁）。

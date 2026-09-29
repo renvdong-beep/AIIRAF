@@ -637,6 +637,18 @@ dock_for_handoff:
   # 第 0 拍就"在位"，接近过程从未执行（36 µm 是帧本地偏置的投影，不是停靠精度）。
   # 适配器现在会在执行前显式拒绝这类自指目标帧（提交 ba22c9e）。
   target_frame: handoff_station_frame
+  # **站位注册表**（2026-09-29 加入，双臂轮转演示）：调用方按**站名**选择停靠目标，
+  # 站名 → 场景帧名（帧由 `scenes/handoff_lab/scene.yaml` 的 frames 段注入模型）。
+  # 为什么要有它：把"走到哪个站"变成**声明事实**，新站位只改声明、不动核心代码与技能
+  # （AGENTS.md 6.3）；调用方**只能给站名**，不得给坐标或容差（见 skills/dock_for_handoff 输入契约）。
+  # 自洽门禁（适配器执行前校验）：`target_frame` 必须等于 `stations[default_station]`
+  # —— 同一事实不出现两处，写歪了直接显式失败。
+  stations:
+    # A 站：Piper 侧交接站位（既有的、已验收的那个）。
+    handoff_a: handoff_station_frame
+    # B 站：UR5e 侧交接站位（新增）。位置依据见 scene.yaml 的 frames 段（可达环带 + 四足工作空间）。
+    handoff_b: handoff_station_frame_b
+  default_station: handoff_a
   # 接近速度上限（m/s）：必须 ≤ 安全策略 max_speed_mps=0.5；只允许收紧。
   # 初始档 0.15 是"慢速接近"的工程选择，**待按停靠判据标定**（标定后在声明里写明扫描范围与依据）。
   approach_speed_mps: 0.15

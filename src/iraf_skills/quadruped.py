@@ -644,18 +644,25 @@ class DockForHandoffProvider:
                      "settled_at_s", "final_translation_error_m", "final_yaw_error_deg",
                      "final_speed_mps")
 
+    #: 允许的输入键：**只有站名**。为什么只允许名字（2026-09-29 双臂轮转演示引入第二个站位）：
+    #: 停靠目标是场景事实、且站位数量会增长 ⇒ 站名登记在机型声明里（`dock_for_handoff.stations`），
+    #: 步骤只按名选择；坐标/容差等数字一律不得由调用方给（与原"无参数"契约同一纪律）。
+    ALLOWED_INPUTS = ("station",)
+
     def __init__(self, profile, backend):
         self.profile = profile
         self.backend = backend
 
     def execute(self, inputs, lease):
-        if inputs:
+        unknown = sorted(str(key) for key in (inputs or {}) if str(key) not in self.ALLOWED_INPUTS)
+        if unknown:
             raise SkillContractError(
-                "dock_for_handoff 不接受参数（接近参数与验收判据来自机型声明）：实际 %s"
-                % sorted(inputs))
+                "dock_for_handoff 只接受站位名 `station`（接近参数与验收判据全部来自机型声明），"
+                "不接受其它键：%s" % unknown)
+        station = (inputs or {}).get("station")
         acceptance = self.backend.dock_acceptance()      # 来自声明；本层不写数字
         # 适配器签名是 keyword-only（`def dock_for_handoff(self, *, lease, ...)`）
-        report = self.backend.dock_for_handoff(lease=lease, **acceptance)
+        report = self.backend.dock_for_handoff(lease=lease, station=station, **acceptance)
         # **显式结论**（2026-09-28 §11.23(34)）：停靠未完成时后端只把 `failure` 放进报告、
         # 终态量取不到实数（`final_speed_mps` 会是 None）⇒ 若直接返回，契约会以
         # "Provider output does not match schema: None is not of type 'number'" 报错，

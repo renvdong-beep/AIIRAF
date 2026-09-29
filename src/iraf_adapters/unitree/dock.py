@@ -15,7 +15,7 @@ from __future__ import annotations
 import math
 
 __all__ = ["pose_error", "approach_command", "stopping_distance_m",
-           "assert_target_is_world_fixed", "DOCK_DEFAULTS_FORBIDDEN"]
+           "resolve_dock_station", "assert_target_is_world_fixed", "DOCK_DEFAULTS_FORBIDDEN"]
 
 
 class DockDeclarationError(ValueError):
@@ -122,6 +122,54 @@ def stopping_distance_m(v_measured_mps, braking_lead_s, min_distance_m):
     if v < 0.0:
         raise DockDeclarationError("v_measured_mps 必须 ≥ 0（速度模长），实际 %r" % (v_measured_mps,))
     return max(floor, lead * v)
+
+
+def resolve_dock_station(section, station=None):
+    """把**站名**解析成场景帧名（声明驱动；纯函数，不碰模型）。
+
+    声明形状（机型声明的 `dock_for_handoff` 段）：
+      · `target_frame: <帧名>`            —— 默认站位的帧（旧行为的唯一事实来源，保留）
+      · `stations: {<站名>: <帧名>, ...}`  —— 可选；有它才能**按站名**选择
+      · `default_station: <站名>`          —— 有 stations 时必需，其帧必须 == target_frame
+
+    为什么要有这一层（2026-09-29，双臂轮转演示需要第二个站位）：
+      · "走到哪个站"是**场景事实**，且站位数量随演示增长 ⇒ 站名进声明，新站位只改声明；
+      · 调用方**只能给站名**（坐标、容差、速度等数字一律来自声明，见
+        `skills/dock_for_handoff/dock_for_handoff.input.json` 的输入契约）；
+      · 缺声明即显式失败，不猜（`DOCK_DEFAULTS_FORBIDDEN` 同一纪律）。
+
+    返回 `(target_frame, station_name)`；未登记 stations 时 station_name 为 None。
+    """
+    target_frame = str(section["target_frame"])
+    stations = section.get("stations")
+    if stations is None:
+        if station is not None and str(station) != "":
+            raise DockDeclarationError(
+                "调用方指定了站位 %r，但声明 dock_for_handoff 没有 stations 登记 ⇒ 无法解析站名"
+                "（要么在声明里登记站位，要么不要指定）" % (station,))
+        return target_frame, None
+    if not isinstance(stations, dict) or not stations:
+        raise DockDeclarationError("dock_for_handoff.stations 必须是非空对象（站名 → 场景帧名）")
+    default_station = section.get("default_station")
+    if not isinstance(default_station, str) or not default_station:
+        raise DockDeclarationError(
+            "声明了 dock_for_handoff.stations 就必须声明 default_station（缺省值必须显式给出，不猜）")
+    if str(default_station) not in stations:
+        raise DockDeclarationError(
+            "dock_for_handoff.default_station=%r 不在 stations 里：%s"
+            % (default_station, sorted(str(key) for key in stations)))
+    # 自洽门禁：默认站位的帧必须与 target_frame 逐字相同（同一事实不出现两处）
+    if str(stations[str(default_station)]) != target_frame:
+        raise DockDeclarationError(
+            "dock_for_handoff.target_frame=%r 与 stations[%r]=%r 不一致："
+            "target_frame 记的就是默认站位的帧，两处必须一致"
+            % (target_frame, default_station, stations[str(default_station)]))
+    station_name = str(station) if station else str(default_station)
+    if station_name not in stations:
+        raise DockDeclarationError(
+            "未知站位 %r：声明登记的站位是 %s（站名只能来自声明，不接受坐标）"
+            % (station_name, sorted(str(key) for key in stations)))
+    return str(stations[station_name]), station_name
 
 
 def assert_target_is_world_fixed(*, frame_label, frame_kind, frame_body_id, frame_body_label,

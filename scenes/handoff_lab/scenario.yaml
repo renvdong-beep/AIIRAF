@@ -170,6 +170,36 @@ scenarios:
           require_payload_confirmation: true
           max_accept_offset_m: 0.06
           max_accept_speed_mps: 0.01
+      # 【2026-09-29 新增 · I2】s02b：从 A 站走到**B 站**（第二台臂 UR5e 侧）并停靠。
+      # 为什么排在这里：前面的 s03/s04 是"Piper 把方块放进**停在 A 站**的托盘"，
+      # 全程要求狗在 A 站 ⇒ 换站必须发生在载荷确认**之后**（改前序步骤的时序会废掉既有验收数字）。
+      # 目标用**站名**（声明 config/go2_joint.yaml 的 dock_for_handoff.stations.handoff_b），
+      # 步骤里**不出现坐标**；`station` 是 dock_for_handoff 唯一允许的输入键（见技能输入契约）。
+      # 判据与 s02 同口径（同一停靠能力、同一测量依据：技能 evidence 的
+      # final_translation_error_m / |final_yaw_error_deg| / final_speed_mps）。
+      - id: s02b_dock_station_b
+        action: dock_for_handoff
+        robot: unitree_go2
+        params:
+          station: handoff_b
+        criteria:
+          translation_error_max_m: 0.03
+          yaw_error_max_deg: 2.0
+          max_speed_m_s: 0.05
+      # 【2026-09-29 新增 · I2】s05b：到达 B 站后**再复核一次载荷仍在托盘**。
+      # 为什么必须有（不是重复劳动）：s04/s05 证明的是"停在 A 站时载荷进了托盘"；
+      # 狗从 A 走到 B 是**带载行走**，方块可能被颠出托盘 ⇒ 这一段必须有自己的实测证据，
+      # 否则"运输"就只是"走过去"而没有"东西还在"。判据与 s05 同口径（同一测量函数）。
+      - id: s05b_confirm_payload_at_b
+        action: accept_payload
+        robot: unitree_go2
+        params:
+          payload_id: box_01
+          place_target_id: tray_01
+        criteria:
+          require_payload_confirmation: true
+          max_accept_offset_m: 0.06
+          max_accept_speed_mps: 0.01
     faults: []
 
   fault_sensor_loss:

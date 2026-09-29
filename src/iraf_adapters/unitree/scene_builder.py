@@ -965,6 +965,46 @@ def _child_compiler_dirs(child_path):
     return meshdir, assetsdir
 
 
+def _declared_actuator_ctrl(child_path, home, robot_id):
+    """按子模型自己的 `<actuator>` 声明，给出**每个执行器的关键帧 ctrl**（声明驱动，不猜）。
+
+    为什么必须（2026-09-29 实测，**真缺陷**）：`MjSpec.attach` 会把关键帧的 ctrl 用**零**扩展，
+    而 ctrl=0 对**位置执行器**意味着"目标关节角 = 0" ⇒ 附加本体一上电就**摆到零位**。
+    实测（联合产物关键帧）：`ur5e_shoulder_pan` ctrl=0 而 qpos=−1.570800（差 −1.570800）、
+    `ur5e_elbow` ctrl=0 而 qpos=+1.570800（差 +1.570800）。
+    Piper 的零位恰好"在臂上方"（且它自己的场景构建器写过 ctrl），所以这个缺陷一直藏着；
+    UR5e 的摆动会扫过四足走的走廊 ⇒ 表现成整株植物失稳
+    （`Nan, Inf or huge value in QACC at DOF 0 ... Time = 276.802`，s01 末速 131.3 m/s）。
+
+    口径：ctrl = `home[joint] / gear`（位置执行器 gear 通常 1；用 gear 换算而不是直接抄角度，
+    因为 ctrl 是**执行器空间**的量）；执行器的传输**不是关节**（如 2F-85 的指爪走 tendon）
+    时取 0.0（与厂商 keyframe 的 0 一致）并登记来源；传输是关节但**未在 Profile 声明初值**
+    ⇒ 显式失败（与 qpos 那条规则同源，禁止用零顶替）。
+    """
+    root = ET.parse(str(child_path)).getroot()
+    section = root.find("actuator")
+    rows = []
+    if section is None:
+        return rows
+    for node in section:
+        joint = node.get("joint")
+        gear = float(node.get("gear") or 1.0)
+        name = str(node.get("name") or "<unnamed>")
+        if joint and str(joint) in home:
+            rows.append({"actuator": name, "joint": str(joint),
+                         "ctrl": float(home[str(joint)]) / (gear if gear else 1.0),
+                         "gear": gear, "source": "declared_home_div_gear"})
+        elif joint:
+            _fail(EXIT_DECLARATION,
+                  "附加本体 %s 的执行器 %s 的传输关节 %s 未在 Profile 声明关键帧初值"
+                  "（spec.home / spec.model.home / spec.gripper.open_positions 之一）"
+                  "：缺声明即失败，不用 0 顶替" % (robot_id, name, joint))
+        else:
+            rows.append({"actuator": name, "joint": None, "ctrl": 0.0, "gear": gear,
+                         "source": "no_joint_transmission_zero"})
+    return rows
+
+
 def _child_asset_source(record, path):
     """按**子模型自己的编译器规则**列出源文件候选（meshdir → assetsdir → 子模型目录），取首个存在的文件。
 
@@ -996,13 +1036,20 @@ def _attach_robots(staging, scene, root, attached_ids):
 
     staging_parsed = ET.parse(str(staging)).getroot()
     key_qpos_by_index = {}
+    key_ctrl_by_index = {}
     for parsed_key in staging_parsed.find("keyframe") or []:
         if parsed_key.tag == "key" and parsed_key.get("qpos"):
             key_qpos_by_index[len(key_qpos_by_index)] = [
                 float(v) for v in parsed_key.get("qpos").split()]
+        if parsed_key.tag == "key" and parsed_key.get("ctrl") is not None:
+            key_ctrl_by_index[len(key_ctrl_by_index)] = [
+                float(v) for v in (parsed_key.get("ctrl") or "").split()]
     spec = mujoco.MjSpec.from_file(str(staging))
     records = []
     attached_robot_values = []
+    # 关键帧 **ctrl** 的附加部分（每个附加本体一组，顺序与 attached_ids / 子模型 actuator 声明一致）：
+    # 与 qpos 分开收集，因为它们长度不同（qpos 含自由关节/全部关节，ctrl 只有执行器）。
+    attached_ctrl_values = []
     # 指爪 geom 的**声明名**占用表（跨附加本体）：重名即显式失败，见下方注释（MuJoCo 允许 geom 重名，
     # 但按名字解析会静默指到任意一个 ⇒ 不能让"附加顺序"变成隐式语义）。
     claimed_finger_geoms = set()
@@ -1081,6 +1128,10 @@ def _attach_robots(staging, scene, root, attached_ids):
         for bucket in ("bodies", "geoms", "sites", "joints"):
             _collect_names(bucket, getattr(child, bucket, []) or [])
         declared_names = {key: sorted(value) for key, value in declared_sets.items()}
+        # 关键帧 ctrl：附加本体的执行器必须**按声明保持初值**（否则位置执行器把它们驱到零位，
+        # 详见 `_declared_actuator_ctrl` 的说明与实际故障记录）。顺序 = 子模型 <actuator> 的声明顺序。
+        ctrl_rows = _declared_actuator_ctrl(child_path, home, robot_id)
+        attached_ctrl_values.append([row["ctrl"] for row in ctrl_rows])
         prefix = "%s_" % robot_id
         # MjSpec 需要**数值列表**（`_numbers()` 是给 XML 属性用的字符串，别混用）
         frame = spec.worldbody.add_frame(pos=[float(v) for v in pos],
@@ -1156,6 +1207,8 @@ def _attach_robots(staging, scene, root, attached_ids):
                         # 执行器刚度口径的留痕（声明出处 / 逐关节 kp_before→kp_after / 规则）
                         "position_gain": gain_record,
                         "home_joints": len(joint_values),
+                        # 关键帧 **ctrl** 的逐执行器来源（声明驱动；0 只出现在"传输非关节"的情形）
+                        "keyframe_ctrl": ctrl_rows,
                         "keyframes_extended": len(list(getattr(spec, "keys", []) or []))})
     # ---- 关键帧：**覆写**为「主模型关键帧 + 各附加本体的声明初值」（所有本体附加完成后统一做）
     # ⚠ 两处实测教训：① `attach()` 可能自行扩展主模型的关键帧 ⇒ 必须覆写而不是追加；
@@ -1167,6 +1220,20 @@ def _attach_robots(staging, scene, root, attached_ids):
         for index, key in enumerate(list(getattr(spec, "keys", []) or [])):
             base = key_qpos_by_index.get(index, base_qpos)
             key.qpos = list(base) + flat
+    if attached_ctrl_values:
+        ctrl_flat = [value for values in attached_ctrl_values for value in values]
+        base_ctrl = [float(v) for v in key_ctrl_by_index.get(0, [])]
+        for index, key in enumerate(list(getattr(spec, "keys", []) or [])):
+            base = key_ctrl_by_index.get(index, base_ctrl)
+            # ⚠ 长度必须等于 nu（主模型执行器数 + 附加本体执行器数）；不等即显式失败 ——
+            # 静默写错长度会得到"某个执行器拿了别人的 ctrl"这种最难查的错。
+            expected = len(base) + len(ctrl_flat)
+            if expected != len(list(getattr(spec, "actuators", []) or [])):
+                _fail(EXIT_MODEL,
+                      "关键帧 ctrl 长度自检失败：%d（主模型 %d + 附加 %d）≠ 模型执行器数 %d"
+                      % (expected, len(base), len(ctrl_flat),
+                         len(list(getattr(spec, "actuators", []) or []))))
+            key.ctrl = list(base) + ctrl_flat
 
     # ---- 资产自包含（A1）：两个本体的 meshdir 不同 ⇒ 合成后相对路径互指（实测
     # `.../piper_description/mujoco_model/../../../vendor/unitree_go2/.../base_link.STL` 不存在）。

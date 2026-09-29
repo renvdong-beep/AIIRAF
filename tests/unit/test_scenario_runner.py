@@ -529,13 +529,18 @@ class RealSimulationTests(RunnerFixture):
                                              if item != "dock_for_handoff"]
 
         def restore_pending(scenario_doc):
-            # ⚠ 必须把**两处**引用同一能力的步骤都退回待交付：场景包的预检是**包级**的，
+            # ⚠ 必须把**所有** dock 步骤都退回待交付：场景包的预检是**包级**的，
             # 只补 fault_sensor_loss.f02_dock 会让 nominal.s02_dock 变成"未登记待交付"⇒ 退出码 3
             #（实测踩点：初次只补一处，得到 3 != 0）。
+            # ⚠ 2026-09-29 再修：改为**按声明遍历**（原先写死 `steps[1]`）—— 本轮新增第二个停靠步骤
+            #（nominal.s02b_dock_station_b，B 站）后，写死的下标漏掉了它 ⇒ 又得到 3 != 0。
+            # 与本仓库"夹具不得依赖声明的顺序/数量"同一纪律（同类坑已第三次）。
             entry = {"pending_closed_by": "步骤 18",
                      "pending_reason": "夹具：把注入点退回待交付，验证「未注入」如实登记"}
-            scenario_doc["scenarios"]["fault_sensor_loss"]["steps"][1].update(entry)
-            scenario_doc["scenarios"]["nominal"]["steps"][1].update(dict(entry))
+            for scenario_name in ("nominal", "fault_sensor_loss"):
+                for step in scenario_doc["scenarios"][scenario_name]["steps"]:
+                    if step.get("action") == "dock_for_handoff":
+                        step.update(dict(entry))
 
         self.mutate_scene(drop_capability)
         self.mutate_scenario(restore_pending)
