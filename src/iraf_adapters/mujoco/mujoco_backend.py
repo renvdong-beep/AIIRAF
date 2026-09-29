@@ -1172,9 +1172,20 @@ class MujocoBackend:
                                 if int(self.model.actuator_trnid[i, 0]) == int(jid)), -1)
                     state[str(name)] = {"qpos": round(float(self.data.qpos[int(self.model.jnt_qposadr[jid])]), 9),
                                         "ctrl": (round(float(self.data.ctrl[act]), 9) if act >= 0 else None)}
+                # ⚠ 必须同时记**腕部**姿态（§11.23(48)）：只有"载荷在转"分不清是"工具带着转"
+                # 还是"载荷在夹口里滑" ⇒ 两者的修法完全不同（前者改求解时的姿态约束，
+                # 后者改夹紧力/倾覆力矩）。指腹开合轴也记下来（夹口朝向的直接证据）。
+                wrist_q = np.asarray(self.data.xquat[self._body_id(str(gripper["wrist_body"]))],
+                                     dtype=float)
+                span = (np.asarray(self.data.geom_xpos[pad_geoms[1]], dtype=float)
+                        - np.asarray(self.data.geom_xpos[pad_geoms[0]], dtype=float)) \
+                    if len(pad_geoms) >= 2 and pad_geoms[0] >= 0 and pad_geoms[1] >= 0 \
+                    else np.zeros(3)
                 row = {"step": int(step), "plant_step_index": int(self.plant.step_index),
                        "payload_pos_m": [round(float(v), 6) for v in self.data.xpos[target_body]],
                        "payload_quat_wxyz": [round(float(v), 9) for v in self.data.xquat[target_body]],
+                       "wrist_quat_wxyz": [round(float(v), 9) for v in wrist_q],
+                       "pad_span_m": [round(float(v), 6) for v in span],
                        "pad_mid_m": [round(float(v), 6) for v in mid],
                        "gripper": state, "contacts": contacts}
             lift_samples.append(row)
