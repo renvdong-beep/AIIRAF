@@ -63,8 +63,8 @@ grasp:
     # 双侧力 0 N）⇒ 腰部夹持是**边缘状态**，根因是实测夹持点在载荷中心**下方 43 mm**
     # （`regrasp.pad_minus_payload_z_m = −0.043291`，目标口径已按 pad_offset 修正但仍偏）
     # ⇒ **先标定握位再启用**（下一步），不把颤动状态留在仓库。
-    enabled: false
-    hold_pre_lift: false
+    enabled: true
+    hold_pre_lift: true
     # **regrasp 的目标口径**（2026-09-29 §11.23(48)）：
     #   payload_mid             = 夹爪下探到**载荷腰身中点**：目标 = 抓取点 + pre_lift − **pad_offset**
     #                             （pad_offset = 指腹中点比抓取点高多少，本场景 0.032016224）

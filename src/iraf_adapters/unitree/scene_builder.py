@@ -470,6 +470,12 @@ def _inject_props(
                 mass="%.9f" % float(prop["mass_kg"]),
                 material=material_name,
                 friction=str(prop["friction"]),
+                # **道具的接触 margin 必须显式写 0**（2026-09-29 §11.23(48)）：挂到本体上的道具位于
+                # 厂商 `<default class=...>` 作用域内 ⇒ 会继承厂商的 `margin="0.001"`，而挂在 worldbody
+                # 上的道具是引擎默认 0 ⇒ 同一对"载荷-托盘"geom 的接触判定踩在 ~0.65 mm 刀口上
+                # （实测 gap 0.000627866 有接触通过、0.000675377 无接触失败）。显式 0 = 引擎默认值，
+                # 不引入实现层新数字，只是**不再继承**厂商宽容度，判据完全由物理接触决定。
+                margin="0",
                 **attributes,
             )
             record["mount"] = {"frame": frame_name, "entity": entity, "body": body_name}
@@ -500,6 +506,12 @@ def _inject_props(
                 mass="%.9f" % float(prop["mass_kg"]),
                 material=material_name,
                 friction=str(prop["friction"]),
+                # **道具的接触 margin 必须显式写 0**（2026-09-29 §11.23(48)）：挂到本体上的道具位于
+                # 厂商 `<default class=...>` 作用域内 ⇒ 会继承厂商的 `margin="0.001"`，而挂在 worldbody
+                # 上的道具是引擎默认 0 ⇒ 同一对"载荷-托盘"geom 的接触判定踩在 ~0.65 mm 刀口上
+                # （实测 gap 0.000627866 有接触通过、0.000675377 无接触失败）。显式 0 = 引擎默认值，
+                # 不引入实现层新数字，只是**不再继承**厂商宽容度，判据完全由物理接触决定。
+                margin="0",
                 **attributes,
             )
             record["pose_source"] = "world_static" if static else "world"
@@ -1758,6 +1770,40 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
         replaced[phase] = {"positions_key": positions_key,
                            "replaced_joints": [item["joint"] for item in diff],
                            "diff_vs_inherited": diff}
+    # **regrasp 两段必须同样按联合模型重解**（2026-09-29 §11.23(48)）：它们此前**不在覆写清单里**
+    # ⇒ 原样继承臂侧世界的位形（臂基座在原点、方块在腕高的那个世界）⇒ 在"臂被抬高 0.12 m"的联合
+    # 世界里同一组关节角指向完全不同的位置：实测 pre_lift_delta_m 0.174019（声明 0.04）、
+    # 工具多走 175 mm、载荷被顶到夹口上方 ⇒ regrasp 随机失败。
+    # 判据（构建期自证）：当 placement 把臂**抬高**（z ≠ 0）时，重解结果**必须**与继承值不同
+    # ⇒ 相同即 fail-closed（这类"静默继承"不可能再溜过去）。
+    regrasp_reference = (resolution["reference"].get("regrasp") or {})
+    if regrasp_reference:
+        lift_z = float(placement.get("pos_m")[2]) if isinstance(placement.get("pos_m"), (list, tuple)) \
+            else 0.0
+        for label, positions_key, pose_key in (("pre_lift", "pre_lift_positions", "pre_lift"),
+                                               ("regrasp", "regrasp_positions", "regrasp")):
+            pose = regrasp_reference.get(pose_key)
+            merged = dict(out_gripper.get(positions_key) or {})
+            if not pose or not merged:
+                continue
+            diff = []
+            for name, value in (pose.get("joint_positions") or {}).items():
+                model_name = rename(name)
+                previous = merged.get(model_name)
+                if previous is None or abs(float(previous) - float(value)) > 0.0:
+                    diff.append({"joint": model_name,
+                                 "inherited": (None if previous is None else float(previous)),
+                                 "resolved": float(value)})
+                merged[model_name] = float(value)
+            out_gripper[positions_key] = merged
+            replaced[label] = {"positions_key": positions_key,
+                               "replaced_joints": [item["joint"] for item in diff],
+                               "diff_vs_inherited": diff}
+            if lift_z != 0.0 and not diff:
+                _fail(EXIT_REFERENCE,
+                      "regrasp.%s 的联合重解与臂侧继承值**逐位相同**，而 placement 抬高了 %.6f m "
+                      "⇒ 说明重解没有真正发生（场景专属位形被静默继承，§11.23(48) 的同类缺陷）"
+                      % (label, lift_z))
     inherited_pad_offset = out_gripper.get("pad_offset_m")
     out_gripper["pad_offset_m"] = float(resolution["pad_offset_m"])
     # 放置段（`place_object`）的接近/抬离间隙：取臂侧**已声明**的 `pregrasp_offset_m`
