@@ -1454,6 +1454,56 @@ def _load_declared_callable(root, declaration, robot_id, purpose):
     return entry, module_path
 
 
+def _measure_grip_height_m(model, gripper, targets):
+    """在**已验证的 pick 抓取位形**上 FK，实测「指腹中点 − 载荷中心」= 夹口高度（m）。
+
+    为什么必须实测（2026-09-29 §11.25(f-2)）：place 段原先复用 pick 侧的 `pad_offset_m`，而那个名字
+    在 pick 侧指"指尖离台配平的修正量"（本场景 joint 解析 0.032016224），不是本段需要的
+    `pad_mid − 载荷中心`（同场景实测 0.0437 − 0.025 = 0.0187）⇒ 相差 13.3 mm ⇒ 方块在承载面上方
+    13.3 mm 被松手（再叠加托盘比名义低 7.6 mm = 实测 20.9 mm 落差）⇒ 落点双峰（托盘内/台面）。
+
+    口径与判据/后端一致：指腹中点 = **双侧 pad geom 的中点**（声明名，非 body 中心）；
+    载荷中心 = 目标 body 在联合模型里的 FK 位置（报告 `targets[].position_m`，来源 joint_model_fk）。
+    返回 (grip_height_m, 证据 dict)。缺输入即显式失败（不猜、不用 0 兜底）。
+    """
+    positions = {str(k): float(v) for k, v in (gripper.get("grasp_positions") or {}).items()}
+    pad_names = [str(gripper.get(key) or "") for key in ("left_finger_geom", "right_finger_geom")]
+    if not positions:
+        _fail(EXIT_REFERENCE, "无法实测夹口高度：报告 gripper 缺少 grasp_positions")
+    if not all(pad_names):
+        _fail(EXIT_REFERENCE, "无法实测夹口高度：报告 gripper 未声明 left/right_finger_geom")
+    target = (targets or [{}])[0]
+    if target.get("position_m") is None:
+        _fail(EXIT_REFERENCE, "无法实测夹口高度：目标缺少 position_m（联合模型 FK 结果）")
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    for name, value in positions.items():
+        joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+        if joint_id < 0:
+            _fail(EXIT_REFERENCE, "夹口高度实测：抓取位形里的关节 %r 不在联合模型里" % name)
+        data.qpos[int(model.jnt_qposadr[joint_id])] = value
+    mujoco.mj_forward(model, data)
+    points = []
+    for name in pad_names:
+        geom_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, name)
+        if geom_id < 0:
+            _fail(EXIT_REFERENCE, "夹口高度实测：指腹 geom %r 不在联合模型里" % name)
+        points.append(np.asarray(data.geom_xpos[geom_id], dtype=float))
+    pad_mid_z = float((points[0] + points[1])[2] / 2.0)
+    payload_center_z = float(target["position_m"][2])
+    height = pad_mid_z - payload_center_z
+    # 合理性闸：夹口高度是"指腹在载荷中心上方多少"，本场景量级 1~5 cm；越界说明位形/位姿不匹配
+    if not (0.0 < height < 0.2):
+        _fail(EXIT_MODEL,
+              "夹口高度实测不合理（%.9f m；pad_mid_z=%.9f − 载荷中心 z=%.9f）："
+              "检查报告里的 grasp_positions 与 targets[].position_m 是否来自同一模型"
+              % (height, pad_mid_z, payload_center_z))
+    return height, {"grip_height_m": height, "pad_mid_z_m": pad_mid_z,
+                    "payload_center_z_m": payload_center_z, "pad_geoms": pad_names,
+                    "source": "FK@报告 gripper.grasp_positions（联合模型）",
+                    "replaces": "pick 侧 pad_offset_m（含义不同，差 13.3 mm）"}
+
+
 def _joint_reference_resolution(root, solver, placement, robot_id, targets, model, prefix):
     """在**臂基座系**重解参考姿态：目标换算 → **按声明**调用求解器 → 校验输出。
 
@@ -1596,7 +1646,7 @@ def _joint_reference_feedforward(root, solver, model, resolution, prefix, grippe
 
 
 def _joint_place_resolution(root, solver, resolution, place_targets, arm_report, out_gripper,
-                            rename, model, prefix="", carrier_trunk=""):
+                            rename, model, prefix="", carrier_trunk="", pick_targets=None):
     """按声明解出**放置四段**（关节空间）并写进报告的 gripper 段。
 
     为什么构建期（§11.16）：已验证的 pick 能抬 88 mm 靠的是**构建期求解器**给的关节空间位形，
@@ -1637,6 +1687,19 @@ def _joint_place_resolution(root, solver, resolution, place_targets, arm_report,
             [0.0, 0.0, float(item["size_m"][2])], dtype=float)
         local = rotation.T @ (top_world - base_pos)
         pad_offset = float(resolution["pad_offset_m"])
+        # ---- 夹口高度：**构建期实测**（替代含义不同的 pick 侧 pad_offset，见 §11.25(f-2)）
+        # ⚠ 必须用**联合模型 FK 出来的** pick 目标（`pick_targets[].position_m`，
+        # 由 `_joint_manipulation` 在本模型上算得），不能用臂侧报告里的坐标
+        # （那是臂自己场景的位置，联合场景可能不同）。
+        grip_height, grip_evidence = _measure_grip_height_m(
+            model, out_gripper, pick_targets or (arm_report or {}).get("targets") or [])
+        # 触地间隙：必须由声明给出（缺声明即失败，不猜）
+        touch_clearance = (baseline_doc.get("grasp") or {}).get("place_touch_clearance_m")
+        if (not isinstance(touch_clearance, (int, float)) or isinstance(touch_clearance, bool)
+                or float(touch_clearance) < 0.0):
+            _fail(EXIT_REFERENCE,
+                  "基线 %s 缺少 grasp.place_touch_clearance_m（触地间隙=下降终点让载荷最低点停在"
+                  "承载面上方多少；缺声明即失败，不用 0 兜底）" % baseline_path.name)
         # 放置段的净间隙：优先用基线声明的 `grasp.place_clearance_m`（与 pick 的 pregrasp_offset 分开），
         # 缺声明则回退到 pregrasp_offset_m（行为与改动前一致，不新造数字）。
         place_clearance = ((baseline_doc.get("grasp") or {}).get("place_clearance_m"))
@@ -1682,7 +1745,7 @@ def _joint_place_resolution(root, solver, resolution, place_targets, arm_report,
         if transit_world is not None:
             lift_local = rotation.T @ (transit_world - base_pos)
             transit_local = [float(lift_local[0]), float(lift_local[1]),
-                             float(local[2] + float(payload_half) + pad_offset + clearance)]
+                             float(local[2] + float(payload_half) + grip_height + clearance)]
         # IK 种子 = 已验证的 pick **抬升位形**（把模型名还原成声明名：报告里是 piper_jointN）
         seed_positions = {}
         for name, value in (out_gripper.get("lift_positions") or {}).items():
@@ -1690,7 +1753,7 @@ def _joint_place_resolution(root, solver, resolution, place_targets, arm_report,
             seed_positions[declared] = float(value)
         try:
             poses = entry(root, baseline_doc, [float(v) for v in local], float(payload_half),
-                          pad_offset, clearance,
+                          grip_height, clearance, float(touch_clearance),
                           **({"transit_local_m": transit_local} if transit_local else {}),
                           seed_positions=seed_positions)
         except Exception as error:  # noqa: BLE001
@@ -1705,6 +1768,59 @@ def _joint_place_resolution(root, solver, resolution, place_targets, arm_report,
             out_gripper[key] = merged
             written[key] = {"replaced_joints": sorted(positions),
                             "position_error_m": pose.get("position_error_m")}
+        # ---- 构建期自证（§11.25(f-2) ③）：下降终点必须把载荷**放到**承载面上，而不是悬空松手。
+        # 为什么必须（实测教训）：上一版把方块放在承载面上方 20.9 mm 松手（自由落体 ⇒ 落点双峰、
+        # 失败率约 1/4），而构建期一路"成功" ⇒ 只能靠 6 轮连跑才发现。这条闸把该量变成**构建期**判据。
+        # 口径：FK 下降位形 → 载荷最低点 = pad_mid_z(下降) − grip_height − payload_half，
+        #       要求 ≤ 承载面世界 z + 触地间隙 + 声明容差。
+        descend_positions = out_gripper.get("place_descend_positions") or {}
+        tolerance_m = (baseline_doc.get("acceptance") or {}).get("pose_tolerance_m")
+        if not isinstance(tolerance_m, (int, float)):
+            _fail(EXIT_REFERENCE, "基线 %s 缺少 acceptance.pose_tolerance_m（构建期自证需要容差）"
+                  % baseline_path.name)
+        if descend_positions:
+            check_data = mujoco.MjData(model)
+            mujoco.mj_forward(model, check_data)
+            for name, value in descend_positions.items():
+                joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, str(name))
+                if joint_id >= 0:
+                    check_data.qpos[int(model.jnt_qposadr[joint_id])] = float(value)
+            mujoco.mj_forward(model, check_data)
+            check_points = []
+            for pad_name in (str(out_gripper.get("left_finger_geom") or ""),
+                             str(out_gripper.get("right_finger_geom") or "")):
+                geom_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, pad_name)
+                if geom_id >= 0:
+                    check_points.append(np.asarray(check_data.geom_xpos[geom_id], dtype=float))
+            if len(check_points) != 2:
+                _fail(EXIT_MODEL, "构建期自证：下降位形下找不到声明的指腹 geom，无法核算落点高度")
+            descend_pad_mid_z = float((check_points[0] + check_points[1])[2] / 2.0)
+            predicted_payload_low = descend_pad_mid_z - grip_height - float(payload_half)
+            allowed_low = float(top_world[2]) + float(touch_clearance) + float(tolerance_m)
+            place_selfcheck = {
+                "descend_pad_mid_z_m": round(descend_pad_mid_z, 9),
+                "grip_height_m": round(float(grip_height), 9),
+                "predicted_payload_low_m": round(predicted_payload_low, 9),
+                "bearing_surface_z_m": round(float(top_world[2]), 9),
+                "touch_clearance_m": float(touch_clearance),
+                "allowed_low_m": round(allowed_low, 9),
+                "gap_above_bearing_m": round(predicted_payload_low - float(top_world[2]), 9),
+                "tolerance_m": float(tolerance_m),
+                "grip_height_evidence": grip_evidence,
+            }
+            if predicted_payload_low > allowed_low:
+                _fail(EXIT_MODEL,
+                      "放置段构建期自证失败：下降终点把载荷停在承载面上方 %.6f m"
+                      "（载荷最低点 %.9f > 允许 %.9f = 承载面 %.9f + 触地间隙 %.6f + 容差 %.6f）"
+                      "⇒ 会变成自由落体（实测该情形下失败率约 1/4）。检查 grasp 侧"
+                      "place_touch_clearance_m 与夹口高度实测值。"
+                      % (predicted_payload_low - float(top_world[2]), predicted_payload_low,
+                         allowed_low, float(top_world[2]), float(touch_clearance), float(tolerance_m)))
+            out_gripper["place_selfcheck"] = place_selfcheck
+        else:
+            out_gripper["place_selfcheck"] = {"status": "skipped",
+                                              "reason": "没有 place_descend_positions（未解放置段）"}
+
         # 航点间隙自检：把每段关节解设进**联合模型**做 FK，检查**臂的 geom**是否与**载体的 geom**
         # 接触（载体 = 名字不带该附加本体前缀的 body；台面/道具不算"载体"）。违规即显式失败 ——
         # 航点是关节解 ⇒ 构建期能 FK，这正是"构建期求解"相对"运行时现解"的优势（§11.17）。
@@ -2018,7 +2134,7 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
     if reference_solver and reference_solver.get("place_entry") and place_targets:
         place_record = _joint_place_resolution(
             root, reference_solver, resolution, place_targets, report, out_gripper, rename,
-            model, prefix=prefix, carrier_trunk=carrier_trunk)
+            model, prefix=prefix, carrier_trunk=carrier_trunk, pick_targets=targets)
     feedforward_source = "inherited_from_arm_report"
     feedforward_evidence = None
     # 前馈在**四段位置合并之后**算：`gripper_positions` 必须是该相位的完整位置指令

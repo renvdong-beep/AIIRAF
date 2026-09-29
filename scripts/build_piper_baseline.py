@@ -109,8 +109,9 @@ def build_reference_feedforward(model, reference, baseline, prefix="", gripper_p
     return feedforward, feedforward_evidence
 
 
-def build_place_reference_poses(root, baseline, target_local_m, payload_half_m, pad_offset_m,
-                                clearance_m, transit_local_m=None, seed_positions=None):
+def build_place_reference_poses(root, baseline, target_local_m, payload_half_m, grip_height_m,
+                                clearance_m, touch_clearance_m, transit_local_m=None,
+                                seed_positions=None):
     """按**臂基座系**里的接收体目标解出放置四段（关节空间），供后端**回放**。
 
     为什么是构建期解而不是运行期 IK（2026-09-28，docs/debug/2026-09-24-joint-model-dog-arm.md §11.16）：
@@ -119,12 +120,22 @@ def build_place_reference_poses(root, baseline, target_local_m, payload_half_m, 
     而运行时"现解 IK"（`pad_mid + Δ`）会落到别的分支、轨迹中途把方块打掉。放置段照同一条路做。
 
     输入（都由声明/报告给出，函数内不写死任何数字）：
-      `target_local_m` —— 接收体**承载面中心**在臂基座系里的坐标；
-      `payload_half_m` —— 载荷的半高（方块半边长，来自场景/基线声明）；
-      `pad_offset_m`   —— 指腹中点相对抓取点的高度（= 本场景已解出的 `finger_height_correction_m`）；
-      `clearance_m`    —— 接近/抬离的净间隙（取声明的 `grasp.pregrasp_offset_m`）。
-    输出：`{"above": {...}, "descend": {...}, "retreat": {...}}`，每段是与
-    `build_reference_poses` 同形状的 `_pack_pose` 结果（`joint_positions` 为臂关节解）。
+      `target_local_m`     —— 接收体**承载面中心**在臂基座系里的坐标；
+      `payload_half_m`     —— 载荷的半高（方块半边长，来自场景/基线声明）；
+      `grip_height_m`      —— **夹口高度**：指腹中点 − 载荷中心，**由调用方在已验证的 pick
+                              抓取位形上 FK 实测**（2026-09-29 引入，见下）；
+      `clearance_m`        —— 接近/抬离的净间隙（取声明的 `grasp.pregrasp_offset_m`）；
+      `touch_clearance_m`  —— **触地间隙**：下降终点让载荷最低点停在承载面上方这么多
+                              （**新声明的键**，缺声明即调用方失败）。
+    输出：`{"poses": {"above"|"descend"|"retreat"|"transit": {...}}, ...}`，每段是与
+    `build_reference_poses` 同形状的 `_pack_pose` 结果。
+
+    ⚠ 为什么不再用 `pad_offset_m`（2026-09-29，§11.25(f-2) 实测）：**同一个名字在两处含义不同**——
+    pick 侧的 `pad_offset_m`（本场景 joint 解析 0.032016224）是**指尖离台配平**的修正量，
+    而本段需要的是 `pad_mid − 载荷中心`（同场景实测 `0.0437 − 0.025 = 0.0187`）⇒ 相差 13.3 mm，
+    落点因此被抬高 13.3 mm，方块是在承载面上方被"松手"（自由落体 ⇒ 落点双峰：托盘内/台面，
+    实测 6 轮 20.5~22.2 mm 落差，失败率约 1/4）。改用实测的夹口高度后，下降终点即让
+    载荷最低点落在承载面上方 `touch_clearance_m` 处（触地而非坠地）。
     """
     model_cfg = baseline["model"]
     source = _resolve(root, model_cfg["source"])
@@ -145,7 +156,21 @@ def build_place_reference_poses(root, baseline, target_local_m, payload_half_m, 
     base = np.asarray(target_local_m, dtype=float)
     if base.shape != (3,):
         raise ValueError("target_local_m 必须是 3 个数值（臂基座系）")
-    height = float(pad_offset_m) + float(payload_half_m)      # 指腹中点相对承载面的高度
+    # 入参自检：三个高度量都必须由调用方给出且物理上合理（缺声明/给错即失败，不用默认值兜底）
+    for label, value in (("grip_height_m", grip_height_m), ("payload_half_m", payload_half_m),
+                         ("touch_clearance_m", touch_clearance_m)):
+        if not np.isfinite(float(value)):
+            raise ValueError("%s 必须是有限数，实际 %r" % (label, value))
+    if float(grip_height_m) <= 0.0 or float(payload_half_m) <= 0.0:
+        raise ValueError("grip_height_m 与 payload_half_m 必须为正（实际 %r / %r）"
+                         % (grip_height_m, payload_half_m))
+    if float(touch_clearance_m) < 0.0:
+        raise ValueError("touch_clearance_m 必须 ≥ 0（实际 %r）" % (touch_clearance_m,))
+    # 下降终点的高度：让**载荷最低点**停在承载面上方 touch_clearance 处
+    #   payload_low = base(=承载面) + touch_clearance
+    #   pad_mid     = payload_center + grip_height = (base + payload_half + touch_clearance) + grip_height
+    #             ⇒ height = grip_height + payload_half + touch_clearance
+    height = float(grip_height_m) + float(payload_half_m) + float(touch_clearance_m)
     # 放置段的**接近方向**（声明 `grasp.place_approach_direction`；缺省 = 竖直 [0,0,1] ⇒ 行为不变）。
     # 为什么可能需要倾角（2026-09-28 §11.23(31)）：纯竖直接近时腕部位于载荷**外侧**约 0.26 m
     # ⇒ 腕部半径 ≈ sqrt(0.45²+(0.286+0.26)²)=0.707 m > 可达 0.594 m ⇒ 该姿态几何不可达、
@@ -167,9 +192,13 @@ def build_place_reference_poses(root, baseline, target_local_m, payload_half_m, 
     if transit_local_m is not None:
         plan["transit"] = np.asarray(transit_local_m, dtype=float)
     out = {"schema_version": "iraf.piper-reference-pose/v1",
-           "place_mode": "declared_offset",
+           "place_mode": "measured_grip_height",
            "target_local_m": [round(float(v), 9) for v in base],
-           "payload_half_m": float(payload_half_m), "pad_offset_m": float(pad_offset_m),
+           "payload_half_m": float(payload_half_m),
+           # 夹口高度与触地间隙留痕（它们决定下降终点的绝对高度，必须可追溯）
+           "grip_height_m": float(grip_height_m),
+           "touch_clearance_m": float(touch_clearance_m),
+           "pad_offset_m_replaced_by_grip_height": True,
            "clearance_m": float(clearance_m), "solver": dict(solver_cfg),
            "poses": {}}
     # 种子位形（**必须**给，且应当是已验证的 pick 抬升位形）：位置型 IK 是局部求解器，
