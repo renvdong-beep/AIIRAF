@@ -604,12 +604,62 @@ def build_reference_poses(root, baseline, target_id=None, target_xy_override_m=N
                 % (pre_lift_m, depth_m))
         if open_m <= 0.0:
             raise ValueError("grasp.regrasp.open_m 必须为正数（松开量）：%r" % (open_m,))
+        # regrasp 目标口径（声明；缺声明即失败）：见 config 的 regrasp.target 说明
+        target_mode = str(regrasp_cfg.get("target") or "")
+        if target_mode not in ("payload_mid", "pre_lift_minus_depth"):
+            raise ValueError("grasp.regrasp.target 必须是 payload_mid|pre_lift_minus_depth（缺声明即失败），"
+                             "实际: %r" % (target_mode,))
+        # pad_offset **必须取本次求解算出的配平量**（= 报告里的 `finger_height_correction_m`，
+        # 本场景 0.032016224）：它就是"指腹中点比抓取点高多少"，是 regrasp 目标公式的唯一几何依据。
+        pad_offset_for_target = float(height_correction)
+        descend_m = (pre_lift_m - pad_offset_for_target if target_mode == "payload_mid"
+                     else pre_lift_m - depth_m)
         pre_lift_pose = solve_finger_center_pose(
             model, data, grasp_target_corrected + pregrasp_direction * pre_lift_m,
             arm_joints, arm_names, left_geom, right_geom, solver_cfg)
         regrasp_pose = solve_finger_center_pose(
-            model, data, grasp_target_corrected + pregrasp_direction * (pre_lift_m - depth_m),
+            model, data, grasp_target_corrected + pregrasp_direction * descend_m,
             arm_joints, arm_names, left_geom, right_geom, solver_cfg)
+        # **自证**（2026-09-29 §11.23(48)）：这两段此前**没有任何门禁** ⇒ "指腹高出目标 95 mm、
+        # 夹住空气"的解被静默接受，运行时才以"力为 0"暴露。三条：残差 / 与抓取轴同半球 / 目标在支撑面之上。
+        def _axis_of(pose):
+            for name, value in pose["joint_positions"].items():
+                jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, str(name))
+                if jid >= 0:
+                    data.qpos[int(model.jnt_qposadr[jid])] = float(value)
+            mujoco.mj_forward(model, data)
+            pad = (np.asarray(data.geom_xpos[left_geom], dtype=float)
+                   + np.asarray(data.geom_xpos[right_geom], dtype=float)) / 2.0
+            vector = pad - np.asarray(data.xpos[wrist_body], dtype=float)
+            return vector / max(float(np.linalg.norm(vector)), 1e-12)
+
+        regrasp_self_check = {}
+        tol = float(solver_cfg.get("tolerance_m", 1e-5))
+        for label, pose, target in (("pre_lift", pre_lift_pose,
+                                     grasp_target_corrected + pregrasp_direction * pre_lift_m),
+                                    ("regrasp", regrasp_pose,
+                                     grasp_target_corrected + pregrasp_direction * descend_m)):
+            residual = float(pose["position_error_m"])
+            axis_here = _axis_of(pose)
+            dot = float(np.dot(axis_here, axis))
+            above = float(np.asarray(target, dtype=float)[2]) > float(support_z)
+            regrasp_self_check[label] = {
+                "target_m": [round(float(v), 9) for v in np.asarray(target, dtype=float)],
+                "residual_m": round(residual, 9), "axis_dot": round(dot, 6), "above_support": bool(above),
+            }
+            if residual > tol:
+                raise ValueError("regrasp.%s 位置解残差 %.9f m > 声明容差 %.9f m ⇒ 拒绝"
+                                 "（不做实现层兜底；见 §11.23(48)）" % (label, residual, tol))
+            if dot <= 0.0:
+                raise ValueError("regrasp.%s 的解把腕→指腹方向翻到了相反半球（dot=%.6f）⇒ 拒绝"
+                                 % (label, dot))
+            if not above:
+                raise ValueError("regrasp.%s 的目标在支撑面之下（target_z=%.9f support_z=%.9f）⇒ 拒绝"
+                                 % (label, float(np.asarray(target, dtype=float)[2]), float(support_z)))
+        # 自证与目标口径随 regrasp 位形一起写进 reference（构建期证据；下面建好字典后再挂上去，
+        # 否则会在字典创建之前赋值 —— 本轮实测踩到 TypeError: 'NoneType' object does not support item assignment）
+        regrasp_extra = {"self_check": regrasp_self_check, "target_mode": target_mode,
+                         "descend_m": descend_m}
         hold_pre_lift = bool(regrasp_cfg.get("hold_pre_lift", False))
         regrasp_poses = {
             "enabled": True,
@@ -620,6 +670,7 @@ def build_reference_poses(root, baseline, target_id=None, target_xy_override_m=N
             "pre_lift": pre_lift_pose, "regrasp": regrasp_pose,
             "direction_world": [round(float(v), 9) for v in pregrasp_direction],
         }
+        regrasp_poses.update(regrasp_extra)
 
     home_qpos = {name: 0.0 for name in grasp["joint_positions"]}
     reference = {
@@ -644,6 +695,10 @@ def build_reference_poses(root, baseline, target_id=None, target_xy_override_m=N
             # 没在这里列出来 ⇒ reference 里就没有 ⇒ 臂侧 builder 读不到 ⇒ 后端永远 false
             # ⇒ 预抬段没临时刚住、预抬失效（实测载荷 z 只动 0.000151 m）。这就是"同一宣言第 4 个枚举点"。
             "hold_pre_lift": regrasp_poses["hold_pre_lift"],
+            # 目标口径与自证也要随 reference 走到报告（构建期证据；漏在这里就又"看不见"了）
+            "target_mode": regrasp_poses["target_mode"],
+            "descend_m": regrasp_poses["descend_m"],
+            "self_check": regrasp_poses["self_check"],
             "direction_world": regrasp_poses["direction_world"],
             "pre_lift": regrasp_poses["pre_lift"],
             "regrasp": regrasp_poses["regrasp"],
