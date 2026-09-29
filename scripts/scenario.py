@@ -1295,6 +1295,12 @@ def _stop_run_display(summary, seconds):
         report["error"] = summary["box"]["error"]
     return {"display": summary["display"], "owner_backend": summary["owner"],
             "render_hz": summary["render_hz"],
+            # **相机/GL/窗口尺寸必须进报告**（2026-09-29）：演示报告要能自证"这次看的是哪个视角"，
+            # 否则使用者反馈"看不全"时无从判断是声明没生效还是取景本身不对。
+            # 相机形态：字符串 = 模型具名相机；对象 = 自由相机（lookat/distance/azimuth/elevation）。
+            "camera": summary.get("camera"),
+            "software_gl": summary.get("software_gl"),
+            "window_px": summary.get("window_px"),
             "thread_alive_after_stop": bool(summary["thread"].is_alive()),
             "window_opened": report.get("window_opened"),
             "frames": report.get("frames"), "display_mode": report.get("display_mode"),
