@@ -2935,6 +2935,94 @@ D2 的施加机械**保留但关闭**（声明 `mode: measure_only`）：契约�
 | 用例注释说明"判据作用域来自技能输出契约" | ✓ |
 | 相关单测子集（146 项） | ✓ 全绿（含起点遗留的那条，现已真正修绿）|
 
+### §11.24 第二台臂（UR5e+2F-85）进联合世界：构建已通 + 三处"静默丢弃"声明化（2026-09-29）
+
+**(a) 目标与验收口径（I1 增量）**：UR5e 与 Piper、Go2 同处**一份 MJCF / 一株共享植物 / 一份 mjData**。
+验收三条：① 联合构建 `EXIT=0`；② `scene_check --require-model` `EXIT=0`；③ piper 侧**模型**不变（见 (b)）。
+
+**(b) "对 Piper 无损"的强证据：比对产物，而不是比对运行数字**
+
+把 `src/iraf_adapters/unitree/scene_builder.py` 临时换回 `HEAD` 版，用**同一份声明**重建 `--attach piper`：
+
+```
+HEAD 版构建器:  e04e708cb7697ced4caadf0ecf9f54c17a90b90171530b5848d47c5a9db45085
+本轮改动后:     e04e708cb7697ced4caadf0ecf9f54c17a90b90171530b5848d47c5a9db45085
+diff 行数:      0
+```
+
+⇒ 本轮构建器改动对"只有一台臂"的情形**逐字节惰性**，只在"第二台臂存在"时生效。
+
+⚠ **纠正一条我自己的口径错误**：原计划用"运行期实测数字逐位不变"证明无损 —— 实测**不成立**：
+同一份 piper 产物连跑两次数字就不同（s01 末速 `1.4887881241839877e-05` vs `1.4887880813600727e-05`，
+相对 `2.876e-08`；s02 平移 `0.02856927288102236` vs `0.02856927779911992`，相对 `1.721e-07`）。
+"逐位不变"只能对**产物**说，不能对**运行数字**说（物理与求解顺序都有偶发项）。
+
+**(c) 两个构建期根因（我上一轮的判断方向都是错的）**
+
+1. **指爪 geom**：名字其实**在**（厂商名 `rq2f85_left_pad1` / `rq2f85_left_pad2` + 1 个无名 visual，共 3 个）。
+   真因是 `spec.attach(prefix=)` 会给**被附加子树里的所有名字**加前缀 ⇒ 联合模型里是
+   `ur5e_rq2f85_left_pad1`，按裸名查必然落空。Piper 之所以从未暴露：它每侧只有 1 个 geom，
+   走了"单 geom 回退重命名"这条旧路径。
+   修法：**裸名与加前缀名都接受**，命中后统一改回**声明名**（与臂侧报告/后端/判据同口径）；
+   并新增**跨附加本体的声明名占用表**（重名即 fail-closed —— MuJoCo 允许 geom 重名，
+   而按名字解析会静默指到任意一个，不能让"附加顺序"变成隐式语义）。
+2. **资产路径**：原先只按 `子模型目录 / file` 找源文件（对 Piper 成立：它的 meshdir 是默认值）。
+   UR5e 装配模型写 `meshdir="assets/"` ⇒ `child_dir/shoulder_0.obj` 不存在、真身在 `assets/` 下
+   ⇒ 这些 mesh 保持**相对路径**留在联合产物里，合成后按**主模型**的 meshdir（Go2 的 assets）解析
+   ⇒ 编译期 ENOENT：`vendor/unitree_go2/unitree_robots/go2/assets/shoulder_0.obj`。
+   修法：按**子模型自己的** `<compiler meshdir/assetsdir>` 解析源文件，并把这两个目录写进留痕；
+   同时**只改写属于该本体的 mesh**（`attach` 会给 mesh 名加前缀 ⇒ 名字前缀即所有权）——
+   Go2 与 UR5e 都有 `base_0.obj` 这类同名文件，没有这条过滤，主模型自己的 mesh 会被改写成
+   UR5e 的资产绝对路径（**静默串味**，比编译失败更坏）。
+
+**(d) 三处"静默丢弃"→ 显式**
+
+1. **多臂**：联合报告顶层 `manipulation`/`gripper`/`targets` 只能描述一台臂，原实现按 `--attach` 顺序
+   取第一台 ⇒ 第二台被**静默丢弃**。改为由声明 `scene.model.joint_manipulator` 指定主臂；
+   多台带 `manipulation_report` 而无声明 ⇒ fail-closed；新增
+   `manipulation.attached_manipulators[]`（每台一条：`resolved` / `name_map_included` / 中文原因）。
+   实测（`--attach piper --attach ur5e`）：`attached_robot=piper`、`declared_primary=piper`、
+   ur5e `resolved=false` / `name_map_included=false`、`name_map` 条目 **16**（只含 piper）。
+2. **空能力**：schema 原先要求"已交付 Profile 的本体至少 1 项能力" ⇒ "已装配进本场景但无任何已验收能力"
+   这个**真实状态无法诚实表达**。新增 `capabilities_unverified: {closed_by, reason}` 与 `capabilities: []`
+   配对（`anyOf`: 要么 ≥1 项能力、要么 0 项 + 显式说明）；既不允许塞假能力充数，
+   也不允许退回 profile 占位（构建器必须从**真** Profile 取模型/关节/夹爪声明）。
+3. **指腹摩擦口径**：注释原先写"多 pad 机型对该侧全部 pad 生效"，实际只注入报告声明的
+   `*_finger_geom`（每侧 1 个，与臂侧 `build_piper_pick_scene` 一致）⇒ 注释已改成如实描述。
+
+**(e) 顺带修掉的两个真缺陷（都在"失败处理 / 诊断"上，且当场咬人）**
+
+1. `src/iraf_core/runtime.py`：`except LeaseConflict as exc:` 引用的名字**从未导入** ⇒
+   代码注释里承诺的"收尾时租约过期要容忍（并留痕）"实际执行成 `NameError`，把**整步**变成未捕获异常、
+   连报告都写不出来（磁盘上留的是上一轮的陈旧报告）。实测报错：
+   `NameError: name 'LeaseConflict' is not defined`，它掩盖了真因 `iraf_core.authority.LeaseConflict: lease expired`。
+   已补 `from .authority import LeaseConflict`。
+2. `src/iraf_adapters/mujoco/mujoco_backend.py`：`PRE_LIFT_TRACE` 的打印**没有**受 `IRAF_DEBUG_PICK` 约束
+   （默认每 10 个样本一行）⇒ 单步墙钟被 print 拖长（本场景一段 pre_lift 上万行），收尾时租约过期。
+   **诊断输出改变了被测对象的时序（观测者效应）**。实测：加开关后同一条命令的输出行数从（上万行）降到
+   **124 行**、退出码 0。
+
+**(f) 实测到的偶发失败（另案，本轮不修）**
+
+piper-only 的一次连跑出现一种**更严重**的失败模式：s04 `place_object` 报
+"Backend 未确认载荷已放下"，s05 报"载荷最低点 `-0.000215511 m`、承载面 `0.343222481 m`、
+落位间隙 `-0.343437992 m`、接触 geom `[]`" ⇒ **方块从托盘掉到了台面**（不是已知的"末速超限"）。
+该次用的 piper 模型与 HEAD 逐字节一致（见 (b)）⇒ 不是本轮改动引入。
+已交付量化工具 `scripts/joint_stability_probe.py`（连跑 N 次、按**进程退出码**判定、归档失败模式与数值范围）。
+
+**(g) 测试夹具的位置依赖（本轮踩到）**
+
+`tests/unit/test_scene_schema.py` 用 `robots[1]` / `robots[2]` 定位本体；加入 ur5e 后 `robots[2]`
+由 `humanoid_static` 变成 `unitree_go2` ⇒"人形不得声明运动能力"这条负向用例在**正确实现**上开始报红
+（隐式位置依赖 = 假红/假绿）。已改为按 id 定位（`robot_by_id`），并新增一条守 (d)2 新口子的负向用例。
+
+**(h) 未完成（诚实边界）**
+
+- 双臂**运行期**：UR5e 在本场景无技能验收（`capabilities: []`）；联合报告还没有**按本体**的
+  manipulation 段（name_map / 参考姿态 / 夹持事实）⇒ 在联合世界里跑 UR5e 的技能前必须先补，
+  见 `.hermes/plans/2026-09-29-dual-arm-shuttle-demo.md` 的 I2/I3/I4。
+- (f) 的偶发项只完成了量化工具，**通过率数字**见下一轮（连跑结果写入 `build/joint-stability.json`）。
+
 ### 11.19 撤两条假设 + 第 9 个工装缺陷：搬运丢件的机制**仍未判死**（2026-09-28）
 
 **撤销 1：夹具（equality）不是原因。** 臂场景模型里确实有一条 `box_01_lift_constraint`

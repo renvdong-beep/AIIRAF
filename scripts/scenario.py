@@ -816,6 +816,30 @@ def build_backend_config(root, declaration, spec):
     # 否则臂会等到第一次运动才报"找不到关节或执行器: joint1"，那时已经跑了一半。
     attached = (report.get("manipulation") or {}).get("attached_robot")
     name_map = (report.get("manipulation") or {}).get("name_map")
+    # **联合报告的所有权校验**（2026-09-29 新增，多臂场景的硬门禁）：
+    # `manipulation`/`gripper`/`targets` 只描述 `scene.model.joint_manipulator` 指定的**那一台**臂。
+    # 若本机型声明的 report 指向一份 `attached_robot ≠ 本本体` 的联合报告，装配出来的后端会去驱动
+    # **另一台臂**的关节与指腹 —— 而且**不会报错**：实测 ur5e 会解析到 `piper_left_finger`
+    # （那个名字在联合模型里**确实存在**），于是"夹爪张开/闭合"实际作用在 piper 上。
+    # 这类跨本体错绑必须在装配前拦下（失败要早于任何运动）。注意本检查**不是**临时措辞：
+    # 按本体给出 manipulation 段（计划 I1b）落地后，这里要改成"取本本体的段"而不是删掉。
+    robot_identity = str(((declaration.get("robot") or {}).get("id")) or "")
+    if attached and robot_identity and str(attached) != robot_identity:
+        per_robot = {str(item.get("id")): item for item in
+                     ((report.get("manipulation") or {}).get("attached_manipulators") or [])
+                     if isinstance(item, dict)}
+        state = per_robot.get(robot_identity) or {}
+        detail = ("该报告已显式登记本本体 `resolved=%s`（未解它的参考姿态/gripper/name_map）"
+                  % state.get("resolved")) if state else "该报告里没有本本体的条目"
+        raise ScenarioError(
+            "机型 %s 的 backend_config.report 指向的联合报告描述的是**另一台臂**"
+            "（manipulation.attached_robot=%s；哪台是主臂由 scene.model.joint_manipulator 声明）：%s。"
+            "⇒ 按本体的 manipulation 段落地之前，本本体在联合世界里不得跑技能；"
+            "也不要让联合场景的步骤把它作为 robot 下发（见 "
+            ".hermes/plans/2026-09-29-dual-arm-shuttle-demo.md 的 I1b）"
+            % (robot_identity, attached, detail),
+            EXIT_DECLARATION,
+        )
     if attached and not name_map:
         raise ScenarioError(
             "场景报告 %s 声明了 manipulation.attached_robot=%s（联合模型）却没有 name_map："

@@ -1,0 +1,26 @@
+schema_version: iraf.machine-declaration/v1
+# 机型声明（UR5e + Robotiq 2F-85 的**运行时绑定**；与 config/machines/piper.yaml 同构）。
+#
+# 分工与 piper.yaml 完全一致（禁止互相复制）：
+#   config/ur5_simulation_baseline.yaml = 构建基线（场景生成 + 参考姿态 + 求解参数 + 验收阈值）
+#   本文件                              = 运行时绑定（Profile + Backend 入口 + 后端配置来源 + 安全策略）
+#
+# 本文件的存在理由（基线完整性）：`scenes/handoff_lab/baseline.yaml` 的 `robots` / `robots_joint`
+# 是"场景本体 → 机型声明"的**一一映射**，少一个键 scene_check 直接退出码 1
+# （实测：`baseline.robots 的键 [...] 与 scene.robots[].id [...] 不一致`）。
+robot:
+  id: ur5e
+  profile: profiles/ur5_mujoco.yaml
+  backend: mujoco_arm
+  backend_config:
+    # 机械臂用 `mode: scene_report`（后端配置来自臂侧场景报告：model_path/manipulation.gripper/vision）。
+    mode: scene_report
+    report: build/models/ur5-pick-scene.json
+    # 抓取目标容差：与臂侧基线 acceptance.pose_tolerance_m 同值（0.005）。
+    # 必须显式声明 —— 缺失即装配失败，不猜默认值（scripts/scenario.py 门禁）。
+    target_tolerance_m: 0.005
+    # 与 piper.yaml 同一口径：交互/演示按实时步进；批量与 CI 另建声明设 false。
+    realtime: true
+skills:
+  # 臂侧安全策略：沿用已验收的仿真实验档（与 piper.yaml 同源）。
+  safety_policy: profiles/safety/simulation_lab.yaml

@@ -191,6 +191,10 @@
           "pattern": "^(build|artifacts)/[A-Za-z0-9._/-]+\\.xml$",
           "description": "联合模型（多本体合成，`--attach <本体>`）的输出路径；单本体产物仍写 `output`。"
         },
+        "joint_manipulator": {
+          "type": "string",
+          "description": "联合报告顶层 `manipulation`/`gripper`/`targets` 描述**哪一台**附加机械臂（`robots[].id`）。`--attach` 里有多台本体声明了 `manipulation_report` 时**必须**给出（否则构建器显式失败），单台时可省略。取值不接受按 `--attach` 顺序隐式推断。"
+        },
         "builder": {
           "$ref": "#/definitions/unverified_or_path",
           "description": "场景构建器入口：要么是已存在的仓库相对路径，要么是显式 unverified 占位（占位会进 scene_check 的 pending_refs，不是静默忽略）。"
@@ -368,6 +372,25 @@
           },
           "description": "该本体在本场景中声明可用的能力。分派层按能力而不是机型名选择 Provider。"
         },
+        "capabilities_unverified": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "closed_by",
+            "reason"
+          ],
+          "properties": {
+            "closed_by": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "description": "「本本体已装配进本场景、但**在本场景**尚无任何已验收能力」的显式声明（与 capabilities 为空配对）。存在理由（2026-09-29 实测）：Profile 已交付的本体被要求至少声明一项能力，而把臂装配进联合世界（同一 MJCF/共享植物）本身不需要任何技能验收 —— 此时**不允许**塞一个假能力充数，也不允许退回 profile 占位（构建器要从该 Profile 取模型/关节/夹爪声明）。填法示例：{closed_by: \"I1 增量\", reason: \"只验证能进同一物理世界\"}。"
+        },
         "model_only": {
           "type": "boolean"
         },
@@ -408,7 +431,7 @@
       },
       "allOf": [
         {
-          "description": "已交付 profile 的本体必须至少声明一项能力；未交付（unverified）的本体允许空能力数组。",
+          "description": "已交付 profile 的本体必须至少声明一项能力；未交付（unverified）的本体允许空能力数组；已装配但**本场景未验收**任何能力时，用 capabilities: [] + capabilities_unverified 显式声明（见该键说明）。",
           "if": {
             "properties": {
               "profile": {
@@ -420,11 +443,25 @@
             ]
           },
           "then": {
-            "properties": {
-              "capabilities": {
-                "minItems": 1
+            "anyOf": [
+              {
+                "properties": {
+                  "capabilities": {
+                    "minItems": 1
+                  }
+                }
+              },
+              {
+                "required": [
+                  "capabilities_unverified"
+                ],
+                "properties": {
+                  "capabilities": {
+                    "maxItems": 0
+                  }
+                }
               }
-            }
+            ]
           }
         },
         {

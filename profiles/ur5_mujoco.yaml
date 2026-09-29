@@ -66,7 +66,7 @@ spec:
     # 已写明"声明它们会让 move_joint 直接控制它们、破坏 4 杆机构一致性"⇒ 它们**不进** `spec.joints`，
     # 因此也不能放 `spec.home`（Profile 校验会拒："home 引用了未声明的关节"）。
     # 这里的 `model.home` 是**联合构建专用**的初值来源（构建器的报错信息即指向 `spec.model.home`）。
-    # 值取自装配模型自己的 `<keyframe>`（build/gen_ur5e_model_home.py 导出；不手写、不猜）。
+    # 值取自装配模型自己的 `<keyframe>`（scripts/gen_ur5e_model_home.py 导出；不手写、不猜）。
     home:
       rq2f85_right_driver_joint: 0.0
       rq2f85_right_coupler_joint: 0.0

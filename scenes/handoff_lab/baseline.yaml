@@ -7,6 +7,9 @@ robots:
   # piper 的**运行时绑定**（Profile + Backend + 后端配置来源 + 安全策略）在 config/machines/piper.yaml；
   # 构建基线 config/piper_simulation_baseline.yaml 仍负责场景生成与参考姿态（两者分工不同，不互相复制）。
   piper: config/machines/piper.yaml
+  # UR5e 的运行时绑定（第二台臂）。同一场景里每个本体都要有自己的机型声明 ——
+  # 这也是 scene_check 的硬校验：`baseline.robots` 的键集合必须与 `scene.robots[].id` 完全一致。
+  ur5e: config/machines/ur5e.yaml
   # 步骤 17 闭合：Go2 的机型基线就是 loopback/技能层共用的声明文件
   # （config/go2_loopback.yaml：模型、控制增益、站立位形来源、传感器、技能验收）。
   # 两处（scene.robots[].profile 与 baseline.robots）必须同时是路径，不允许一处占位一处路径。
@@ -25,6 +28,10 @@ robots:
 # 共享植物角色：unitree_go2 = owner（唯一时间推进者）、piper = guest（注入 owner 的植物）。
 robots_joint:
   piper: config/machines/piper_joint.yaml
+  # 第二台臂在联合世界里的绑定：report 指向联合报告（同一份 MJCF），plant 角色同为 guest。
+  # ⚠ 联合报告的顶层 manipulation 段当前只描述主臂（scene.model.joint_manipulator: piper）；
+  #   UR5e 的这部分事实在 manipulation.attached_manipulators[] 里以 resolved=false 显式登记。
+  ur5e: config/machines/ur5e_joint.yaml
   unitree_go2: config/go2_joint.yaml
   humanoid_static:
     state: unverified
@@ -36,6 +43,12 @@ initial_state:
   piper:
     pose_source: profile
     note: 参考姿态来自 profiles/piper_mujoco.yaml 的 home 段。
+  ur5e:
+    # 参考姿态同样来自 profile（不复制数字）：profiles/ur5_mujoco.yaml 的 home 段 +
+    # model.home（2F-85 的 8 个关节初值，由 scripts/gen_ur5e_model_home.py 从装配模型的
+    # keyframe 导出，不手写不猜）。
+    pose_source: profile
+    note: 臂侧基线 config/ur5_simulation_baseline.yaml；臂侧报告 build/models/ur5-pick-scene.json。
   unitree_go2:
     # 步骤 15 已交付并验收：站立参考位形来自 profiles/unitree_go2_mujoco.yaml 的 spec.home
     # （不复制数字，避免两份事实），由 loopback 验收入口 scripts/verify_go2_loopback.py 取证。

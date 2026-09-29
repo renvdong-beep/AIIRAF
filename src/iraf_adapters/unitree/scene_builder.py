@@ -947,6 +947,43 @@ def _read_world_physics(staging):
             "gravity": [float(value) for value in model.opt.gravity]}
 
 
+def _child_compiler_dirs(child_path):
+    """读附加本体 XML 的 `<compiler meshdir/assetsdir>`（相对子模型目录的字符串）。
+
+    为什么必须读（2026-09-29 实测）：资产拷贝原先只按 `子模型目录 / file` 找源文件，这对 Piper
+    成立（它的 `meshdir` 是默认值、STL 就放在模型目录旁），但 UR5e 装配模型写的是
+    `meshdir="assets/"` + `file="shoulder_0.obj"` ⇒ `child_dir/shoulder_0.obj` 不存在，
+    真身是 `child_dir/assets/shoulder_0.obj`。结果是这些 mesh 保持**相对路径**留在联合产物里，
+    合成后按主模型的 meshdir（Go2 的 assets 目录）解析 ⇒ 编译期 ENOENT：
+    `vendor/unitree_go2/unitree_robots/go2/assets/shoulder_0.obj`（实测）。
+    """
+    node = ET.parse(str(child_path)).getroot()
+    compiler = node.find("compiler")
+    meshdir = str(compiler.get("meshdir")) if compiler is not None and compiler.get("meshdir") else "."
+    assetsdir = (str(compiler.get("assetsdir"))
+                 if compiler is not None and compiler.get("assetsdir") else ".")
+    return meshdir, assetsdir
+
+
+def _child_asset_source(record, path):
+    """按**子模型自己的编译器规则**列出源文件候选（meshdir → assetsdir → 子模型目录），取首个存在的文件。
+
+    顺序即声明优先级：先信子模型声明的 meshdir，再退到 assetsdir，最后才是目录本身。
+    """
+    base = Path(str(record.get("child_dir")))
+    roots = []
+    for key in ("child_meshdir", "child_assetsdir"):
+        value = str(record.get(key) or "")
+        if value and value not in (".", "./"):
+            roots.append(base / value)
+    roots.append(base)
+    for root in roots:
+        candidate = root / path
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def _attach_robots(staging, scene, root, attached_ids):
     """把**附加本体**合成进主模型（`MjSpec.attach(child, prefix, frame)`，库原生合成）。
 
@@ -966,6 +1003,9 @@ def _attach_robots(staging, scene, root, attached_ids):
     spec = mujoco.MjSpec.from_file(str(staging))
     records = []
     attached_robot_values = []
+    # 指爪 geom 的**声明名**占用表（跨附加本体）：重名即显式失败，见下方注释（MuJoCo 允许 geom 重名，
+    # 但按名字解析会静默指到任意一个 ⇒ 不能让"附加顺序"变成隐式语义）。
+    claimed_finger_geoms = set()
     for robot_id in attached_ids:
         entity = resolve_robot(scene, robot_id)
         profile_path, _source = resolve_profile(root, entity, robot_id)
@@ -981,6 +1021,8 @@ def _attach_robots(staging, scene, root, attached_ids):
         child_path = root / str(model["file"])
         child = mujoco.MjSpec.from_file(str(child_path))
         child_dir = child_path.resolve().parent
+        # 子模型的资产解析目录（资产拷贝要按**它自己的**规则找源文件，见 _child_compiler_dirs）
+        child_meshdir, child_assetsdir = _child_compiler_dirs(child_path)
         # 执行器刚度口径（Profile 声明 → 按声明注入；未声明即留痕"沿用厂商口径"，不猜）：
         # 联合模型里的臂必须与臂自己场景同一动力学口径，否则臂侧验收数字不可移植（§11.6）。
         gain_record = _apply_declared_position_gains(root, child, profile_spec, robot_id)
@@ -1062,21 +1104,39 @@ def _attach_robots(staging, scene, root, attached_ids):
                           % (robot_id, prefix, body_name))
                 geoms = list(getattr(body, "geoms", []) or [])
                 # **按声明的 geom 名取**（2026-09-29 修）：原先要求"指爪 body 只能有 1 个 geom"，那是
-                # Piper 侧"注入单个 pad"的约定；UR5e+2F-85 每侧有 **2 个 pad**（基线以 `pad_boxes` 声明
-                # `rq2f85_*_pad1/pad2`）⇒ 该假设不成立（实测退出码 3：`指爪 body 有 3 个 geom`）。
-                # 改为按名字命中，并校验它属于该 body；旧约定（body 只有 1 个 geom）仍兼容。
-                named = [item for item in geoms if str(getattr(item, "name", "")) == str(geom_name)]
+                # Piper 侧"注入单个 pad"的约定；UR5e+2F-85 每侧有 **2 个 pad** + 1 个 visual geom
+                # （基线以 `pad_boxes` 声明 `rq2f85_*_pad1/pad2`）⇒ 该假设不成立
+                # （实测退出码 3：`指爪 body 有 3 个 geom`）。
+                # ⚠ 第二个坑（同一轮实测）：`spec.attach(prefix=)` 会给**被附加子树里的所有名字**加前缀
+                #   ⇒ 厂商名 `rq2f85_left_pad1` 在联合模型里是 `ur5e_rq2f85_left_pad1`，只按裸名查必然落空
+                #   （Piper 之所以没暴露：它每侧只有 1 个 geom，走了下面的"单 geom 回退"重命名）。
+                #   因此**裸名与加前缀名都接受**，命中后统一改回**声明名**，与臂侧报告/后端/判据
+                #   使用的名字保持同一口径（同一条"声明名 → 联合名"的规则，见 name_map）。
+                candidates = {str(geom_name), "%s%s" % (prefix, geom_name)}
+                named = [item for item in geoms if str(getattr(item, "name", "")) in candidates]
                 if not named:
                     if len(geoms) == 1:
-                        geoms[0].name = str(geom_name)
                         named = [geoms[0]]
                     else:
                         _fail(EXIT_REFERENCE,
                               "附加本体 %s 的指爪 body %s 下没有声明名字的 geom %s（该 body 有 %d 个 geom）"
                               % (robot_id, body_name, geom_name, len(geoms)))
+                # 声明名必须可唯一解析：两台同型臂（或厂商模型自带重名）都改回同一个裸名时，
+                # MuJoCo 不会报错、但**后续按名字解析会静默指到任意一个** ⇒ 显式失败，让人去改声明。
+                declared_key = str(geom_name)
+                if declared_key in claimed_finger_geoms:
+                    _fail(EXIT_REFERENCE,
+                          "指爪 geom 声明名 %s 在联合模型里不唯一（已有另一台附加本体占用）："
+                          "请在本体 Profile 的 model.finger_geoms 里给出本体唯一的指爪 geom 名，"
+                          "不要靠附加顺序区分" % declared_key)
+                claimed_finger_geoms.add(declared_key)
+                for item in named:
+                    item.name = declared_key
                 # 指腹摩擦按声明注入（见 profiles/piper_mujoco.yaml 的 finger_friction 说明）：
                 # 与 position_gain 同一个理由 —— 联合模型里的臂必须与已验收的臂场景同一物理口径，
-                # 否则"抓起来"能过、"搬过去"会滑掉（实测）。**多 pad 机型对该侧全部 pad 生效**。
+                # 否则"抓起来"能过、"搬过去"会滑掉（实测）。
+                # 口径与臂侧构建器一致：只注入**报告声明的 `*_finger_geom`**（每侧 1 个 pad），
+                # 不扩散到同类 pad_boxes 的其余 box（臂侧 build_piper_pick_scene 也只注入这两个）。
                 friction_value = _declared_finger_friction(root, profile_spec, robot_id)
                 if friction_value is not None:
                     for item in named:
@@ -1087,6 +1147,10 @@ def _attach_robots(staging, scene, root, attached_ids):
                         "placement": {"pos_m": [float(v) for v in pos],
                                       "quat_wxyz": [float(v) for v in quat]},
                         "child_dir": str(child_dir),
+                        # 子模型自己的资产解析目录（meshdir/assetsdir）：资产拷贝按它找源文件，
+                        # 也必须留痕 —— 否则"某台臂的 mesh 用了别台的目录"这种事故无从复盘。
+                        "child_meshdir": str(child_meshdir),
+                        "child_assetsdir": str(child_assetsdir),
                         # 附加本体在**自己模型**里的名字清单（联合报告 name_map 的输入与留痕）
                         "declared_names": declared_names,
                         # 执行器刚度口径的留痕（声明出处 / 逐关节 kp_before→kp_after / 规则）
@@ -1124,8 +1188,15 @@ def _attach_robots(staging, scene, root, attached_ids):
         if not path or path.startswith("assets/"):
             continue
         for record in records:
-            candidate = Path(record["child_dir"]) / path
-            if candidate.is_file():
+            # **只处理属于该附加本体的 mesh**（`attach` 会给 mesh 名加前缀 ⇒ 名字前缀即所有权）。
+            # 为什么必须有这条：资产查找改为按子模型 meshdir 解析后，"同名不同机"的 mesh 会互撞
+            # （实测 Go2 与 UR5e 都有 base_0.obj/baser_*.obj 这类名字）—— 没有这条过滤，
+            # 主模型自己的 base_0 mesh 会被改写成 UR5e 的资产绝对路径（静默串味，比编译失败更坏）。
+            mesh_name = str(getattr(item, "name", "") or "")
+            if not mesh_name.startswith("%s_" % record["id"]):
+                continue
+            candidate = _child_asset_source(record, path)
+            if candidate is not None:
                 target_rel = Path("assets") / str(record["id"]) / Path(path).name
                 target = output_dir / target_rel
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -1141,8 +1212,11 @@ def _attach_robots(staging, scene, root, attached_ids):
         if not path or path.startswith("assets/"):
             continue
         for record in records:
-            candidate = Path(record["child_dir"]) / path
-            if candidate.is_file():
+            texture_name = str(getattr(item, "name", "") or "")
+            if texture_name and not texture_name.startswith("%s_" % record["id"]):
+                continue
+            candidate = _child_asset_source(record, path)
+            if candidate is not None:
                 target_rel = Path("assets") / str(record["id"]) / Path(path).name
                 target = output_dir / target_rel
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -2841,30 +2915,48 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
         # 联合报告：把臂侧的 manipulation 事实（gripper/targets）按**可判定规则**改名后并入，
         # 使 `robot.backend_config.mode: scene_report` 能直接指向本报告装配臂后端
         # （`output` 已是联合产物路径）。
-        arm_report = None
-        prefix = None
-        robot_id = None
-        arm_declared_names = None
-        arm_reference_solver = None
-        arm_placement = None
+        # 联合报告顶层 `manipulation`/`gripper`/`targets` 只描述**一台**臂（臂后端按它装配）。
+        # 多台臂各自带 `manipulation_report` 时**必须由声明指明是哪一台**（scene.model.joint_manipulator）：
+        # 原先按 `--attach` 顺序取第一台 ⇒ 第二台的 gripper/targets/name_map 被**静默丢弃**，
+        # 而"哪台是主臂"这种语义绝不能由命令行顺序隐式决定（AGENTS.md 2.3 / 5.3）。
+        arm_with_report = []
         for attached in attach:
             entity = resolve_robot(scene, attached)
-            candidate = entity.get("manipulation_report")
-            if candidate:
-                arm_report = root / str(candidate)
-                prefix = "%s_" % attached
-                robot_id = attached
-                # 联合模式参考姿态求解器与绑定位姿**都来自声明**（构建器只按声明调用）。
-                arm_reference_solver = entity.get("reference_solver")
-                arm_placement = entity.get("placement")
-                for record in attached_robots:
-                    if str(record.get("id")) == str(attached):
-                        arm_declared_names = record.get("declared_names")
-                break
-        if arm_report is None:
+            if entity.get("manipulation_report"):
+                arm_with_report.append(str(attached))
+        model_section = (scene or {}).get("model") or {}
+        declared_primary = (model_section.get("joint_manipulator")
+                            if isinstance(model_section, dict) else None)
+        declared_primary = str(declared_primary) if declared_primary else None
+        if declared_primary is not None and declared_primary not in arm_with_report:
+            _fail(EXIT_DECLARATION,
+                  "scene.model.joint_manipulator 声明为 %s，但它不是本次 --attach 里带 "
+                  "`manipulation_report` 的本体（%s）" % (declared_primary, arm_with_report or "无"))
+        if len(arm_with_report) > 1 and declared_primary is None:
+            _fail(EXIT_DECLARATION,
+                  "本次 --attach 有 %d 台本体带 `manipulation_report`（%s），但场景未声明 "
+                  "`model.joint_manipulator` —— 联合报告的顶层 manipulation/gripper/targets 只能描述一台，"
+                  "缺声明会导致其余本体的操纵事实被静默丢弃（不接受按 --attach 顺序隐式决定）"
+                  % (len(arm_with_report), arm_with_report))
+        if not arm_with_report:
             _fail(EXIT_DECLARATION,
                   "使用 --attach 时必须在本体声明 `manipulation_report`（继承 gripper/targets 的"
                   "来源；缺声明即失败，不猜）")
+        robot_id = declared_primary or arm_with_report[0]
+        prefix = None
+        arm_report = None
+        arm_declared_names = None
+        arm_reference_solver = None
+        arm_placement = None
+        entity = resolve_robot(scene, robot_id)
+        arm_report = root / str(entity.get("manipulation_report"))
+        prefix = "%s_" % robot_id
+        # 联合模式参考姿态求解器与绑定位姿**都来自声明**（构建器只按声明调用）。
+        arm_reference_solver = entity.get("reference_solver")
+        arm_placement = entity.get("placement")
+        for record in attached_robots:
+            if str(record.get("id")) == str(robot_id):
+                arm_declared_names = record.get("declared_names")
         manipulation = _joint_manipulation(root, arm_report, prefix, facts, compiled,
                                            arm_declared_names,
                                            reference_solver=arm_reference_solver,
@@ -2880,7 +2972,36 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
         # `name_map_facts`：四个判定桶的留痕（mapped/identical/conflicts/missing）。
         # `reference_pose_resolution`：参考姿态/pad_offset/重力前馈的**重解留痕**（求解器出处、
         # 绑定位姿、基座系目标、与继承值的差）；缺它说明这些数字是继承来的 —— 本构建已不允许。
+        # 每台带 `manipulation_report` 的附加本体都留一条记录：主臂 `resolved: true`，
+        # 其余 `resolved: false` + 原因 —— "还没为它做参考姿态重解"必须是**显式状态**，
+        # 不能靠"顶层字段里没有它"来表达（那正是被静默丢弃的形态）。
+        attached_manipulators = []
+        for attached in attach:
+            attached_entity = resolve_robot(scene, attached)
+            if not attached_entity.get("manipulation_report"):
+                continue
+            is_primary = str(attached) == str(robot_id)
+            attached_manipulators.append({
+                "id": str(attached),
+                "prefix": "%s_" % attached,
+                "manipulation_report": str(attached_entity.get("manipulation_report")),
+                "reference_solver": attached_entity.get("reference_solver"),
+                "has_placement": bool(attached_entity.get("placement")),
+                "resolved": is_primary,
+                # `name_map`（声明名 → 联合模型名）当前只按主臂的声明名生成 ⇒ 非主臂必须**显式**
+                # 说明"没包含"，不能让调用方把"空 name_map"误读成"这台臂没有可解析的名字"。
+                "name_map_included": is_primary,
+                "note": ("本报告的顶层 manipulation/gripper/targets/name_map 取自本本体"
+                         "（scene.model.joint_manipulator）"
+                         if is_primary else
+                         "已在同一物理世界里装配（几何/执行器/资产都在），但本报告**没有**为它解"
+                         "参考姿态/gripper/name_map 事实（scene.model.joint_manipulator 未指向它）"
+                         "⇒ 在联合世界里跑它的技能前必须先补按本体的 manipulation 段；"
+                         "它的技能验收属于后续增量"),
+            })
         report["manipulation"] = {"attached_robot": str(robot_id),
+                                  "declared_primary": declared_primary,
+                                  "attached_manipulators": attached_manipulators,
                                   "inherited_from": manipulation["inherited_from"],
                                   "rename_rule": manipulation["rename_rule"],
                                   "name_map": manipulation["name_map"],

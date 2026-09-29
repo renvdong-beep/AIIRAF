@@ -1,0 +1,28 @@
+schema_version: iraf.machine-declaration/v1
+# 机型运行时绑定（**联合场景**版）：与 `ur5e.yaml` 的唯一差别是 `backend_config.report` 指向
+# **联合报告**（狗 + 双臂同一份 MJCF 的产物），并声明共享植物里的角色。
+#
+# ⚠ 现状（诚实登记，2026-09-29）：联合报告的顶层 `manipulation`/`gripper`/`targets` 只描述
+#   `scene.model.joint_manipulator` 指定的**主臂**（当前 = piper）。本绑定把 UR5e 接进同一个物理世界，
+#   但**尚未**为它解参考姿态/夹持事实 ⇒ 现在指向联合报告只能解析到 geometry/name_map 一层，
+#   UR5e 在联合世界里跑技能（从狗背托盘卸载）属于 I3/I4 增量，届时联合报告需要按本体给出
+#   各自的 manipulation 段（见 .hermes/plans/2026-09-29-dual-arm-shuttle-demo.md）。
+#   本文件在此之前的用途：让 `baseline.robots_joint.ur5e` 有合法指向，并让任何"在联合世界里
+#   按 ur5e 绑定起后端"的尝试拿到**显式**的"事实未解"状态，而不是静默拿到 piper 的数字。
+robot:
+  id: ur5e
+  profile: profiles/ur5_mujoco.yaml
+  backend: mujoco_arm
+  backend_config:
+    mode: scene_report
+    report: build/scenes/handoff_lab/handoff_lab_joint.json
+    target_tolerance_m: 0.005
+    realtime: true
+  plant:
+    # 共享植物角色：**guest** —— 注入 owner（四足）持有的植物，不得推进时间，
+    # 只能写自己 name_map 界定的执行器（越界即显式失败）。与 piper_joint.yaml 同口径。
+    role: guest
+    owner: unitree_go2
+    guest_timeout_factor: 30.0
+skills:
+  safety_policy: profiles/safety/simulation_lab.yaml

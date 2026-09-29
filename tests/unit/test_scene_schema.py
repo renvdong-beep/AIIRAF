@@ -229,10 +229,24 @@ class NegativeContractTests(ScenePackageFixture):
         self.assertTrue(any("builder" in item for item in report["schema_failures"]))
 
 
+def robot_by_id(doc, robot_id):
+    """按 id 取本体声明 —— **不按列表下标**。
+
+    为什么（2026-09-29 实测）：本场景加入第二台机械臂（ur5e）后，夹具里写死的
+    `robots[1]` / `robots[2]` 指向了**另一个本体**，于是负向用例测的就不是它想测的规则了：
+    `robots[2]` 从 humanoid_static 变成 unitree_go2 ⇒"人形不得声明运动能力"这条用例
+    在**正确实现**上开始报红（隐式位置依赖 = 假红/假绿）。声明顺序是自由项，用例必须按 id 定位。
+    """
+    for item in doc.get("robots") or []:
+        if str(item.get("id")) == str(robot_id):
+            return item
+    raise AssertionError("夹具里没有本体 %s" % robot_id)
+
+
 class NegativeReferenceTests(ScenePackageFixture):
     def test_missing_robot_profile_is_rejected(self):
         def mutate(doc):
-            doc["robots"][0]["profile"] = "profiles/does_not_exist_mujoco.yaml"
+            robot_by_id(doc, "piper")["profile"] = "profiles/does_not_exist_mujoco.yaml"
 
         self.mutate(self.scene_path, mutate)
         report, exit_code = self.run_check()
@@ -241,7 +255,7 @@ class NegativeReferenceTests(ScenePackageFixture):
 
     def test_profile_must_be_a_robot_profile(self):
         def mutate(doc):
-            doc["robots"][0]["profile"] = "config/piper_simulation_baseline.yaml"
+            robot_by_id(doc, "piper")["profile"] = "config/piper_simulation_baseline.yaml"
 
         self.mutate(self.scene_path, mutate)
         report, exit_code = self.run_check()
@@ -252,7 +266,7 @@ class NegativeReferenceTests(ScenePackageFixture):
         """声明不得超出 profile：场景里写 pick_object 而 profile 没有，即失败（铁律 1.3）。"""
 
         def mutate(doc):
-            doc["robots"][0]["capabilities"] = ["move_joint", "teleport"]
+            robot_by_id(doc, "piper")["capabilities"] = ["move_joint", "teleport"]
 
         self.mutate(self.scene_path, mutate)
         report, exit_code = self.run_check()
@@ -275,7 +289,7 @@ class NegativeReferenceTests(ScenePackageFixture):
         """
 
         def mutate(doc):
-            doc["robots"][1]["profile"] = {
+            robot_by_id(doc, "unitree_go2")["profile"] = {
                 "state": "unverified",
                 # closed_by 必须匹配 ^步骤 [0-9]{2}$（schema 的占位契约）：写自由文本会被 schema 拦下，
                 # 那样测的就不是"两处不一致"这条规则了。步骤 99 = 永不存在的步骤，仅作夹具。
@@ -378,11 +392,27 @@ class NegativeScenarioTests(ScenePackageFixture):
         """人形声明运动能力：契约层直接拒绝（schema 的 model_only 分支）。"""
 
         def mutate(doc):
-            doc["robots"][2]["capabilities"] = ["stand", "locomote"]
+            robot_by_id(doc, "humanoid_static")["capabilities"] = ["stand", "locomote"]
 
         self.mutate(self.scene_path, mutate)
         report, exit_code = self.run_check()
         self.assertEqual(exit_code, scene_check.EXIT_SCHEMA)
+
+    def test_delivered_profile_without_capabilities_needs_explicit_unverified(self):
+        """已交付 Profile 的本体：`capabilities` 不能既为空、又不说明"本场景未验收"。
+
+        守的是 2026-09-29 新增的口子（`capabilities_unverified`）：空能力数组必须**显式**给原因，
+        否则会被当成"漏写能力"（沉默的能力缺失 = 分派层悄悄少一条路径）。场景本次的新本体 ur5e
+        正是这种状态：已装配进同一个物理世界，但本场景没有任何已验收能力。
+        """
+
+        def mutate(doc):
+            robot_by_id(doc, "ur5e").pop("capabilities_unverified")
+
+        self.mutate(self.scene_path, mutate)
+        report, exit_code = self.run_check()
+        self.assertEqual(exit_code, scene_check.EXIT_SCHEMA)
+        self.assertTrue(any("capabilities" in item for item in report["schema_failures"]))
 
     def test_fault_step_reference_is_checked(self):
         def mutate(doc):
@@ -689,7 +719,7 @@ class CliTests(ScenePackageFixture):
 
     def test_main_reports_reference_failure_code(self):
         def mutate(doc):
-            doc["robots"][0]["profile"] = "profiles/does_not_exist_mujoco.yaml"
+            robot_by_id(doc, "piper")["profile"] = "profiles/does_not_exist_mujoco.yaml"
 
         self.mutate(self.scene_path, mutate)
         self.assertEqual(

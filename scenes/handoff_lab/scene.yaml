@@ -105,6 +105,54 @@ robots:
       # 偏航偏 31.3° 时指腹斜切方块棱边并与之重叠）。站位 (0.45, 0) 仍在可达范围内（距基座 0.45 m）。
       quat_wxyz: [0.382683432365090, 0.0, 0.0, 0.923879532511287]
     note: 既有能力（MuJoCo 仿真已验收）；本场景复用配置 config/piper_simulation_baseline.yaml，不改其语义。
+  # 【2026-09-29 新增】第二台机械臂 UR5e+2F-85（双臂轮转演示的"卸货"侧）。
+  # 与 piper 的差异全部落在**声明**里（构建器内不出现机型/脚本名）：
+  #   · 参考姿态求解器指向**机型无关**的通用入口 scripts/build_robot_baseline.py: build_reference_poses
+  #     （与 piper 的 build_piper_baseline.py 同一契约：entry(root, baseline_doc,
+  #      target_xy_override_m, target_z_override_m)），基线指向 config/ur5_simulation_baseline.yaml；
+  #   · 没有 place_entry（该基线未声明"放置段"）⇒ 联合报告的 place_targets 不由它提供；
+  #   · 安装面 0.12 m 的抬高是 piper 的**可达性需要**（工具点可达环带上界 0.594284 m），
+  #     本臂不需要：基座直接坐在台面 top_z_m = 0.0 上。
+  # 安装面实测依据（scripts/ur5e_base_aabb_probe.py，从网格顶点算，不用包围球）：
+  #   base body 的网格顶点世界系最低 z = −9.021622823790487e-10 m（即安装面就是基座原点平面），
+  #   且该 body 的 2 个 geom 都是 visual（geom_contype/geom_conaffinity = 0）⇒ 与工作台不产生接触。
+  # 朝向：基座放在 (0.45, +0.45)，使"基座 → 交接站位 (0.45, 0)"的方位角 = −90°（270°）
+  #   ⇒ 偏航取 270°，臂正面朝站位；与 piper（(0.45,−0.45) 偏航 135°）关于 y 轴对称。
+  #   （yaw=270° ⇒ quat_wxyz = (cos135°, 0, 0, sin135°)。）
+  # capabilities 为**空**：本增量只验证"第二条臂能进同一个物理世界"（同一份 MJCF、同一株共享植物、
+  #   同一份 mjData）。它在联合场景里的技能（从狗背托盘卸载方块）尚未验收 ⇒ 不声明能力
+  #   （AGENTS.md 1.5 / 6.3：未验收不得声明；能力四处必须成对同步）。
+  - id: ur5e
+    kind: arm
+    role: manipulator
+    profile: profiles/ur5_mujoco.yaml
+    # 门禁要求"Profile 身份与本体 id 一致"（id 是 ur5e、Profile 名是 ur5_mujoco）⇒ 显式映射。
+    profile_name: ur5_mujoco
+    # 空能力 + 显式"本场景未验收"声明（不允许塞假能力，也不允许退回 profile 占位 ——
+    # 构建器必须从真 Profile 取模型/关节/夹爪声明才能把这条臂装进联合世界）。
+    capabilities: []
+    capabilities_unverified:
+      closed_by: "I1 增量（双臂轮转演示第 1 步）"
+      reason: >-
+        本增量只验证"UR5e 能进同一个物理世界"（同一份 MJCF、同一株共享植物、同一份 mjData）：
+        构建成功 + 既有 piper 链路 s01–s05 数字逐位不变。UR5e 在本场景的技能
+        （从狗背托盘卸载方块、与 piper 交替）尚未验收 ⇒ 不声明任何能力。
+    manipulation_report: build/models/ur5-pick-scene.json
+    reference_solver:
+      module: scripts/build_robot_baseline.py
+      entry: build_reference_poses
+      baseline: config/ur5_simulation_baseline.yaml
+    placement:
+      pos_m: [0.45, 0.45, 0.0]
+      quat_wxyz: [-0.707106781186548, 0.0, 0.0, 0.707106781186548]
+    note: >-
+      UR5e 侧报告 build/models/ur5-pick-scene.json 已可复现（EXIT=0，抓取残差 8.852152079374226e-08）。
+      在**本联合场景**里它尚未跑过技能：联合报告的顶层 manipulation/gripper/targets 由
+      `model.joint_manipulator: piper` 指定取自 piper，UR5e 的事实以
+      `manipulation.attached_manipulators[].resolved = false` **显式**登记为"未解"，
+      不允许静默借用 piper 的数字。技能验收见
+      .hermes/plans/2026-09-29-dual-arm-shuttle-demo.md 的 I3/I4。
+      两台臂同为 manipulator 角色，各自独立进程/权限/设备所有权（AGENTS.md 6.11 不合并安全边界）。
   - id: unitree_go2
     kind: quadruped
     role: carrier
@@ -344,4 +392,8 @@ model:
   output: build/scenes/handoff_lab/handoff_lab.xml
   # 联合产物（`--attach <本体>` 时写入本路径）：单本体产物保持逐个构建、互不影响。
   joint_output: build/scenes/handoff_lab/handoff_lab_joint.xml
+  # 联合报告顶层 manipulation/gripper/targets 描述**哪一台**附加臂（臂后端按它装配）。
+  # 为什么必须显式：`--attach piper --attach ur5e` 两台臂都带 manipulation_report 时，
+  # 原实现按命令行顺序取第一台 ⇒ 另一台的操纵事实被静默丢弃（谁"带负载"绝不能由参数顺序决定）。
+  joint_manipulator: piper
   builder: scripts/build_scene.py
