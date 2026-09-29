@@ -2572,6 +2572,29 @@ D1 只测不施、D2 机械实现并试施加 ⇒ **施加被实测判定有害*
 （不是设计意图的"腰部"），且 regrasp 两段位置解仍**没有残差/可达性自证** ⇒ 这两项属下一步（先补自证，
 再按自证结果标定 `depth_m`/`pre_lift_m`/`open_m`）。
 
+**regrasp 标定第 1 步：预抬处观测揭开随机失败的真因（2026-09-29）**
+
+给预抬结束处补观测（`pre_lift_declared_m` / `payload_z_after_pre_lift_m` / `pre_lift_delta_m` /
+`pad_minus_payload_z_after_pre_lift_m` / `payload_pad_lateral_after_pre_lift_m`）。实测：
+
+| 量 | 值 | 判读 |
+|---|---|---|
+| `pre_lift_declared_m` | 0.04 | 声明 |
+| `pre_lift_delta_m` | **0.175094** | 载荷实际被抬 **175 mm = 声明的 4.4 倍** ✗ |
+| `pad_minus_payload_z_after_pre_lift_m` | **−0.016588** | 预抬后指腹反而跑到载荷中心**下方** 16.6 mm ✗（设计是 +0.032） |
+| `payload_pad_lateral_after_pre_lift_m` | 0.015004 | 横向正常 |
+| （闭合时）`pad_minus_payload_z_m` | −0.043437 | 夹持点在载荷中心下方 43 mm（"夹空气/夹底棱"） |
+| （闭合时）双侧力 | 13.115314 / 14.127027 N | 有接触，但是**载荷落到夹爪上**的偶然接触 |
+
+⇒ **随机失败的根因**：预抬段把载荷**甩到夹口上方**（载荷相对指腹高了 ~49 mm），闭合时夹到的是
+载荷的**底棱甚至下方** ⇒ 时而成、时而完全没接触（力 0）。此前看到的"13 N 腰部面夹"是**偶发**的，
+不是稳定夹持 ⇒ 这条路线在预抬段修好之前不可能稳定。
+**下一步**：查预抬段为何超额 4.4 倍 —— 候选：① 焊缝 `eq_active` 在段内被重置（若失效，载荷不应上升 ✗
+需量）；② 锚点跟随的**姿态**分量缺失（pick 侧只传了 `anchor_body/anchor_follow/anchor_offset`，
+没有放置段的 `anchor_wrist/anchor_rel_quat` ⇒ 焊缝把姿态锁死而位置被拉 ⇒ 可能产生甩动）；
+③ 预抬轨迹本身（`pre_lift_positions`）与目标不符。判据：`pre_lift_delta_m` 与 `pre_lift_declared_m`
+之差 ≤ 声明容差（现在差 135 mm）。声明保持 `enabled: false`（稳定绿）。
+
 **结论与下一步**（每一项都带上面的数字支撑）：
 1. **抬升段的横向拖拽（主项 32.7 mm）**：把声明化的抓取约束 `carry_constraint` 的**适用面扩展到
    pick 的抬升段**（现在是"只作用于 place 的搬运段"⇒ 抬升纯摩擦 ⇒ 拖出 33 mm）；

@@ -1122,6 +1122,24 @@ class MujocoBackend:
             self._log_pick_phase("PRE_LIFT", target_body)
             self._move_trajectory(pre_lift_positions, regrasp_ms, self._pick_ctrl_offsets("lift"),
                                   **pre_lift_anchor_kwargs)
+            # **预抬结束处的观测**（2026-09-29 §11.23(48) 标定用）：只有闭合后一个点分不清
+            # 「预抬抬多/抬少」与「目标公式偏」 ⇒ 这里量：载荷实际抬升量（对比声明 pre_lift_m）、
+            # 载荷相对指腹的竖向与横向偏移（夹持几何的直接证据）。
+            with self._data_lock:
+                _pad = (np.asarray(self.data.xpos[self._body_id(str(gripper["left_finger_body"]))],
+                                   dtype=float)
+                        + np.asarray(self.data.xpos[self._body_id(str(gripper["right_finger_body"]))],
+                                     dtype=float)) / 2.0
+                _pay = np.asarray(self.data.xpos[target_body], dtype=float).copy()
+            pre_lift_after_z = float(_pay[2])
+            pre_lift_observe = {
+                "pre_lift_declared_m": float(regrasp_cfg.get("pre_lift_m") or 0.0),
+                "payload_z_after_pre_lift_m": round(pre_lift_after_z, 6),
+                "pre_lift_delta_m": round(pre_lift_after_z - pre_lift_z, 6),
+                "pad_minus_payload_z_after_pre_lift_m": round(float(_pad[2] - _pay[2]), 6),
+                "payload_pad_lateral_after_pre_lift_m": round(
+                    float(np.linalg.norm((_pay - _pad)[:2])), 6),
+            }
             self._log_pick_phase("REGRASP_OPEN", target_body)
             opened = {str(name): (float(value) + open_m if str(name).endswith("joint7") else
                                   float(value) - open_m)
@@ -1169,6 +1187,7 @@ class MujocoBackend:
                 "payload_pad_lateral_m": round(
                     float(np.linalg.norm((_payload_c - _pad_mid)[:2])), 6),
                 "pre_lift_z_m": round(pre_lift_z, 6),
+                **pre_lift_observe,
                 "after_regrasp_z_m": round(after_regrasp_z, 6),
                 "bilateral_after_regrasp": bool(bilateral), "force_ok_after_regrasp": bool(force_ok),
             }
