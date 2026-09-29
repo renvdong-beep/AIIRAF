@@ -53,17 +53,29 @@ def _run_once(index, scene, scenario, world, workdir, log_dir):
 
 
 def _failure_mode(report):
-    """把一次失败归类成 (步骤 id, 判据名)；无失败返回 (None, None)。"""
+    """把一次失败归类成 (步骤 id, 归类键)；无失败返回 (None, None)。
+
+    ⚠ 归类键的口径（2026-09-29 实测踩点）：**步骤级 FAILED 必须用 `reason`**，不能拿它
+    "第一个未通过的判据名" —— 步骤级失败时所有判据都是未测量（`measured=null`、`passed=false`），
+    于是会稳定地取到**列表里第一个判据名**，把"横向纠偏守卫拦下"这类真实原因伪装成
+    `require_release`（本轮据此误判过一次"触地纠偏导致释放失败"，见 §11.25(f-6)/(f-7)）。
+    判据级失败（步骤 SUCCEEDED 但某判据不达标）才用判据名。
+    """
     failed = report.get("failed_checks") or []
     if not failed:
         return None, None
     for step in (report.get("steps") or []):
-        if step.get("status") == "SUCCEEDED":
-            continue
+        reason = str(step.get("reason") or "").strip()
+        if step.get("status") != "SUCCEEDED":
+            if reason:
+                return str(step.get("id")), "reason:" + reason[:60]
+            for check in (step.get("checks") or []):
+                if not check.get("passed", True):
+                    return str(step.get("id")), str(check.get("name"))
+            return str(step.get("id")), None
         for check in (step.get("checks") or []):
             if not check.get("passed", True):
                 return str(step.get("id")), str(check.get("name"))
-        return str(step.get("id")), None
     return "<report>", None
 
 
