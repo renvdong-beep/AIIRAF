@@ -2491,6 +2491,24 @@ D1 只测不施、D2 机械实现并试施加 ⇒ **施加被实测判定有害*
 3. 若 1+2 都不行，才退到"抓取约束扩到整个抬升段"——那会削弱"夹爪能搬"的能力声明，必须同时保留
    纯摩擦实测拖拽量。
 
+**regrasp 复活路线的第一次实测（2026-09-29）**：
+
+- **前置修好一个"声明藏在有无里"的设计**：`build_piper_pick_scene.py` 原先在
+  `acceptance.require_friction_lift=true` 时**不写** `gripper.lift_constraint` ⇒ 后端只能靠"键缺失"
+  推断，既无法表达"预抬段临时刚住"，也让"为什么没有约束"不可见。现在**总是**报告约束名 +
+  `require_friction_lift` 开关，由后端显式门控（另：联合构建器的 `rename()` 只认 body/site/geom/joint
+  **不认 equality 名** ⇒ `lift_constraint` 必须进语义键，否则联合构建 fail-closed）。
+- 按声明 `regrasp.hold_pre_lift: true` 只在**预抬段**临时刚住载荷、`REGRASP_CLOSE` 后撤销 ⇒
+  **三段真的跑到了**（PRE_LIFT → REGRASP_OPEN → REGRASP_DESCEND → REGRASP_CLOSE）——
+  这是历史上第一次（此前预抬 0.04 m 只升 9 mm 就翻滚、根本到不了腰部）。
+- **但腰部握力/双侧判据未通过**（`force_ok_after_regrasp=false`）⇒ 抬升段被跳过 ⇒
+  s03 报"Backend 未确认目标已抓取"。
+- 顺带暴露一个**变量遮蔽坑**（本文件既有纪律里"长函数变量遮蔽"那一类）：regrasp 块内的
+  `force_ok = (...)` **重新绑定**了外层同名变量 ⇒ 腰部握力不达标时会**静默跳过整个抬升段**，
+  症状是"没有抬升样本 + 未确认已抓取"，看起来像物理问题、实际是控制流问题。
+- ⇒ regrasp 路线的机制已就位，剩下的是**腰部夹持几何与参数**（`depth_m` / `open_m` / 闭合档）
+  的标定，属独立工作项。声明回到 `enabled: false`。
+
 **结论与下一步**（每一项都带上面的数字支撑）：
 1. **抬升段的横向拖拽（主项 32.7 mm）**：把声明化的抓取约束 `carry_constraint` 的**适用面扩展到
    pick 的抬升段**（现在是"只作用于 place 的搬运段"⇒ 抬升纯摩擦 ⇒ 拖出 33 mm）；

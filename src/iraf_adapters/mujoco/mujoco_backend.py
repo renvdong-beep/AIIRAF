@@ -1043,6 +1043,11 @@ class MujocoBackend:
             }, ensure_ascii=False), flush=True)
         constraint_activated = False
         equality_name = gripper.get("lift_constraint")
+        # **门控**（2026-09-29 §11.23(48)）：`require_friction_lift=true` ⇒ 抬升段**不使用**约束
+        # （这是"夹爪能搬"的能力证明口径，是既有已验证声明）。要临时刚住请走 `regrasp.hold_pre_lift`
+        # —— 它只在**预抬段**激活、`REGRASP_CLOSE` 之后立即撤销，最终搬运仍由摩擦承担。
+        if bool(gripper.get("require_friction_lift")):
+            equality_name = None
         if force_ok and equality_name:
             equality_id = mujoco.mj_name2id(
                 self.model, mujoco.mjtObj.mjOBJ_EQUALITY, equality_name
@@ -1073,6 +1078,23 @@ class MujocoBackend:
                 raise ValueError("gripper.regrasp.open_m 必须为正数（松开量）：%r" % (open_m,))
             regrasp_ms = max(1, int(regrasp_cfg.get("duration_ms") or phase_ms))
             pre_lift_z = float(self.data.xpos[target_body][2])
+            # **预抬段临时刚住**（声明 `regrasp.hold_pre_lift`，2026-09-29 §11.23(48)）：
+            # regrasp 此前"第一步就失败（预抬 0.04 m 只升 9 mm）"的根因就是预抬阶段载荷已经翻滚
+            # （与 LIFT 同一机制：上缘夹持 ⇒ 抗转力矩≈0）。这里用声明化的抬升约束把载荷**临时**
+            # 刚住，让预抬成立；`REGRASP_CLOSE` 之后立即撤销 ⇒ **最终搬运仍由摩擦承担**，
+            # "夹爪能搬"的能力口径不受影响（纯摩擦下的拖拽量继续作为诊断上报）。
+            hold_pre_lift = bool(regrasp_cfg.get("hold_pre_lift", False))
+            pre_lift_equality = None
+            if hold_pre_lift:
+                pre_lift_equality = gripper.get("lift_constraint")
+                if not pre_lift_equality:
+                    raise ValueError("regrasp.hold_pre_lift=true 但报告没有 lift_constraint 名字")
+                eid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_EQUALITY,
+                                        str(pre_lift_equality))
+                if eid < 0:
+                    raise ValueError("抓取约束不存在: " + str(pre_lift_equality))
+                with self._data_lock:
+                    self.data.eq_active[eid] = 1
             self._log_pick_phase("PRE_LIFT", target_body)
             self._move_trajectory(pre_lift_positions, regrasp_ms, self._pick_ctrl_offsets("lift"))
             self._log_pick_phase("REGRASP_OPEN", target_body)
@@ -1094,11 +1116,19 @@ class MujocoBackend:
                 and force_evidence["right_normal_force_n"] >= gripper["min_normal_force_n"]
                 and force_evidence["force_imbalance_ratio"] <= gripper["max_force_imbalance_ratio"]
             )
+            if hold_pre_lift and pre_lift_equality:
+                # 腰部面夹已合上 ⇒ **撤销临时约束**，之后的抬升/搬运由摩擦承担（能力口径见上）
+                eid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_EQUALITY,
+                                        str(pre_lift_equality))
+                with self._data_lock:
+                    self.data.eq_active[eid] = 0
             with self._data_lock:
                 after_regrasp_z = float(self.data.xpos[target_body][2])
             regrasp_evidence = {
                 "applied": True, "pre_lift_m": float(regrasp_cfg.get("pre_lift_m") or 0.0),
                 "depth_m": float(regrasp_cfg.get("depth_m") or 0.0), "open_m": open_m,
+                "hold_pre_lift": bool(regrasp_cfg.get("hold_pre_lift", False)),
+                "pre_lift_constraint": (str(pre_lift_equality) if hold_pre_lift else None),
                 "pre_lift_z_m": round(pre_lift_z, 6),
                 "after_regrasp_z_m": round(after_regrasp_z, 6),
                 "bilateral_after_regrasp": bool(bilateral), "force_ok_after_regrasp": bool(force_ok),
@@ -3375,6 +3405,8 @@ class MujocoBackend:
             if not math.isfinite(max_tilt) or not 0.0 <= max_tilt <= 90.0:
                 raise ValueError("max_tilt_deg 必须在 0..90 之间")
             gripper["max_tilt_deg"] = max_tilt
+            friction_flag = raw_gripper.get("require_friction_lift")
+            gripper["require_friction_lift"] = bool(friction_flag) if friction_flag is not None else False
             constraint = raw_gripper.get("lift_constraint")
             if constraint is not None:
                 if not isinstance(constraint, str) or not constraint:

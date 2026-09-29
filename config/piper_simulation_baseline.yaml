@@ -49,7 +49,16 @@ grasp:
   # enabled: true 时 pick 相位表变为 …GRIP_CLOSE → PRE_LIFT → REGRASP_OPEN → REGRASP_DESCEND
   # → REGRASP_CLOSE → LIFT；enabled: false 与改动前逐位一致（便于对照）。
   regrasp:
-    enabled: false   # ← 实测：首次"压上缘"抓取连 4 cm 预抬都撑不住（只升 9 mm 就翻滚），regrasp 无法到达
+    # 【2026-09-29 重新启用】原先 false 的原因：首次"压上缘"抓取连 4 cm 预抬都撑不住（只升 9 mm
+    # 就翻滚）⇒ regrasp 无从到达。根因与本轮定位的 LIFT 翻滚同一机制（上缘夹持、抗转力矩≈0）
+    # ⇒ 用 `hold_pre_lift: true`（**只在预抬段**临时用声明化约束刚住载荷）让预抬成立，
+    # REGRASP_CLOSE 之后立即撤销 ⇒ 最终搬运仍由摩擦承担。
+    # 【2026-09-29 实测：仍然是 false】启用 `hold_pre_lift` 后 regrasp 三段**真的跑到了**
+    # （PRE_LIFT → REGRASP_OPEN → REGRASP_DESCEND → REGRASP_CLOSE；此前预抬阶段就翻滚、根本到不了），
+    # 但**腰部握力/双侧判据未通过** ⇒ 抬升段被跳过 ⇒ s03 报"Backend 未确认目标已抓取"。
+    # 机制已就位、参数（depth_m/open_m/闭合档）与腰部夹持几何需要单独调，属**独立工作项**。
+    enabled: false
+    hold_pre_lift: false
     pre_lift_m: 0.04      # 第一次竖直抬离台的高度（> 方块半高 0.025）
     depth_m: 0.025        # 之后下探深度（到方块腰部）
     open_m: 0.004         # 松开量（每侧），保证下探时不挤住载荷

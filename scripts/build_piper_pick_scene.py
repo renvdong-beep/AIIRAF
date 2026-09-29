@@ -568,6 +568,7 @@ def build_scene(
         "approach_hold": approach_hold,
         "lift_path": lift_path,
         "lift_gripper": lift_gripper,
+        "require_friction_lift": bool(acceptance.get("require_friction_lift", False)),
         "carry_constraint": carry_constraint,
         "place_settle_ms": place_settle_ms,
         # 放置点纠偏声明（**语义字典**：含字符串 mode + 数值上限）⇒ 必须**原样**透传：
@@ -585,9 +586,11 @@ def build_scene(
         "pad_offset_m": 0.0,
         "pad_offset_axis": [0.0, 0.0, 1.0],
     }
-    if not bool(acceptance.get("require_friction_lift", False)):
-        # 默认使用抓取锚点焊接约束完成搬运；要求纯摩擦抬升时不提供该夹具。
-        gripper["lift_constraint"] = target_id + "_lift_constraint"
+    # **总是**报告约束名与"是否要求纯摩擦"开关（2026-09-29 §11.23(48)）：
+    # 原先"要求纯摩擦 ⇒ 不写约束名"把**声明**藏进了报告的有无里 —— 后端只能靠"键缺失"推断，
+    # 既无法表达"预抬段临时刚住"（regrasp 需要），也让"为什么没有约束"不可见。现在两者都显式报告。
+    gripper["lift_constraint"] = target_id + "_lift_constraint"
+    gripper["require_friction_lift"] = bool(acceptance.get("require_friction_lift", False))
     if reference is not None:
         gripper["pad_offset_m"] = float(
             reference.get("finger_height_correction_m", 0.0)
