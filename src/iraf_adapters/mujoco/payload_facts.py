@@ -183,7 +183,64 @@ def check_carry_cadence(sink):
 
 
 #: "放置点纠偏"的合法模式（声明驱动；实现层不给默认值）
-PLACE_POSE_CORRECTION_MODES = ("off", "measure_only", "lateral_only", "full_pose")
+PLACE_POSE_CORRECTION_MODES = ("off", "measure_only", "lateral_only", "full_pose", "touchdown")
+
+
+def resolve_touchdown_correction(declaration, payload_low_m, bearing_surface_z_m):
+    """算**竖向触地纠偏量**（纯函数，便于单测；是否施加由调用方按 mode 决定）。
+
+    为什么另开一个函数（2026-09-29 §11.25(f-4)）：`resolve_place_pose_correction` 的 delta 来自
+    "**托盘**实测位姿 − 名义位姿"，而实测把它施加下去**反而更差**（offset 0.051933449 → 0.059755439）
+    ⇒ 误差主项不在托盘位姿，而在**方块在夹口里下滑**：`PLACE_TRACE` 实测「载荷最低点 − 指腹中点」
+    在放置段内变化 **24.7 mm**（start −0.063954 → after_above −0.039229 → after_descend −0.043797），
+    而构建期在抓取位形上 FK 的关系是 −0.032008 ⇒ 运行时方块比名义低 ~12 mm，且**逐轮不同**
+    ⇒ 松手高度逐轮不同 ⇒ 落点横向散布也逐轮不同（offset 实测摆动 0.0139~0.0630，判据 0.06）。
+
+    口径：要消掉的量 = **载荷底面与承载面的实测间隙**（不是托盘位姿差），
+      `gap_m       = payload_low_m − bearing_surface_z_m`
+      `delta_z_m   = −(gap_m − touch_clearance_m)`（负 = 往下走；正 = 需要抬高）
+
+    声明（实现层不写默认值，缺即失败）：
+      · `touch_clearance_m`     —— 目标落位间隙（= 声明的触地间隙）；
+      · `max_vertical_m`        —— 允许的竖向纠偏上限（超过即**显式拒绝**，不静默截断）；
+      · `residual_tolerance_m`  —— 进此容差即视为无需纠偏（`applied=False`）。
+    返回 dict（含 mode / applied / delta_z_m / gap_m / touch_clearance_m / max_vertical_m）。
+    """
+    if not isinstance(declaration, dict) or not declaration:
+        raise ValueError(
+            "缺少 place_pose_correction 声明（grasp.place_pose_correction）：实现层不给默认值")
+    for label, value in (("payload_low_m", payload_low_m), ("bearing_surface_z_m", bearing_surface_z_m)):
+        if not isinstance(value, (int, float)) or isinstance(value, bool) \
+                or not np.isfinite(float(value)):
+            raise ValueError("触地纠偏需要实测的 %s（有限数），实际: %r" % (label, value))
+    required = {}
+    for key in ("touch_clearance_m", "max_vertical_m", "residual_tolerance_m"):
+        value = declaration.get(key)
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or float(value) < 0:
+            raise ValueError(
+                "place_pose_correction.mode=touchdown 时必须声明非负的 %s（实现层不写默认值），"
+                "实际: %r" % (key, value))
+        required[key] = float(value)
+    payload_low = float(payload_low_m)
+    bearing = float(bearing_surface_z_m)
+    gap = payload_low - bearing
+    delta_z = -(gap - required["touch_clearance_m"])
+    residual = abs(gap - required["touch_clearance_m"])
+    report = {"mode": "touchdown", "applied": False,
+              "gap_m": round(gap, 9), "delta_z_m": round(delta_z, 9),
+              "residual_m": round(residual, 9),
+              "payload_low_m": round(payload_low, 9), "bearing_surface_z_m": round(bearing, 9),
+              **{key: required[key] for key in required}}
+    if residual <= required["residual_tolerance_m"]:
+        return report
+    if abs(delta_z) > required["max_vertical_m"]:
+        raise ValueError(
+            "触地纠偏需要竖向移动 %.9f m（载荷底面 %.9f − 承载面 %.9f − 触地间隙 %.9f），"
+            "超过声明上限 max_vertical_m=%.9f m ⇒ 拒绝放置（不静默截断、不按名义高度照放）"
+            % (delta_z, payload_low, bearing, required["touch_clearance_m"],
+               required["max_vertical_m"]))
+    report["applied"] = True
+    return report
 
 
 def resolve_place_pose_correction(declaration, nominal_pose_m, live_pose_m):

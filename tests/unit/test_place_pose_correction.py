@@ -8,7 +8,8 @@
 
 import unittest
 
-from iraf_adapters.mujoco.payload_facts import resolve_place_pose_correction
+from iraf_adapters.mujoco.payload_facts import (resolve_place_pose_correction,
+                                                resolve_touchdown_correction)
 
 NOMINAL = [0.43486632, 0.0, 0.33288002]
 
@@ -79,6 +80,49 @@ class RejectionTests(unittest.TestCase):
         self.assertAlmostEqual(report["lateral_m"], 0.03, places=9)
         self.assertEqual(report["ik_iterations"], 800)
         self.assertAlmostEqual(report["max_residual_m"], 0.0001, places=12)
+
+
+class TouchdownCorrectionTests(unittest.TestCase):
+    """竖向触地纠偏（2026-09-29 §11.25(f-4)）：要消的是**载荷底面与承载面的实测间隙**。
+
+    为什么另开一组用例：原先那条 `resolve_place_pose_correction` 的量来自"托盘位姿 − 名义位姿"，
+    实测施加后**更差**（0.051933449 → 0.059755439）⇒ 误差主项不在托盘位姿，而在方块在夹口里下滑
+    （PLACE_TRACE 实测放置段内摆动 24.7 mm）。所以这一组钉住"按载荷底面算、按声明上下限判、缺失即失败"。
+    """
+
+    DECL = {"mode": "touchdown", "touch_clearance_m": 0.002,
+            "max_vertical_m": 0.05, "residual_tolerance_m": 0.001}
+
+    def test_needs_correction_when_payload_hangs_high(self):
+        # 实测的典型情形：方块在承载面上方 13.3 mm ⇒ 需要往下走 11.3 mm
+        report = resolve_touchdown_correction(self.DECL, 0.356372, 0.343000)
+        self.assertTrue(report["applied"])
+        self.assertAlmostEqual(report["gap_m"], 0.013372, places=9)
+        self.assertAlmostEqual(report["delta_z_m"], -0.011372, places=9)
+        self.assertLess(report["delta_z_m"], 0.0)
+
+    def test_no_correction_when_within_tolerance(self):
+        report = resolve_touchdown_correction(self.DECL, 0.3452, 0.3432)   # 间隙 2 mm = 目标
+        self.assertFalse(report["applied"])
+        self.assertAlmostEqual(report["residual_m"], 0.0, places=9)
+
+    def test_beyond_limit_is_refused_explicitly(self):
+        with self.assertRaises(ValueError) as ctx:
+            resolve_touchdown_correction({**self.DECL, "max_vertical_m": 0.01}, 0.3633, 0.3430)
+        self.assertIn("超过声明上限", str(ctx.exception))
+        self.assertIn("不静默截断", str(ctx.exception))
+
+    def test_missing_declaration_keys_fail(self):
+        for key in ("touch_clearance_m", "max_vertical_m", "residual_tolerance_m"):
+            with self.subTest(missing=key):
+                broken = {k: v for k, v in self.DECL.items() if k != key}
+                with self.assertRaises(ValueError) as ctx:
+                    resolve_touchdown_correction(broken, 0.3452, 0.3432)
+                self.assertIn(key, str(ctx.exception))
+
+    def test_non_finite_measurement_fails(self):
+        with self.assertRaises(ValueError):
+            resolve_touchdown_correction(self.DECL, float("nan"), 0.3432)
 
 
 if __name__ == "__main__":
