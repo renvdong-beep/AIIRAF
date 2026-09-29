@@ -250,7 +250,8 @@ MEASUREMENT_KEYS = ("sim_time_advance_s", "final_speed_mps", "wall_seconds", "ev
                     "place_carry_payload_lateral_m",
                     "regrasp_pad_minus_payload_z_m", "regrasp_payload_pad_lateral_m",
                     "regrasp_left_force_n", "regrasp_right_force_n", "regrasp_force_ok",
-                    "regrasp_pre_lift_delta_m", "regrasp_pad_minus_payload_after_pre_lift_m")
+                    "regrasp_pre_lift_delta_m", "regrasp_pad_minus_payload_after_pre_lift_m",
+                    "place_settled_gap_m", "place_settled_speed_mps", "place_settled_on_target")
 
 #: 步骤分类（报告里逐项可见，避免"没跑"和"跑过了"混在一起）。
 STEP_EXECUTED = "EXECUTED"
@@ -1012,6 +1013,14 @@ def measure_step(before, after, evidence, wall_seconds):
             measured["place_released"] = 1.0 if evidence["released"] else 0.0
         if evidence.get("payload_in_tray") is not None:
             measured["place_payload_in_tray"] = 1.0 if evidence["payload_in_tray"] else 0.0
+        # 放置段自检失败的诊断（2026-09-29 稳定性实测：6 次里 2 次报"未确认载荷已放下"，
+        # 且失败模式单一 ⇒ 必须能看到失败瞬间的落位间隙/末速/自检值）
+        for source_key, target_key in (("place_settled_gap_m", "place_settled_gap_m"),
+                                       ("place_settled_speed_mps", "place_settled_speed_mps"),
+                                       ("place_settled_on_target", "place_settled_on_target")):
+            if evidence.get(source_key) is not None:
+                value = evidence[source_key]
+                measured[target_key] = (1.0 if value else 0.0) if isinstance(value, bool) else float(value)
         # regrasp 调参用的诊断（§11.23(48)）：力与夹持几何必须可观测，否则只能靠猜
         rg = evidence.get("regrasp")
         if isinstance(rg, dict) and rg.get("applied"):
