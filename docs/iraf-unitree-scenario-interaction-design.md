@@ -108,7 +108,7 @@ scripts/scenario.py interact --scene scenes/handoff_lab     # S1 交互模式
 | `locomote`（速度指令） | LocomotionProvider（高层运动服务） | 目标速度跟踪误差在声明范围内，超时/超速触发安全停止 | **已实现（MuJoCo 仿真）** |
 | `navigate` | Nav2 或厂商运动服务 | 到达位姿且无安全事件（相机/雷达故障时禁止自主导航） | 待实现 |
 | `dock_for_handoff` | 四足 | `tray_frame` 平移误差 ≤ 30 mm、偏航 ≤ 2 deg、速度为零 | **已实现（MuJoCo 仿真）**：实测 0.025516453 m / 0.143376133° |
-| `accept_payload` | 四足 | 托盘占用/载荷确认（不得只凭"夹爪已张开"） | **已实现（MuJoCo 仿真）**：实测落位间隙 −0.000215511 m、整链末速 3.5781e-05 m/s |
+| `accept_payload` | 四足 | 托盘占用/载荷确认（不得只凭"夹爪已张开"） | **已实现（MuJoCo 仿真）**：实测落位间隙 +0.000627866 m（**在模型自身的接触 margin 0.001 m 之内** ⇒ 判"落在承载面上"）、整链末速 0.003442571 m/s（判据 ≤0.01）、载荷中心偏移 0.052586728 m（判据 ≤0.06）；托盘现挂在狗背 `tray_frame`（2026-09-29，见 `docs/debug/2026-09-24-joint-model-dog-arm.md` §11.23(47)） |
 | `pick_object` / `place_object` | Piper + MoveIt2 | 既有判据（双指接触 + 抬升 + 命中目标） | **已实现（MuJoCo 仿真）** |
 
 先落地"本体单体"能力（`stand`/`stop`/`locomote`/状态读取），再谈交接集成；顺序不可颠倒。
