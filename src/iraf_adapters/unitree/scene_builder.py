@@ -228,10 +228,48 @@ def load_build_declarations(profile_path, robot):
 
 
 def verify_vendor_source(root, model, label):
-    """厂商资产锁定校验：文件必须在锁内登记，且 SHA-256 与锁一致（字节级 provenance）。"""
+    """厂商资产锁定校验：文件必须在锁内登记，且 SHA-256 与锁一致（字节级 provenance）。
+
+    **派生模型**（2026-09-29 新增，`spec.model.derived_from_report`）：附加本体的模型可能不是**单个**
+    厂商文件，而是**多个厂商件组装**出来的产物（UR5e+2F-85 由 `scripts/assemble_ur5e_2f85.py` 组装，
+    落在 `build/models/` 下 ⇒ 天然不在 `vendor/` 里，撞上 vendor 前缀门禁）。
+    此时**不绕过** provenance，而是把锁换成**该臂侧报告里的 `model_source.sha256`**：
+    报告由组装流程本身产出、记录 sha256 ⇒ 文件必须与该 sha256 逐位一致，否则 fail-closed。
+    为什么用"声明一个报告路径"而不是"把 sha256 写进 Profile"：哈希写死会随模型更新静默过期。
+    """
     root = Path(root)
     vendor = str(model["vendor"])
     relative = str(model["file"])
+    derived_report = model.get("derived_from_report")
+    if derived_report:
+        source = root / str(relative)
+        if not source.is_file():
+            _fail(EXIT_REFERENCE, "%s 的派生模型不存在: %s" % (label, relative))
+        report_path = root / str(derived_report)
+        if not report_path.is_file():
+            _fail(EXIT_REFERENCE, "%s.derived_from_report 不存在: %s" % (label, derived_report))
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            _fail(EXIT_REFERENCE, "%s.derived_from_report 不可解析: %s" % (label, error))
+        locked = str(((report.get("model_source") or {}).get("sha256")) or "")
+        if not locked:
+            _fail(EXIT_REFERENCE,
+                  "%s.derived_from_report 指向的报告没有 model_source.sha256（无从校验派生模型）" % label)
+        import hashlib
+        digest = hashlib.sha256()
+        with open(str(source), "rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+        actual = digest.hexdigest()
+        if actual != locked:
+            _fail(EXIT_REFERENCE,
+                  "%s 的派生模型 sha256 与报告不一致（模型被改过或报告过期）: 实际 %s ≠ 锁 %s"
+                  % (label, actual, locked))
+        return {"source": str(source), "vendor": vendor, "derived_from_report": str(derived_report),
+                "locked_sha256": locked, "actual_sha256": actual, "lock_schema": "derived-report"}
+
+    prefix = "vendor/%s/" % vendor
     prefix = "vendor/%s/" % vendor
     if not relative.startswith(prefix):
         _fail(
@@ -950,6 +988,14 @@ def _attach_robots(staging, scene, root, attached_ids):
         #   · `spec.home`：本体标称位形（臂的 joint1..6）
         #   · `spec.gripper.open_positions`：抓手的"张开"位形（臂的 joint7/8 在这段里声明）
         home = dict(profile_spec.get("home") or {})
+        # **`spec.model.home` 也必须读**（2026-09-29 修）：错误信息一直写着"未在 Profile spec.model.home
+        # 声明初值"，而代码只读了 `spec.home` ⇒ 报错指向的键和行为不一致。这个键是**联合构建专用**的
+        # 初值来源：被动关节（如 2F-85 的 coupler/spring_link/follower）不能进 `spec.joints`（会让
+        # move_joint 直接控制它们、破坏 4 杆机构），因此也不能进 `spec.home`（Profile 校验会拒），
+        # 但它们**必须**有联合关键帧初值 ⇒ 落在这里。
+        model_home = (profile_spec.get("model") or {}).get("home")
+        if isinstance(model_home, dict):
+            home.update({str(k): float(v) for k, v in model_home.items()})
         gripper = profile_spec.get("gripper")
         if isinstance(gripper, dict):
             home.update({str(k): float(v) for k, v in (gripper.get("open_positions") or {}).items()})
@@ -1015,17 +1061,26 @@ def _attach_robots(staging, scene, root, attached_ids):
                     _fail(EXIT_REFERENCE, "附加本体 %s 的指爪 body %s%s 不在合成模型里"
                           % (robot_id, prefix, body_name))
                 geoms = list(getattr(body, "geoms", []) or [])
-                if len(geoms) != 1:
-                    _fail(EXIT_REFERENCE,
-                          "附加本体 %s 的指爪 body %s 有 %d 个 geom，无法唯一确定指爪碰撞体"
-                          "（臂侧约定是按名字引用单个 geom）" % (robot_id, body_name, len(geoms)))
-                geoms[0].name = str(geom_name)
+                # **按声明的 geom 名取**（2026-09-29 修）：原先要求"指爪 body 只能有 1 个 geom"，那是
+                # Piper 侧"注入单个 pad"的约定；UR5e+2F-85 每侧有 **2 个 pad**（基线以 `pad_boxes` 声明
+                # `rq2f85_*_pad1/pad2`）⇒ 该假设不成立（实测退出码 3：`指爪 body 有 3 个 geom`）。
+                # 改为按名字命中，并校验它属于该 body；旧约定（body 只有 1 个 geom）仍兼容。
+                named = [item for item in geoms if str(getattr(item, "name", "")) == str(geom_name)]
+                if not named:
+                    if len(geoms) == 1:
+                        geoms[0].name = str(geom_name)
+                        named = [geoms[0]]
+                    else:
+                        _fail(EXIT_REFERENCE,
+                              "附加本体 %s 的指爪 body %s 下没有声明名字的 geom %s（该 body 有 %d 个 geom）"
+                              % (robot_id, body_name, geom_name, len(geoms)))
                 # 指腹摩擦按声明注入（见 profiles/piper_mujoco.yaml 的 finger_friction 说明）：
                 # 与 position_gain 同一个理由 —— 联合模型里的臂必须与已验收的臂场景同一物理口径，
-                # 否则"抓起来"能过、"搬过去"会滑掉（实测）。
+                # 否则"抓起来"能过、"搬过去"会滑掉（实测）。**多 pad 机型对该侧全部 pad 生效**。
                 friction_value = _declared_finger_friction(root, profile_spec, robot_id)
                 if friction_value is not None:
-                    geoms[0].friction = list(friction_value)
+                    for item in named:
+                        item.friction = list(friction_value)
 
         attached_robot_values.append(list(joint_values))
         records.append({"id": robot_id, "prefix": prefix, "source": str(model["file"]),

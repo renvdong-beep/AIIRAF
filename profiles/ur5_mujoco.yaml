@@ -49,6 +49,45 @@ spec:
     # 因此驱动角色是"腱驱动"而非"左右独立平行指"。
     rq2f85_right_driver_joint: gripper_drive
     rq2f85_left_driver_joint: gripper_drive
+  # **联合构建期声明**（`spec.model.*`；形状与 `profiles/piper_mujoco.yaml` 同构，不新增键）：
+  # 供联合模型构建器（`build_scene.py --attach ur5e`）读取"模型来源 / 哪个 body 是基座 /
+  # 位置增益与指腹摩擦从哪份声明取"。缺这一段 ⇒ 附加本体无法进联合世界。
+  model:
+    vendor: universal_robots_rq2f85
+    # 组装产物（由 scripts/assemble_ur5e_2f85.py 生成，含 source-lock 校验）
+    file: build/models/ur5e_2f85/ur5e_2f85.xml
+    trunk_body: base
+    # **派生模型**：UR5e+2F-85 不是单个厂商文件，而是 `scripts/assemble_ur5e_2f85.py` 由多个厂商件组装的
+    # 产物 ⇒ 不在 `vendor/` 下（撞 vendor 前缀门禁）。此时 provenance **不绕过**：把锁换成该臂侧报告里的
+    # `model_source.sha256`（报告由组装流程产出），构建器会逐位校验，不一致即 fail-closed。
+    derived_from_report: build/models/ur5-pick-scene.json
+    # **联合关键帧的关节初值**（2026-09-29 补）：构建器给**子模型里每个关节**都要一个初值，
+    # 而 2F-85 的 coupler/spring_link/follower 属**被动关节**（tendon + equality 跟随）——本文件上面
+    # 已写明"声明它们会让 move_joint 直接控制它们、破坏 4 杆机构一致性"⇒ 它们**不进** `spec.joints`，
+    # 因此也不能放 `spec.home`（Profile 校验会拒："home 引用了未声明的关节"）。
+    # 这里的 `model.home` 是**联合构建专用**的初值来源（构建器的报错信息即指向 `spec.model.home`）。
+    # 值取自装配模型自己的 `<keyframe>`（build/gen_ur5e_model_home.py 导出；不手写、不猜）。
+    home:
+      rq2f85_right_driver_joint: 0.0
+      rq2f85_right_coupler_joint: 0.0
+      rq2f85_right_spring_link_joint: 0.0
+      rq2f85_right_follower_joint: 0.0
+      rq2f85_left_driver_joint: 0.0
+      rq2f85_left_coupler_joint: 0.0
+      rq2f85_left_spring_link_joint: 0.0
+      rq2f85_left_follower_joint: 0.0
+    # ⚠ **自碰撞排除未声明**：UR5e+2F-85 的自重叠**没有实测过**，按纪律"未知值不得猜测"留空。
+    # 若联合世界出现同类巨力接触（Piper 侧踩过：安装基座网格与 link1 设计上重叠 6 mm，冻结口径下
+    # 放大成 9.21e+08 N），按同一方法补：geom 级取证 → 声明化 `self_collision_excludes`。
+    position_gain:
+      baseline: config/ur5_simulation_baseline.yaml
+      section: scene
+      joints_section: model
+    finger_friction:
+      baseline: config/ur5_simulation_baseline.yaml
+      section: scene
+      key: pad_friction
+
   gripper:
     # type=tendon：**单执行器 + 欠驱动**。2F-85 在 MuJoCo 里 8 个关节
     # （左右各 driver/coupler/spring_link/follower）由**一个** tendon
