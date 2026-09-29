@@ -1242,7 +1242,27 @@ def _start_run_display(runtimes, bindings, world, display, render_hz, hold_secon
     width_px, height_px = render_spec.get("width_px"), render_spec.get("height_px")
     window_px = ((int(width_px), int(height_px))
                  if isinstance(width_px, int) and isinstance(height_px, int) else None)
-    camera = (str(render_spec["camera"]) if render_spec.get("camera") else None)
+    # 相机：**字符串** = 模型里的固定相机名（`camera_settings` 口径见 viewer_runner）；
+    #       **对象** = 自由相机（`lookat_m` / `distance_m` / `azimuth_deg` / `elevation_deg`）。
+    # 两种形态都由**机型声明**给出，viewer_runner 按类型分派（见其 `run_live_mirror` 的注释）。
+    # 为什么必须支持自由相机（2026-09-29，使用者反馈"看不全"）：场景自带的 `overhead_camera`
+    # 只盯着方块/托盘那一小片（(0.28,−0.28)），把第二台臂装进联合世界之后 UR5e 与 Piper 都在画面外
+    # ⇒ 演示看不到"两台臂 + 狗"。自由相机的四个量全部来自声明，不在这里写默认值。
+    raw_camera = render_spec.get("camera")
+    camera = None
+    if isinstance(raw_camera, dict):
+        required = ("lookat_m", "distance_m", "azimuth_deg", "elevation_deg")
+        missing = [key for key in required if key not in raw_camera]
+        if missing:
+            return {"display": str(display), "owner": owner_id, "window_opened": False,
+                    "frames": 0, "camera": None,
+                    "error": "render.camera 自由相机声明缺键 %s（需要 %s，缺声明即失败，不猜）"
+                             % (missing, list(required))}
+        camera = {key: ([float(v) for v in raw_camera[key]]
+                        if isinstance(raw_camera[key], (list, tuple)) else float(raw_camera[key]))
+                  for key in required}
+    elif isinstance(raw_camera, str) and raw_camera:
+        camera = raw_camera
 
     def loop():
         try:

@@ -2584,32 +2584,60 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         return self._lock
 
     def render_settings(self):
-        """返回 (camera, width_px, height_px, render_hz)，全部来自声明。"""
+        """返回 (camera, width_px, height_px, render_hz)，全部来自声明。
+
+        `camera` 原样返回（**不再 `str()`**）：字符串 = 模型里的具名相机；对象 = 自由相机
+        （`lookat_m` / `distance_m` / `azimuth_deg` / `elevation_deg`）。
+        为什么（2026-09-29）：把第二台臂装进联合世界后，场景自带的 `overhead_camera` 只盯着
+        方块/托盘那一片 ⇒ 演示看不到"两台臂 + 狗"；而 `str()` 会把自由相机对象变成
+        `"{'lookat_m': ...}"` 这种垃圾名，再被下面的"必须在模型里存在"校验拒掉。
+        """
         render = self.declaration.get("render") or {}
         return (
-            str(render.get("camera")),
+            render.get("camera"),
             int(render.get("width_px")),
             int(render.get("height_px")),
             float(render.get("render_hz")),
         )
 
     def _display_renderer(self):
-        """惰性创建离屏渲染器（分辨率与相机名来自声明，不写死）。"""
+        """惰性创建离屏渲染器（分辨率与相机来自声明，不写死）。
+
+        相机两种形态（与交互窗口同一口径，见 `viewer_runner.run_live_mirror`）：
+          · 字符串 ⇒ 按名字取模型相机（缺失即显式失败，避免"声明与场景不一致"静默生效）；
+          · 对象   ⇒ **自由相机**：四个量全部来自声明，缺键即失败（不给默认值）。
+        """
         with self._lock:
             if self._display_renderer_cache is None:
                 camera, width, height, _hz = self.render_settings()
-                camera_id = self.mujoco.mj_name2id(
-                    self.model, self.mujoco.mjtObj.mjOBJ_CAMERA, camera
-                )
-                if camera_id < 0:
-                    raise DeclarationError(
-                        "声明 render.camera=%r 在模型中不存在（可用相机见模型 ncam）："
-                        "显示参数必须与生成场景一致" % camera
-                    )
                 self._display_renderer_cache = self.mujoco.Renderer(
                     self.model, height=height, width=width
                 )
-                self._display_renderer_cache._iraf_camera_id = camera_id
+                if isinstance(camera, dict):
+                    required = ("lookat_m", "distance_m", "azimuth_deg", "elevation_deg")
+                    missing = [key for key in required if key not in camera]
+                    if missing:
+                        raise DeclarationError(
+                            "声明 render.camera 是自由相机，但缺键 %s（需要 %s；缺声明即失败，不猜）"
+                            % (missing, list(required)))
+                    free = self.mujoco.MjvCamera()
+                    free.type = self.mujoco.mjtCamera.mjCAMERA_FREE
+                    free.lookat[:] = [float(v) for v in camera["lookat_m"]]
+                    free.distance = float(camera["distance_m"])
+                    free.azimuth = float(camera["azimuth_deg"])
+                    free.elevation = float(camera["elevation_deg"])
+                    self._display_renderer_cache._iraf_camera_id = free
+                else:
+                    camera_name = str(camera)
+                    camera_id = self.mujoco.mj_name2id(
+                        self.model, self.mujoco.mjtObj.mjOBJ_CAMERA, camera_name
+                    )
+                    if camera_id < 0:
+                        raise DeclarationError(
+                            "声明 render.camera=%r 在模型中不存在（可用相机见模型 ncam）："
+                            "显示参数必须与生成场景一致" % camera_name
+                        )
+                    self._display_renderer_cache._iraf_camera_id = camera_id
             return self._display_renderer_cache
 
     def render_frames(self, count=1):

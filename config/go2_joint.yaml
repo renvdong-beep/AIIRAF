@@ -563,7 +563,17 @@ sample:
 # 实现层与脚本不得写死分辨率或相机名；`render.camera` 必须在被装配的模型里真实存在
 # （from_config 期校验，缺失即失败）；`render_hz` 是窗口渲染频率上限。
 render:
-  camera: overhead_camera
+  # 相机：**对象 = 自由相机**（viewer_runner 按类型分派：字符串=模型固定相机名；对象=自由相机）。
+  # 为什么不再用 `overhead_camera`（2026-09-29 使用者反馈"看不全"）：它只盯着方块/托盘那一片
+  # （look_at (0.28,−0.28)），把第二台臂装进联合世界后 **Piper 与 UR5e 都在画面外** ⇒ 演示看不到
+  # "两台臂 + 狗"。四个量按场景几何选：要收进 Piper 基座 (0.45,−0.45)、UR5e 基座 (0.45,0.90)、
+  # 狗走的走廊 x=0.45 / y∈[0,0.45]、以及托盘高度 ~0.35 ⇒ 中心取 (0.42, 0.22, 0.28)，
+  # 距离 3.0 m（45° 视场下覆盖约 2.5 m × 3.3 m），略偏 3/4 角（azimuth 285）+ 俯视 35°。
+  camera:
+    lookat_m: [0.42, 0.22, 0.28]
+    distance_m: 3.0
+    azimuth_deg: 285.0
+    elevation_deg: -35.0
   width_px: 640
   height_px: 480
   render_hz: 30.0
