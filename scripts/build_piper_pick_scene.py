@@ -448,6 +448,14 @@ def build_scene(
     approach_hold = str(gripper_cfg.get("approach_hold") or "none")
     # 抬升路径语义（声明透传；缺省 direct 但**显式写入报告**，后端据此选择单段或两段回放）
     lift_path = str((config.get("grasp") or {}).get("lift_path") or "direct")
+    # **放下后的落稳窗**（2026-09-29 §11.23(47)）：声明透传；**缺声明即失败**（后端据此在抬离后
+    # 先让载荷落稳再判"已放下"）。为什么不能给默认值：它是判据时序的一部分，猜一个数就等于
+    # 把"载荷是否已静止在承载面上"这件事交给运气（世界固定托盘那次恰好落在承载面上，掩盖了很久）。
+    place_settle_ms = (config.get("grasp") or {}).get("place_settle_ms")
+    if not isinstance(place_settle_ms, int) or isinstance(place_settle_ms, bool) or place_settle_ms <= 0:
+        raise ValueError(
+            "grasp.place_settle_ms 必须是正整数（毫秒）：放下后必须让载荷落稳再判；"
+            "缺声明即显式失败，不给实现层默认值（实际: %r）" % (place_settle_ms,))
     # 搬运段抓取约束（声明透传；缺省 enabled=false 但**显式写入报告**）
     _carry = (config.get("grasp") or {}).get("carry_constraint") or {}
     carry_constraint = {
@@ -541,6 +549,7 @@ def build_scene(
         "approach_hold": approach_hold,
         "lift_path": lift_path,
         "carry_constraint": carry_constraint,
+        "place_settle_ms": place_settle_ms,
         "closed_positions": _merge_arm_and_gripper({}, closed_positions),
         "lift_positions": _merge_arm_and_gripper(lift_arm, phase_gripper["lift"]),
         "min_lift_delta_m": float(acceptance.get("min_lift_delta_m", 0.02)),

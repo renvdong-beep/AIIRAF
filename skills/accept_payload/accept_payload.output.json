@@ -101,6 +101,11 @@
             "type": "object"
           },
           "description": "确认过程的实测采样（载荷最低点/中心、承载面、接触对、末速）。"
+        },
+        "contact_margin_m": {
+          "type": "number",
+          "minimum": 0,
+          "description": "接收体与载荷 geom 的**接触 margin 上界**（从模型 `geom_margin` 读，不写数字）。MuJoCo 在 dist < margin 时即把接触纳入约束集 ⇒ 载荷会稳定停在几何表面上方 ~margin；判“落在承载面上”用这个口径。"
         }
       }
     }

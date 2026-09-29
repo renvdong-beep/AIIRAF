@@ -218,11 +218,13 @@ class InjectionTests(SceneBuilderFixture):
         for frame in scene.get("frames") or []:
             self.assertIn(frame["id"], facts["sites"], msg=frame["id"])
         # 注入计数（厂商 nbody=18 含 world、ncam=0、nsite=1）：
-        # 注入后 nbody=20（+box_01 +tray_01）、ncam=1、nsite=4
+        # 注入后 nbody = 厂商 18 + **场景声明的道具数**、ncam=1、nsite=4
         #（+tray_frame +payload_lidar_site +handoff_station_frame）。
+        # ⚠ body 数**从声明派生**（2026-09-29）：写死 20 之后，新增 `arm_pedestal` 这种合法改动
+        # 立刻变成假失败（实测 21 != 20）并掩盖真实回归 —— 与本文件"道具清单也按声明派生"同一纪律。
         self.assertEqual(facts["ncam"], 1)
         self.assertEqual(facts["nsite"], 4)
-        self.assertEqual(facts["nbody"], 20)
+        self.assertEqual(facts["nbody"], 18 + len(scene["props"]))
         self.assertEqual(facts["nu"], 12)  # 四足 12 个力矩型 motor，未被改写
         self.assertEqual([item["name"] for item in report["sensors"]["injected"]], ["overhead_camera", "payload_lidar_site"])
         self.assertEqual(
@@ -268,8 +270,15 @@ class InjectionTests(SceneBuilderFixture):
         # （证据 build/acceptance/go2-skills/report.json）；locomote 仍未声明
         # （首期无步态控制器）。这里的断言跟着**事实**走，不是放宽门禁。
         # 2026-09-24：`dock_for_handoff` 完成三层验收后回填（同一事实的第五处：场景报告）
-        self.assertEqual(identity["capabilities"],
-                         ["stand", "stop", "locomote", "dock_for_handoff"])
+        # ⚠ 期望值**从场景声明派生**（2026-09-29）：写死清单会在每次"回填一项已验收能力"时
+        #   变成假失败（本次实测：`accept_payload` 交付后 5 项红；本用例只需守"报告如实记录了
+        #   Profile 的能力清单"这一性质，不需要自己再抄一份清单）。
+        expected = {}
+        for robot in _load(self.scene_path)["robots"]:
+            if robot["id"] == "unitree_go2":
+                expected = list(robot["capabilities"])
+        self.assertTrue(expected, "场景声明里必须给出 unitree_go2 的 capabilities")
+        self.assertEqual(identity["capabilities"], expected)
         # 步骤 17 后 scene.robots[].profile 已闭合为路径 ⇒ 构建器走"声明路径"这条来源，
         # 而不是按声明身份回退查找（两条都合法，报告必须写明走了哪条，绝不静默）。
         self.assertEqual(report["robot"]["profile_source"], "scene.robots[].profile")

@@ -9,7 +9,11 @@
 只做"从模型与 data 出事实"，**锁、租约、证据组装由各自后端负责**。
 
 判据口径（全是事实，不设力阈值；阈值由场景判据声明）：
-  `payload_on_target` = 载荷与接收体 geom **存在接触** 且 载荷最低点**不高于承载面**（不是悬空）。
+  `payload_on_target` = 载荷与接收体 geom **存在接触** 且 载荷最低点**不高于「承载面 + 模型声明的
+  接触 margin」**（不是悬空）。
+  ⚠ margin 必须从**模型**读（`geom_margin`），不能写死 0：厂商 Go2 模型声明 `margin="0.001"`，
+  MuJoCo 在 `dist < margin` 时就把接触纳入约束集 ⇒ 载荷会稳定停在几何表面**上方 ~1 mm**
+  （实测 dist +0.000489、每点力 0.10~0.12 N）。写死 `gap ≤ 0` 会让任何带 margin 的模型永远判"悬空"。
 """
 
 import numpy as np
@@ -40,8 +44,23 @@ def _lowest_point_z(mujoco, model, data, body_id):
             verts = np.asarray(model.mesh_vert[vert_adr:vert_adr + vert_num], dtype=float)
             rotation = np.asarray(data.geom_xmat[geom_id], dtype=float).reshape(3, 3)
             z = float((rotation @ verts.T).T[:, 2].min() + center[2])
+        elif geom_type == int(mujoco.mjtGeom.mjGEOM_BOX):
+            # 盒体：按**世界顶点**求最低点 —— 与承载面（下方同一算法）**同口径**。
+            # 为什么必须（2026-09-29 实测）：`center[2] - half_z` 只对**轴对齐**盒成立；载荷随
+            # 狗身姿态在托盘上轻微倾斜时（本例 0.72 mm / 0.05 m ≈ 0.83°），该式**高估**最低点
+            # ⇒ 明明已接触（`contact_geoms=['box_01_geom']`）却算出 `resting_gap=+0.000722398 m`
+            # ⇒ `payload_on_target` 被判 False（s05 误报"未确认落在接收体上"）。
+            rotation = np.asarray(data.geom_xmat[geom_id], dtype=float).reshape(3, 3)
+            corners = np.asarray([[sx * float(model.geom_size[geom_id][0]),
+                                   sy * float(model.geom_size[geom_id][1]),
+                                   sz * float(model.geom_size[geom_id][2])]
+                                  for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)], dtype=float)
+            z = float((rotation @ corners.T).T[:, 2].min() + center[2])
+        elif geom_type == int(mujoco.mjtGeom.mjGEOM_SPHERE):
+            z = float(center[2] - abs(float(model.geom_size[geom_id][0])))
         else:
-            # 其余类型用 size 的竖直半高（盒/球/圆柱/胶囊在 MuJoCo 里 size[2] 即竖直半高）
+            # 其余类型（圆柱/胶囊/椭球）用 size 的竖直半高：**已知的近似**（倾斜时同样会高估），
+            # 本场景的载荷与接收体都是盒体，不进这条分支；真要支持需按 geom 轴向算端点。
             half_z = float(model.geom_size[geom_id][2])
             z = float(center[2] - abs(half_z))
         lowest = z if lowest is None else min(lowest, z)
@@ -103,11 +122,23 @@ def confirm_payload_on_target(mujoco, model, data, payload_name, target_name):
         dof = int(model.jnt_dofadr[jnt])
         speed = max(speed, float(np.linalg.norm(np.asarray(data.qvel[dof:dof + 3], dtype=float))))
 
+    # **接触 margin（"软垫"）**：MuJoCo 在 `dist < margin` 时就把接触纳入约束集 ⇒ 承载物会在几何
+    # 表面**上方 ~margin** 处形成稳定平衡（2026-09-29 实测：4 个接触点、每点 0.1007~0.1174 N、
+    # 合计 ≈0.436 N ≈ 载荷重量 0.392 N + 托盘受压，而 `dist=+0.000489`）。
+    # 本场景的 margin 来自**厂商 Go2 模型**的 `<default class="go2"><geom margin="0.001">`
+    # ⇒ 判"是否落在承载面上"必须用**模型自己的口径**，不能写死 `gap ≤ 0`：
+    # 否则任何带 margin 的模型都永远判"悬空"（旧的世界固定托盘恰好无 margin 干扰，掩盖了这条）。
+    # 取值只从模型读（不写数字）：载荷与接收体 geom 的 margin 上界。
+    margin = 0.0
+    for geom_id in range(int(model.ngeom)):
+        if int(model.geom_bodyid[geom_id]) in (payload_body, target_body):
+            margin = max(margin, float(model.geom_margin[geom_id]))
     offset = float(np.linalg.norm(np.asarray(payload_center[:2], dtype=float)
                                   - np.asarray(top_center[:2], dtype=float)))
     resting_gap = float(low - top_z)
     return {
-        "payload_on_target": bool(contacts) and resting_gap <= 0.0,
+        "payload_on_target": bool(contacts) and resting_gap <= margin,
+        "contact_margin_m": round(float(margin), 9),
         "payload_low_z_m": round(low, 9),
         "target_top_z_m": round(float(top_z), 9),
         "resting_gap_m": round(resting_gap, 9),

@@ -1776,8 +1776,33 @@ class MujocoBackend:
                 retreat_goal[str(name)] = float(gripper["open_positions"][name])
         self._move_trajectory(retreat_goal, phase_ms,
                               ctrl_offsets=self._pick_ctrl_offsets("lift") or None)
+        _trace("after_retreat", _snapshot(), "抬离结束（载荷应留在承载面上）")
+
+        # ---- ④b **落稳窗**（声明化；缺声明即失败）：放下后载荷是**自由体**，离开指腹的那一刻
+        #      它还没落到承载面上 —— 必须给它时间落稳，再判"我放下了"。
+        # 为什么必须有（2026-09-29 实测，§11.23(47)）：托盘挂到狗背上后，抬离结束时载荷**仍在
+        # 自由下落中**（载荷自由关节速度 0.005385696 m/s、距承载面 0.000935902 m；MuJoCo 报的是
+        # 4 个 **+dist** 接触点 ⇒ 尚未压上）⇒ 下一帧（s05）量到 `resting_gap_m=+0.000653879 m`、
+        # `payload_on_target=False`，s05 因此误报"载荷未确认落在接收体上"。
+        # 旧的世界固定托盘**恰好**落在承载面上（gap −0.000215511）⇒ 这条时序假设被掩盖了很久。
+        # 判据不能靠"恰好"：先落稳，再按共享测量取事实（与四足侧同一函数，口径不漂移）。
+        settle_ms = gripper.get("place_settle_ms")
+        if not isinstance(settle_ms, int) or isinstance(settle_ms, bool) or settle_ms <= 0:
+            raise ValueError(
+                "场景报告缺少 gripper.place_settle_ms（正整数，毫秒）：放下后必须让载荷落稳再判；"
+                "实现层不写默认值（声明缺失即显式失败）")
+        self._advance_for(int(settle_ms))
+        from iraf_adapters.mujoco.payload_facts import confirm_payload_on_target
+
+        # ⚠ **必须持 `_data_lock`**：联合世界里臂是 guest，而共享植物由 owner 的驻留线程推进；
+        # `confirm_payload_on_target` 内部会 `mj_forward`（**写** data）⇒ 不持锁就是数据竞态。
+        # 本轮实测代价：不持锁直接 **SIGSEGV（exit 139，core dumped）**。`_snapshot()` 一直持锁，
+        # 所以同一条路径在过去从未暴露过这个约束。
+        with self._data_lock:
+            settled_facts = confirm_payload_on_target(
+                mujoco, self.model, self.data, str(payload["body"]), str(record["body"]))
         final = _snapshot()
-        _trace("after_retreat", final, "抬离结束（载荷应留在承载面上）")
+        _trace("after_settle", final, "落稳窗结束（载荷应静止在承载面上）")
 
         # ---- 判据（事实，不设阈值）
         left_id = self._body_id(gripper["left_finger_body"])
@@ -1825,6 +1850,14 @@ class MujocoBackend:
                                        "注意不能用 qpos 当目标：位置伺服的力 ∝ (target − qpos)，"
                                        "target=qpos ⇒ 夹持力为 0 ⇒ 载荷滑落（place24 实测，§11.23(13)）")},
             "place_mode": "declared_offset",
+            # 落稳窗实测（证明"放下"是在载荷**静止在承载面上**之后判的；见 §11.23(47)）
+            "place_settle_ms": int(settle_ms),
+            "place_settled_gap_m": float(settled_facts["resting_gap_m"]),
+            "place_settled_speed_mps": float(settled_facts["last_speed_mps"]),
+            # 按**共享测量**（与四足侧同一函数）判"落在承载面上"，并给出它用的 margin 口径：
+            # 厂商 Go2 模型声明 margin=0.001 ⇒ 载荷稳定停在几何表面上方 ~1 mm（见 §11.23(47)）。
+            "place_settled_on_target": bool(settled_facts["payload_on_target"]),
+            "place_settled_margin_m": float(settled_facts["contact_margin_m"]),
             "runtime_source": "live_fk",
             "phase_trace": phase_trace,
             "segment_samples": segment_samples,
@@ -2969,6 +3002,14 @@ class MujocoBackend:
                 if raw_gripper.get(key) is not None:
                     gripper[key] = {str(name): float(value)
                                     for name, value in dict(raw_gripper[key]).items()}
+            # **落稳窗**（2026-09-29 §11.23(47)）：必须**透传**，否则被本解析层白名单静默丢掉
+            # （本会话第 6 次踩同一类坑）⇒ `place_object` 到运行中途才 fail-closed。
+            settle_ms = raw_gripper.get("place_settle_ms")
+            if settle_ms is not None:
+                if not isinstance(settle_ms, int) or isinstance(settle_ms, bool) or settle_ms <= 0:
+                    raise ValueError(
+                        "夹爪配置的 place_settle_ms 必须是正整数（毫秒）：实际 %r" % (settle_ms,))
+                gripper["place_settle_ms"] = int(settle_ms)
             # 搬运段抓取约束（构建期按声明写入报告）：**透传**（白名单漏掉就静默失效 —— 本会话已踩四次）
             if raw_gripper.get("carry_constraint") is not None:
                 cc = dict(raw_gripper["carry_constraint"])

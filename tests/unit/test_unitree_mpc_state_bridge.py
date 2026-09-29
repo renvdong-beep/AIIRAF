@@ -1,7 +1,8 @@
 """单测：`mpc.state_bridge`（A6a-④ ②b 第一块）—— 状态口径 + yaw 解卷绕 + 子树质量/惯量。
 
 对照值来自 `docs/debug/2026-09-23-a6a4-state-bridge-facts.md` 的实测（keyframe `home`）：
-  · trunk 子树质量 `15.556408000000001` kg（≠ `sum(body_mass)` = `15.596408`，差 0.040000）；
+  · trunk 子树质量 `15.556408000000001` kg（≠ `sum(body_mass)`：差 = **世界属主道具质量之和**，
+    由 `_declared_prop_mass_kg()` 从场景声明派生 —— 写死数字会在"新增一个道具"时假失败）；
   · trunk 子树 COM `[-0.002120319044, 0.0, 0.268730095598]`；
   · 质心惯量（世界系、绕 trunk COM）手工装 vs `crb[trunk]` 最大差 `1.110e-16`。
 
@@ -25,7 +26,32 @@ from iraf_adapters.unitree.mpc.state_bridge import (STATE_DIM, ComStateTracker,
 
 ROOT = Path(__file__).resolve().parents[2]
 TRUNK_REF_MASS = 15.556408000000001          # 实测（facts 文档 §1 第 2 行）
-SCENE_TOTAL_MASS = 15.596407999999998        # 实测（facts 文档 §1 第 1 行）
+
+
+def _world_parented_prop_mass_kg():
+    """**世界属主**道具的质量之和（从 `scenes/handoff_lab/scene.yaml` 派生，不写死数字）。
+
+    口径：不带 `pose.mount` 的道具（= 直接挂在 worldbody）不进躯干子树；带 `mount` 的
+    （如挂在 `base_link` 下的托盘）**属于**本体 ⇒ 不计入本函数。
+
+    为什么派生（2026-09-29）：本文件要守的性质是"世界属主的道具不进入躯干子树"，
+    不是某个具体公斤数。原先写死 `sum(body_mass)=15.596408`（差 0.04 kg = 载荷）⇒
+    新增 `arm_pedestal`（5 kg 静态基座）后变成假失败、掩盖真实回归；
+    同时托盘从"世界固定"改成"挂回狗背"后，这一项也从排除集移入子树 —— 只有派生才对得上。
+    """
+    scene = yaml.safe_load((ROOT / "scenes/handoff_lab/scene.yaml").read_text(encoding="utf-8"))
+    total = 0.0
+    for item in (scene.get("props") or []):
+        pose = item.get("pose") or {}
+        if not pose.get("mount"):
+            total += float(item.get("mass_kg") or 0.0)
+    return total
+
+
+#: 场景总质量 = 躯干子树 + 世界属主道具（挂在载体上的道具已含在子树里）
+SCENE_TOTAL_MASS = TRUNK_REF_MASS + _world_parented_prop_mass_kg()
+#: 世界属主（不进本体子树）的道具质量之和 = 场景总质量 − 躯干子树质量
+SCENE_EXCLUDED_MASS = _world_parented_prop_mass_kg()
 COM_TOL = 1e-12
 INERTIA_TOL = 1e-12
 
@@ -144,7 +170,13 @@ def test_trunk_subtree_excludes_world_parented_scene_bodies():
     names = {mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, i) for i in bodies}
     assert "box_01" not in names                 # parent=world ⇒ 不属于本体
     assert "tray_01" in names                    # 挂在 base_link 下 ⇒ 属本体
-    assert len(bodies) == 18
+    # 子树体数**从模型与声明派生**（不写死）：全部 body − 世界属主道具（无 `pose.mount`）− world 自身。
+    # 2026-09-29：托盘由"世界固定"改为"挂回狗背"（带 `mount`）⇒ 它从排除集移入子树，计数随之变化；
+    # 写死 18 会变成假失败并掩盖真实回归。
+    prop_rows = yaml.safe_load((ROOT / "scenes/handoff_lab/scene.yaml").read_text(encoding="utf-8"))
+    world_parented = len([item for item in (prop_rows.get("props") or [])
+                          if not (item.get("pose") or {}).get("mount")])
+    assert len(bodies) == int(model.nbody) - world_parented - 1
     assert sum(float(model.body_mass[i]) for i in bodies) == pytest.approx(TRUNK_REF_MASS,
                                                                           abs=1e-12)
     assert float(np.sum(model.body_mass)) == pytest.approx(SCENE_TOTAL_MASS, abs=1e-12)
@@ -167,10 +199,10 @@ def test_subtree_mass_inertia_matches_measured_inertia_and_oracle():
 
 
 def test_subtree_mass_inertia_rejects_scene_total_mass_route():
-    """把 `sum(body_mass)` 当本体质量必须**可被本层的对照测出**（差 0.04 kg）。"""
+    """把 `sum(body_mass)` 当本体质量必须**可被本层的对照测出**（差 = 世界属主道具质量之和）。"""
     mujoco, model, data, trunk = _scene()
     mass, _com, _inertia, _bodies = subtree_mass_inertia(model, data, mujoco, trunk)
-    assert abs(float(np.sum(model.body_mass)) - mass) == pytest.approx(0.04, abs=1e-12)
+    assert abs(float(np.sum(model.body_mass)) - mass) == pytest.approx(SCENE_EXCLUDED_MASS, abs=1e-12)
 
 
 def test_crb_layout_and_gates():

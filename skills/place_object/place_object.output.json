@@ -183,6 +183,29 @@
             "type": "object"
           },
           "description": "运动过程中的采样行（与 phase_trace 同结构的运动期子集）。"
+        },
+        "place_settle_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "放下后**落稳窗**的声明时长（毫秒，来自 piper_simulation_baseline.yaml: grasp.place_settle_ms）。载荷离手时是自由体、尚未落到承载面上 ⇒ 判“已放下”前必须先落稳（§11.23(47)）。"
+        },
+        "place_settled_gap_m": {
+          "type": "number",
+          "description": "落稳窗结束时实测的落位间隙（带符号；≤0 = 已接触/压入）：载荷最低点 − 承载面顶面。"
+        },
+        "place_settled_speed_mps": {
+          "type": "number",
+          "minimum": 0,
+          "description": "落稳窗结束时实测的整链末速（模型内所有自由关节线速度上界）。"
+        },
+        "place_settled_on_target": {
+          "type": "boolean",
+          "description": "落稳窗结束时按**共享测量**（与四足侧同一函数）判定的“载荷落在承载面上”（存在接触 且 最低点不高于承载面 + 模型 margin）。"
+        },
+        "place_settled_margin_m": {
+          "type": "number",
+          "minimum": 0,
+          "description": "落稳窗结束时实测的接触 margin（从模型读）：判“落在承载面上”的口径之一。"
         }
       }
     }

@@ -715,7 +715,8 @@ class AcceptPayloadProvider:
     """
 
     #: 输出 schema（`skills/accept_payload/accept_payload.output.json`）要的 evidence 键。
-    EVIDENCE_KEYS = ("payload_on_target", "payload_low_z_m", "target_top_z_m", "resting_gap_m",
+    EVIDENCE_KEYS = ("payload_on_target", "contact_margin_m", "payload_low_z_m", "target_top_z_m",
+                     "resting_gap_m",
                      "contact_geoms", "payload_center_m", "target_center_m",
                      "offset_from_target_center_m", "last_speed_mps", "runtime_source",
                      "phase_trace")
