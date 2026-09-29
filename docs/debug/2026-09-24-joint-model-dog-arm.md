@@ -2727,6 +2727,25 @@ s05 通过；gap 0.000675377 ⇒ 无接触、s05 报"未确认落位"）。**道
 现在平台**已经稳定**（4/4、末速 3.6e-05），可以安全地做握位标定：改 `regrasp.target = payload_mid` 的
 几何（把 anchor 跟随口径一并核到 geom 中心）⇒ 判据 `|regrasp_pad_minus_payload_z_m| ≤ 声明容差`。
 
+**观测口径统一 + full_pose 试切回退（2026-09-29）**
+
+1. **仪器口径统一**：regrasp 的观测（`pad_mid_z_m` / `pad_minus_payload_z_m` / `payload_pad_lateral_m`）
+   原先取**指腹 body 中心**，而 IK 目标、`pad_offset`、放置段 `pad_mid` 全部取**指腹 geom 中心**
+   ⇒ 实测两者差 33~43 mm（body 更低）⇒ 报出的 `pad_minus_payload_z_m = −0.04754` 是**仪器偏差**，
+   按 geom 口径实际约 −0.008（已接近载荷腰身中点）。已把观测改成 geom 口径（与 IK/放置段同一参考）。
+2. **`place_pose_correction` 试切 `full_pose`**（前提：regrasp 修好后载荷开始跟随指令）：
+   实测 offset 最小值 0.04546417 → **0.038616271**（纠偏确实在管停靠那 3.4 cm），末速 3.68e-05 ✓，
+   但同一组 4 次里出现 **1 次 s03 失败**（"未确认目标已抓取"）⇒ 抓取/regrasp 仍存在 ~1/4 的边缘失败。
+   按纪律**退回 `measure_only`**（两个变量同时动、通过率反降 ⇒ 不留这种状态），复测 **4/4 通过** ✓：
+   `place_offset_from_tray_center_m` **0.03802767 ~ 0.05145873**、
+   `accept_last_speed_mps` **3.6451e-05 ~ 3.6575e-05**。
+
+**下一步（按序）**：
+1. **量化并修抓取侧的边缘失败**：用 `stability_probe.py 8~10` 取通过率（现在样本 4 太小，估计 ~1/4~1/8），
+   失败时用 `regrasp_diag_probe.py` 取腰部夹持力/双侧/预抬量，定位是"腰部握位偶尔夹空"还是"抬升段丢件"；
+2. 抓取侧修好后，**单独**把 `place_pose_correction` 切回 `full_pose` 并复测（一次只动一个变量）；
+3. 最后复核 `regrasp.target = payload_mid` 的几何是否要按 geom 口径再调（现在实测已接近腰身中点）。
+
 **结论与下一步**（每一项都带上面的数字支撑）：
 1. **抬升段的横向拖拽（主项 32.7 mm）**：把声明化的抓取约束 `carry_constraint` 的**适用面扩展到
    pick 的抬升段**（现在是"只作用于 place 的搬运段"⇒ 抬升纯摩擦 ⇒ 拖出 33 mm）；

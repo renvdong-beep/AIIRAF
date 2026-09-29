@@ -1229,8 +1229,13 @@ class MujocoBackend:
                 after_regrasp_z = float(self.data.xpos[target_body][2])
                 # 夹持几何（**调参必须看**，2026-09-29 §11.23(48)）：指腹中点高度 vs 载荷中心高度
                 # ⇒ 判断"夹错高度"（太高=还夹上缘、太低=夹到底棱），以及指腹跨度与载荷-夹口横向偏移。
-                _l = np.asarray(self.data.xpos[self._body_id(str(gripper["left_finger_body"]))], dtype=float)
-                _r = np.asarray(self.data.xpos[self._body_id(str(gripper["right_finger_body"]))], dtype=float)
+                # ⚠ 口径必须与 IK 目标/pad_offset/放置段 `pad_mid` **一致**：都用**指腹 geom 中心**
+                # （2026-09-29 实测：body 中点比 geom 中点低 33~43 mm ⇒ 用 body 会把"夹持高度"读成
+                # −0.04754，而按 geom 口径其实约 −0.008 ⇒ 已接近载荷腰身中点。仪器口径错会被当成物理结论）
+                _l = np.asarray(self.data.geom_xpos[mujoco.mj_name2id(
+                    self.model, mujoco.mjtObj.mjOBJ_GEOM, str(gripper["left_finger_geom"]))], dtype=float)
+                _r = np.asarray(self.data.geom_xpos[mujoco.mj_name2id(
+                    self.model, mujoco.mjtObj.mjOBJ_GEOM, str(gripper["right_finger_geom"]))], dtype=float)
                 _pad_mid = (_l + _r) / 2.0
                 _payload_c = np.asarray(self.data.xpos[target_body], dtype=float).copy()
                 _span = _r - _l
