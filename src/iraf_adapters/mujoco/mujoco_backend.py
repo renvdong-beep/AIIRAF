@@ -1085,6 +1085,7 @@ class MujocoBackend:
             # "夹爪能搬"的能力口径不受影响（纯摩擦下的拖拽量继续作为诊断上报）。
             hold_pre_lift = bool(regrasp_cfg.get("hold_pre_lift", False))
             pre_lift_equality = None
+            pre_lift_anchor_kwargs = {}
             if hold_pre_lift:
                 pre_lift_equality = gripper.get("lift_constraint")
                 if not pre_lift_equality:
@@ -1093,10 +1094,34 @@ class MujocoBackend:
                                         str(pre_lift_equality))
                 if eid < 0:
                     raise ValueError("抓取约束不存在: " + str(pre_lift_equality))
+                anchor_name = gripper.get("lift_anchor_body")
+                if not anchor_name:
+                    raise ValueError("regrasp.hold_pre_lift=true 但报告没有 lift_anchor_body 名字")
+                anchor_id = self._body_id(str(anchor_name))
                 with self._data_lock:
+                    # ⚠ 激活焊缝**必须同时驱动锚点**：否则锚点停在原地 ⇒ 焊缝把载荷**钉住**
+                    # （实测载荷 z 只动 0.000259 m，比纯摩擦还糟）。锚点摆法沿用放置段同一口径：
+                    # 位置 = 载荷当前位置，之后按「指腹中点 + 激活瞬间的载荷−指腹偏移」跟随。
+                    mocap = int(self.model.body_mocapid[anchor_id])
+                    left_p = np.asarray(self.data.xpos[self._body_id(str(gripper["left_finger_body"]))],
+                                        dtype=float)
+                    right_p = np.asarray(self.data.xpos[self._body_id(str(gripper["right_finger_body"]))],
+                                         dtype=float)
+                    finger_mid = (left_p + right_p) / 2.0
+                    payload_now = np.asarray(self.data.xpos[target_body], dtype=float)
+                    self.data.mocap_pos[mocap] = payload_now.copy()
+                    self.data.mocap_quat[mocap] = np.asarray(self.data.xquat[target_body],
+                                                             dtype=float).copy()
                     self.data.eq_active[eid] = 1
+                pre_lift_anchor_kwargs = {
+                    "anchor_body": str(anchor_name),
+                    "anchor_follow": (str(gripper["left_finger_body"]),
+                                      str(gripper["right_finger_body"])),
+                    "anchor_offset": payload_now - finger_mid,
+                }
             self._log_pick_phase("PRE_LIFT", target_body)
-            self._move_trajectory(pre_lift_positions, regrasp_ms, self._pick_ctrl_offsets("lift"))
+            self._move_trajectory(pre_lift_positions, regrasp_ms, self._pick_ctrl_offsets("lift"),
+                                  **pre_lift_anchor_kwargs)
             self._log_pick_phase("REGRASP_OPEN", target_body)
             opened = {str(name): (float(value) + open_m if str(name).endswith("joint7") else
                                   float(value) - open_m)
@@ -3282,11 +3307,16 @@ class MujocoBackend:
                 rg = dict(raw_gripper["regrasp"])
                 if "enabled" not in rg:
                     raise ValueError("gripper.regrasp 必须声明 enabled：%r" % (rg,))
+                # ⚠ 本层也是**显式枚举**（2026-09-29 §11.23(48)）：原先只列了三个数值参数 ⇒
+                # `hold_pre_lift`（预抬段临时刚住）与 `duration_ms`（各段时长）都被静默丢掉 ⇒
+                # 声明写了也不生效（实测后端永远读到 false / 用 phase_ms 兜底）。
                 gripper["regrasp"] = {
                     "enabled": bool(rg["enabled"]),
                     "pre_lift_m": float(rg.get("pre_lift_m") or 0.0),
                     "depth_m": float(rg.get("depth_m") or 0.0),
                     "open_m": float(rg.get("open_m") or 0.0),
+                    "hold_pre_lift": bool(rg.get("hold_pre_lift", False)),
+                    **( {"duration_ms": int(rg["duration_ms"])} if rg.get("duration_ms") else {} ),
                     **( {"source": str(rg["source"])} if rg.get("source") else {} ),
                 }
             # 搬运段的夹爪语义（构建期按声明写入报告）：**透传**，缺失即由 place_object 显式拒绝

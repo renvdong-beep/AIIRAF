@@ -116,6 +116,22 @@
             "payload_pad_lateral_m": {
               "type": "number",
               "description": "载荷中心相对夹口轴线的水平偏移（§11.23(48) 的关键量）。"
+            },
+            "pre_lift_z_m": {
+              "type": "number",
+              "description": "预抬前载荷中心高度（世界 z）。"
+            },
+            "after_regrasp_z_m": {
+              "type": "number",
+              "description": "regrasp 闭合后载荷中心高度（世界 z）。"
+            },
+            "bilateral_after_regrasp": {
+              "type": "boolean",
+              "description": "regrasp 闭合后是否双侧指腹同时接触载荷。"
+            },
+            "force_ok_after_regrasp": {
+              "type": "boolean",
+              "description": "regrasp 闭合后双侧法向力与不平衡比是否达标。"
             }
           }
         },

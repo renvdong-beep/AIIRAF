@@ -57,8 +57,8 @@ grasp:
     # （PRE_LIFT → REGRASP_OPEN → REGRASP_DESCEND → REGRASP_CLOSE；此前预抬阶段就翻滚、根本到不了），
     # 但**腰部握力/双侧判据未通过** ⇒ 抬升段被跳过 ⇒ s03 报"Backend 未确认目标已抓取"。
     # 机制已就位、参数（depth_m/open_m/闭合档）与腰部夹持几何需要单独调，属**独立工作项**。
-    enabled: false
-    hold_pre_lift: false
+    enabled: true
+    hold_pre_lift: true
     pre_lift_m: 0.04      # 第一次竖直抬离台的高度（> 方块半高 0.025）
     depth_m: 0.025        # 之后下探深度（到方块腰部）
     open_m: 0.004         # 松开量（每侧），保证下探时不挤住载荷
@@ -79,6 +79,8 @@ grasp:
   # pick 侧保持**纯摩擦**（臂侧基线 `grasp.require_friction_lift: true` 是既有已验证声明，不动）；
   # 搬运段改用**声明化的抓取约束**（MuJoCo `<connect>` 焊接 + mocap anchor），与臂侧世界同款机制。
   # 证据留痕：`constraint_activated`（已在 pick/place 证据里）。
+  # 抬升/预抬临时约束用的**锚点体**（模型里的具名 body；与搬运段共用同一个 mocap 锚点）
+  lift_anchor_body: grasp_anchor
   carry_constraint:
     enabled: true
     # **约束类型**（2026-09-28 §11.23(41)）：实测 `connect`（球铰，只约束平移）**防不住载荷在

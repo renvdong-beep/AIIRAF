@@ -590,6 +590,12 @@ def build_scene(
     # 原先"要求纯摩擦 ⇒ 不写约束名"把**声明**藏进了报告的有无里 —— 后端只能靠"键缺失"推断，
     # 既无法表达"预抬段临时刚住"（regrasp 需要），也让"为什么没有约束"不可见。现在两者都显式报告。
     gripper["lift_constraint"] = target_id + "_lift_constraint"
+    # ⚠ 锚点体名同样必须一路透传（2026-09-29 §11.23(48) 第 6 处）：`hold_pre_lift` 激活焊缝后
+    # 必须驱动锚点，否则焊缝把载荷钉在原地（实测载荷 z 只动 0.000259 m）。
+    lift_anchor_body = (config.get("grasp") or {}).get("lift_anchor_body")
+    if not isinstance(lift_anchor_body, str) or not lift_anchor_body:
+        raise ValueError("grasp.lift_anchor_body 必须是非空字符串（缺声明即失败）")
+    gripper["lift_anchor_body"] = lift_anchor_body
     gripper["require_friction_lift"] = bool(acceptance.get("require_friction_lift", False))
     if reference is not None:
         gripper["pad_offset_m"] = float(

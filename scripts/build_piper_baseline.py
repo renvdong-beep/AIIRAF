@@ -640,6 +640,10 @@ def build_reference_poses(root, baseline, target_id=None, target_xy_override_m=N
             "pre_lift_m": regrasp_poses["pre_lift_m"],
             "depth_m": regrasp_poses["depth_m"],
             "open_m": regrasp_poses["open_m"],
+            # ⚠ 这一层也是显式枚举（2026-09-29 §11.23(48)）：`hold_pre_lift` 只在 regrasp_poses 里加了、
+            # 没在这里列出来 ⇒ reference 里就没有 ⇒ 臂侧 builder 读不到 ⇒ 后端永远 false
+            # ⇒ 预抬段没临时刚住、预抬失效（实测载荷 z 只动 0.000151 m）。这就是"同一宣言第 4 个枚举点"。
+            "hold_pre_lift": regrasp_poses["hold_pre_lift"],
             "direction_world": regrasp_poses["direction_world"],
             "pre_lift": regrasp_poses["pre_lift"],
             "regrasp": regrasp_poses["regrasp"],

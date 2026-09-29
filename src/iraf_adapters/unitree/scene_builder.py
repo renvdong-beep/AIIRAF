@@ -1170,7 +1170,8 @@ def _inject_self_collision_excludes(staging, scene, root, attached_records):
 #: gripper 段里的**语义开关**（非对象名，不参与前缀改写）：见 _joint_manipulation
 SEMANTIC_GRIPPER_KEYS = ("close_hold", "approach_hold", "carry_gripper", "lift_path",
                          "regrasp", "carry_constraint", "place_settle_ms", "place_pose_correction",
-                         "lift_gripper", "lift_constraint", "require_friction_lift")
+                         "lift_gripper", "lift_constraint", "require_friction_lift",
+                         "lift_anchor_body")
 
 #: `robots[].reference_solver` 的必需键（缺键或缺文件即显式失败，不给默认值）：
 REFERENCE_SOLVER_KEYS = ("module", "entry", "baseline")
