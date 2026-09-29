@@ -2095,6 +2095,25 @@ class MujocoBackend:
                         return float(value)
                 raise ValueError("触地纠偏需要快照里的载荷最低点（payload_low_z）：缺它即拒绝照放")
 
+            def _xy(vector, label):
+                if vector is None or isinstance(vector, (str, bytes)):
+                    raise ValueError("放置纠偏需要快照里的 %s（二维/三维坐标）：缺它即拒绝照放" % label)
+                try:
+                    if len(vector) >= 2:
+                        return [float(vector[0]), float(vector[1])]
+                except TypeError:
+                    pass
+                raise ValueError("放置纠偏需要快照里的 %s：实际 %r" % (label, vector))
+
+            def _payload_xy(snapshot):
+                return _xy(((snapshot.get("payload_pose") or {}).get("pos_m")
+                            if isinstance(snapshot.get("payload_pose"), dict)
+                            else snapshot.get("payload_pose")), "载荷中心 xy")
+
+            def _tray_xy(snapshot):
+                return _xy(snapshot.get("tray_top") if snapshot.get("tray_top") is not None
+                           else snapshot.get("tray_top_m"), "托盘中心 xy")
+
             _wrist_body_td = self._body_id(gripper["wrist_body"])
             # **迭代收敛**（2026-09-29 实测后改）：一次走满会**过冲**（实测落差 +26.3 mm → −4.1 mm，
             # 即多走了 4.1 mm 把方块压进承载面以下），因为移动过程中载荷相对指腹还会再动（"下滑"）。
@@ -2113,15 +2132,25 @@ class MujocoBackend:
             _resolved = resolve_touchdown_correction(
                 pose_correction_declaration, _payload_low(after_descend), _bearing_z(after_descend))
             touch_record = {"first": _resolved}
+            from iraf_adapters.mujoco.payload_facts import resolve_place_alignment_correction
             for _index in range(1, _max_iterations + 1):
                 _resolved = resolve_touchdown_correction(
                     pose_correction_declaration, _payload_low(after_descend),
                     _bearing_z(after_descend))
-                if not _resolved["applied"]:
-                    _iterations.append({"iteration": _index, "skipped": "已在容差内", **_resolved})
+                # **横向**同轮一起纠（§11.25(f-5)：实测最终偏移 61.8 mm 里 47.4 mm 在释放前就已存在，
+                # 主因是搬运段在夹口里侧滑 21.6 mm；竖向纠偏不改变横向 ⇒ 必须同轮纠 xy）
+                _lateral = resolve_place_alignment_correction(
+                    pose_correction_declaration, _payload_xy(after_descend), _tray_xy(after_descend))
+                if not _resolved["applied"] and not _lateral["applied"]:
+                    _iterations.append({"iteration": _index, "skipped": "竖向与横向都已在容差内",
+                                        "vertical": _resolved, "lateral": _lateral})
                     break
-                _step_z = float(_resolved["delta_z_m"]) * _step_fraction
-                _cumulative_delta = _cumulative_delta + np.asarray([0.0, 0.0, _step_z], dtype=float)
+                _step_vec = np.asarray([
+                    (float(_lateral["delta_xy_m"][0]) if _lateral["applied"] else 0.0),
+                    (float(_lateral["delta_xy_m"][1]) if _lateral["applied"] else 0.0),
+                    (float(_resolved["delta_z_m"]) if _resolved["applied"] else 0.0)], dtype=float)
+                _step_vec = _step_vec * _step_fraction
+                _cumulative_delta = _cumulative_delta + _step_vec
                 _goal_td, _rows_td = self._corrected_place_goal(
                     descend, _cumulative_delta, pad_points, arm_joints, _wrist_body_td,
                     pose_correction_declaration,
@@ -2134,16 +2163,30 @@ class MujocoBackend:
                 after_descend = _snapshot()
                 _trace("after_touchdown_%d" % _index, after_descend,
                        "触地纠偏第 %d 次（累计 delta_z=%.6f）" % (_index, _cumulative_delta[2]))
-                _iterations.append({"iteration": _index, "step_z_m": round(_step_z, 9),
-                                    "cumulative_z_m": round(float(_cumulative_delta[2]), 9),
+                _iterations.append({"iteration": _index,
+                                    "step_m": [round(float(v), 9) for v in _step_vec],
+                                    "cumulative_m": [round(float(v), 9) for v in _cumulative_delta],
                                     "gap_after_m": round(float(_payload_low(after_descend)
                                                                - _bearing_z(after_descend)), 9),
+                                    "lateral_after_m": round(float(np.hypot(
+                                        _payload_xy(after_descend)[0] - _tray_xy(after_descend)[0],
+                                        _payload_xy(after_descend)[1] - _tray_xy(after_descend)[1])), 9),
                                     "segment": _rows_td})
             _final = resolve_touchdown_correction(
                 pose_correction_declaration, _payload_low(after_descend), _bearing_z(after_descend))
+            _final_lateral = resolve_place_alignment_correction(
+                pose_correction_declaration, _payload_xy(after_descend), _tray_xy(after_descend))
             touch_record["iterations"] = _iterations
             touch_record["final"] = _final
-            touch_record["cumulative_delta_z_m"] = round(float(_cumulative_delta[2]), 9)
+            touch_record["final_lateral"] = _final_lateral
+            touch_record["cumulative_delta_m"] = [round(float(v), 9) for v in _cumulative_delta]
+            if _final_lateral["applied"]:
+                raise ValueError(
+                    "放置纠偏迭代 %d 次后横向仍未到位：剩余 %.9f m（载荷中心 %r − 托盘中心 %r）"
+                    "超过容差 %.9f m ⇒ 拒绝照放（不静默截断）"
+                    % (_max_iterations, _final_lateral["lateral_m"],
+                       _payload_xy(after_descend), _tray_xy(after_descend),
+                       float(pose_correction_declaration["lateral_tolerance_m"])))
             if _final["applied"]:
                 raise ValueError(
                     "触地纠偏迭代 %d 次后仍未到位：剩余竖向 %.9f m（载荷底面 %.9f − 承载面 %.9f − "
@@ -2152,7 +2195,7 @@ class MujocoBackend:
                        _final["bearing_surface_z_m"],
                        float(pose_correction_declaration["touch_clearance_m"]),
                        float(pose_correction_declaration["residual_tolerance_m"])))
-            descend = _goal_td if _iterations and "cumulative_z_m" in _iterations[-1] else descend
+            descend = _goal_td if _iterations and "cumulative_m" in _iterations[-1] else descend
             touch_record["done"] = True
         padding = float(gripper.get("pad_offset_m") or 0.0)
         alignment_distance = float(
