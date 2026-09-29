@@ -6,6 +6,7 @@ import re
 import threading
 import uuid
 
+from .authority import LeaseConflict
 from .core import TaskStatus
 from .policy import PolicyGateway, PolicyRejected
 from .safety import SafetyQuarantine, QuarantineError

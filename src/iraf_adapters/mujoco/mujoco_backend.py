@@ -1179,7 +1179,12 @@ class MujocoBackend:
                         "payload_minus_anchor_m": ([round(float(v), 6) for v in (_pay - np.asarray(_anchor, dtype=float))]
                                                    if _anchor is not None else None)}
                 pre_lift_samples.append(_row)
-                if len(pre_lift_samples) % _pre_stride == 0:
+                # ⚠ 必须与其它诊断一样受 `IRAF_DEBUG_PICK` 开关约束（2026-09-29 实测）：
+                # 原先只按 stride 打印（默认 10）⇒ 演示/验收时每 10 个样本落一行，
+                # 单步墙钟被 print 拖长（本场景一段 pre_lift 就有上万行）⇒ 收尾时租约
+                # 已过期（LeaseConflict）。诊断输出不得改变被测对象的时序（观测者效应）。
+                if (os.environ.get("IRAF_DEBUG_PICK") == "1"
+                        and len(pre_lift_samples) % _pre_stride == 0):
                     print("PRE_LIFT_TRACE " + json.dumps(_row, ensure_ascii=False), flush=True)
 
             self._log_pick_phase("PRE_LIFT", target_body)
