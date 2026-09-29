@@ -1304,6 +1304,15 @@ class MujocoBackend:
             raise ValueError("接收体放置需要报告声明 gripper.pad_offset_m 与 gripper.pregrasp_offset_m")
         tray_body = self._body_id(record["body"])
         payload_body = self._body_id(payload["body"])
+        # 放置点纠偏：**实测**接收体位姿 vs 构建期名义位姿（是否施加由声明 mode 决定；
+        # mode=off 时逐位不变）。托盘随载体运动 ⇒ 停靠误差会直接变成放置偏移（§11.23(48)）。
+        from iraf_adapters.mujoco.payload_facts import resolve_place_pose_correction
+
+        with self._data_lock:
+            mujoco.mj_forward(self.model, self.data)
+            _live_tray_pose = np.asarray(self.data.xpos[tray_body], dtype=float).copy()
+        place_pose_correction = resolve_place_pose_correction(
+            gripper.get("place_pose_correction"), record.get("nominal_pose_m"), _live_tray_pose)
         payload_geom = payload.get("geom")
         if payload_geom is None:
             raise ValueError("载荷 %s 未声明 geom（无法量最低点）" % payload_id)
@@ -1861,6 +1870,8 @@ class MujocoBackend:
             # 按**共享测量**（与四足侧同一函数）判"落在承载面上"，并给出它用的 margin 口径：
             # 厂商 Go2 模型声明 margin=0.001 ⇒ 载荷稳定停在几何表面上方 ~1 mm（见 §11.23(47)）。
             "place_settled_on_target": bool(settled_facts["payload_on_target"]),
+            # 放置点纠偏的实测（见 §11.23(48)）：本步只测量不施加，先把真实 delta 取出来
+            "place_pose_correction": dict(place_pose_correction),
             "place_settled_margin_m": float(settled_facts["contact_margin_m"]),
             "runtime_source": "live_fk",
             "phase_trace": phase_trace,
@@ -3002,6 +3013,15 @@ class MujocoBackend:
                     raise ValueError(
                         "夹爪配置的 place_settle_ms 必须是正整数（毫秒）：实际 %r" % (settle_ms,))
                 gripper["place_settle_ms"] = int(settle_ms)
+            # **放置点纠偏**（语义字典：字符串 mode + 数值上限）⇒ 必须**原样**透传：
+            # 落到通用"名字改写/浮点转换"分支会把 mode 当名字、或 float("measure_only") 崩掉。
+            # 声明合法性由共享函数 `resolve_place_pose_correction` 统一校验（唯一口径）。
+            correction = raw_gripper.get("place_pose_correction")
+            if correction is not None:
+                if not isinstance(correction, dict):
+                    raise ValueError(
+                        "夹爪配置的 place_pose_correction 必须是对象：实际 %r" % (correction,))
+                gripper["place_pose_correction"] = dict(correction)
             # 搬运段抓取约束（构建期按声明写入报告）：**透传**（白名单漏掉就静默失效 —— 本会话已踩四次）
             if raw_gripper.get("carry_constraint") is not None:
                 cc = dict(raw_gripper["carry_constraint"])

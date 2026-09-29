@@ -180,3 +180,67 @@ def check_carry_cadence(sink):
                 "（anchor 只在每个控制迭代跟随一次 ⇒ 步数越大，载荷挂陈旧 anchor 越久）"
                 % (measured, limit))
     return None
+
+
+#: "放置点纠偏"的合法模式（声明驱动；实现层不给默认值）
+PLACE_POSE_CORRECTION_MODES = ("off", "measure_only", "lateral_only", "full_pose")
+
+
+def resolve_place_pose_correction(declaration, nominal_pose_m, live_pose_m):
+    """解析"放置点纠偏"声明并算出**实测纠偏量**（纯函数，便于单测；是否施加由调用方按 mode 决定）。
+
+    为什么需要（2026-09-29，§11.23(48)）：托盘随载体运动后，放置偏移 = 停靠误差 + 名义/实测量差，
+    而放置四段航点是**构建期按名义停靠位姿**解出的。三轮实测 offset = 0.052625625 / 0.058340468 /
+    0.056955541（判据 0.06）⇒ 余量最薄 1.7 mm，属"会随机变红"的验收脆弱点。根治只能把放置点纠到
+    **运行期实测位姿**上（不调阈值），而"纠多少"必须先量出来。
+
+    口径（旋转不改变模长 ⇒ 水平量与坐标系无关，故 delta 记世界系即可）：
+      · `off`          ⇒ 不测量（`applied=False`，返回里无 `delta_world_m`）；
+      · `measure_only` ⇒ 实测并留痕，`applied=False`；
+      · `lateral_only` / `full_pose` ⇒ **尚未实现** ⇒ 声明了即**显式失败**（不得静默按名义位姿照放）；
+      · 实测水平量超过声明的 `max_lateral_m` ⇒ **显式拒绝**（不静默截断）。
+    """
+    if not isinstance(declaration, dict) or not declaration:
+        raise ValueError(
+            "缺少 place_pose_correction 声明（grasp.place_pose_correction）：实现层不给默认值")
+    mode = str(declaration.get("mode") or "")
+    if mode not in PLACE_POSE_CORRECTION_MODES:
+        raise ValueError(
+            "place_pose_correction.mode 必须是 %s 之一，实际: %r"
+            % (list(PLACE_POSE_CORRECTION_MODES), declaration.get("mode")))
+    if mode == "off":
+        return {"mode": mode, "applied": False}
+    if nominal_pose_m is None:
+        raise ValueError(
+            "接收体记录缺少 nominal_pose_m（构建期名义停靠位姿）：无法量纠偏量 "
+            "⇒ 拒绝而非按名义位姿照放")
+    nominal = [float(v) for v in nominal_pose_m]
+    live = [float(v) for v in live_pose_m]
+    if len(nominal) != 3 or len(live) != 3:
+        raise ValueError("nominal_pose_m 与实测位姿都必须是 3 维，实际 %r / %r" % (nominal, live))
+    delta = [live[i] - nominal[i] for i in range(3)]
+    lateral = float(np.linalg.norm(np.asarray(delta[:2], dtype=float)))
+    max_lateral = declaration.get("max_lateral_m")
+    if not isinstance(max_lateral, (int, float)) or isinstance(max_lateral, bool) \
+            or not float(max_lateral) > 0:
+        raise ValueError(
+            "place_pose_correction 非 off 时必须声明正的 max_lateral_m（实现层不写默认值），实际: %r"
+            % (max_lateral,))
+    report = {
+        "mode": mode,
+        "applied": False,
+        "delta_world_m": [round(value, 9) for value in delta],
+        "lateral_m": round(lateral, 9),
+        "vertical_m": round(delta[2], 9),
+        "max_lateral_m": float(max_lateral),
+    }
+    if lateral > float(max_lateral):
+        raise ValueError(
+            "接收体实测位姿相对名义位姿偏 %.9f m（水平）> 声明上限 %.9f m ⇒ 拒绝放置"
+            "（该量说明载体没有停到位；不静默截断、不按名义位姿照放）"
+            % (lateral, float(max_lateral)))
+    if mode in ("lateral_only", "full_pose"):
+        raise ValueError(
+            "place_pose_correction.mode=%s 尚未实现（本步只交付 measure_only 的实测与留痕）⇒ "
+            "显式失败，不得静默按名义位姿照放" % mode)
+    return report

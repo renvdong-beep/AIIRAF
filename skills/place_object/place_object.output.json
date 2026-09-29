@@ -206,6 +206,52 @@
           "type": "number",
           "minimum": 0,
           "description": "落稳窗结束时实测的接触 margin（从模型读）：判“落在承载面上”的口径之一。"
+        },
+        "place_pose_correction": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "applied"
+          ],
+          "description": "把放置点从**构建期名义停靠位姿**纠正到**运行期实测接收体位姿**的量（托盘随载体运动 ⇒ 停靠误差会直接变成放置偏移）。mode 与上限由 piper_simulation_baseline.yaml: grasp.place_pose_correction 声明；未实现的模式必须显式失败（不得静默按名义位姿照放）。",
+          "properties": {
+            "mode": {
+              "enum": [
+                "off",
+                "measure_only",
+                "lateral_only",
+                "full_pose"
+              ]
+            },
+            "applied": {
+              "type": "boolean",
+              "description": "本轮是否真的施加了纠偏（measure_only/off ⇒ false）。"
+            },
+            "delta_world_m": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "number"
+              },
+              "description": "实测接收体位姿 − 构建期名义位姿（世界系，米）。"
+            },
+            "lateral_m": {
+              "type": "number",
+              "minimum": 0,
+              "description": "上述差值的水平模长（旋转不改变模长 ⇒ 与臂基座系同值）。"
+            },
+            "vertical_m": {
+              "type": "number",
+              "description": "竖直分量（世界 z）。"
+            },
+            "max_lateral_m": {
+              "type": "number",
+              "minimum": 0,
+              "description": "声明允许施加的水平纠偏上限；超过即显式拒绝（不静默截断）。"
+            }
+          }
         }
       }
     }

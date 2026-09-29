@@ -456,6 +456,20 @@ def build_scene(
         raise ValueError(
             "grasp.place_settle_ms 必须是正整数（毫秒）：放下后必须让载荷落稳再判；"
             "缺声明即显式失败，不给实现层默认值（实际: %r）" % (place_settle_ms,))
+    # 放置点纠偏（声明透传；**缺声明即失败**：它是判据时序/几何基准的一部分，不给默认值）
+    _pose_correction = (config.get("grasp") or {}).get("place_pose_correction")
+    if not isinstance(_pose_correction, dict) or not _pose_correction:
+        raise ValueError("grasp.place_pose_correction 必须声明为对象（含 mode；实现层不给默认值）")
+    if str(_pose_correction.get("mode") or "") not in ("off", "measure_only", "lateral_only",
+                                                       "full_pose"):
+        raise ValueError("grasp.place_pose_correction.mode 必须是 off/measure_only/lateral_only/"
+                         "full_pose，实际: %r" % (_pose_correction.get("mode"),))
+    if str(_pose_correction.get("mode")) != "off":
+        _max_lateral = _pose_correction.get("max_lateral_m")
+        if not isinstance(_max_lateral, (int, float)) or isinstance(_max_lateral, bool) \
+                or not float(_max_lateral) > 0:
+            raise ValueError("place_pose_correction 非 off 时必须声明正的 max_lateral_m（实际: %r）"
+                             % (_max_lateral,))
     # 搬运段抓取约束（声明透传；缺省 enabled=false 但**显式写入报告**）
     _carry = (config.get("grasp") or {}).get("carry_constraint") or {}
     carry_constraint = {
@@ -550,6 +564,9 @@ def build_scene(
         "lift_path": lift_path,
         "carry_constraint": carry_constraint,
         "place_settle_ms": place_settle_ms,
+        # 放置点纠偏声明（**语义字典**：含字符串 mode + 数值上限）⇒ 必须**原样**透传：
+        # 落到通用"名字改写/浮点转换"分支会把 mode 当名字或 float("measure_only") 而炸掉。
+        "place_pose_correction": dict(_pose_correction),
         "closed_positions": _merge_arm_and_gripper({}, closed_positions),
         "lift_positions": _merge_arm_and_gripper(lift_arm, phase_gripper["lift"]),
         "min_lift_delta_m": float(acceptance.get("min_lift_delta_m", 0.02)),
