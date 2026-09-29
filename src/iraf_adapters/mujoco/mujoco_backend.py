@@ -1119,6 +1119,20 @@ class MujocoBackend:
                                       str(gripper["right_finger_body"])),
                     "anchor_offset": payload_now - finger_mid,
                 }
+                # **姿态分量必须与放置段同口径**（2026-09-29 §11.23(48) 标定第 2 步）：
+                # 焊缝（weld）同时约束 6 个自由度 ⇒ 若只跟随**位置**、不跟随姿态，焊缝的姿态约束
+                # 与工具转动会互相拧、持续泵入能量 ⇒ 实测预抬把载荷**甩到夹口上方**
+                # （pre_lift_delta_m = 0.175094，是声明 0.04 的 4.4 倍）。
+                # 放置段的写法：anchor 姿态 = 腕部姿态 ⊗ 激活瞬间的（腕部⁻¹ ⊗ 载荷）。
+                carry_cfg = gripper.get("carry_constraint") or {}
+                if str(carry_cfg.get("type") or "") == "weld":
+                    with self._data_lock:
+                        wrist_q = np.asarray(
+                            self.data.xquat[self._body_id(str(gripper["wrist_body"]))], dtype=float)
+                        payload_q = np.asarray(self.data.xquat[target_body], dtype=float)
+                    pre_lift_anchor_kwargs["anchor_wrist"] = str(gripper["wrist_body"])
+                    pre_lift_anchor_kwargs["anchor_rel_quat"] = _quat_mul(_quat_conj(wrist_q),
+                                                                        payload_q)
             self._log_pick_phase("PRE_LIFT", target_body)
             self._move_trajectory(pre_lift_positions, regrasp_ms, self._pick_ctrl_offsets("lift"),
                                   **pre_lift_anchor_kwargs)
