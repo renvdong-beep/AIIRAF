@@ -2215,6 +2215,25 @@ after_retreat: 指腹 (0.3043,-0.3127,0.0850) ｜ 载荷 (0.2742,-0.29,0.0281)
 **(d) 顺带**：这一步也说明"时间语义"在本项目里必须一律按**墙钟**处理（§11.11 已记录 4 条路径差异）；
 `carry_cadence_steps` 进入报告的 `measured` 后，任何一次回归都能事后看到当时的节拍是多少。
 
+#### (44) 待办（起点遗留，已定位）：预检识别不了"该步骤技能产不出这条判据"
+
+`scripts/scenario.py: plan_steps` 的
+
+```python
+unsupported = [key for key in record["criteria"] if key not in CRITERION_SPEC]
+```
+
+只校验**判据名是否在全局词表**里，不校验"**这个技能**能否产出这条判据的测量量"。实测：给
+`ss01 stand` 配 `pose_tolerance_m`（该判据只属于 pick/place）⇒ `unsupported == []` ⇒
+`check_evaluable_criteria` 不触发 ⇒ 步骤照跑，直到运行期才以退出码 **5** 报判据未满足；
+而 `tests/unit/test_scenario_runner.py::…fails_preflight` 期望的是预检 **2** 并给出判据名。
+
+根因是**判据契约没有机器可读的测量路径**：`CRITERION_SPEC` 的第三个元素是中文散文
+（"evidence.grasp_alignment.center_distance_m"），无法与技能输出契约对照。候选设计与验收标准见
+`.hermes/plans/2026-09-28-preflight-evaluable-scope.md`（甲案：判据自带 evidence 路径 + 用技能
+`output.json` 校验；乙案：技能清单声明 measurements）。**本项按"已知阻塞如实登记"处理，
+不通过改测试期望来"变绿"。**
+
 ### 11.19 撤两条假设 + 第 9 个工装缺陷：搬运丢件的机制**仍未判死**（2026-09-28）
 
 **撤销 1：夹具（equality）不是原因。** 臂场景模型里确实有一条 `box_01_lift_constraint`
