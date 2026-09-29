@@ -34,7 +34,7 @@ def main():
         print("没有 PICK_LIFT_TRACE（该轮可能没跑到抬升段，或日志被截断）")
         return 0
     first = rows[0]
-    print("step   |载荷−指腹|水平  |载荷−指腹|3D   载荷z      指腹z      载荷倾角(相对首帧)  指腹跨度")
+    print("step   |载荷−指腹|水平  |载荷−指腹|3D   载荷z      指腹z      载荷倾角 腕部倾角 指腹跨度")
     for index, row in enumerate(rows):
         if index % every:
             continue
@@ -45,8 +45,12 @@ def main():
         total = (dx * dx + dy * dy + dz * dz) ** 0.5
         tilt = _quat_tilt_deg(first.get("payload_quat_wxyz", [1, 0, 0, 0]),
                               row.get("payload_quat_wxyz", [1, 0, 0, 0]))
-        print("%-6s %-18.6f %-18.6f %-11.6f %-11.6f %-19.2f %.6f" % (
-            row.get("step"), lateral, total, payload[2], pad[2], tilt,
+        # ⚠ **必须同时看腕部**（§11.23(48)）：只有"载荷在转"分不清是"工具带着转"还是"载荷在夹口里滑"
+        # —— 两者修法完全不同（前者改运动/姿态，后者改夹持力与抗转力矩）。
+        wrist_tilt = _quat_tilt_deg(first.get("wrist_quat_wxyz", [1, 0, 0, 0]),
+                                    row.get("wrist_quat_wxyz", [1, 0, 0, 0]))
+        print("%-6s %-18.6f %-18.6f %-11.6f %-11.6f %-8.2f %-8.2f %.6f" % (
+            row.get("step"), lateral, total, payload[2], pad[2], tilt, wrist_tilt,
             _norm(row.get("pad_span_m"))))
     last = rows[-1]
     payload, pad = last["payload_pos_m"], last["pad_mid_m"]

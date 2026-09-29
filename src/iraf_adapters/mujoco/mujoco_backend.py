@@ -1166,7 +1166,8 @@ class MujocoBackend:
                         if _jid >= 0:
                             _arm_now[str(_name)] = round(
                                 float(self.data.qpos[int(self.model.jnt_qposadr[_jid])]), 6)
-                _row = {"step": int(step), "anchor_mocap_m": _anchor,
+                _row = {"step": int(step), "plant_step_index": int(self.plant.step_index),
+                        "anchor_mocap_m": _anchor,
                         "pad_mid_body_m": [round(float(v), 6) for v in _pad],
                         "pad_mid_geom_m": [round(float(v), 6) for v in _pad_geom],
                         "body_minus_geom_m": [round(float(v), 6) for v in (_pad - _pad_geom)],
@@ -1335,6 +1336,9 @@ class MujocoBackend:
                     if len(pad_geoms) >= 2 and pad_geoms[0] >= 0 and pad_geoms[1] >= 0 \
                     else np.zeros(3)
                 row = {"step": int(step), "plant_step_index": int(self.plant.step_index),
+                       # 节拍必须在**同一行**里可算（§11.23(43)(48)）：采样回调每个**控制迭代**调一次，
+                       # 而 anchor 每迭代只跟随一次 ⇒ `plant_step_index` 的相邻差 = 该迭代植物前进的步数。
+                       # 带追踪的 6 轮全绿、无追踪的 8 轮里 1 次失败 ⇒ 判为节拍敏感 ⇒ 需要这个量。
                        "payload_pos_m": [round(float(v), 6) for v in self.data.xpos[target_body]],
                        "payload_quat_wxyz": [round(float(v), 9) for v in self.data.xquat[target_body]],
                        "wrist_quat_wxyz": [round(float(v), 9) for v in wrist_q],
