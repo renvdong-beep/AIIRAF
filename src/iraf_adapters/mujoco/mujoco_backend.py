@@ -1813,7 +1813,11 @@ class MujocoBackend:
         payload_in_footprint = (
             abs(float(final["payload_center"][0]) - float(final["tray_top"][0])) <= half_x
             and abs(float(final["payload_center"][1]) - float(final["tray_top"][1])) <= half_y)
-        resting = self._payload_rests_on_target(payload_body, tray_body)
+        # 判"载荷落在接收体上"必须用**共享测量**（与四足侧 accept_payload 同一函数）：
+        # 原先这里是本地实现 `_payload_rests_on_target`，**只看有没有接触**（不看落位间隙、
+        # 也不认模型声明的接触 margin）⇒ 与四足侧口径分叉（本轮登记的债，见 §11.23(47)）。
+        # 现在两侧都取 `confirm_payload_on_target` 的 `payload_on_target`（接触 且 gap ≤ margin）。
+        resting = bool(settled_facts["payload_on_target"])
         offset_from_center = float(np.linalg.norm(
             np.asarray([final["payload_center"][0] - final["tray_top"][0],
                         final["payload_center"][1] - final["tray_top"][1]], dtype=float)))
@@ -1913,18 +1917,6 @@ class MujocoBackend:
                 bodies = {int(self.model.geom_bodyid[contact.geom1]),
                           int(self.model.geom_bodyid[contact.geom2])}
                 if int(body_a) in bodies and int(body_b) in bodies:
-                    return True
-        return False
-
-    def _payload_rests_on_target(self, payload_body, target_body):
-        """载荷是否与接收体**存在接触**（"放住了"的事实判据，不设力阈值）。"""
-        with self._data_lock:
-            mujoco.mj_forward(self.model, self.data)
-            for index in range(int(self.data.ncon)):
-                contact = self.data.contact[index]
-                bodies = {int(self.model.geom_bodyid[contact.geom1]),
-                          int(self.model.geom_bodyid[contact.geom2])}
-                if int(payload_body) in bodies and int(target_body) in bodies:
                     return True
         return False
 
