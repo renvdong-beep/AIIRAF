@@ -1149,9 +1149,29 @@ class MujocoBackend:
                                        dtype=float)
                             + np.asarray(self.data.xpos[self._body_id(str(gripper["right_finger_body"]))],
                                          dtype=float)) / 2.0
+                    # **同图对照**（§11.23(48)）：求解器用的点是**指腹 geom** 中心，而 anchor 跟随用
+                    # **body** 中心 ⇒ 两者应是同一物理点；同一采样里若位置不同，就说明参考点取错对象。
+                    _pad_geom = (np.asarray(self.data.geom_xpos[mujoco.mj_name2id(
+                                    self.model, mujoco.mjtObj.mjOBJ_GEOM,
+                                    str(gripper["left_finger_geom"]))], dtype=float)
+                                 + np.asarray(self.data.geom_xpos[mujoco.mj_name2id(
+                                    self.model, mujoco.mjtObj.mjOBJ_GEOM,
+                                    str(gripper["right_finger_geom"]))], dtype=float)) / 2.0
                     _pay = np.asarray(self.data.xpos[target_body], dtype=float).copy()
+                with self._data_lock:
+                    _arm_now = {}
+                    for _name, _value in (pre_lift_positions or {}).items():
+                        _jid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT,
+                                                self._model_name(str(_name)))
+                        if _jid >= 0:
+                            _arm_now[str(_name)] = round(
+                                float(self.data.qpos[int(self.model.jnt_qposadr[_jid])]), 6)
                 _row = {"step": int(step), "anchor_mocap_m": _anchor,
+                        "pad_mid_body_m": [round(float(v), 6) for v in _pad],
+                        "pad_mid_geom_m": [round(float(v), 6) for v in _pad_geom],
+                        "body_minus_geom_m": [round(float(v), 6) for v in (_pad - _pad_geom)],
                         "pad_mid_m": [round(float(v), 6) for v in _pad],
+                        "arm_qpos": _arm_now,
                         "payload_m": [round(float(v), 6) for v in _pay],
                         "payload_minus_anchor_m": ([round(float(v), 6) for v in (_pay - np.asarray(_anchor, dtype=float))]
                                                    if _anchor is not None else None)}
