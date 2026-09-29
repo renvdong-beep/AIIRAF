@@ -220,6 +220,11 @@ grasp:
     touch_clearance_m: 0.0
     max_vertical_m: 0.05
     residual_tolerance_m: 0.001
+    # 迭代收敛参数（2026-09-29 **实测定值**）：单次走满会**过冲**（实测落差 +26.3 mm → −4.1 mm，
+    # 多走 4.1 mm 把方块压进承载面以下）—— 因为移动过程中载荷相对指腹还会再动（"下滑"）。
+    # 故按比例小步逼近 + 每次复测（闭环），上限也只允许这么多步（走不完即显式失败，不静默照放）。
+    touchdown_step_fraction: 0.5
+    touchdown_max_iterations: 6
     # 重解参数**必须声明**（实现层不写默认值）：与构建期链路同一族的量级
     ik_iterations: 800
     ik_step: 0.5

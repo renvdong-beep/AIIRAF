@@ -1505,8 +1505,13 @@ class MujocoBackend:
         with self._data_lock:
             mujoco.mj_forward(self.model, self.data)
             _live_tray_pose = np.asarray(self.data.xpos[tray_body], dtype=float).copy()
+        # ⚠ 声明 vs 报告**必须分开**（2026-09-29 实测踩点）：`resolve_place_pose_correction` 的**返回值**
+        # 只带它自己那几个键（mode/applied/delta_world_m/lateral_m/vertical_m/max_lateral_m[/ik_*]），
+        # **不带** touchdown 需要的 `touch_clearance_m`/`max_vertical_m`/`residual_tolerance_m`
+        # ⇒ 拿返回值当"声明"用会让触地纠偏拿到 None 并被守卫拦下（三连失败的第 3 次）。
+        pose_correction_declaration = gripper.get("place_pose_correction")
         place_pose_correction = resolve_place_pose_correction(
-            gripper.get("place_pose_correction"), record.get("nominal_pose_m"), _live_tray_pose)
+            pose_correction_declaration, record.get("nominal_pose_m"), _live_tray_pose)
         # 诊断（§11.23(48)）：把"构建期解"与"名义/实测目标点"分别**量出来** —— 只有这样才能判
         # "偏差在构建期解侧"还是"纠偏逻辑侧"。口径：目标点 = 承载面中心 + 声明的法向间隙(pad_offset)。
         if place_pose_correction.get("mode") != "off":
@@ -2056,46 +2061,98 @@ class MujocoBackend:
             from iraf_adapters.mujoco.payload_facts import resolve_touchdown_correction
 
             def _bearing_z(snapshot):
-                """从快照里取**承载面**世界 z：优先显式键，其次托盘顶面中心的三维坐标。"""
+                """从**快照**里取承载面世界 z。
+
+                ⚠ 键名必须用快照自己的（2026-09-29 实测踩点）：`_snapshot()` 给的是
+                `tray_top`（三维向量）与 `payload_low_z`（标量）；`tray_top_m` / `payload_low_m`
+                是 `_trace()` **加工后**才加的键 ⇒ 在快照上取这两个名字会落空。
+                第一版就是取错了名字，被自己的 fail-closed 守卫拦下（s04 报"缺承载面高度"）。
+                """
                 value = snapshot.get("bearing_surface_z_m")
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
                     return float(value)
-                top = snapshot.get("tray_top_m")
-                if isinstance(top, (list, tuple)) and len(top) == 3:
-                    return float(top[2])
+                for key in ("tray_top", "tray_top_m"):
+                    top = snapshot.get(key)
+                    # ⚠ 不能用 `isinstance(..., (list, tuple))`（2026-09-29 实测踩点第二次）：
+                    # 快照里的 `tray_top` 是 **numpy 数组** ⇒ isinstance 判 False、守卫又拦下
+                    # （报"缺承载面高度"）。改成"可索引且长度为 3"的判定，兼容 ndarray/list/tuple。
+                    if top is None or isinstance(top, (str, bytes)):
+                        continue
+                    try:
+                        if len(top) == 3:
+                            return float(top[2])
+                    except TypeError:
+                        continue
                 raise ValueError(
-                    "触地纠偏需要快照里的承载面高度（bearing_surface_z_m 或 tray_top_m）"
+                    "触地纠偏需要快照里的承载面高度（tray_top 或 bearing_surface_z_m）"
                     "：缺它即无法判定落点，拒绝照放")
 
+            def _payload_low(snapshot):
+                """从**快照**里取载荷最低点 z（同上的键名纪律）。"""
+                for key in ("payload_low_z", "payload_low_m"):
+                    value = snapshot.get(key)
+                    if isinstance(value, (int, float)) and not isinstance(value, bool):
+                        return float(value)
+                raise ValueError("触地纠偏需要快照里的载荷最低点（payload_low_z）：缺它即拒绝照放")
+
             _wrist_body_td = self._body_id(gripper["wrist_body"])
-            _first = resolve_touchdown_correction(
-                place_pose_correction, after_descend.get("payload_low_m"), _bearing_z(after_descend))
-            touch_record = {"first": _first}
-            if _first["applied"]:
-                _delta_td = np.asarray([0.0, 0.0, float(_first["delta_z_m"])], dtype=float)
+            # **迭代收敛**（2026-09-29 实测后改）：一次走满会**过冲**（实测落差 +26.3 mm → −4.1 mm，
+            # 即多走了 4.1 mm 把方块压进承载面以下），因为移动过程中载荷相对指腹还会再动（"下滑"）。
+            # 因此按声明的**步长比例**逐次逼近 + 每次复测：grip 相对滑动让单次开环量不可靠，
+            # 闭环（测量→小步→再测量）才可控。上限与比例都必须由声明给出（实现层不写默认值）。
+            _step_fraction = float(pose_correction_declaration["touchdown_step_fraction"])
+            _max_iterations = int(pose_correction_declaration["touchdown_max_iterations"])
+            if not 0.0 < _step_fraction <= 1.0:
+                raise ValueError(
+                    "place_pose_correction.touchdown_step_fraction 必须在 (0,1]，实际 %r" % _step_fraction)
+            if _max_iterations < 1:
+                raise ValueError(
+                    "place_pose_correction.touchdown_max_iterations 必须 ≥ 1，实际 %r" % _max_iterations)
+            _cumulative_delta = np.zeros(3, dtype=float)
+            _iterations = []
+            _resolved = resolve_touchdown_correction(
+                pose_correction_declaration, _payload_low(after_descend), _bearing_z(after_descend))
+            touch_record = {"first": _resolved}
+            for _index in range(1, _max_iterations + 1):
+                _resolved = resolve_touchdown_correction(
+                    pose_correction_declaration, _payload_low(after_descend),
+                    _bearing_z(after_descend))
+                if not _resolved["applied"]:
+                    _iterations.append({"iteration": _index, "skipped": "已在容差内", **_resolved})
+                    break
+                _step_z = float(_resolved["delta_z_m"]) * _step_fraction
+                _cumulative_delta = _cumulative_delta + np.asarray([0.0, 0.0, _step_z], dtype=float)
                 _goal_td, _rows_td = self._corrected_place_goal(
-                    descend, _delta_td, pad_points, arm_joints, _wrist_body_td,
-                    place_pose_correction, "descend_touchdown")
-                touch_record["segment"] = _rows_td
+                    descend, _cumulative_delta, pad_points, arm_joints, _wrist_body_td,
+                    pose_correction_declaration,
+                    "descend_touchdown_%d" % _index)
                 self._move_trajectory(
                     _carry_goal(_goal_td, "descend"), phase_ms,
                     ctrl_offsets=self._pick_ctrl_offsets("grasp") or None,
                     sampler=_segment_sampler("place_descend_touchdown_positions", segment_samples),
                     **carry_anchor_kwargs)
-                descend = _goal_td
                 after_descend = _snapshot()
-                _trace("after_touchdown", after_descend, "触地纠偏后的位形")
-                _second = resolve_touchdown_correction(
-                    place_pose_correction, after_descend.get("payload_low_m"),
-                    _bearing_z(after_descend))
-                touch_record["after"] = _second
-                if abs(_second["delta_z_m"]) > float(place_pose_correction["residual_tolerance_m"]):
-                    raise ValueError(
-                        "触地纠偏后仍未到位：剩余竖向 %.9f m（载荷底面 %.9f − 承载面 %.9f − 触地间隙 %.9f）"
-                        "超过容差 %.9f m ⇒ 拒绝照放（不静默截断、不按名义高度照放）"
-                        % (_second["delta_z_m"], _second["payload_low_m"], _second["bearing_surface_z_m"],
-                           float(place_pose_correction["touch_clearance_m"]),
-                           float(place_pose_correction["residual_tolerance_m"])))
+                _trace("after_touchdown_%d" % _index, after_descend,
+                       "触地纠偏第 %d 次（累计 delta_z=%.6f）" % (_index, _cumulative_delta[2]))
+                _iterations.append({"iteration": _index, "step_z_m": round(_step_z, 9),
+                                    "cumulative_z_m": round(float(_cumulative_delta[2]), 9),
+                                    "gap_after_m": round(float(_payload_low(after_descend)
+                                                               - _bearing_z(after_descend)), 9),
+                                    "segment": _rows_td})
+            _final = resolve_touchdown_correction(
+                pose_correction_declaration, _payload_low(after_descend), _bearing_z(after_descend))
+            touch_record["iterations"] = _iterations
+            touch_record["final"] = _final
+            touch_record["cumulative_delta_z_m"] = round(float(_cumulative_delta[2]), 9)
+            if _final["applied"]:
+                raise ValueError(
+                    "触地纠偏迭代 %d 次后仍未到位：剩余竖向 %.9f m（载荷底面 %.9f − 承载面 %.9f − "
+                    "触地间隙 %.9f）超过容差 %.9f m ⇒ 拒绝照放（不静默截断、不按名义高度照放）"
+                    % (_max_iterations, _final["delta_z_m"], _final["payload_low_m"],
+                       _final["bearing_surface_z_m"],
+                       float(pose_correction_declaration["touch_clearance_m"]),
+                       float(pose_correction_declaration["residual_tolerance_m"])))
+            descend = _goal_td if _iterations and "cumulative_z_m" in _iterations[-1] else descend
             touch_record["done"] = True
         padding = float(gripper.get("pad_offset_m") or 0.0)
         alignment_distance = float(
