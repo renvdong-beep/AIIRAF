@@ -204,8 +204,22 @@ grasp:
     # **1 次 s03 失败**（"未确认目标已抓取" ⇒ 抓取/regrasp 仍有 ~1/4 边缘失败）。
     # 按纪律：不把"两个变量同时动、通过率反而下降"的状态留在仓库 ⇒ 先退回 measure_only，
     # 等抓取侧的边缘失败被量化并修掉，再单独切 full_pose 并复测（一次只动一个变量）。
-    mode: measure_only
+    # ===== 2026-09-29 切 **touchdown**（§11.25(f-4)）=====
+    # 为什么换口径：`measure_only`/`full_pose` 那条的 delta 来自"**托盘**实测位姿 − 名义位姿"，
+    # 但 PLACE_TRACE 实测证明误差主项**不在托盘位姿**、而在"**方块在夹口里下滑 ~12 mm**"
+    # （同一段放置过程内「载荷最低点 − 指腹中点」摆动 24.7 mm：start −0.063954 → after_above
+    # −0.039229 → after_descend −0.043797，而构建期 FK 得 −0.032008）。
+    # `touchdown` 改为按**实测「载荷底面 − 承载面」**在下降到位后做**一次**竖向微降并复测，
+    # 仍不到位即显式失败（不静默照放）。水平量仍照旧测量（max_lateral_m 保留作门禁）。
+    mode: touchdown
     max_lateral_m: 0.05   # 允许施加的水平纠偏上限（实测 0.0338 ⇒ 在界内；超界即显式拒绝）
+    # 触地纠偏的三个量（缺任一即失败，实现层不写默认值）：
+    #   touch_clearance_m     —— 目标落位间隙（0 = 命令它贴到承载面；正间隙只会加高松手高度）
+    #   max_vertical_m        —— 允许的竖向纠偏上限（超过即显式拒绝，不静默截断）
+    #   residual_tolerance_m  —— 纠偏后仍在容差内即视为到位
+    touch_clearance_m: 0.0
+    max_vertical_m: 0.05
+    residual_tolerance_m: 0.001
     # 重解参数**必须声明**（实现层不写默认值）：与构建期链路同一族的量级
     ik_iterations: 800
     ik_step: 0.5

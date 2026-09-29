@@ -207,6 +207,11 @@
           "minimum": 0,
           "description": "落稳窗结束时实测的接触 margin（从模型读）：判“落在承载面上”的口径之一。"
         },
+        "place_touchdown_correction": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "**运行期触地纠偏**的痕迹（2026-09-29 §11.25(f-4)）：下降到位后按**实测**「载荷底面 − 承载面」决定是否再竖向微降一次。为什么必须运行期：方块在夹口里下滑 ~12 mm 且逐轮不同（PLACE_TRACE 实测放置段内摆动 24.7 mm），构建期名义几何覆盖不了 ⇒ 松手高度逐轮不同 ⇒ 落点横向散布大。字段：mode/gap_m/delta_z_m/residual_m/applied + 纠偏后复测（after）。口径与上下限由声明 grasp.place_pose_correction 给出（touch_clearance_m / max_vertical_m / residual_tolerance_m）。"
+        },
         "place_pose_correction": {
           "type": "object",
           "additionalProperties": false,
@@ -214,14 +219,30 @@
             "mode",
             "applied"
           ],
-          "description": "把放置点从**构建期名义停靠位姿**纠正到**运行期实测接收体位姿**的量（托盘随载体运动 ⇒ 停靠误差会直接变成放置偏移）。mode 与上限由 piper_simulation_baseline.yaml: grasp.place_pose_correction 声明；未实现的模式必须显式失败（不得静默按名义位姿照放）。",
+          "description": "把放置点从**构建期名义停靠位姿**纠正到**运行期实测接收体位姿**的量（托盘随载体运动 ⇒ 停靠误差会直接变成放置偏移）。mode 与上限由 piper_simulation_baseline.yaml: grasp.place_pose_correction 声明；未实现的模式必须显式失败（不得静默按名义位姿照放）。mode=touchdown 时另带触地口径的三个键（touch_clearance_m / max_vertical_m / residual_tolerance_m），见 place_touchdown_correction。",
           "properties": {
+            "touch_clearance_m": {
+              "type": "number",
+              "minimum": 0,
+              "description": "mode=touchdown 时的目标落位间隙（m）：0 = 命令载荷底面贴到承载面。正间隙只会加高松手高度（实测），故通常取 0。"
+            },
+            "max_vertical_m": {
+              "type": "number",
+              "minimum": 0,
+              "description": "mode=touchdown 时允许的竖向纠偏上限（m）：超过即显式拒绝，不静默截断。"
+            },
+            "residual_tolerance_m": {
+              "type": "number",
+              "minimum": 0,
+              "description": "mode=touchdown 时判“已到位”的容差（m）。"
+            },
             "mode": {
               "enum": [
                 "off",
                 "measure_only",
                 "lateral_only",
-                "full_pose"
+                "full_pose",
+                "touchdown"
               ]
             },
             "applied": {

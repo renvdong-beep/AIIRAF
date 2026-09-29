@@ -465,10 +465,14 @@ def build_scene(
     _pose_correction = (config.get("grasp") or {}).get("place_pose_correction")
     if not isinstance(_pose_correction, dict) or not _pose_correction:
         raise ValueError("grasp.place_pose_correction 必须声明为对象（含 mode；实现层不给默认值）")
+    # ⚠ 这是**第 8 个**枚举点（本会话第 8 次踩"新取值在某层被静默/显式拒绝"）：
+    # 新增 `touchdown`（2026-09-29 §11.25(f-4)，运行期按"载荷底面 − 承载面"竖向纠偏）
+    # ⇒ 必须同时改：本处、`payload_facts.PLACE_POSE_CORRECTION_MODES`、`skills/place_object` 的
+    # 输出契约 mode 枚举。三处不一致时，构建期或运行期会以"模式非法"显式失败（不会静默）。
     if str(_pose_correction.get("mode") or "") not in ("off", "measure_only", "lateral_only",
-                                                       "full_pose"):
+                                                       "full_pose", "touchdown"):
         raise ValueError("grasp.place_pose_correction.mode 必须是 off/measure_only/lateral_only/"
-                         "full_pose，实际: %r" % (_pose_correction.get("mode"),))
+                         "full_pose/touchdown，实际: %r" % (_pose_correction.get("mode"),))
     if str(_pose_correction.get("mode")) != "off":
         _max_lateral = _pose_correction.get("max_lateral_m")
         if not isinstance(_max_lateral, (int, float)) or isinstance(_max_lateral, bool) \

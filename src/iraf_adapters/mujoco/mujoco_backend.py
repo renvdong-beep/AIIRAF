@@ -2043,6 +2043,60 @@ class MujocoBackend:
                               **carry_anchor_kwargs)
         after_descend = _snapshot()
         _trace("after_descend", after_descend, "下行到位（载荷应正落在承载面上）")
+        # ---- 运行期**触地纠偏**（2026-09-29 §11.25(f-4)）
+        # 为什么必须运行期：方块在夹口里**下滑 ~12 mm 且逐轮不同**（PLACE_TRACE 实测「载荷最低点 −
+        # 指腹中点」在放置段内摆动 24.7 mm：start −0.063954 → after_above −0.039229 → after_descend
+        # −0.043797，而构建期在抓取位形上 FK 得 −0.032008）⇒ 构建期名义几何覆盖不了 ⇒ 松手高度逐轮不同
+        # ⇒ 落点横向散布大（offset 实测 0.0139~0.0630，判据 0.06；约 1/4 概率直接掉件）。
+        # 口径：要消的量 = **载荷底面 − 承载面 − 触地间隙**（不是"托盘位姿 − 名义位姿"——后者实测
+        # 施加后反而更差 0.051933449 → 0.059755439，见 §11.25(f-4)）。只做**一次**竖向微降，再复测；
+        # 仍进不了容差即**显式失败**（不静默照放）。
+        touch_record = None
+        if str((place_pose_correction or {}).get("mode")) == "touchdown":
+            from iraf_adapters.mujoco.payload_facts import resolve_touchdown_correction
+
+            def _bearing_z(snapshot):
+                """从快照里取**承载面**世界 z：优先显式键，其次托盘顶面中心的三维坐标。"""
+                value = snapshot.get("bearing_surface_z_m")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    return float(value)
+                top = snapshot.get("tray_top_m")
+                if isinstance(top, (list, tuple)) and len(top) == 3:
+                    return float(top[2])
+                raise ValueError(
+                    "触地纠偏需要快照里的承载面高度（bearing_surface_z_m 或 tray_top_m）"
+                    "：缺它即无法判定落点，拒绝照放")
+
+            _wrist_body_td = self._body_id(gripper["wrist_body"])
+            _first = resolve_touchdown_correction(
+                place_pose_correction, after_descend.get("payload_low_m"), _bearing_z(after_descend))
+            touch_record = {"first": _first}
+            if _first["applied"]:
+                _delta_td = np.asarray([0.0, 0.0, float(_first["delta_z_m"])], dtype=float)
+                _goal_td, _rows_td = self._corrected_place_goal(
+                    descend, _delta_td, pad_points, arm_joints, _wrist_body_td,
+                    place_pose_correction, "descend_touchdown")
+                touch_record["segment"] = _rows_td
+                self._move_trajectory(
+                    _carry_goal(_goal_td, "descend"), phase_ms,
+                    ctrl_offsets=self._pick_ctrl_offsets("grasp") or None,
+                    sampler=_segment_sampler("place_descend_touchdown_positions", segment_samples),
+                    **carry_anchor_kwargs)
+                descend = _goal_td
+                after_descend = _snapshot()
+                _trace("after_touchdown", after_descend, "触地纠偏后的位形")
+                _second = resolve_touchdown_correction(
+                    place_pose_correction, after_descend.get("payload_low_m"),
+                    _bearing_z(after_descend))
+                touch_record["after"] = _second
+                if abs(_second["delta_z_m"]) > float(place_pose_correction["residual_tolerance_m"]):
+                    raise ValueError(
+                        "触地纠偏后仍未到位：剩余竖向 %.9f m（载荷底面 %.9f − 承载面 %.9f − 触地间隙 %.9f）"
+                        "超过容差 %.9f m ⇒ 拒绝照放（不静默截断、不按名义高度照放）"
+                        % (_second["delta_z_m"], _second["payload_low_m"], _second["bearing_surface_z_m"],
+                           float(place_pose_correction["touch_clearance_m"]),
+                           float(place_pose_correction["residual_tolerance_m"])))
+            touch_record["done"] = True
         padding = float(gripper.get("pad_offset_m") or 0.0)
         alignment_distance = float(
             np.linalg.norm(after_descend["pad_mid"]
@@ -2150,6 +2204,8 @@ class MujocoBackend:
             "place_settled_on_target": bool(settled_facts["payload_on_target"]),
             # 放置点纠偏的实测（见 §11.23(48)）：本步只测量不施加，先把真实 delta 取出来
             "place_pose_correction": dict(place_pose_correction),
+            # 运行期触地纠偏的痕迹（mode=touchdown 时；否则 None）——含纠偏前后两次实测与自证结果
+            "place_touchdown_correction": touch_record,
             "place_settled_margin_m": float(settled_facts["contact_margin_m"]),
             "runtime_source": "live_fk",
             "phase_trace": phase_trace,
