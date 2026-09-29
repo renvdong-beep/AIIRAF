@@ -9,7 +9,11 @@ robot:
     mode: scene_report
     report: build/scenes/handoff_lab/handoff_lab_joint.json
     target_tolerance_m: 0.005
-    realtime: false
+    # **演示必须实时步进**（2026-09-29 实测）：原先 false ⇒ 8 s 仿真只花 0.78 s 墙钟，
+    # 而窗口（模型加载 + GL 初始化）要十几秒才出来 ⇒ 用户看到的第一个画面里狗**已经站在交接位**，
+    # "一开始没有走的动作"就是这么来的（狗实际走了 0.45 m，只是发生在窗口出来之前）。
+    # 与 config/machines/piper.yaml 同一口径：交互/演示实时；批量与 CI 另建声明设 false。
+    realtime: true
   plant:
     # 共享植物角色：**guest** —— 本本体在联合场景里注入 `owner`（四足）持有的植物，
     # 因此不得推进时间，只能写自己 name_map 界定的执行器（越界即显式失败）。
