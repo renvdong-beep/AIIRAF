@@ -44,6 +44,15 @@ model:
     # 由构型声明而不是写死，与其它名字字段同一口径。
     flange_site: attachment_site
 
+# **重力前馈**（2026-09-29 补；与 Piper 侧同一机制、同一组起始值）：求每个臂关节"抵消重力所需的
+# ctrl 增量"，并在**运行期同款模型**上做静态保持自证（残余 ≤ tolerance_rad，否则构建失败）。
+# 这三个数是**起始声明值**，不是机型常数：UR5e 的执行器口径与 Piper 不同 ⇒ 构建期门禁会按本机型
+# 逐相位验证（过不了就显式失败并给出数字 ⇒ 再按证据调，不静默兜底）。
+gravity_feedforward:
+  hold_ms: 4000
+  tolerance_rad: 0.001
+  max_passes: 4
+
 workbench:
   top_z_m: 0.0
   half_size_m: 0.8

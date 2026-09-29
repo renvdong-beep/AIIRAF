@@ -293,8 +293,16 @@ def _seed_positions(model, baseline, arm_names):
 
 
 
-def build_reference_poses(root, baseline, target_id=None):
-    """求解 home/approach/grasp/lift 四个参考关节姿态。"""
+def build_reference_poses(root, baseline, target_id=None, target_xy_override_m=None,
+                          target_z_override_m=None):
+    """求解 home/approach/grasp/lift 四个参考关节姿态。
+
+    `target_xy_override_m` / `target_z_override_m`（可选，2026-09-29 补）：**抓取点**相对**臂基座系**
+    的 xy 与世界 z。为什么需要（与 Piper 侧同一理由）：场景的 `reference_solver` 契约要求
+    `entry(root, baseline_doc, target_xy_override_m, target_z_override_m)` —— 联合世界把目标换算到
+    臂基座系后重解，避免把"臂自己场景"的位姿照搬过去（照搬实测造成 0.367696068 m 抓取残差）。
+    缺省 None ⇒ 行为与改动前**逐位一致**。
+    """
     model_cfg = baseline["model"]
     source = _resolve(root, model_cfg["source"])
     if not source.is_file():
@@ -371,10 +379,14 @@ def build_reference_poses(root, baseline, target_id=None):
         pointing_direction, spread_axis,
     )
 
-    finger_xy = grasp_cfg.get("finger_center_xy_m")
+    finger_xy = (list(target_xy_override_m) if target_xy_override_m is not None
+                 else grasp_cfg.get("finger_center_xy_m"))
     if not finger_xy or len(finger_xy) != 2:
         raise ValueError("基线配置缺少 grasp.finger_center_xy_m")
-    grasp_target = [float(finger_xy[0]), float(finger_xy[1]), top_z + half_size]
+    grasp_target = [
+        float(finger_xy[0]), float(finger_xy[1]),
+        (float(target_z_override_m) if target_z_override_m is not None else top_z + half_size),
+    ]
 
     solver_cfg = grasp_cfg.get("solver") or {}
     offset = float(grasp_cfg.get("pregrasp_offset_m", 0.16))
@@ -405,6 +417,11 @@ def build_reference_poses(root, baseline, target_id=None):
         per_iteration_orientation.append(residual)
         return result
 
+    # **配平的支撑面必须取"目标自身所在平面"**（2026-09-29 修，与 Piper 侧同源缺陷）：
+    # 原先写死 `top_z` ⇒ 一旦调用方用 `target_z_override_m` 把目标搬到别的高度（联合世界里臂被抬升后
+    # 目标相对臂基座可能落在台面之下），配平会把目标**拉回台面附近**（Piper 侧实测指腹中点比方块中心
+    # 高 +0.17892，应为 pad_offset）。缺省无覆盖时 `grasp_target[2] - half_size == top_z` ⇒ **逐位不变**。
+    support_z = float(grasp_target[2]) - half_size
     grasp_result, height_correction, clearance_trace, cleared = balance_tip_clearance(
         model,
         data,
@@ -412,7 +429,7 @@ def build_reference_poses(root, baseline, target_id=None):
         base_target,
         retreat_direction,
         pad_geoms,
-        top_z,
+        support_z,
         tip_clearance,
         iterations=int(grasp_cfg.get("clearance_iterations", 8)),
     )
@@ -425,7 +442,7 @@ def build_reference_poses(root, baseline, target_id=None):
                 len(clearance_trace),
                 float(last.get("deficit_m", float("nan"))),
                 float(last.get("tip_z_m", float("nan"))),
-                top_z + tip_clearance,
+                support_z + tip_clearance,
                 clearance_trace,
             )
         )
@@ -563,6 +580,20 @@ def build_reference_poses(root, baseline, target_id=None):
     # 稳态误差约 0.015 rad，折算到末端约 15mm > 5mm 验收容差。
     # **四个姿态都要算**：重力矩随位形变化（实测 shoulder_lift 28~33 N·m），
     # 只算 home 再全段复用会让 DESCEND 段残留数毫米偏差。
+    # ⚠ 前馈参数必须**声明**（2026-09-29 修）：本调用原先没传 hold_ms/tolerance_rad/max_passes，
+    # 靠函数默认值；而 `max_passes` 早已改成必填（实现层不写默认值）⇒ 通用/UR5e 这条路从那以后
+    # 一直是坏的（`KinematicsError: 重力前馈必须声明 max_passes`），因为没有验收覆盖而未暴露。
+    # 与 Piper 侧同一契约：三个数都从基线 `gravity_feedforward` 段读，缺声明即失败。
+    ff_cfg = baseline.get("gravity_feedforward") or {}
+    hold_ms = ff_cfg.get("hold_ms")
+    tolerance_rad = ff_cfg.get("tolerance_rad")
+    max_passes = ff_cfg.get("max_passes")
+    if not isinstance(hold_ms, int) or isinstance(hold_ms, bool) or hold_ms <= 0:
+        raise ValueError("基线必须声明 gravity_feedforward.hold_ms（正整数），实际 %r" % (hold_ms,))
+    if not isinstance(tolerance_rad, (int, float)) or isinstance(tolerance_rad, bool) or tolerance_rad <= 0:
+        raise ValueError("基线必须声明 gravity_feedforward.tolerance_rad（正数），实际 %r" % (tolerance_rad,))
+    if not isinstance(max_passes, int) or isinstance(max_passes, bool) or max_passes <= 0:
+        raise ValueError("基线必须声明 gravity_feedforward.max_passes（正整数），实际 %r" % (max_passes,))
     feedforward = {}
     feedforward_evidence = {}
     for name, pose in (
@@ -572,7 +603,8 @@ def build_reference_poses(root, baseline, target_id=None):
         ("lift", lift),
     ):
         offsets, evidence = gravity_hold_ctrl(
-            model, arm_names, dict(pose["joint_positions"])
+            model, arm_names, dict(pose["joint_positions"]),
+            hold_ms=int(hold_ms), tolerance_rad=float(tolerance_rad), max_passes=int(max_passes),
         )
         feedforward[name] = offsets
         feedforward_evidence[name] = evidence
