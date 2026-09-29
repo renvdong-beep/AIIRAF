@@ -2509,6 +2509,36 @@ D1 只测不施、D2 机械实现并试施加 ⇒ **施加被实测判定有害*
 - ⇒ regrasp 路线的机制已就位，剩下的是**腰部夹持几何与参数**（`depth_m` / `open_m` / 闭合档）
   的标定，属独立工作项。声明回到 `enabled: false`。
 
+**regrasp 调参的第一轮取证（2026-09-29，未通过 ⇒ 保持 enabled: false）**：
+
+调参必须先看得见 —— 为此给 regrasp 证据补了**力与夹持几何**（`contact_forces`、`pad_mid_z_m`、
+`payload_center_z_m`、`pad_minus_payload_z_m`、`pad_span_m`、`payload_pad_lateral_m`），
+并加了不改仓库的诊断探针 `build/regrasp_diag_probe.py`（包住后端 `pick_object`，
+**失败时也把证据打出来** —— 否则 Provider 抛错后证据根本不进报告，调参没有任何输入）。
+
+实测（探针输出）：
+
+| 量 | 值 | 判读 |
+|---|---|---|
+| `pad_mid_z_m` | **0.152063** | 指腹落点比抓取位（0.057）**高 95 mm** ✗ |
+| `payload_center_z_m` | 0.024784 | 载荷还在台面上 |
+| `pad_minus_payload_z_m` | **0.127279** | 指腹离载荷中心 127 mm ⇒ **夹的是空气** |
+| `pad_span_m` | 0.046 | 指腹合到只剩 46 mm（互相夹住，中间没有载荷） |
+| `pre_lift_z_m` → `after_regrasp_z_m` | 0.024633 → 0.024784 | 载荷只动了 **0.000151 m** ⇒ **预抬根本没发生** |
+| `hold_pre_lift` | **false** | 声明**没生效**（见下） |
+
+两条独立缺陷：
+1. **声明链上有 4 个显式枚举点，漏一处就"声明不了效"**：① `build_reference_poses` 的
+   `regrasp_poses`；② 臂侧 `build_piper_pick_scene.py` 的 `gripper["regrasp"]` 字典；
+   ③ 联合构建器语义键；④ 后端解析层。本轮实测 `hold_pre_lift` 前三处都漏过 ⇒ 后端永远看到 false
+   ⇒ 预抬段没有临时刚住 ⇒ 预抬失效（载荷 z 只动 0.000151 m）。
+2. **regrasp 的两段位置解没有任何残差/可达性自证**（pick 的其他段都有）⇒ 求解落到"指腹高出 95 mm"
+   这种解也会被静默接受 ⇒ 运行时表现为"夹空气、力为 0"。
+   ⇒ 这是**独立工作项**：先给 regrasp 两段加残差 + 同半球 + 目标可达性门禁，再谈 depth_m/open_m 标定。
+
+⇒ 本轮结论：regrasp 的**机制与观测已就位**，"夹空气"的根因是**声明传递 + 求解自证**两件事，
+不是 depth_m/open_m 这类参数；标定必须排在这两件之后。声明保持 `enabled: false`（仓库绿）。
+
 **结论与下一步**（每一项都带上面的数字支撑）：
 1. **抬升段的横向拖拽（主项 32.7 mm）**：把声明化的抓取约束 `carry_constraint` 的**适用面扩展到
    pick 的抬升段**（现在是"只作用于 place 的搬运段"⇒ 抬升纯摩擦 ⇒ 拖出 33 mm）；

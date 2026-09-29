@@ -92,6 +92,30 @@
                 "null"
               ],
               "description": "临时使用的约束名（未启用为 null）。"
+            },
+            "contact_forces": {
+              "type": "object",
+              "description": "regrasp 闭合时刻的双侧法向力与不平衡比（与抓取段同一函数）。"
+            },
+            "pad_mid_z_m": {
+              "type": "number",
+              "description": "指腹中点高度（世界 z）：判断是否夹在载荷腰部。"
+            },
+            "payload_center_z_m": {
+              "type": "number",
+              "description": "载荷中心高度（世界 z）。"
+            },
+            "pad_minus_payload_z_m": {
+              "type": "number",
+              "description": "指腹中点 − 载荷中心（高度差）：0 附近=夹腰部；偏大=仍夹上缘。"
+            },
+            "pad_span_m": {
+              "type": "number",
+              "description": "指腹间距。"
+            },
+            "payload_pad_lateral_m": {
+              "type": "number",
+              "description": "载荷中心相对夹口轴线的水平偏移（§11.23(48) 的关键量）。"
             }
           }
         },

@@ -623,6 +623,10 @@ def build_scene(
                 "pre_lift_m": float(rg["pre_lift_m"]),
                 "depth_m": float(rg["depth_m"]),
                 "open_m": float(rg["open_m"]),
+                # ⚠ 遗漏即"声明不了效"（本会话第 N 次同类坑，2026-09-29 §11.23(48)）：
+                # 这里只枚举了三个数值参数，`hold_pre_lift` 没透传 ⇒ 后端看到 false
+                # ⇒ 预抬段没有临时刚住 ⇒ 预抬根本没发生（实测载荷 z 只动 0.000126 m）。
+                "hold_pre_lift": bool(rg.get("hold_pre_lift", False)),
                 "source": "piper_simulation_baseline.yaml:grasp.regrasp",
             }
 

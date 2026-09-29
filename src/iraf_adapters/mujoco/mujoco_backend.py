@@ -1124,11 +1124,25 @@ class MujocoBackend:
                     self.data.eq_active[eid] = 0
             with self._data_lock:
                 after_regrasp_z = float(self.data.xpos[target_body][2])
+                # 夹持几何（**调参必须看**，2026-09-29 §11.23(48)）：指腹中点高度 vs 载荷中心高度
+                # ⇒ 判断"夹错高度"（太高=还夹上缘、太低=夹到底棱），以及指腹跨度与载荷-夹口横向偏移。
+                _l = np.asarray(self.data.xpos[self._body_id(str(gripper["left_finger_body"]))], dtype=float)
+                _r = np.asarray(self.data.xpos[self._body_id(str(gripper["right_finger_body"]))], dtype=float)
+                _pad_mid = (_l + _r) / 2.0
+                _payload_c = np.asarray(self.data.xpos[target_body], dtype=float).copy()
+                _span = _r - _l
             regrasp_evidence = {
                 "applied": True, "pre_lift_m": float(regrasp_cfg.get("pre_lift_m") or 0.0),
                 "depth_m": float(regrasp_cfg.get("depth_m") or 0.0), "open_m": open_m,
                 "hold_pre_lift": bool(regrasp_cfg.get("hold_pre_lift", False)),
                 "pre_lift_constraint": (str(pre_lift_equality) if hold_pre_lift else None),
+                "contact_forces": dict(force_evidence),
+                "pad_mid_z_m": round(float(_pad_mid[2]), 6),
+                "payload_center_z_m": round(float(_payload_c[2]), 6),
+                "pad_minus_payload_z_m": round(float(_pad_mid[2] - _payload_c[2]), 6),
+                "pad_span_m": round(float(np.linalg.norm(_span)), 6),
+                "payload_pad_lateral_m": round(
+                    float(np.linalg.norm((_payload_c - _pad_mid)[:2])), 6),
                 "pre_lift_z_m": round(pre_lift_z, 6),
                 "after_regrasp_z_m": round(after_regrasp_z, 6),
                 "bilateral_after_regrasp": bool(bilateral), "force_ok_after_regrasp": bool(force_ok),

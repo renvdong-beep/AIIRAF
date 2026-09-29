@@ -247,7 +247,9 @@ MEASUREMENT_KEYS = ("sim_time_advance_s", "final_speed_mps", "wall_seconds", "ev
                     "carry_cadence_steps", "place_correction_lateral_m",
                     "place_correction_vertical_m", "place_correction_applied",
                     "place_nominal_solution_offset_m", "place_nominal_solution_lateral_m",
-                    "place_carry_payload_lateral_m")
+                    "place_carry_payload_lateral_m",
+                    "regrasp_pad_minus_payload_z_m", "regrasp_payload_pad_lateral_m",
+                    "regrasp_left_force_n", "regrasp_right_force_n", "regrasp_force_ok")
 
 #: 步骤分类（报告里逐项可见，避免"没跑"和"跑过了"混在一起）。
 STEP_EXECUTED = "EXECUTED"
@@ -1009,6 +1011,15 @@ def measure_step(before, after, evidence, wall_seconds):
             measured["place_released"] = 1.0 if evidence["released"] else 0.0
         if evidence.get("payload_in_tray") is not None:
             measured["place_payload_in_tray"] = 1.0 if evidence["payload_in_tray"] else 0.0
+        # regrasp 调参用的诊断（§11.23(48)）：力与夹持几何必须可观测，否则只能靠猜
+        rg = evidence.get("regrasp")
+        if isinstance(rg, dict) and rg.get("applied"):
+            cf = rg.get("contact_forces") or {}
+            measured["regrasp_pad_minus_payload_z_m"] = float(rg.get("pad_minus_payload_z_m"))
+            measured["regrasp_payload_pad_lateral_m"] = float(rg.get("payload_pad_lateral_m"))
+            measured["regrasp_left_force_n"] = float(cf.get("left_normal_force_n"))
+            measured["regrasp_right_force_n"] = float(cf.get("right_normal_force_n"))
+            measured["regrasp_force_ok"] = 1.0 if rg.get("force_ok_after_regrasp") else 0.0
         # 放置点纠偏的实测（§11.23(48)）：把"接收体**实际停靠位姿**与构建期名义位姿之差"暴露成观测量
         # ⇒ 才答得出"放置偏移里有多少是载体停靠误差、有多少是系统性的"，也才能验"纠偏是否真的启用了"。
         correction = evidence.get("place_pose_correction")

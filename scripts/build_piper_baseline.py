@@ -610,8 +610,12 @@ def build_reference_poses(root, baseline, target_id=None, target_xy_override_m=N
         regrasp_pose = solve_finger_center_pose(
             model, data, grasp_target_corrected + pregrasp_direction * (pre_lift_m - depth_m),
             arm_joints, arm_names, left_geom, right_geom, solver_cfg)
+        hold_pre_lift = bool(regrasp_cfg.get("hold_pre_lift", False))
         regrasp_poses = {
             "enabled": True,
+            # ⚠ 声明链上每一处显式枚举都要带上它（2026-09-29 §11.23(48) 实测：这条链共有 4 个枚举点
+            # —— reference 求解器、臂侧场景 builder、联合语义键、后端解析层；漏一处就"声明不了效"）
+            "hold_pre_lift": hold_pre_lift,
             "pre_lift_m": pre_lift_m, "depth_m": depth_m, "open_m": open_m,
             "pre_lift": pre_lift_pose, "regrasp": regrasp_pose,
             "direction_world": [round(float(v), 9) for v in pregrasp_direction],
