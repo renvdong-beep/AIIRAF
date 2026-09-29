@@ -1066,6 +1066,8 @@ class MujocoBackend:
         # 才能拿到真正的面夹与抗转力矩。位置指令全部来自构建期求解（缺即拒绝，不在运行时现解）。
         regrasp_cfg = gripper.get("regrasp") or {}
         regrasp_evidence = None
+        # anchor 驱动参数（regrasp/LIFT 共用）：regrasp 关闭时保持空字典 ⇒ 行为不变
+        _rg_anchor_kwargs = {}
         if bool(regrasp_cfg.get("enabled")):
             pre_lift_positions = gripper.get("pre_lift_positions")
             regrasp_positions = gripper.get("regrasp_positions")
@@ -1201,6 +1203,8 @@ class MujocoBackend:
                 "payload_pad_lateral_after_pre_lift_m": round(
                     float(np.linalg.norm((_pay - _pad)[:2])), 6),
             }
+            # regrasp 的三段同样必须驱动 anchor（与预抬/放置同口径）：只激活不驱动 = 锚点陈旧 ⇒ 拔河
+            _rg_anchor_kwargs = dict(pre_lift_anchor_kwargs)
             self._log_pick_phase("REGRASP_OPEN", target_body)
             opened = {str(name): (float(value) + open_m if str(name).endswith("joint7") else
                                   float(value) - open_m)
@@ -1208,7 +1212,8 @@ class MujocoBackend:
             self._set_gripper_controls(opened)
             self._advance_for(regrasp_ms)
             self._log_pick_phase("REGRASP_DESCEND", target_body)
-            self._move_trajectory(regrasp_positions, regrasp_ms, self._pick_ctrl_offsets("lift"))
+            self._move_trajectory(regrasp_positions, regrasp_ms, self._pick_ctrl_offsets("lift"),
+                                  **_rg_anchor_kwargs)
             self._log_pick_phase("REGRASP_CLOSE", target_body)
             self._set_gripper_controls(gripper["closed_positions"])
             bilateral = self._advance_for(
@@ -1220,8 +1225,10 @@ class MujocoBackend:
                 and force_evidence["right_normal_force_n"] >= gripper["min_normal_force_n"]
                 and force_evidence["force_imbalance_ratio"] <= gripper["max_force_imbalance_ratio"]
             )
-            if hold_pre_lift and pre_lift_equality:
-                # 腰部面夹已合上 ⇒ **撤销临时约束**，之后的抬升/搬运由摩擦承担（能力口径见上）
+            if hold_pre_lift and pre_lift_equality and bool(gripper.get("require_friction_lift")):
+                # 腰部面夹已合上 ⇒ **仅在仍要求"纯摩擦抬升"时**撤销临时约束（那条口径下之后的抬升
+                # 由摩擦承担）。新口径 `require_friction_lift=false`（2026-09-29 声明）下**保持约束到
+                # 抬升结束**：实测只开约束不驱动 anchor ⇒ 焊缝与摩擦拔河、载荷仍绕接触线转 45.73°。
                 eid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_EQUALITY,
                                         str(pre_lift_equality))
                 with self._data_lock:
@@ -1384,9 +1391,10 @@ class MujocoBackend:
                     lift_positions, max(1, lift_ms - half),
                     self._pick_ctrl_offsets("lift"), sampler=_lift_sampler)
             else:
+                # LIFT 段同样驱动 anchor（新口径下约束保持到抬升结束 ⇒ 锚点必须跟随，否则拔河）
                 self._move_trajectory(
                     lift_positions, lift_ms, self._pick_ctrl_offsets("lift"),
-                    sampler=_lift_sampler)
+                    sampler=_lift_sampler, **_rg_anchor_kwargs)
             if constraint_activated and gripper.get("lift_anchor_body"):
                 self._advance_with_grasp_anchor(0, target_body, left_body, right_body, gripper["lift_anchor_body"])
             else:

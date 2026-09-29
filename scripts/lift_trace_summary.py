@@ -68,8 +68,11 @@ def main():
                                   row.get("payload_quat_wxyz", [1, 0, 0, 0])) for row in rows)
     max_wrist = max(_quat_tilt_deg(first.get("wrist_quat_wxyz", [1, 0, 0, 0]),
                                    row.get("wrist_quat_wxyz", [1, 0, 0, 0])) for row in rows)
-    print("  抬升段最大：载荷倾角 %.2f° / 腕部倾角 %.2f°（相差大 ⇒ 载荷在夹口里滑转）"
-          % (max_tilt, max_wrist))
+    # **判据用相对量**（2026-09-29）：绝对值 = 工具自身转动（正常）；"载荷有没有在夹口里滑"
+    # = 载荷倾角 − 腕部倾角。实测：摩擦-only 时 46.8~55.7° vs 腕部 13°（相对 34~43° ⇒ 滑转）；
+    # 抬升段纳入约束后 14.10° vs 12.60°（相对 1.5° ⇒ 跟随）。
+    print("  抬升段最大：载荷倾角 %.2f° / 腕部倾角 %.2f° ⇒ **相对滑转 %.2f°**（前者是绝对值，"
+          "后者才是'在夹口里滑'的量）" % (max_tilt, max_wrist, max_tilt - max_wrist))
     print("  载荷倾角 首帧→末帧 %.2f°" % _quat_tilt_deg(
         first.get("payload_quat_wxyz", [1, 0, 0, 0]), last.get("payload_quat_wxyz", [1, 0, 0, 0])))
     return 0

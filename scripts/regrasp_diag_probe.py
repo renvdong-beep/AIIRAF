@@ -31,6 +31,8 @@ def _wrapped(self, *args, **kwargs):
             ev.get("bilateral_contact"), ev.get("left_normal_force_n"),
             ev.get("right_normal_force_n"), ev.get("force_imbalance_ratio"),
             ev.get("force_ok")), flush=True)
+        print("约束: constraint_activated=%s | 腰部力 ok=%s | lift_delta_m=%s" % (
+            ev.get("constraint_activated"), ev.get("force_ok"), ev.get("lift_delta_m")), flush=True)
         print("align center_distance_m=%s pad_offset_m=%s" % (
             (ev.get("grasp_alignment") or {}).get("center_distance_m"),
             (ev.get("grasp_alignment") or {}).get("pad_offset_m")), flush=True)
