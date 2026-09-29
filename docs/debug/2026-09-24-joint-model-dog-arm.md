@@ -2268,6 +2268,28 @@ unsupported = [key for key in record["criteria"] if key not in CRITERION_SPEC]
    离开工作台"的检查同样用 `top_z` ⇒ 目标落到台面之下即判非法。统一改为**目标自身的支撑面**
    `grasp_target[2] − half_size`（默认情况与 `top_z` 数值等价 ⇒ 逐位不变）。
 
+**(d2) 定向取证（接触粒度，本轮新增）**：用"把方块与台面一起下移 0.12 m"的**等价变换**
+（与"把臂抬高 0.12 m"相对几何相同、重力方向不变、臂基座与世界焊接关系不变）在现有联合模型上复现，
+并**逐相位**调用构建器同一条代码路径 `gravity_hold_ctrl`（`build/ff_phase_isolation_probe.py`）：
+
+| 相位 | 夹爪（声明 `phases`） | 结果 |
+|---|---|---|
+| home | open | 收敛，worst 0.000000000 |
+| approach | open | 收敛，worst 0.000000085 |
+| **grasp** | **open** | **失败**：残余 {joint1 0.00118594, **joint2 0.007300448**, joint3 0.009778486, joint4 −0.000535463, joint5 0.003104311, joint6 −0.000184794} |
+| lift | closed | 收敛，worst 0.000469915 |
+
+失败相位（`grasp`，夹爪张开）保持窗内的接触对：
+```
+?+workbench                                 n=21  dist∈[0.000455, 0.000845]  ← 臂自身与台面
+box_01_geom+piper_left_finger               n= 1  dist=-0.000355            ← 与方块擦碰
+box_01_geom+piper_right_finger              n= 1  dist=-0.000356
+piper_left_finger+piper_right_finger        n= 5  dist=-0.000000            ← **两指在张开指令下互相接触（异常）**
+```
+⇒ **下一步（仪器已就绪）**：用同一探针跑**当前布置（绿）**的 `grasp` 相位做对照：
+若同样出现"两指互触"⇒ 是我的等价变换引入的假象；若没有 ⇒ 是抬高布置下**真实的指间干涉**
+（张开位形在该深度下两指相碰 ⇒ 需按声明调整张开量或抓取深度）。**在此之前不再改任何实现。**
+
 **(e) 状态**：两处修复 + 前馈定迭代机制**已提交**；狗背布置的**场景改动已回退**（构建被 (c) 挡住，
 不得把红色的场景留在仓库里）。整链在回退后的布置上仍 **s01–s05 全绿**
 （s04 偏移 0.02376498 m、`carry_cadence_steps` 130）。
