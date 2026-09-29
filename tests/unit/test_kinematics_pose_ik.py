@@ -43,6 +43,19 @@ def _model(xml=SLIDE_MJCF):
     return mujoco.MjModel.from_xml_string(xml)
 
 
+#: 滑轨 + **被保持的第二通道**（模拟夹爪）：用于验证"被保持的关节必须同时写 qpos 与 ctrl"。
+GRIPPER_MJCF = SLIDE_MJCF.replace(
+    '<site name="flange" pos="0 0 0"/>',
+    '<site name="flange" pos="0 0 0"/>\n      '
+    '<joint name="grip" type="slide" axis="1 0 0" range="0 0.2" damping="0.5"/>',
+).replace(
+    "</actuator>",
+    '  <general name="grip_act" joint="grip" gaintype="fixed" biastype="affine"\n'
+    '           gainprm="1000" biasprm="0 -1000 -100" ctrlrange="0 0.2" forcerange="-50 50"/>\n'
+    "  </actuator>",
+)
+
+
 class ToolPoseFromAxesTests(unittest.TestCase):
     def test_returns_orthonormal_basis_with_axes_in_place(self):
         pose = tool_pose_from_axes([0, 0, -1], [1, 0, 0])
@@ -224,25 +237,52 @@ class GravityHoldCtrlTests(unittest.TestCase):
 
     def test_feedforward_equals_gravity_torque_over_gain(self):
         offsets, evidence = gravity_hold_ctrl(
-            self.model, [self.joint_name], {self.joint_name: 0.3}, hold_ms=2000
+            self.model, [self.joint_name], {self.joint_name: 0.3}, hold_ms=2000, max_passes=4
         )
         expected = self.expected_torque / 1000.0
         self.assertAlmostEqual(expected, offsets[self.joint_name], places=9)
         # 自证：静态保持后关节误差在门限内
         self.assertLessEqual(evidence["worst_residual_rad"], evidence["tolerance_rad"])
-        self.assertEqual("qfrc_bias_plus_static_hold", evidence["method"])
+        self.assertEqual("qfrc_bias_static_hold_fixed_point_replace", evidence["method"])
 
     def test_zero_feedforward_when_gravity_cancelled(self):
         """无重力时前馈必须为零：结构性判据，不依赖具体数值。"""
         model = _model(SLIDE_MJCF.replace('gravity="0 0 -9.81"', 'gravity="0 0 0"'))
-        offsets, _ = gravity_hold_ctrl(model, ["slide"], {"slide": 0.2}, hold_ms=200)
+        offsets, _ = gravity_hold_ctrl(model, ["slide"], {"slide": 0.2}, hold_ms=200, max_passes=4)
         self.assertAlmostEqual(0.0, offsets["slide"], places=12)
 
     def test_does_not_mutate_caller_state(self):
         data = mujoco.MjData(self.model)
         before = np.array(data.qpos, dtype=float)
-        gravity_hold_ctrl(self.model, ["slide"], {"slide": 0.25}, hold_ms=200)
+        gravity_hold_ctrl(self.model, ["slide"], {"slide": 0.25}, hold_ms=200, max_passes=4)
         np.testing.assert_allclose(before, np.array(data.qpos, dtype=float))
+
+    def test_held_joint_command_is_written_to_ctrl(self):
+        """被保持的**非臂**关节（如夹爪）必须同时写 qpos 与 ctrl。
+
+        2026-09-28 实测缺陷（§11.23(45)(d3)）：只写 qpos 时，它的执行器按模型默认/keyframe 的
+        ctrl 出力 —— 联合模型 grasp 相 4 s 保持末态指腹张开向量 0.028290954 m（声明 0.090362481 m），
+        即手指被驱动合拢、夹在载荷上，接触反力经腕部污染臂关节残差（0.000000000 → 0.000660017）。
+        本用例直接检查 ctrl 通道，不依赖接触复现。
+        """
+        model = _model(GRIPPER_MJCF)
+        grip_actuator = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, "grip_act")
+        self.assertGreaterEqual(grip_actuator, 0, "测试夹具必须含 grip_act 执行器")
+        seen = {}
+        original = mujoco.mj_step
+
+        def _spy(m, d):
+            seen.setdefault("grip_ctrl", float(d.ctrl[grip_actuator]))
+            return original(m, d)
+
+        mujoco.mj_step = _spy
+        try:
+            gravity_hold_ctrl(model, ["slide"], {"slide": 0.3, "grip": 0.15},
+                              hold_ms=100, max_passes=2)
+        finally:
+            mujoco.mj_step = original
+        self.assertEqual(0.15, seen.get("grip_ctrl"),
+                         "被保持的关节必须把声明值写进 ctrl（否则按模型默认值出力）")
 
     def test_rejects_unknown_joint_and_missing_target(self):
         with self.assertRaisesRegex(KinematicsError, "缺少臂关节"):

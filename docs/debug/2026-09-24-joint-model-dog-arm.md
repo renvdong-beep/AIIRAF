@@ -2290,6 +2290,42 @@ piper_left_finger+piper_right_finger        n= 5  dist=-0.000000            ← 
 若同样出现"两指互触"⇒ 是我的等价变换引入的假象；若没有 ⇒ 是抬高布置下**真实的指间干涉**
 （张开位形在该深度下两指相碰 ⇒ 需按声明调整张开量或抓取深度）。**在此之前不再改任何实现。**
 
+**(d3) 撤回 (d2) 的证据 + 找到真缺陷（本轮）**
+
+1. **撤回**：(d2) 的接触对**无效** —— `gravity_hold_ctrl` 在**函数内部自建 `MjData`**
+   （`mujoco.MjData(model)` + `mj_resetDataKeyframe`），所以探针里手改的 `data.qpos`（把方块下移 0.12）
+   **从未被使用**；那些接触对来自探针**自己**的步进，而探针只设了 qpos、没设 ctrl ⇒
+   夹爪执行器按 keyframe 的 ctrl 合拢 ⇒ "两指互触"是**我的工装缺陷**，不是物理发现。
+   教训（与既有纪律一致）：**前馈只看 `model` + `hold_positions` 两个入口**，等价变换必须落在 **model** 上。
+2. **可信仪器**（`build/ff_lift_equivalence_probe.py`）：等价变换改为
+   ①`model.key_qpos[0][方块 z] -= 0.12`；②所有 `body=world` 的 geom 下移 0.12。
+   **自检**：LIFT=0.0 复现已提交联合报告的 `feedforward_evidence[*]`（四相 `passes=1`；
+   home/approach/lift `worst=0.000000000`，grasp `0.000660017`）⇒ 仪器可信。
+3. **结论（重要）**：**抬高布置（LIFT=0.12）在新仪器下不再复现那个阻塞** —— 四相全部 1 轮收敛
+   （home 0.000000000 / approach 0.000000000 / grasp **0.000001073** / lift 0.000000000）。
+   把 0.003480159 的来历对齐时间线：它是在提交 `9465e85`（修掉两处"基座 z=0 时休眠"的坐标系 bug：
+   `target_z_override_m` 传世界 z、指尖配平支撑面写死台面）**之前**量的，而修好之后
+   **抬高布置从未重建过** ⇒ 那个数字是**旧口径的遗留**，不是现存的物理阻塞。
+4. **顺带查实并修掉一个真缺陷**（契约级）：`gravity_hold_ctrl` 的静态保持**只对臂关节写 ctrl**，
+   `hold_positions` 里的非臂关节（夹爪 joint7/8）**只写 qpos** ⇒ 保持窗内它的执行器一直按
+   keyframe 的 ctrl 出力，"该相位的夹爪开合指令"**从未生效**。实测（联合模型）：
+   | 相位 | 声明 | 末态指腹张开向量 | worst 残差 |
+   |---|---|---|---|
+   | grasp（LIFT=0） | open 0.035/−0.035 | **0.028290954**（被驱动合拢、夹在方块上） | 0.000660017 |
+   | grasp（LIFT=0） | 同上 + ctrl 写声明值 | **0.090362481** | **0.000000000** |
+   | grasp（LIFT=0.12） | 现状 | 0.026053319 | 0.000493444 |
+   | grasp（LIFT=0.12） | ctrl 写声明值 | 0.090362481 | **0.000001073** |
+   ⇒ 修复：`held_actuators` 收集"被保持的非臂关节"，每轮把**声明值**写进 ctrl
+   （臂关节照旧"声明值 + 前馈补偿"）；回归测试
+   `tests/unit/test_kinematics_pose_ik.py::GravityHoldCtrlTests::test_held_joint_command_is_written_to_ctrl`
+   （直接检查 ctrl 通道，不依赖接触复现）。
+5. **回归**：旧契约变更（`max_passes` 必填、`method` 改名）连带 3 项过期断言一并修好；
+   两个产物重建（`--robot unitree_go2 --attach piper` 与不带 `--attach`）⇒ `scene_check` 退出码 0；
+   `nominal --world joint` **passed=True / failed_checks=0 / s01–s05 全 SUCCEEDED**
+   （s05 `accept_offset_from_target_center_m` 0.030673246、`resting_gap_m` −0.000215511）。
+6. **下一步**：把抬高布置（基座 0.12 m + 托盘挂回狗背）真正重建一次 —— 现在它是**未被证伪**的候选，
+   重建才是唯一判据。
+
 **(e) 状态**：两处修复 + 前馈定迭代机制**已提交**；狗背布置的**场景改动已回退**（构建被 (c) 挡住，
 不得把红色的场景留在仓库里）。整链在回退后的布置上仍 **s01–s05 全绿**
 （s04 偏移 0.02376498 m、`carry_cadence_steps` 130）。

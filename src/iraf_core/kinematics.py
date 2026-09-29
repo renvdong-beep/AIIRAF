@@ -562,10 +562,26 @@ def gravity_hold_ctrl(
 
     # 夹爪等其它自由度：若调用方给出了关节名键，按 keyframe 或声明值固定，
     # 避免把它们的重力算进臂关节补偿。
+    #
+    # ⚠ 只设 qpos 不设 ctrl 是**错的**（2026-09-28 §11.23(45)(d3) 实测）：本函数在**内部**
+    # 从 keyframe 重置 `data` 后逐步仿真，非臂关节的执行器会一直按 keyframe 的 ctrl 出力 ——
+    # `hold_positions` 里的"夹爪开合指令"因此**从未生效**。证据（联合模型、grasp 相，
+    # 声明 open=0.035/-0.035）：4 s 保持末态指腹张开向量 **0.028290954 m**（应为 0.090362481 m）
+    # ⇒ 手指被驱动合拢、**夹在 50 mm 方块上**，接触反力经腕部污染整条臂：
+    # 残差 worst 0.000493444 → 0.000001073、approach 0.000000028 → 0.000000000。
+    # 所以"被保持的关节"必须在 qpos 与 ctrl 两处同时成立（臂关节照旧叠加前馈补偿）。
+    held_actuators = []
     for name, value in (hold_positions or {}).items():
         joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, str(name))
-        if joint_id >= 0:
-            data.qpos[int(model.jnt_qposadr[joint_id])] = float(value)
+        if joint_id < 0:
+            continue
+        data.qpos[int(model.jnt_qposadr[joint_id])] = float(value)
+        if str(name) in arm_joints:
+            continue                      # 臂关节的 ctrl 在每轮按"声明值 + 前馈补偿"写入
+        for index in range(int(model.nu)):
+            if int(model.actuator_trnid[index, 0]) == int(joint_id):
+                held_actuators.append((int(index), float(value)))
+                break
 
     qpos_adr = [int(model.jnt_qposadr[joint]) for joint in joint_ids]
     for index, name in enumerate(arm_joints):
@@ -602,6 +618,10 @@ def gravity_hold_ctrl(
             compensation[str(name)] = float(bias[dof_adr[index]] / gains[index])
             data.ctrl[actuator_ids[index]] = (float(hold_positions[name])
                                               + float(compensation[str(name)]))
+        # 被保持的非臂关节（夹爪）：ctrl 也要写成**声明值**（见上方 held_actuators 的实测依据），
+        # 否则它们会按 keyframe 的 ctrl 出力、把接触反力灌进臂关节残差。
+        for actuator_id, value in held_actuators:
+            data.ctrl[actuator_id] = value
         for _ in range(steps):
             mujoco.mj_step(model, data)
         mujoco.mj_forward(model, data)
