@@ -182,7 +182,8 @@ MEASUREMENT_KEYS = ("sim_time_advance_s", "final_speed_mps", "wall_seconds", "ev
                     "grasp_center_distance_m", "grasp_lift_delta_m", "grasp_bilateral_contact",
                     "place_offset_from_tray_center_m", "place_released", "place_payload_in_tray",
                     "accept_payload_on_target", "accept_offset_from_target_center_m",
-                    "accept_last_speed_mps", "accept_resting_gap_m")
+                    "accept_last_speed_mps", "accept_resting_gap_m",
+                    "carry_cadence_steps")
 
 #: 步骤分类（报告里逐项可见，避免"没跑"和"跑过了"混在一起）。
 STEP_EXECUTED = "EXECUTED"
@@ -936,6 +937,10 @@ def measure_step(before, after, evidence, wall_seconds):
             measured["accept_last_speed_mps"] = float(evidence["last_speed_mps"])
         if evidence.get("resting_gap_m") is not None:
             measured["accept_resting_gap_m"] = float(evidence["resting_gap_m"])
+        # 搬运节拍实测（诊断量，**不是判据**）：随负载波动（实测 25/40 步），归档进报告便于事后对账
+        cadence = evidence.get("carry_cadence")
+        if isinstance(cadence, dict) and cadence.get("max_plant_steps_per_iteration") is not None:
+            measured["carry_cadence_steps"] = float(cadence["max_plant_steps_per_iteration"])
     return measured
 
 

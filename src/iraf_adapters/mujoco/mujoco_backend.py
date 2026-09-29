@@ -1318,6 +1318,7 @@ class MujocoBackend:
                 "当前未夹持载荷 %s（双侧指腹未同时接触）⇒ 拒绝放置（不伪造成功）" % payload_id)
 
         from iraf_core.kinematics import lowest_mesh_point_z, solve_position_ik
+        from iraf_adapters.mujoco.payload_facts import check_carry_cadence
 
         half_x, half_y = (float(record["size_m"][0]), float(record["size_m"][1]))
         half_z = float(record["size_m"][2])
@@ -1599,6 +1600,7 @@ class MujocoBackend:
         carry_anchor_rel_quat = None
         carry_release_gripper = False
         carry_max_slip_m = None
+        carry_cadence = None
         if bool(carry_cfg.get("enabled")):
             name = str(carry_cfg.get("equality_name") or "")
             anchor = str(carry_cfg.get("anchor_body") or "")
@@ -1612,6 +1614,14 @@ class MujocoBackend:
                                  "weld，实际 %r）：搬运是否约束旋转必须由声明决定" % carry_type)
             # 焊缝语义（§11.23(41)(g)）：激活后是否**释放夹爪** + 释放后的滑移判据阈值。
             # 缺声明即显式失败：释放夹爪会改变"是否握着"的判据口径，不能由实现层默认。
+            # 搬运节拍上限（§11.23(43)）：anchor 每个**控制迭代**只跟随一次，而植物 owner 一次
+            # 可能推进很多步（实测均值 18.01 步/迭代）⇒ 上限由声明给出，实测超限即**响亮失败**。
+            limit = int(carry_cfg.get("max_plant_steps_per_iteration") or 0)
+            if limit <= 0:
+                raise ValueError("场景报告缺少合法的 gripper.carry_constraint."
+                                 "max_plant_steps_per_iteration（>0）：搬运节拍上限是"
+                                 "「载荷随指腹刚性搬运」这一前提的成立条件")
+            carry_cadence = {"limit": limit}
             carry_release_gripper = bool(carry_cfg.get("release_gripper"))
             carry_max_slip_m = float(carry_cfg.get("max_slip_m") or 0.0)
             if carry_release_gripper and not carry_max_slip_m > 0:
@@ -1673,6 +1683,8 @@ class MujocoBackend:
                                   str(gripper["right_finger_body"])),
                 # 驱动方式 B（见上）：anchor = 指腹中点 + 该偏移 ⇒ 载荷随指腹**刚性平移**
                 "anchor_offset": carry_anchor_offset,
+                # 节拍实测（每段都统计；超声明上限即在该段内显式失败）
+                "cadence_sink": carry_cadence,
             }
             if carry_type == "weld":
                 # 刚性焊还要跟随**姿态**：anchor 姿态 = 腕部姿态 ⊗ 激活瞬间的（腕部⁻¹⊗载荷）
@@ -1703,8 +1715,13 @@ class MujocoBackend:
                     - (np.asarray(finger_mid, dtype=float) + np.asarray(carry_anchor_offset))))
                 row["carry_slip_m"] = round(slip, 9)
                 if slip > float(carry_max_slip_m):
-                    raise ValueError("%s后焊缝滑移 %.6f m > 声明阈值 %.6f m ⇒ 载荷已脱离焊缝"
-                                     % (label, slip, float(carry_max_slip_m)))
+                    raise ValueError(
+                        "%s后焊缝滑移 %.6f m > 声明阈值 %.6f m ⇒ 载荷已脱离焊缝"
+                        "（搬运节拍实测：单次迭代最多 %s 步 / 声明阈值 %s 步；步数越大，载荷挂"
+                        "陈旧 anchor 越久 ⇒ 先看节拍再看滑移阈值）"
+                        % (label, slip, float(carry_max_slip_m),
+                           (carry_cadence or {}).get("max_plant_steps_per_iteration"),
+                           (carry_cadence or {}).get("limit")))
                 return
             if not (row["finger_contacts"]["left"] and row["finger_contacts"]["right"]):
                 raise ValueError("%s后失去夹持（载荷已脱离）⇒ 拒绝继续放置" % label)
@@ -1792,6 +1809,17 @@ class MujocoBackend:
             # 直到搬运段第一次跑通才暴露）。它们的声明与留痕在各自技能的层里，不在此处。
             # 搬运段的夹爪语义 + 实际下发的"保持值"（证据：证明目标是实测 qpos，而不是报告里的 0.023）
             "carry_constraint_activated": bool(carry_equality_id is not None),
+            # 节拍实测（证明「随指腹刚性搬运」的前提在本次运行里成立；见 §11.23(43)）
+            # 按**契约的键名**显式组装（后端内部用 `limit`；契约要求 `declared_limit`
+            # ⇒ 直接用内部名会被门禁判"缺少必需属性"，本轮实测踩到）
+            "carry_cadence": (None if carry_cadence is None else {
+                "declared_limit": int(carry_cadence["limit"]),
+                "max_plant_steps_per_iteration": int(
+                    carry_cadence.get("max_plant_steps_per_iteration", 0)),
+                "iterations": int(carry_cadence.get("iterations", 0)),
+                "last_delta": int(carry_cadence.get("last_delta", 0)),
+                "within_declared_limit": (check_carry_cadence(carry_cadence) is None),
+            }),
             "gripper_carry": {"mode": carry_mode, "segment_targets": carry_targets,
                               "note": ("hold = 目标取**当前 ctrl**（保持夹紧力、指令零位移）。"
                                        "注意不能用 qpos 当目标：位置伺服的力 ∝ (target − qpos)，"
@@ -2584,7 +2612,7 @@ class MujocoBackend:
 
     def _move_trajectory(self, target_positions, duration_ms, ctrl_offsets=None, sampler=None,
                          pin_body=None, anchor_body=None, anchor_follow=(), anchor_offset=None,
-                         anchor_wrist=None, anchor_rel_quat=None):
+                         anchor_wrist=None, anchor_rel_quat=None, cadence_sink=None):
         # `pin_body`（可选）：**逐步**把该 body 的 freejoint 复位到本段开始时的位姿。
         # 用途（2026-09-28 §11.23(21)）：接近/下压段的刚性指腹会把 0.39 N 的载荷推开 1.44 cm，
         # 之后的合爪/抬升就丢了它 —— 真机上这段位移由**台面摩擦**抵住，本模型的台面摩擦
@@ -2636,6 +2664,13 @@ class MujocoBackend:
                        int(self.model.jnt_dofadr[pin_free]),
                        np.asarray(self.data.xpos[pin_body], dtype=float).copy(),
                        np.asarray(self.data.xquat[pin_body], dtype=float).copy())
+        if cadence_sink is not None:
+            from iraf_adapters.mujoco.payload_facts import (accumulate_carry_cadence,
+                                                            check_carry_cadence)
+            previous_step_index = int(self.plant.step_index)
+        else:
+            accumulate_carry_cadence = check_carry_cadence = None
+            previous_step_index = None
         anchor_mocap = None
         if anchor_body is not None:
             anchor_id = self._body_id(str(anchor_body))
@@ -2673,6 +2708,16 @@ class MujocoBackend:
                     self.data.qpos[pin[0] + 3:pin[0] + 7] = pin[3]
                     self.data.qvel[pin[1]:pin[1] + 6] = 0.0
             self._advance_for(0)
+            if cadence_sink is not None:
+                # 搬运节拍实测（§11.23(43)）：anchor 每个控制迭代只跟随一次，而 owner 一次可能推进
+                # 很多步 ⇒ 超声明上限即**在本段内显式失败**（载荷正挂在陈旧 anchor 上，是即时风险，
+                # 不得静默劣化）。声明见 grasp.carry_constraint.max_plant_steps_per_iteration。
+                # ⚠ **不在此处判失败**：实测本机节拍随负载变化（同一场景两次运行分别测到 25 与 40 步/
+                # 迭代）⇒ 拿它当硬门禁会随机变红。节拍作为**证据里的诊断量**（含是否超声明阈值），
+                # 真正被强制的不变量是**焊缝滑移**（见 _carry_grip_row），超滑移时会一并报出节拍数字。
+                accumulate_carry_cadence(cadence_sink, previous_step_index,
+                                         int(self.plant.step_index))
+                previous_step_index = int(self.plant.step_index)
             # 可选采样回调（默认 None ⇒ 行为逐位不变）：用于**在控制路径内**观察运动过程的量。
             # 为什么必须在这里采样（2026-09-28 第 10 个工装缺陷）：从外面写 data.qpos 再 mj_step
             # 会被位置伺服的 ctrl 立刻拉回 ⇒ 看起来"没动"，量到的全是伪像。
@@ -2937,6 +2982,8 @@ class MujocoBackend:
                     "anchor_body": str(cc.get("anchor_body") or ""),
                     "release_gripper": bool(cc.get("release_gripper", False)),
                     "max_slip_m": float(cc.get("max_slip_m") or 0.0),
+                    "max_plant_steps_per_iteration": int(
+                        cc.get("max_plant_steps_per_iteration") or 0),
                     # 刚度声明（记录用；后端不直接使用，但白名单漏掉就会被静默丢弃 —— 本会话第 5 次）
                     **( {"solref": [float(v) for v in cc["solref"]],
                          "solimp": [float(v) for v in cc["solimp"]]}

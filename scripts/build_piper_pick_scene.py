@@ -464,11 +464,16 @@ def build_scene(
         # 焊缝语义（§11.23(41)(g)）：激活后是否释放夹爪 + 滑移判据阈值
         "release_gripper": bool(_carry.get("release_gripper", False)),
         "max_slip_m": float(_carry.get("max_slip_m") or 0.0),
+        # 搬运节拍上限（缺声明即失败：它决定"载荷挂陈旧 anchor 多久"这一前提是否成立）
+        "max_plant_steps_per_iteration": int(_carry.get("max_plant_steps_per_iteration") or 0),
         "source": "piper_simulation_baseline.yaml:grasp.carry_constraint",
     }
     if carry_constraint["enabled"] and not (carry_constraint["equality_name"]
                                             and carry_constraint["anchor_body"]):
         raise ValueError("grasp.carry_constraint.enabled=true 时必须声明 equality_name 与 anchor_body")
+    if carry_constraint["enabled"] and carry_constraint["max_plant_steps_per_iteration"] <= 0:
+        raise ValueError("grasp.carry_constraint 必须声明正的 max_plant_steps_per_iteration："
+                         "搬运 anchor 每控制迭代只跟随一次，节拍上限是它的成立前提")
     if carry_constraint["enabled"] and not carry_constraint["max_slip_m"] > 0:
         raise ValueError("grasp.carry_constraint 必须声明正的 max_slip_m（焊缝完整度判据阈值）："
                          "释放夹爪后不能再用指腹接触判\"是否握着\"")

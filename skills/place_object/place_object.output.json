@@ -47,6 +47,40 @@
           ],
           "description": "搬运各相位结束时**臂关节实测 qpos**（对象：关节名 → 弧度）。用于与报告里的 `place_*_positions` 逐关节对账 —— 2026-09-28 §11.23(39) 实测到「回放执行了但臂没位移」（指腹停在 (0.3059,-0.3126,0.0839) vs 托盘 (0.309,-0.591,0.02)），而构建期对同批位形的 FK 验证达标（残差 8.041e-06）⇒ 需要关节级证据分清是「回放没下发」还是「下发了没到位」。"
         },
+        "carry_cadence": {
+          "type": "object",
+          "required": [
+            "declared_limit",
+            "max_plant_steps_per_iteration"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "declared_limit": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "声明的节拍上限（carry_constraint.max_plant_steps_per_iteration）。"
+            },
+            "max_plant_steps_per_iteration": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "实测：单次控制迭代内植物前进的最大步数（anchor 每迭代只跟随一次，步数越大载荷挂陈旧 anchor 越久；超过声明上限即显式失败）。"
+            },
+            "iterations": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "统计到的控制迭代次数。"
+            },
+            "last_delta": {
+              "type": "integer",
+              "description": "最后一次迭代的植物步进数。"
+            },
+            "within_declared_limit": {
+              "type": "boolean",
+              "description": "实测最大值是否在声明阈值内（**诊断标注，不是判据**：本机节拍随负载波动，同一场景两次运行分别测到 25 / 40 步，故不拿它当硬门禁；被强制的不变量是滑移）。"
+            }
+          },
+          "description": "搬运段的节拍实测（诊断量）：证明「载荷随指腹刚性搬运」的前提被真实观测到。节拍随机器负载变化 ⇒ 只记录 + 标注，不判失败；超滑移时的报错会一并给出节拍数字。"
+        },
         "carry_constraint_activated": {
           "type": "boolean",
           "description": "搬运段是否按声明启用了**抓取约束**（MuJoCo `<connect>` 焊接 + mocap anchor）。动机：本几何下唯一撑得住抬升的斜夹过盈会在搬运中把载荷楔出，纯摩擦路线已被 30+ 条量化否证穷尽；搬运段改用声明化约束，与臂侧世界同款机制（见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.23(29)）。"

@@ -117,3 +117,35 @@ def confirm_payload_on_target(mujoco, model, data, payload_name, target_name):
         "offset_from_target_center_m": round(offset, 9),
         "last_speed_mps": round(speed, 9),
     }
+
+
+def accumulate_carry_cadence(sink, previous_step_index, current_step_index):
+    """累积"搬运节拍"实测：**一次控制迭代内植物前进了多少步**。
+
+    为什么必须可观测（2026-09-28 §11.23(43)）：联合世界里"谁推进时间"由植物 owner 决定，而臂是
+    **guest** ⇒ `_advance_for(0)` 在 guest 上是"等 owner 推进"，owner 可能一次推进很多步。搬运段
+    把载荷**焊**在 mocap anchor 上，而 anchor 每个**控制迭代**只跟随一次 ⇒ 若一次迭代内植物前进
+    步数过大，载荷会长时间挂在**陈旧 anchor** 上（实测均值 18.01 步/迭代）。这个前提此前是隐式的、
+    只靠软约束兜着 ⇒ 现在由声明给出上限并**响亮失败**（不静默劣化）。
+
+    返回：`{"max_plant_steps_per_iteration", "iterations", "last_delta"}`（就地返回同一个 sink）。
+    """
+    delta = int(current_step_index) - int(previous_step_index)
+    sink["iterations"] = int(sink.get("iterations", 0)) + 1
+    sink["last_delta"] = delta
+    if delta > int(sink.get("max_plant_steps_per_iteration", 0)):
+        sink["max_plant_steps_per_iteration"] = delta
+    return sink
+
+
+def check_carry_cadence(sink):
+    """按**声明上限**判定节拍是否越界；越界即显式失败（返回说明或 None）。"""
+    limit = int(sink.get("limit") or 0)
+    measured = int(sink.get("max_plant_steps_per_iteration", 0))
+    if limit <= 0:
+        raise ValueError("搬运节拍检查缺少声明上限（carry_constraint.max_plant_steps_per_iteration）")
+    if measured > limit:
+        return ("搬运节拍超出声明上限: 单次控制迭代植物最多前进 %d 步 > 声明 %d 步"
+                "（anchor 只在每个控制迭代跟随一次 ⇒ 步数越大，载荷挂陈旧 anchor 越久）"
+                % (measured, limit))
+    return None
