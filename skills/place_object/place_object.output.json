@@ -250,6 +250,171 @@
               "type": "number",
               "minimum": 0,
               "description": "声明允许施加的水平纠偏上限；超过即显式拒绝（不静默截断）。"
+            },
+            "applied_delta_world_m": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "number"
+              },
+              "description": "实际施加的纠偏向量（世界系；lateral_only 时竖直分量为 0）。"
+            },
+            "segments": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "逐段（above/descend）的重解自证：残差、实际位移、同半球点积、迭代数。",
+              "properties": {
+                "above": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "label",
+                    "residual_m",
+                    "hemisphere_dot"
+                  ],
+                  "properties": {
+                    "label": {
+                      "type": "string"
+                    },
+                    "residual_m": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "shift_m": {
+                      "type": "array",
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "items": {
+                        "type": "number"
+                      }
+                    },
+                    "shift_error_m": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "hemisphere_dot": {
+                      "type": "number"
+                    },
+                    "iterations": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                },
+                "descend": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "label",
+                    "residual_m",
+                    "hemisphere_dot"
+                  ],
+                  "properties": {
+                    "label": {
+                      "type": "string"
+                    },
+                    "residual_m": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "shift_m": {
+                      "type": "array",
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "items": {
+                        "type": "number"
+                      }
+                    },
+                    "shift_error_m": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "hemisphere_dot": {
+                      "type": "number"
+                    },
+                    "iterations": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            },
+            "ik_iterations": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "重解用的迭代上限（来自声明）。"
+            },
+            "ik_step": {
+              "type": "number",
+              "minimum": 0,
+              "description": "重解用的步长（来自声明）。"
+            },
+            "max_residual_m": {
+              "type": "number",
+              "minimum": 0,
+              "description": "重解残差与\"实际位移−请求位移\"的共同上限（来自声明）。"
+            },
+            "nominal_top_m": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "number"
+              },
+              "description": "构建期名义承载面中心（世界系）= nominal_pose_m + R_nominal·[0,0,half_z]。"
+            },
+            "live_top_m": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "number"
+              },
+              "description": "运行期实测承载面中心（世界系）= 实测 body 位姿 + R_live·[0,0,half_z]。"
+            },
+            "nominal_solution_pad_mid_m": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "number"
+              },
+              "description": "构建期放置解（descend）下的指腹中点（世界系，实测 FK）。"
+            },
+            "nominal_solution_payload_m": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "number"
+              },
+              "description": "同一状态下载荷中心（世界系）—— 即\"构建期解会把载荷送到哪\"。"
+            },
+            "nominal_solution_offset_m": {
+              "type": "number",
+              "minimum": 0,
+              "description": "构建期解离\"名义承载面中心 + pad_offset\"的距离（≠0 ⇒ 构建基准与接收体中心本来就不重合）。"
+            },
+            "nominal_solution_lateral_m": {
+              "type": "number",
+              "minimum": 0,
+              "description": "同上，只取水平分量。"
+            },
+            "carry_payload_offset_m": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "number"
+              },
+              "description": "测量时刻的**载荷中心 − 指腹中点**（世界系）：搬运过程产生的载荷相对夹口偏移，是放置偏移的主项。"
+            },
+            "carry_payload_lateral_m": {
+              "type": "number",
+              "minimum": 0,
+              "description": "同上，只取水平模长（本轮实测 0.0548 m ⇒ 放置偏移的绝大部分）。"
             }
           }
         }

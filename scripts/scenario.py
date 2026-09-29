@@ -245,7 +245,9 @@ MEASUREMENT_KEYS = ("sim_time_advance_s", "final_speed_mps", "wall_seconds", "ev
                     "accept_payload_on_target", "accept_offset_from_target_center_m",
                     "accept_last_speed_mps", "accept_resting_gap_m",
                     "carry_cadence_steps", "place_correction_lateral_m",
-                    "place_correction_vertical_m", "place_correction_applied")
+                    "place_correction_vertical_m", "place_correction_applied",
+                    "place_nominal_solution_offset_m", "place_nominal_solution_lateral_m",
+                    "place_carry_payload_lateral_m")
 
 #: 步骤分类（报告里逐项可见，避免"没跑"和"跑过了"混在一起）。
 STEP_EXECUTED = "EXECUTED"
@@ -1014,6 +1016,13 @@ def measure_step(before, after, evidence, wall_seconds):
             measured["place_correction_lateral_m"] = float(correction["lateral_m"])
             measured["place_correction_vertical_m"] = float(correction["vertical_m"])
             measured["place_correction_applied"] = 1.0 if correction.get("applied") else 0.0
+            if correction.get("carry_payload_lateral_m") is not None:
+                measured["place_carry_payload_lateral_m"] = float(correction["carry_payload_lateral_m"])
+            if correction.get("nominal_solution_offset_m") is not None:
+                measured["place_nominal_solution_offset_m"] = float(
+                    correction["nominal_solution_offset_m"])
+                measured["place_nominal_solution_lateral_m"] = float(
+                    correction["nominal_solution_lateral_m"])
         # 载荷确认结果量（`accept_payload`，由**四足侧**独立复核；同样只认技能自己给出的实测值）
         if evidence.get("payload_on_target") is not None:
             measured["accept_payload_on_target"] = 1.0 if evidence["payload_on_target"] else 0.0

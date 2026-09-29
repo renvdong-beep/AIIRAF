@@ -1313,6 +1313,70 @@ class MujocoBackend:
             _live_tray_pose = np.asarray(self.data.xpos[tray_body], dtype=float).copy()
         place_pose_correction = resolve_place_pose_correction(
             gripper.get("place_pose_correction"), record.get("nominal_pose_m"), _live_tray_pose)
+        # 诊断（§11.23(48)）：把"构建期解"与"名义/实测目标点"分别**量出来** —— 只有这样才能判
+        # "偏差在构建期解侧"还是"纠偏逻辑侧"。口径：目标点 = 承载面中心 + 声明的法向间隙(pad_offset)。
+        if place_pose_correction.get("mode") != "off":
+            with self._data_lock:
+                mujoco.mj_forward(self.model, self.data)
+                _R_live = np.asarray(self.data.xmat[tray_body], dtype=float).reshape(3, 3)
+                _live_top = np.asarray(self.data.xpos[tray_body], dtype=float) + _R_live @ np.asarray(
+                    [0.0, 0.0, float(record["size_m"][2])], dtype=float)
+            _nom_q = np.asarray([float(v) for v in (record.get("nominal_quaternion_wxyz")
+                                                    or [1.0, 0.0, 0.0, 0.0])], dtype=float)
+            _w, _x, _y, _z = (float(_nom_q[0]), float(_nom_q[1]), float(_nom_q[2]), float(_nom_q[3]))
+            _R_nom = np.asarray([
+                [1 - 2 * (_y * _y + _z * _z), 2 * (_x * _y - _z * _w), 2 * (_x * _z + _y * _w)],
+                [2 * (_x * _y + _z * _w), 1 - 2 * (_x * _x + _z * _z), 2 * (_y * _z - _x * _w)],
+                [2 * (_x * _z - _y * _w), 2 * (_y * _z + _x * _w), 1 - 2 * (_x * _x + _y * _y)],
+            ], dtype=float)
+            _nom_top = np.asarray([float(v) for v in record["nominal_pose_m"]], dtype=float) \
+                + _R_nom @ np.asarray([0.0, 0.0, float(record["size_m"][2])], dtype=float)
+            _pad_offset = float(gripper.get("pad_offset_m") or 0.0)
+            # **搬运中的载荷相对夹口偏移**（本轮根因，§11.23(48)）：实测点 = 载荷中心 vs 指腹中点。
+            # 它不是构建期量（构建解横向 8.251e-06 m ⇒ 构建基准是对的），而是搬运过程产生的
+            # ⇒ 放置偏移的主项，任何"只纠放置点"的做法都动不了它。
+            with self._data_lock:
+                _pad_geoms_now = [int(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM,
+                                                        str(gripper[key])))
+                                  for key in ("left_finger_geom", "right_finger_geom")]
+                mujoco.mj_forward(self.model, self.data)
+                _pad_now = np.mean([np.asarray(self.data.geom_xpos[g], dtype=float)
+                                    for g in _pad_geoms_now if g >= 0], axis=0)
+                _payload_now = np.asarray(self.data.xpos[payload_body], dtype=float).copy()
+            _carry_delta = _payload_now - _pad_now
+            place_pose_correction["carry_payload_offset_m"] = [round(float(v), 9)
+                                                              for v in _carry_delta]
+            place_pose_correction["carry_payload_lateral_m"] = round(
+                float(np.linalg.norm(_carry_delta[:2])), 9)
+            place_pose_correction["nominal_top_m"] = [round(float(v), 9) for v in _nom_top]
+            place_pose_correction["live_top_m"] = [round(float(v), 9) for v in _live_top]
+            # **构建期解自身**离"名义承载面中心 + pad_offset"多远：若不为零，说明放置航点的
+            # 构建基准与接收体中心**本来就不重合** ⇒ 相对纠偏（nominal→live）救不了它。
+            _descend = gripper.get("place_descend_positions") or {}
+            if _descend:
+                _pad_geoms = [int(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM,
+                                                    str(gripper[key])))
+                              for key in ("left_finger_geom", "right_finger_geom")]
+                with self._data_lock:
+                    _scratch = mujoco.MjData(self.model)
+                    _scratch.qpos[:] = self.data.qpos
+                    for _name, _value in _descend.items():
+                        _jid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, str(_name))
+                        if _jid >= 0:
+                            _scratch.qpos[int(self.model.jnt_qposadr[_jid])] = float(_value)
+                    mujoco.mj_forward(self.model, _scratch)
+                    _pad_nom = np.mean([np.asarray(_scratch.geom_xpos[g], dtype=float)
+                                        for g in _pad_geoms if g >= 0], axis=0)
+                    _payload_nom = np.asarray(_scratch.xpos[payload_body], dtype=float).copy()
+                _nom_target = _nom_top + np.asarray([0.0, 0.0, _pad_offset], dtype=float)
+                place_pose_correction["nominal_solution_pad_mid_m"] = [
+                    round(float(v), 9) for v in _pad_nom]
+                place_pose_correction["nominal_solution_payload_m"] = [
+                    round(float(v), 9) for v in _payload_nom]
+                place_pose_correction["nominal_solution_offset_m"] = round(
+                    float(np.linalg.norm(_pad_nom - _nom_target)), 9)
+                place_pose_correction["nominal_solution_lateral_m"] = round(
+                    float(np.linalg.norm((_pad_nom - _nom_target)[:2])), 9)
         payload_geom = payload.get("geom")
         if payload_geom is None:
             raise ValueError("载荷 %s 未声明 geom（无法量最低点）" % payload_id)
@@ -1746,6 +1810,26 @@ class MujocoBackend:
                                   **carry_anchor_kwargs)
             seg_row = _trace("after_transit", _snapshot(), "绕行航点（竖直抬升到托盘高度）")
             _carry_grip_row(seg_row, "绕行航点")
+        # ---- 放置点纠偏（声明驱动，§11.23(48)）：把 above/descend 两段的关节目标纠到
+        #      **运行期实测位姿**上。off/measure_only ⇒ 一个字节都不动（逐位不变）；
+        #      lateral_only / full_pose ⇒ 按声明重解 + 三条自证（任一不满足即显式抛错）。
+        if place_pose_correction.get("mode") in ("lateral_only", "full_pose"):
+            _delta = np.asarray(place_pose_correction["delta_world_m"], dtype=float)
+            if place_pose_correction["mode"] == "lateral_only":
+                _delta = np.asarray([_delta[0], _delta[1], 0.0], dtype=float)   # 只纠水平两轴
+            _wrist_body = self._body_id(gripper["wrist_body"])
+            _segments = {}
+            for _label, _positions in (("above", above), ("descend", descend)):
+                _goal, _rows = self._corrected_place_goal(
+                    _positions, _delta, pad_points, arm_joints, _wrist_body, place_pose_correction, _label)
+                _segments[_label] = _rows
+                if _label == "above":
+                    above = _goal
+                else:
+                    descend = _goal
+            place_pose_correction["applied"] = True
+            place_pose_correction["applied_delta_world_m"] = [round(float(v), 9) for v in _delta]
+            place_pose_correction["segments"] = _segments
         # ⚠ 结构修正（2026-09-28 §11.23(41)）：`above` / `descend` 的回放**必须在这一层**。
         # 实测（AST 对账）：`descend` 曾被嵌在"失去夹持就报错"的 `if not (双侧接触):` 体内
         # ⇒ 是**死代码、永不执行**：`after_above` 与 `after_descend` 之间植物只前进 5 步
@@ -1884,6 +1968,78 @@ class MujocoBackend:
             "confirmation": "released",
             "evidence": evidence,
         }
+
+    def _corrected_place_goal(self, goal, delta_world, pad_points, arm_joints, wrist_body,
+                              correction, label):
+        """把一段放置目标的**关节解**按世界系平移 `delta_world` 重解（名义解作种子 ⇒ 不换分支）。
+
+        为什么这样（§11.23(48)）：托盘随载体运动 ⇒ 构建期按**名义停靠位姿**解出的航点带着
+        "载体没停到位"的误差（实测横向 0.033814698 m、竖向 −0.012792153 m）。运行时现解 IK 曾经
+        把载荷打掉，根因是**没给种子、落到另一个分支**；这里以构建期名义解为初值、只做小位移重解。
+
+        三条自证，任一不满足即**显式抛错**（不静默按名义位姿照放）：
+          ① 求解残差 ≤ 声明的 `max_residual_m`；
+          ② 求解后**腕→指腹方向与名义同半球**（dot ≥ 0，防翻分支）；
+          ③ 指腹中点实际位移与请求 delta 之差 ≤ `max_residual_m`。
+
+        自建 MjData（不写共享植物，避开 owner 驻留线程）；读共享状态时持 `_data_lock`。
+        返回 (该段的纠正后目标字典, 证据字典)。
+        """
+        from iraf_core.kinematics import solve_position_ik
+
+        arm_joint_set = {int(item) for item in arm_joints}
+
+        def _pad_mid(data):
+            return np.mean([np.asarray(data.geom_xpos[item["id"]], dtype=float)
+                            for item in pad_points], axis=0)
+
+        with self._data_lock:
+            data = mujoco.MjData(self.model)
+            data.qpos[:] = self.data.qpos          # 以**实测**状态为初值（含载荷/载体的真实姿态）
+            mujoco.mj_forward(self.model, data)
+            for name, value in goal.items():
+                joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, str(name))
+                if joint_id < 0:
+                    raise ValueError("放置段目标引用了模型里不存在的关节: %s" % name)
+                if int(joint_id) in arm_joint_set:
+                    data.qpos[int(self.model.jnt_qposadr[joint_id])] = float(value)
+            mujoco.mj_forward(self.model, data)
+            nominal_mid = _pad_mid(data)
+            nominal_dir = nominal_mid - np.asarray(data.xpos[wrist_body], dtype=float)
+            result = solve_position_ik(self.model, data, nominal_mid + np.asarray(delta_world, dtype=float),
+                                       arm_joints, pad_points,
+                                       iterations=int(correction["ik_iterations"]),
+                                       step=float(correction["ik_step"]),
+                                       tolerance_m=float(correction["max_residual_m"]))
+            mujoco.mj_forward(self.model, data)
+            achieved_mid = _pad_mid(data)
+            achieved_dir = achieved_mid - np.asarray(data.xpos[wrist_body], dtype=float)
+            corrected = dict(goal)
+            for name in list(goal):
+                joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, str(name))
+                if int(joint_id) in arm_joint_set:
+                    corrected[str(name)] = float(data.qpos[int(self.model.jnt_qposadr[joint_id])])
+
+        max_residual = float(correction["max_residual_m"])
+        residual = float(result.position_error_m)
+        shift = achieved_mid - nominal_mid
+        shift_error = float(np.linalg.norm(shift - np.asarray(delta_world, dtype=float)))
+        dot = float(np.dot(achieved_dir / max(np.linalg.norm(achieved_dir), 1e-12),
+                           nominal_dir / max(np.linalg.norm(nominal_dir), 1e-12)))
+        if residual > max_residual:
+            raise ValueError("放置点纠偏（%s）求解残差 %.9f m > 声明上限 %.9f m ⇒ 拒绝"
+                             "（不静默按名义位姿照放）" % (label, residual, max_residual))
+        if dot < 0.0:
+            raise ValueError("放置点纠偏（%s）把腕→指腹方向翻到了相反半球（dot=%.6f < 0）⇒ 拒绝"
+                             % (label, dot))
+        if shift_error > max_residual:
+            raise ValueError("放置点纠偏（%s）实际位移与请求 delta 差 %.9f m > 声明上限 %.9f m ⇒ 拒绝"
+                             % (label, shift_error, max_residual))
+        return corrected, {"label": label, "residual_m": round(residual, 9),
+                           "shift_m": [round(float(v), 9) for v in shift],
+                           "shift_error_m": round(shift_error, 9),
+                           "hemisphere_dot": round(dot, 6),
+                           "iterations": int(result.iterations)}
 
     def accept_payload(self, payload_id, place_target_id, lease):
         """载荷确认（`accept_payload`）：复核载荷是否落在接收体承载面上**且整链已静止**。

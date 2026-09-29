@@ -58,12 +58,27 @@ class RejectionTests(unittest.TestCase):
             resolve_place_pose_correction({"mode": "measure_only", "max_lateral_m": 0.05},
                                           NOMINAL, live)
 
-    def test_unimplemented_mode_is_rejected(self):
-        """声明了尚未实现的施加模式 ⇒ 显式失败（不得静默按名义位姿照放）。"""
+    def test_apply_mode_requires_ik_parameters(self):
+        """施加模式（lateral_only/full_pose）必须声明 IK 参数 —— 缺一个即显式失败。"""
         for mode in ("lateral_only", "full_pose"):
-            with self.assertRaisesRegex(ValueError, "尚未实现"):
-                resolve_place_pose_correction({"mode": mode, "max_lateral_m": 0.05},
-                                              NOMINAL, NOMINAL)
+            with self.assertRaisesRegex(ValueError, "必须声明正的 ik_iterations"):
+                resolve_place_pose_correction({"mode": mode, "max_lateral_m": 0.05}, NOMINAL, NOMINAL)
+            with self.assertRaisesRegex(ValueError, "必须声明正的 max_residual_m"):
+                resolve_place_pose_correction(
+                    {"mode": mode, "max_lateral_m": 0.05, "ik_iterations": 800, "ik_step": 0.5},
+                    NOMINAL, NOMINAL)
+
+    def test_apply_mode_is_accepted_with_parameters(self):
+        """参数齐备时**解析**通过（解析层不施加 ⇒ applied 保持 False，施加由后端完成并另写证据）。"""
+        report = resolve_place_pose_correction(
+            {"mode": "lateral_only", "max_lateral_m": 0.05, "ik_iterations": 800,
+             "ik_step": 0.5, "max_residual_m": 0.0001},
+            NOMINAL, [NOMINAL[0] + 0.03, NOMINAL[1], NOMINAL[2]])
+        self.assertEqual(report["mode"], "lateral_only")
+        self.assertFalse(report["applied"])
+        self.assertAlmostEqual(report["lateral_m"], 0.03, places=9)
+        self.assertEqual(report["ik_iterations"], 800)
+        self.assertAlmostEqual(report["max_residual_m"], 0.0001, places=12)
 
 
 if __name__ == "__main__":

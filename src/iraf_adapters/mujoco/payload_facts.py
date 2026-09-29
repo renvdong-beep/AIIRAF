@@ -240,7 +240,14 @@ def resolve_place_pose_correction(declaration, nominal_pose_m, live_pose_m):
             "（该量说明载体没有停到位；不静默截断、不按名义位姿照放）"
             % (lateral, float(max_lateral)))
     if mode in ("lateral_only", "full_pose"):
-        raise ValueError(
-            "place_pose_correction.mode=%s 尚未实现（本步只交付 measure_only 的实测与留痕）⇒ "
-            "显式失败，不得静默按名义位姿照放" % mode)
+        # 施加所需的 IK 参数**必须声明**（实现层不写默认值）：迭代上限 / 步长 / 允许残差。
+        for key in ("ik_iterations", "ik_step", "max_residual_m"):
+            value = declaration.get(key)
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or not float(value) > 0:
+                raise ValueError(
+                    "place_pose_correction.mode=%s 时必须声明正的 %s（实现层不写默认值），实际: %r"
+                    % (mode, key, value))
+        report["ik_iterations"] = int(declaration["ik_iterations"])
+        report["ik_step"] = float(declaration["ik_step"])
+        report["max_residual_m"] = float(declaration["max_residual_m"])
     return report
