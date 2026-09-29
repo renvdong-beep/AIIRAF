@@ -8,8 +8,8 @@
 
 import unittest
 
-from iraf_adapters.mujoco.payload_facts import (resolve_place_pose_correction,
-                                                resolve_touchdown_correction)
+from iraf_adapters.mujoco.payload_facts import (
+    resolve_place_alignment_correction, resolve_place_pose_correction, resolve_touchdown_correction)
 
 NOMINAL = [0.43486632, 0.0, 0.33288002]
 
@@ -123,6 +123,49 @@ class TouchdownCorrectionTests(unittest.TestCase):
     def test_non_finite_measurement_fails(self):
         with self.assertRaises(ValueError):
             resolve_touchdown_correction(self.DECL, float("nan"), 0.3432)
+
+
+class PlaceAlignmentCorrectionTests(unittest.TestCase):
+    """横向放置纠偏（2026-09-29 §11.25(f-5)）：要消的是"载荷中心 − 托盘中心"。
+
+    实测来源：`PLACE_TRACE` 显示释放前就已偏 47.4 mm（主因是搬运段在夹口里**侧滑 21.6 mm**：
+    start 27.4 mm → after_transit 49.0 mm），释放瞬间再加 13.7 mm ⇒ 最终 61.8 mm 破 0.06 判据。
+    故 delta 必须取"载荷相对托盘的位置"，而不是"托盘位姿差"（后者 D2 实测施加后更差）。
+    """
+
+    DECL = {"mode": "touchdown", "max_lateral_m": 0.05, "lateral_tolerance_m": 0.005}
+
+    def test_delta_points_to_tray_center(self):
+        report = resolve_place_alignment_correction(self.DECL, [0.449541, 0.048539],
+                                                    [0.440934, 0.001917])
+        self.assertTrue(report["applied"])
+        self.assertAlmostEqual(report["lateral_m"], 0.047409823, places=8)
+        # 载荷在托盘 +y 侧 ⇒ delta 应为 −y 方向（把载荷挪回中心）
+        self.assertLess(report["delta_xy_m"][1], 0.0)
+        self.assertAlmostEqual(report["delta_xy_m"][1], -0.046622, places=6)
+
+    def test_within_tolerance_not_applied(self):
+        report = resolve_place_alignment_correction(self.DECL, [0.4410, 0.0020],
+                                                    [0.440934, 0.001917])
+        self.assertFalse(report["applied"])
+        self.assertLess(report["lateral_m"], self.DECL["lateral_tolerance_m"])
+
+    def test_beyond_cap_is_refused(self):
+        with self.assertRaises(ValueError) as ctx:
+            resolve_place_alignment_correction({**self.DECL, "max_lateral_m": 0.03},
+                                               [0.449541, 0.048539], [0.440934, 0.001917])
+        self.assertIn("超过声明上限", str(ctx.exception))
+        self.assertIn("不静默截断", str(ctx.exception))
+
+    def test_missing_keys_and_bad_shape_fail(self):
+        for key in ("lateral_tolerance_m", "max_lateral_m"):
+            with self.subTest(missing=key):
+                broken = {k: v for k, v in self.DECL.items() if k != key}
+                with self.assertRaises(ValueError) as ctx:
+                    resolve_place_alignment_correction(broken, [0.45, 0.05], [0.44, 0.0])
+                self.assertIn(key, str(ctx.exception))
+        with self.assertRaises(ValueError):
+            resolve_place_alignment_correction(self.DECL, [0.45, 0.05, 0.0], [0.44, 0.0])
 
 
 if __name__ == "__main__":

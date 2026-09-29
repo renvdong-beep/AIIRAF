@@ -243,6 +243,57 @@ def resolve_touchdown_correction(declaration, payload_low_m, bearing_surface_z_m
     return report
 
 
+def resolve_place_alignment_correction(declaration, payload_center_xy_m, tray_center_xy_m):
+    """算**放置横向纠偏量**（纯函数，可单测）：把"载荷中心 − 托盘中心"作为要消掉的量。
+
+    为什么（2026-09-29 §11.25(f-5) 实测）：`PLACE_TRACE` 逐相位给出横向偏移的**来源**——
+      start 载荷→夹口 27.4 mm → after_transit **49.0 mm**（搬运段在夹口里**侧滑 21.6 mm**，已知现象）
+      → after_descend 载荷→托盘 47.4 mm（释放前就已偏）→ after_retreat **61.8 mm**（释放瞬间又 +13.7）
+      ⇒ 最终 61.8 mm = 释放前 47.4（主因搬运侧滑）+ 释放 13.7。只要把释放前纠到近零，
+        最终就会落回 13.7 mm 量级 ⇒ 判据 0.06 m 能过（现状 0.061824263/0.065815019 刚好破线）。
+    现有 `resolve_place_pose_correction` 的 delta 取自"托盘**位姿**差"，D2 实测施加后更差
+    （0.051933449 → 0.059755439）⇒ 误差主项不在托盘位姿，而在"载荷相对托盘的位置"。
+
+    口径：`delta_xy = 托盘中心 − 载荷中心`（把载荷往托盘中心挪），
+      `lateral_m = |载荷中心 − 托盘中心|`；进 `lateral_tolerance_m` 即 `applied=False`；
+      超过 `max_lateral_m` ⇒ **显式拒绝**（不静默截断、不按名义位置照放）。
+    返回 dict：mode/applied/delta_xy_m/lateral_m/lateral_tolerance_m/max_lateral_m。
+    """
+    if not isinstance(declaration, dict) or not declaration:
+        raise ValueError(
+            "缺少 place_pose_correction 声明（grasp.place_pose_correction）：实现层不给默认值")
+    payload_xy = [float(v) for v in payload_center_xy_m]
+    tray_xy = [float(v) for v in tray_center_xy_m]
+    if len(payload_xy) != 2 or len(tray_xy) != 2:
+        raise ValueError("载荷中心与托盘中心都必须是 2 维（xy），实际 %r / %r"
+                         % (payload_center_xy_m, tray_center_xy_m))
+    for label, value in (("payload_center_xy_m", payload_xy), ("tray_center_xy_m", tray_xy)):
+        for v in value:
+            if not np.isfinite(float(v)):
+                raise ValueError("横向纠偏需要有限的 %s，实际 %r" % (label, value))
+    tolerance = declaration.get("lateral_tolerance_m")
+    cap = declaration.get("max_lateral_m")
+    for label, value in (("lateral_tolerance_m", tolerance), ("max_lateral_m", cap)):
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or float(value) < 0:
+            raise ValueError(
+                "横向纠偏需要声明非负的 %s（实现层不写默认值），实际: %r" % (label, value))
+    delta = [tray_xy[0] - payload_xy[0], tray_xy[1] - payload_xy[1]]
+    lateral = float(np.hypot(payload_xy[0] - tray_xy[0], payload_xy[1] - tray_xy[1]))
+    report = {"mode": "lateral_alignment", "applied": False,
+              "delta_xy_m": [round(delta[0], 9), round(delta[1], 9)],
+              "lateral_m": round(lateral, 9),
+              "lateral_tolerance_m": float(tolerance), "max_lateral_m": float(cap)}
+    if lateral <= float(tolerance):
+        return report
+    if lateral > float(cap):
+        raise ValueError(
+            "横向纠偏需要移动 %.9f m（载荷中心 %r − 托盘中心 %r），超过声明上限 max_lateral_m=%.9f m "
+            "⇒ 拒绝放置（不静默截断、不按名义位置照放）"
+            % (lateral, payload_xy, tray_xy, float(cap)))
+    report["applied"] = True
+    return report
+
+
 def resolve_place_pose_correction(declaration, nominal_pose_m, live_pose_m):
     """解析"放置点纠偏"声明并算出**实测纠偏量**（纯函数，便于单测；是否施加由调用方按 mode 决定）。
 
