@@ -2967,6 +2967,12 @@ class MujocoBackend:
                 "within_tolerance": report["within_tolerance"],
                 "target_position_m": history[-1].get("target_position_m"),
                 "finger_center_position_m": history[-1].get("finger_center_position_m"),
+                # 逐样本明细（2026-09-30 §11.43）：失败步骤的 evidence 不进报告 ⇒ 这里全打出来，
+                # 才能定位"哪一刻跳、跳多大"（离散滑移 vs 平滑漂移）。
+                "samples": [{"sample": item.get("sample"), "sim_time_s": item.get("sim_time_s"),
+                             "carrier_xyz_m": item.get("carrier_xyz_m"),
+                             "target_position_m": item.get("target_position_m"),
+                             "distance_m": item.get("distance_m")} for item in history],
             }, ensure_ascii=False), flush=True)
         return report
 
@@ -2998,6 +3004,9 @@ class MujocoBackend:
             "invocation": int(getattr(self, "_pick_invocation", 0)),
             "phase": str(phase),
             "ms": int(ms),
+            # 仿真时刻（2026-09-30 §11.43）：把"载体/目标随时间的轨迹"拼成一条时间线，
+            # 才能分辨**平滑漂移**与**离散滑移事件**（后者是轮间方差的主项）。
+            "sim_time_s": round(float(self.data.time), 6),
             "center_delta_m": alignment["center_delta_m"],
             "center_distance_m": alignment["center_distance_m"],
             "finger_center_position_m": alignment["finger_center_position_m"],
