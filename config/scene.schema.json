@@ -195,6 +195,18 @@
           "type": "string",
           "description": "联合报告顶层 `manipulation`/`gripper`/`targets` 描述**哪一台**附加机械臂（`robots[].id`）。`--attach` 里有多台本体声明了 `manipulation_report` 时**必须**给出（否则构建器显式失败），单台时可省略。取值不接受按 `--attach` 顺序隐式推断。"
         },
+        "attached_actuator": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["armature_min_kg_m2"],
+          "properties": {
+            "armature_min_kg_m2": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "**附加本体**关节的转子惯量下限（kg·m²）：装配后按 `armature := max(厂商值, 本下限)` 注入，**只对附加本体**（主本体与整株步长都不碰）。为什么必须（2026-09-30 §11.35/§11.37）：显式积分下 PD 位置伺服的稳定性由 `kv·dt/J` 决定，UR5e 厂商标定（kp=2000/500、kv=400/100）在小惯量腕关节上远超稳定界 ⇒ 逐步数值颤动（实测肘 qvel 每 2 步翻符号、周期 = 2.008·dt、wrist_2 全程饱和、静态保持残余 0.049657413 rad）；实测需 ≥ 0.5 才进入稳定区（残余 −8.2e-08 rad），且不动 kp/kv 的厂商标定。缺省不注入（行为与改动前一致）。"
+            }
+          }
+        },
         "builder": {
           "$ref": "#/definitions/unverified_or_path",
           "description": "场景构建器入口：要么是已存在的仓库相对路径，要么是显式 unverified 占位（占位会进 scene_check 的 pending_refs，不是静默忽略）。"

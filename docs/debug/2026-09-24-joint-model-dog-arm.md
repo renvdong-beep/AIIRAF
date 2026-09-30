@@ -4178,6 +4178,37 @@ armature，而它对 dt=0.002 下的 kp=2000/500、kv=400/100 **不够**；`0.5`
 ③ s06 用 `PICK_SETTLED.spread_m` 证明"已停稳"，再判其残余是否落进 0.005 m。
 （注：臂**自己**的场景同样存在该颤动，但属另一条基线声明，先不动。）
 
+### §11.38 落地 armature 下限：颤动消除、前馈重算在 dt=0.002 下通过（2026-09-30）
+
+**声明与注入（已落地）**
+- `scenes/handoff_lab/scene.yaml: model.attached_actuator.armature_min_kg_m2: 0.5`
+- `config/scene.schema.json`：`model.attached_actuator`（`additionalProperties:false`、要求正数）
+- `scene_builder._apply_attached_armature`：装配后对**附加本体**的 `<joint>` 取
+  `armature := max(厂商值, 声明下限)`（**只对附加本体**；不动 kp/kv、不动整株步长），逐关节 before/after 进报告
+- 产物证据：`<joint name="ur5e_elbow_joint" … damping="2" armature="0.5" />`；
+  `injections.attached_armature.changed` 列出全部被改关节（piper 0.0→0.5、ur5e 0.1→0.5）
+
+**验收（构建期）**：颤动消失（`probe_ur5e_hold_transient`：home/grasp 两相位**符号变化 0**、
+wrist_2 饱和比 0.0、残余 elbow **−8.2e-08 / 0.0 rad**）；并且**前馈重算在 dt=0.002 下通过**
+（`ff_source: resolved_for_joint_model`，四相位残差 2.99e-07 / 1.44e-07 / 6.7e-08 / 1.23e-07）
+—— 这正是 §11.35/§11.36 里**不可达**的组合（dt=0.002 且前馈重算通过）。
+
+**全链复跑（`nominal --world joint`，RUN_EXIT=5）——注意是"边缘判据被动力学变化挪出"**：
+
+| 步骤 | 结果 | 数字 |
+|---|---|---|
+| s01 / **s02_dock** / s03 | ✓（s02 恢复通过） | s02 在 dt=0.001 时临界失败，现已回到判据内 |
+| s04_place_in_tray | **FAILED（拒绝，非静默）** | 触地纠偏 6 次后剩余竖向 **0.001331352 m** > 容差 0.001 m ⇒ 拒绝照放 |
+| s05 | ✓ | — |
+| s02b_dock_station_b | **FAILED（临界）** | damped_hold 12 s 超时：平移 0.012766（判据 0.03 ✓）/ **偏航 1.882693°（判据 2.0）** |
+| s05b / s06 | FAILED（连锁 + 守卫正确） | s06 纠偏被拒：live=[0.451609, **0.00629**, 0.381407]、nominal=[0.45, 0.45, 0.375264] ⇒ 载荷没进托盘（s04 拒放）⇒ 守卫有效 ✓ |
+
+**读法**：armature 也作用在 **piper** 上（`attached_actuator` 是"附加本体"级声明）⇒ 放置/停靠这两条
+**本来就贴着判据**的验收被挪出：s04 触地残余 1.33 mm vs 容差 1 mm、s02b 偏航 1.88° vs 2.0°。
+这不是"物理坏了"，而是**判据/参数是按旧动力学调的** ⇒ 下一步按新动力学重调这两处（**声明层**），
+再跑 s06；`s06` 本身在 dt=0.001 下已测到"已停稳（spread 1.9933e-05）+ 残余 0.007381 m"，
+其 x 分量 −7.19 mm 的来源仍待并排拆解（`PICK_CORRECTION` / `PICK_SETTLED` 已就位）。
+
 ## 12. 下一步
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
 0a. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。

@@ -1331,6 +1331,56 @@ def _declared_self_collision_excludes(profile_spec, robot_id):
     return pairs
 
 
+def _apply_attached_armature(staging, scene, attached_records):
+    """按声明给**附加本体**的关节加转子惯量下限（`scene.model.attached_actuator.armature_min_kg_m2`）。
+
+    为什么必须（2026-09-30 §11.35/§11.37 判死）：显式积分下的 PD 位置伺服，稳定性由 `kv·dt/J` 决定；
+    UR5e 厂商标定（kp=2000/500、kv=400/100）在**小惯量腕关节**上远超稳定界 ⇒ **逐步数值颤动**
+    （实测肘 qvel 每 2 步翻符号、周期 0.004016 s = 2.008·dt、wrist_2 全程饱和、静态保持残余
+    0.049657413 rad）。标准对策是加**转子惯量**（不动 kp/kv 的厂商标定），实测需 ≥ 0.5 kg·m²；
+    物理上也站得住：UR5e 关节经减速器折算的转子惯量本就在 0.1~1 kg·m² 量级。
+
+    口径：`armature := max(厂商值, 声明下限)`，**只对附加本体**（主本体与整株步长都不碰）。
+    未声明 ⇒ 返回 None（不注入，行为与改动前逐位一致）。
+    """
+    declaration = ((scene or {}).get("model") or {}).get("attached_actuator") or {}
+    if not declaration:
+        return None
+    minimum = declaration.get("armature_min_kg_m2")
+    if not isinstance(minimum, (int, float)) or isinstance(minimum, bool) or float(minimum) <= 0:
+        _fail(EXIT_DECLARATION,
+              "scene.model.attached_actuator.armature_min_kg_m2 必须是正数（缺声明即不注入）")
+    minimum = float(minimum)
+    prefixes = [str(record.get("prefix") or "") for record in (attached_records or [])]
+    if not prefixes:
+        return None
+    model = mujoco.MjModel.from_xml_path(str(staging))
+    tree = ET.parse(str(staging))
+    root_element = tree.getroot()
+    changes = []
+    for element in root_element.iter("joint"):
+        name = str(element.get("name") or "")
+        prefix = next((item for item in prefixes if item and name.startswith(item)), None)
+        if prefix is None:
+            continue
+        joint_id = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name))
+        if joint_id < 0:
+            continue
+        dof = int(model.jnt_dofadr[joint_id])
+        before = float(model.dof_armature[dof])
+        after = max(before, minimum)
+        if after <= before:
+            continue                     # 已达标 ⇒ 不改（保持与厂商声明逐位一致）
+        element.set("armature", "%.9g" % after)
+        changes.append({"joint": name, "before_kg_m2": before, "after_kg_m2": after})
+    if changes:
+        tree.write(str(staging), encoding="utf-8", xml_declaration=False)
+    return {"declared_min_kg_m2": minimum,
+            "rule": "armature := max(厂商值, 声明下限)，只对附加本体",
+            "source": "scene.yaml:model.attached_actuator",
+            "changed": changes}
+
+
 def _inject_self_collision_excludes(staging, scene, root, attached_records):
     """按声明把指定 body 对排除自碰撞（`<contact><exclude/>`）；未声明即**不注入**（返回 None）。"""
     pairs = []
@@ -3299,6 +3349,9 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
     # 附加本体的**自碰撞排除**（按声明注入 `<contact><exclude>`；缺声明即不注入）
     self_collision_excludes = _inject_self_collision_excludes(staging, scene, root, attached_robots)
     injections["self_collision_excludes"] = self_collision_excludes
+    # 附加本体的**转子惯量下限**（声明驱动；未声明即不注入）——治显式积分下的逐步数值颤动（§11.37）
+    attached_armature = _apply_attached_armature(staging, scene, attached_robots)
+    injections["attached_armature"] = attached_armature
     # 物理口径：联合世界必须由**声明**给出，不得继承厂商模型 <option>（§11.23）
     world_physics = _apply_world_physics(staging, scene, required=bool(attach))
     # 搬运段抓取约束（声明驱动，惰性注入；见 _inject_carry_constraint）
