@@ -4029,6 +4029,37 @@ UR5e 的声明是 `open: rq2f85_fingers_actuator = 0.0`（全张，间隙 85.1 m
    与轮数不足 ⇒ 应按**力矩残差**迭代或提高 `max_passes`（**声明**改动，不是放宽 `tolerance_rad`）；
    若 offset 与手算不一致 ⇒ 是共享实现对"非零 `biasprm` 起始偏移/`ctrlrange`"的解释问题，先修实现。
 
+### §11.33 前馈重算失败的相位定位 + 一处 core 加固（2026-09-30）
+
+**（1）逐相位直调共享实现（新探针 `scripts/probe_ur5e_gravity_hold.py`）**
+在**联合模型**上直接调用 `iraf_core.kinematics.gravity_hold_ctrl`，按声明参数
+（`hold_ms 4000 / tolerance_rad 0.001 / max_passes 4`）逐相位跑"静态保持"：
+
+| 相位 | 最差残余 (rad) | 判定 |
+|---|---|---|
+| grasp | **0.000262241** | ✓ 收敛（文件里 arm 自己的场景也是这一档） |
+| approach | 0.023552962 | ✗ |
+| lift | 0.014776755（不给夹爪键）/ 0.015385198（给） | ✗ |
+| **home** | **0.049653448** | ✗ ← **与构建期失败报的数字逐位相同** |
+
+⇒ 构建期"前馈重算失败"就是 **home 相位**；`home` 的残余量级 ≈ 该位形的**原始下垂量**
+（τ_g/kp），说明补偿在该位形**没有被真正施加**（候选：所需力矩超 `forcerange` 饱和；或
+`ctrl + 补偿` 越界被夹断 —— 注意 §11.31(3) 的 ctrl 余量表是 **grasp** 位形的，不能外推到 home）。
+
+**（2）一处 core 加固（有数据支撑）**
+`iraf_core.kinematics.gravity_hold_ctrl` 里"被保持的非臂通道"原先**只按关节名**解析；
+腱驱动夹爪（2F-85 的 `rq2f85_fingers_actuator`）在声明里是**执行器名** ⇒ 会被静默跳过。
+已改为"关节名查不到就按执行器名查并**同样写 ctrl**"（机型无关）。
+实测依据：`lift` 相位 A/B 差异 0.015385198 vs 0.014776755（≈0.6 mrad）⇒ 该通道**确有影响**；
+`grasp`/`home`/`approach` 相位 A/B 相同 ⇒ 其余相位的关键帧 ctrl 已等于声明值。
+
+**（3）下一步（一次性判死，两步）**
+1. 把 §11.31(3) 的探针扩到 **home 位形**：打印每关节 τ_g、`ctrl+补偿` vs `ctrlrange`、
+   `|τ_g|` vs `forcerange`、以及 4 s 后的静止角 ⇒ 判定是"饱和"还是"被夹断"；
+2. 若确认饱和 ⇒ 该位形**物理上无法**用前馈压到 0.001 rad ⇒ 处理方式是**声明层**：
+   让 `home` 用更省力矩的位形（`baseline_overrides.grasp.home_rise_m` 目前 0.10，可再降）
+   或把该相位的容差按"可补偿量"声明 —— **不得**放宽抓取判据或 `tolerance_rad` 的数字口径。
+
 ## 12. 下一步
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
 0a. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。

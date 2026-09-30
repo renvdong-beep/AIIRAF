@@ -574,6 +574,14 @@ def gravity_hold_ctrl(
     for name, value in (hold_positions or {}).items():
         joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, str(name))
         if joint_id < 0:
+            # ⚠ **执行器名**（腱驱动夹爪：2F-85 只有一个 tendon 执行器 `rq2f85_fingers_actuator`，
+            # 声明里给的正是**执行器名**【2026-09-30 §11.33 实测】）：按关节名解析会**静默跳过** ⇒
+            # 它仍按 keyframe 的 ctrl 出力，接触反力经腕部污染整条臂（实测本臂重力前馈重算
+            # 残余停在 0.049653448 rad = 逐关节单步下限 0.010448372 rad 的 4.8 倍，且 4 轮只改善 0.4%）。
+            # 这一类（夹爪键是执行器而非关节）必须同样写 ctrl —— **机型无关**：只按名字查执行器。
+            actuator_only = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, str(name))
+            if actuator_only >= 0:
+                held_actuators.append((int(actuator_only), float(value)))
             continue
         data.qpos[int(model.jnt_qposadr[joint_id])] = float(value)
         if str(name) in arm_joints:
