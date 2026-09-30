@@ -407,7 +407,11 @@ class NegativeScenarioTests(ScenePackageFixture):
         """
 
         def mutate(doc):
-            robot_by_id(doc, "ur5e").pop("capabilities_unverified")
+            # ⚠ 夹具必须**自己制造前提**（2026-09-29：ur5e 已按 I1b/I3 声明 capability ⇒ 原来
+            # "只 pop 掉 capabilities_unverified"不再构成"空能力"⇒ 用例失去被测量）：
+            entry = robot_by_id(doc, "ur5e")
+            entry["capabilities"] = []
+            entry.pop("capabilities_unverified", None)
 
         self.mutate(self.scene_path, mutate)
         report, exit_code = self.run_check()

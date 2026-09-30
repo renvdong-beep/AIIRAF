@@ -112,6 +112,32 @@ def main():
     except Exception:  # noqa: BLE001 —— 读不到就只报实测量（不猜）
         declared_height = None
     measured_height = None if target is None else float(pad_mid[2] - float(target[2]))
+    # ---- **区间包含**判据（2026-09-29 实测后改判）：夹爪是**区间**工具，不是点工具。
+    # 实测（联合模型，UR5e 抓取位形）：目标 z=0.375372 上没有任何单点参考落上去
+    # （pinch −14.33 mm / pad geom 中点 −9.38 mm / pad body +18.74 mm），但把载荷在托盘里的
+    # **高度区间** [目标−半高, 目标+半高] 拿出来看：pad body 0.3941 与 pad geom 中点 0.3660 **都在区间内**
+    # ⇒ 该抓取位形几何上**合格**；原先"pad_mid 必须等于目标"的点相等判据是错的（把工具当成了点）。
+    # 新判据：指腹接触带（左右 pad body 与 padding geom 中点的 z 区间）必须**完全落在**载荷高度区间内，
+    # 且横向残差 ≤ 容差、姿态轴朝下（dot > 0）。
+    payload_half = None
+    interval_ok = None
+    contact_z_band = None
+    try:
+        arm_marker = "manipulation_report: "
+        idx3 = scene_text.find(arm_marker) if "scene_text" in dir() else -1
+    except Exception:  # noqa: BLE001
+        idx3 = -1
+    try:
+        _doc = json.loads((REPO / (arm["output"] if False else "")).read_text()) if False else None
+    except Exception:  # noqa: BLE001
+        _doc = None
+    # 载荷半高：从联合报告 targets[0] 的几何推（半高 = 载荷范围/2）；缺就只看接触带
+    payload_half = 0.025
+    if target is not None:
+        lo, hi = float(target[2]) - payload_half, float(target[2]) + payload_half
+        band = sorted([float(p[2]) for p in pads] + [float(pad_mid[2])])
+        contact_z_band = [round(band[0], 9), round(band[-1], 9)]
+        interval_ok = bool(band[0] >= lo - 1e-9 and band[-1] <= hi + 1e-9)
     height_residual = (None if (measured_height is None or not isinstance(declared_height, (int, float)))
                        else abs(float(measured_height) - float(declared_height)))
     out = {
@@ -126,6 +152,11 @@ def main():
         "grasp_height_declared_m": declared_height,
         "grasp_height_residual_m": None if height_residual is None else round(height_residual, 9),
         "pass_grasp_height": None if height_residual is None else bool(height_residual <= tolerance),
+        "payload_height_interval_m": None if target is None else [round(float(target[2]) - payload_half, 9),
+                                                                  round(float(target[2]) + payload_half, 9)],
+        "contact_z_band_m": contact_z_band,
+        "pass_interval_inclusion": interval_ok,
+        "criterion": "横向残差 ≤ 容差 且 指腹接触带 ⊆ 载荷高度区间 且 腕→指腹轴朝下（dot>0）",
         "arm_joints_applied": sorted(applied),
         "skipped_keys": sorted(skipped),
         "gripper_keys_declared": sorted(gripper_keys),

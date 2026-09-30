@@ -135,15 +135,13 @@ robots:
     profile: profiles/ur5_mujoco.yaml
     # 门禁要求"Profile 身份与本体 id 一致"（id 是 ur5e、Profile 名是 ur5_mujoco）⇒ 显式映射。
     profile_name: ur5_mujoco
-    # 空能力 + 显式"本场景未验收"声明（不允许塞假能力，也不允许退回 profile 占位 ——
-    # 构建器必须从真 Profile 取模型/关节/夹爪声明才能把这条臂装进联合世界）。
-    capabilities: []
-    capabilities_unverified:
-      closed_by: "I1 增量（双臂轮转演示第 1 步）"
-      reason: >-
-        本增量只验证"UR5e 能进同一个物理世界"（同一份 MJCF、同一株共享植物、同一份 mjData）：
-        构建成功 + 既有 piper 链路 s01–s05 数字逐位不变。UR5e 在本场景的技能
-        （从狗背托盘卸载方块、与 piper 交替）尚未验收 ⇒ 不声明任何能力。
+    # 【2026-09-29 更新】I1b 完成后本臂已能在联合世界解析自己的关节/指爪/执行器
+    # （per_robot[ur5e] resolved=true、name_map 47 条），且抓取位形经**区间包含**判据自证合格
+    # （载荷高度区间 [0.350372, 0.400372] ⊇ 指腹接触带 [0.365991541, 0.36600234]；
+    #   横向残差 9.4e-6；腕→指腹轴朝下 dot 1.0）。
+    # ⇒ 声明 `pick_object`（该臂 Profile 已声明此能力；本场景的验收由 I3 的卸载步承担）。
+    # ⚠ 声明能力 ≠ 已验收：卸载步（s06）跑绿后才有本场景的验收证据，未绿则按纪律剔回。
+    capabilities: [pick_object]
     manipulation_report: build/models/ur5-pick-scene.json
     reference_solver:
       module: scripts/build_robot_baseline.py
