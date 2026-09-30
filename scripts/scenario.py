@@ -783,7 +783,25 @@ def build_backend_config(root, declaration, spec):
         raise ScenarioError("场景报告缺少 output（模型路径）：%s" % report_path, EXIT_DECLARATION)
     if not Path(model_path).is_file():
         raise ScenarioError("场景报告指向的模型不存在：%s" % model_path, EXIT_REFERENCE)
-    gripper = report.get("gripper")
+    robot_identity_pre = str(((declaration.get("robot") or {}).get("id")) or "")
+    # **按本体的 manipulation 段**（I1b，2026-09-29）：顶层只描述主臂；非主臂若在
+    # `manipulation.per_robot[<id>]` 里有 `resolved=true` 的段，就用**它自己**的
+    # gripper/targets/vision/name_map 装配后端（而不是拒绝、更不是借用主臂的）。
+    section = None
+    _per_robot = (report.get("manipulation") or {}).get("per_robot") or {}
+    if robot_identity_pre and isinstance(_per_robot, dict) and robot_identity_pre in _per_robot:
+        _entry = _per_robot[robot_identity_pre] or {}
+        if _entry.get("resolved") is True:
+            section = _entry
+        else:
+            raise ScenarioError(
+                "联合报告里本本体 %s 的 manipulation 段**未解**（per_robot.resolved=%r：%s）"
+                "⇒ 拒绝装配（不借用主臂的 gripper/targets/name_map）"
+                % (robot_identity_pre, _entry.get("resolved"), str(_entry.get("error") or "")[:200]),
+                EXIT_DECLARATION)
+    # 本本体的事实来源：有按本体的段用段，否则用顶层（主臂/单臂报告）
+    source = section if section is not None else report
+    gripper = source.get("gripper")
     if not isinstance(gripper, dict) or not gripper:
         raise ScenarioError(
             "场景报告缺少 gripper 段（夹爪几何/位形是装配后端的必需项）：%s" % report_path,
@@ -795,7 +813,7 @@ def build_backend_config(root, declaration, spec):
             "robot.backend_config.target_tolerance_m 必须是正数（抓取判据容差只来自声明）",
             EXIT_DECLARATION,
         )
-    entries = report.get("targets") or ([{"id": report.get("target_id")}] if report.get("target_id") else [])
+    entries = source.get("targets") or ([{"id": source.get("target_id")}] if source.get("target_id") else [])
     targets = {
         # `geom` 随目标一起透传：`place_object` 要量载荷的**最低点**（`lowest_mesh_point_z`）
         # 才能判"是否落到承载面"，而 geom 名只有报告里才有（不从 id/body 猜）。
@@ -824,7 +842,8 @@ def build_backend_config(root, declaration, spec):
     # 这类跨本体错绑必须在装配前拦下（失败要早于任何运动）。注意本检查**不是**临时措辞：
     # 按本体给出 manipulation 段（计划 I1b）落地后，这里要改成"取本本体的段"而不是删掉。
     robot_identity = str(((declaration.get("robot") or {}).get("id")) or "")
-    if attached and robot_identity and str(attached) != robot_identity:
+    # ⚠ 只有**没有**按本体的段时才按旧口径失败（I1b 之后，非主臂用自己那份段是**合法**的）
+    if section is None and attached and robot_identity and str(attached) != robot_identity:
         per_robot = {str(item.get("id")): item for item in
                      ((report.get("manipulation") or {}).get("attached_manipulators") or [])
                      if isinstance(item, dict)}
@@ -858,7 +877,7 @@ def build_backend_config(root, declaration, spec):
         # 接收体声明（承载面上的放置目标：托盘随载体运动 ⇒ 报告只声明几何 + 标称位姿，
         # 运行期由后端按实测位姿解析）。缺段 = 场景没有接收体，`place_object` 会显式拒绝。
         "place_targets": report.get("place_targets"),
-        "vision": report.get("vision"),
+        "vision": source.get("vision"),
         "realtime": realtime,
         "source_report": str(report_path),
         "name_map": name_map,

@@ -3146,6 +3146,54 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
                                            placement=arm_placement, robot_id=robot_id,
                                            place_targets=place_targets,
                                            carrier_trunk=trunk_body_name)
+        # ---- I1b：**按本体**给出 manipulation 段（2026-09-29）
+        # 为什么必须（多臂）：顶层 manipulation/gripper/targets 只能描述一台臂。第二台臂若要跑技能，
+        # 必须能从**它自己**的段里解析 name_map/参考姿态/夹持事实 —— 否则要么被 `scenario.py` 的
+        # 所有权门禁拦下，要么被错绑到主臂的对象上（实测：ur5e 会解析到 `piper_left_finger`，
+        # 于是"夹爪张开"实际作用在 piper 上，且**不会报错**）。
+        # 这里对**每台**带 `manipulation_report` 的附加臂各算一份；主臂复用已算好的（不重复求解），
+        # 顶层仍保留主臂的段（向后兼容，piper 侧逐位不变）。
+        # ⚠ 非主臂解不出时**不做**静默降级：整条失败原因写进 `per_robot[<id>].error`，且
+        # `resolved=False` —— 调用方（scenario.py）据此拒绝装配，失败要早于任何运动。
+        per_robot = {}
+        for attached in attach:
+            attached_entity = resolve_robot(scene, attached)
+            attached_report = attached_entity.get("manipulation_report")
+            if not attached_report:
+                continue
+            attached_id = str(attached)
+            if attached_id == str(robot_id):
+                record = manipulation
+            else:
+                declared_names = None
+                for item in attached_robots:
+                    if str(item.get("id")) == attached_id:
+                        declared_names = item.get("declared_names")
+                try:
+                    record = _joint_manipulation(
+                        root, root / str(attached_report), "%s_" % attached_id, facts, compiled,
+                        declared_names,
+                        reference_solver=attached_entity.get("reference_solver"),
+                        placement=attached_entity.get("placement"), robot_id=attached_id,
+                        place_targets=place_targets, carrier_trunk=trunk_body_name)
+                except (Exception, SystemExit) as error:  # noqa: BLE001
+                    per_robot[attached_id] = {
+                        "resolved": False, "prefix": "%s_" % attached_id,
+                        "manipulation_report": str(attached_report),
+                        "error": "%s: %s" % (type(error).__name__, str(error)[:400])}
+                    continue
+            per_robot[attached_id] = {
+                "resolved": True, "prefix": "%s_" % attached_id,
+                "manipulation_report": str(attached_report),
+                "gripper": record.get("gripper"), "targets": record.get("targets"),
+                "target_id": record.get("target_id"), "vision": record.get("vision"),
+                "name_map": record.get("name_map"), "name_map_facts": record.get("name_map_facts"),
+                "rename_rule": record.get("rename_rule"),
+                "inherited_from": record.get("inherited_from"),
+                "reference_pose_check": record.get("reference_pose_check"),
+                "reference_pose_clearance_check": record.get("reference_pose_clearance_check"),
+                "reference_pose_resolution": record.get("reference_pose_resolution"),
+            }
         reference_pose_check = manipulation.get("reference_pose_check")
         report["gripper"] = manipulation["gripper"]
         report["targets"] = manipulation["targets"]
@@ -3184,6 +3232,8 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
             })
         report["manipulation"] = {"attached_robot": str(robot_id),
                                   "declared_primary": declared_primary,
+                                  # I1b：按本体的 manipulation 段（每台带 manipulation_report 的附加臂一份）
+                                  "per_robot": per_robot,
                                   "attached_manipulators": attached_manipulators,
                                   "inherited_from": manipulation["inherited_from"],
                                   "rename_rule": manipulation["rename_rule"],
