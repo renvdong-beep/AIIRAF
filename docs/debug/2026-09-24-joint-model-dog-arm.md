@@ -3924,6 +3924,39 @@ delta_m    =[-0.0034982, -0.003944493, +0.009737022]
 穿过实测载荷），并复核“离中心 33 mm 的载荷 + 无挡边托盘”在接近/下压时的接触。**不得**用放宽
 `min_lift_delta_m` 或抓取确认口径来"通过"。
 
+### §11.30 接近段纳入纠偏 + 抬升失败的真因（声明层）（2026-09-30）
+
+**（1）接近段纳入同一 Δ 的整列平移（已落地）**
+`_correct_grasp_column` 的相位集合改为 `approach / grasp / lift`，且调用点**提前到 APPROACH 之前**
+（原先在下压之前 ⇒ 接近段仍按标称列下走）。实测对比（`IRAF_DEBUG_PICK=1`，载荷高度轨迹）：
+
+| 版本 | HOME_HOLD | APPROACH | 判定 |
+|---|---|---|---|
+| 只纠 grasp/lift | 0.3847935625159164 | 0.36863705780658107（降 16.156 mm） | 载荷仍在接近段下沉 |
+| 纠 approach/grasp/lift | 0.38429945505060964 | 0.3686837906802241（降 15.616 mm） | **下沉依旧** |
+
+⇒ 结论：下沉**不是**接近段"列不对准"造成的（纠了也一样）⇒ 是**载荷在托盘上不稳定/下滑**
+（无挡边平板 + 载荷离中心 33 mm），需要另做（见 §11.31 待办）。
+
+**（2）抬升失败的真因：声明层缺 `lift_constraint`（已判死，未修）**
+证据：`per_robot[ur5e].gripper` 与 Piper 逐键对照：
+
+| 键 | piper | ur5e |
+|---|---|---|
+| `lift_constraint` | `box_01_lift_constraint` | **缺失（None）** |
+| `carry_constraint` | weld（`equality_name: box_01_lift_constraint`） | 缺失 |
+| `require_friction_lift` | `False` | **`True`** ← 根因 |
+| `lift_anchor_body` | `grasp_anchor` | 缺失 |
+
+`config/ur5_simulation_baseline.yaml: acceptance.require_friction_lift: true` ⇒
+`scripts/build_robot_pick_scene.py` 的 `if not require_friction_lift: gripper["lift_constraint"]=…`
+**不写**约束 ⇒ UR5e 只能靠双指摩擦抬升。运行期实测吻合：`force_ok=true`（双侧接触）、
+`lifted=false`、**`lift_delta_m=0.002016 m`**（夹住但抬不起来）。
+而联合模型里那件焊接夹具**是存在的**：`<weld name="box_01_lift_constraint" body1="grasp_anchor"
+body2="box_01" active="false" …/>`（Piper 路径注入，Piper 的 `lift_delta_m=0.079958` 就靠它）。
+⇒ 下一步：把 UR5e 的该声明改成与 Piper 同口径（`require_friction_lift: false` + 锚点体
+`grasp_anchor`），重建两份产物后复跑——**这是声明修正，不是放宽判据**。
+
 ## 12. 下一步
 
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。

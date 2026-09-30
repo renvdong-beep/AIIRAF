@@ -1010,26 +1010,31 @@ class MujocoBackend:
         if approach_hold not in ("pin_payload", "none"):
             raise ValueError("gripper.approach_hold 只允许 pin_payload|none：%r" % (approach_hold,))
         pin_target = target_body if approach_hold == "pin_payload" else None
-        if approach_positions:
-            self._log_pick_phase("APPROACH", target_body)
-            self._move_trajectory(approach_positions, phase_ms, self._pick_ctrl_offsets("approach"),
-                                  pin_body=pin_target)
-            self.dump_pick_phase("APPROACH", phase_ms, target_body, left_body, right_body, approach_axis)
         # ---- 抓取段**运行期纠偏**（2026-09-30 §11.29）----
         # 构建期的关节解按**标称目标**求；目标被搬动过（卸载步实测偏 15.812 mm）时夹口对不准。
-        # 声明存在即按**实测**目标重解下压/抬升两段（三条门禁在方法内，不收敛即拒绝）。
+        # **必须在接近段之前**做：接近/下压/抬升是同一列运动，只纠下压会让"接近段按标称列下走"——
+        # 实测该段把载荷顶下沉 16.156 mm。声明存在即按实测目标重解**三段**（三条门禁在方法内，
+        # 不收敛即拒绝）。
         lift_positions_for_run = gripper.get("lift_positions")
         pose_correction_evidence = None
         correction_declaration = gripper.get("grasp_pose_correction")
         if correction_declaration:
             _overrides, pose_correction_evidence = self._correct_grasp_column(
                 correction_declaration,
-                {"grasp": grasp_positions, "lift": gripper.get("lift_positions")},
+                {"approach": approach_positions, "grasp": grasp_positions,
+                 "lift": gripper.get("lift_positions")},
                 target_body)
             pose_correction_evidence["pose_source"] = source
             if _overrides:
+                approach_positions = _overrides.get("approach", approach_positions)
                 grasp_positions = _overrides.get("grasp", grasp_positions)
                 lift_positions_for_run = _overrides.get("lift", lift_positions_for_run)
+        if approach_positions:
+            self._log_pick_phase("APPROACH", target_body)
+            self._move_trajectory(approach_positions, phase_ms, self._pick_ctrl_offsets("approach"),
+                                  pin_body=pin_target)
+            self.dump_pick_phase("APPROACH", phase_ms, target_body, left_body, right_body, approach_axis)
+        # ---- 抓取段**运行期纠偏**已在上方（接近段之前）完成：这里不再重复纠偏 ----
         if grasp_positions:
             self._log_pick_phase("DESCEND", target_body)
             self._move_trajectory(grasp_positions, phase_ms, self._pick_ctrl_offsets("grasp"),
@@ -2751,7 +2756,7 @@ class MujocoBackend:
                 return np.asarray(midpoint, dtype=float) - axis * pad_offset, axis_now
 
             nominal, nominal_axis = {}, {}
-            for key in ("grasp", "lift"):
+            for key in ("approach", "grasp", "lift"):
                 section = positions_by_phase.get(key)
                 if isinstance(section, dict) and section:
                     nominal[key], nominal_axis[key] = apply(section)
@@ -2784,7 +2789,7 @@ class MujocoBackend:
             target_geom_ids = {index for index in range(int(self.model.ngeom))
                                if int(self.model.geom_bodyid[index]) == int(target_body)}
             corrected = {}
-            for key in ("grasp", "lift"):
+            for key in ("approach", "grasp", "lift"):
                 section = positions_by_phase.get(key)
                 if not isinstance(section, dict) or not section:
                     continue
