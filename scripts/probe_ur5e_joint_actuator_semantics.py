@@ -110,8 +110,31 @@ def main():
             "gear_is_unity": abs(gear - 1.0) < 1e-12,
         })
     worst = max((row.get("static_error_lower_bound_rad") or 0.0) for row in rows)
+    # --- 判死"迭代为什么停在 5× 下限"（2026-09-30 §11.32(c)）---
+    # 前馈的实际作用是把 `ctrl = 目标角 + offset` 写进通道；若 `ctrl + offset` 越过 `ctrlrange`
+    # （或目标角已贴住关节行程），前馈就**物理上写不进去** ⇒ 残余与迭代次数无关。
+    headroom = []
+    for row in rows:
+        if "actuator" not in row:
+            continue
+        actuator = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, row["actuator"]))
+        ctrlrange = [float(v) for v in model.actuator_ctrlrange[actuator]]
+        offset = row.get("required_ctrl_offset_rad")
+        target = row.get("qpos_rad")
+        if offset is None or target is None:
+            continue
+        commanded = target + offset
+        entry = {"joint": row["joint"], "target_rad": target, "offset_rad": offset,
+                 "commanded_rad": round(commanded, 9), "ctrlrange": ctrlrange}
+        if ctrlrange[0] != ctrlrange[1]:
+            entry["commanded_within_ctrlrange"] = bool(ctrlrange[0] <= commanded <= ctrlrange[1])
+            entry["headroom_rad"] = round(min(ctrlrange[1] - commanded, commanded - ctrlrange[0]), 9)
+        else:
+            entry["commanded_within_ctrlrange"] = None
+        headroom.append(entry)
     result = {"arm": args.arm, "report": str(REPO / args.report), "model": report["output"],
               "declared_tolerance_rad": 0.001,
+              "ctrl_headroom": headroom,
               "worst_static_error_lower_bound_rad": round(worst, 9),
               "note": ("`static_error_lower_bound_rad = |τ_g| / (gear·kp)`：这是**单靠前馈**能把静差压到的"
                        "下限（不含摩擦/耦合）。若它已大于声明容差，说明该声明不可达；若 `gear ≠ 1`，"

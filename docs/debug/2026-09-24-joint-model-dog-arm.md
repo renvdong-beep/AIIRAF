@@ -3979,8 +3979,7 @@ body2="box_01" active="false" …/>`（Piper 路径注入，Piper 的 `lift_delt
 
 ⇒ 该声明**暂时注释**（保持链路可用），并把判死记录写进 `scenes/handoff_lab/scene.yaml`。
 
-**（3）静差下限量化（新探针 `scripts/probe_ur5e_joint_actuator_semantics.py`）**
-只读模型事实，逐关节给 `gaintype/gainprm/biastype/biasprm/gear/forcerange` 与
+**（3）静差下限量化（新探针 `scripts/probe_ur5e_joint_actuator_semantics.py`）**只读模型事实，逐关节给 `gaintype/gainprm/biastype/biasprm/gear/forcerange` 与
 `静态误差下限 = |τ_g| / (gear·kp)`（= 单靠前馈能压到的下限）：
 
 | 关节 | kp | gear | forcerange | τ_g (N·m) | 静差下限 (rad) |
@@ -4001,6 +4000,34 @@ body2="box_01" active="false" …/>`（Piper 路径注入，Piper 的 `lift_delt
 **（4）当前 s06 卡点（稳定复现）**
 `末端未到达目标抓取位姿: distance=0.005937m tolerance=0.005000m`
 （相位级 DESCEND 与 DESCEND_GATE 两帧相同 ⇒ 已停稳，属**静差**，即 §11.31(3) 的直接后果）。
+
+### §11.32 §11.31 的两处**撤回/更正**（2026-09-30，同轮自查）
+
+写 §11.31 后我按纪律回头核对了两条推断，**都站不住**，此处更正，避免后人照着错的结论走：
+
+**（a）"下压时手指是闭合的"——不成立**
+UR5e 的声明是 `open: rq2f85_fingers_actuator = 0.0`（全张，间隙 85.1 mm）、
+`closed = 163.0`（间隙 ≈50 mm，由实测 ctrl→gap 曲线反解）。相位里的手指值因此是**对的**：
+`approach_positions` / `grasp_positions` = 0.0（**张开**）、`lift_positions` = 163.0（闭合搬运）。
+⇒ 不存在"下压时夹爪自接触/夹紧"这条路。
+
+**（b）"技术债 0b（附加本体刚度口径不一致）是本臂静差的原因"——不成立**
+- `scripts/build_robot_pick_scene.py` 的文档写明：**"Piper 需要注入（官方模型缺阻尼），UR5e 不需要
+  （官方 `<general>` 自带 `gainprm/biasprm` 阻尼位置伺服，覆盖它反而破坏官方标定）"**；
+  本臂基线 `scene.inject_arm_position_gains: false` ✓（对照：piper 基线为 `true`）。
+- 实测（§11.31(3)）：联合模型里 `gear = 1`、kp = 2000（肩/肘）/500（腕），即**厂商标定值**；
+  臂自己场景用的是同一批 `<general class>` 类 ⇒ **两侧口径本来就一致**。
+⇒ 0.010448372 rad 是"kp=2000 / τ_g=−20.896743 N·m"下的**固有静差**，与口径无关；硬把 kp 抬上去
+  会破坏官方标定（已有明确结论，不做）。
+
+**（c）因此剩下的真问题（下一步的入口，已可复跑）**
+共享前馈实现的**迭代**为什么只到 `0.049653448 rad`（pass1 `0.049861021`），而逐关节单步下限是
+`0.010448372 rad`？下一步探针（离线、不跑场景）：
+1. 在进程内调用 `build_piper_baseline.build_reference_feedforward`（共享实现）于联合模型，
+   逐轮打印 `worst_residual_rad`、每关节残余，以及它算出的 `offset` 与手算 `τ_g / (gear·kp)` 的逐关节对比；
+2. 判据：若 offset 与手算一致而残余仍停在 5×下限 ⇒ 是**耦合**（肘的重力矩随其余关节下垂变化）
+   与轮数不足 ⇒ 应按**力矩残差**迭代或提高 `max_passes`（**声明**改动，不是放宽 `tolerance_rad`）；
+   若 offset 与手算不一致 ⇒ 是共享实现对"非零 `biasprm` 起始偏移/`ctrlrange`"的解释问题，先修实现。
 
 ## 12. 下一步
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
