@@ -4522,6 +4522,97 @@ ur5e 基线补 place 侧契约（place_entry / carry_gripper / place_pose_correc
 已镜像 Piper 的转发块（`place_settle_ms` / `lift_gripper` / `place_pose_correction`，缺声明即失败）。
 验证：ur5e 报告现含 `place_settle_ms=3000` / `lift_gripper=closed` / `place_pose_correction{mode: touchdown}`。
 
+## 11.54 步骤交界处的"载荷被放掉"= 焊缝锚点协议（2026-09-30，判死 + 已修）
+
+**症状**：s06 卸载步报 SUCCEEDED（`lifted=true`），紧接着 s07 起步报
+`当前未夹持载荷 box_01（双侧指腹未同时接触）⇒ 拒绝放置`。
+
+**先撤回一处自己的结论**：怀疑对象是"步骤收尾把 ctrl 归零"，依据是 `hold_current_pose` 的 docstring
+（"Runtime 收尾会清零控制量"）。**实测否掉**：`_safe_stop_controls` 只在
+`_advance_*` 的 cancel 分支与 `stop(lease)` 里被调用（grep 五个调用点全是 cancel/exception 路径），
+而 `iraf_core/runtime.py` 正常执行收尾只 `authority.release(lease)`，**不调用 `backend.stop()`**
+⇒ 与本次症状无关（相关硬化保留：安全停机不归零**声明的**夹爪通道，见 §11.53）。
+
+**判死工具**：`pick_object` 的调试通路新增 `handoff_state`（`_grasp_liveness_diagnostics`：载荷/指腹位置、
+载荷↔指腹 geom 最小间距、声明夹爪通道的 ctrl+qpos、焊缝 `eq_active`、载荷当前接触体），
+`place_object` 的前置判据拒绝理由里带上同一组量（`PLACE_GATE`）。
+复跑脚本：`scripts/probe_handoff_handover.py`（连跑到 s06 成功再判读；s06 残差间歇，单轮不算数）。
+
+**实测（handoff-round-1.log，s06 报 SUCCEEDED 的那一轮）**：
+- s06 返回时刻：载荷 `[0.455112298, 0.292895771, 0.431395258]`，左指 `[0.452795761, 0.427789012,
+  0.461404556]`、右指 `[0.452591184, 0.473399642, 0.461429476]`
+  ⇒ `payload_left_gap_m=0.101264742`、`payload_right_gap_m=0.139903051`
+  ⇒ 载荷中心距两侧指腹 **10.1 / 14.0 cm**、`payload_contact_bodies=[]`（**零接触**）。
+- 同时 `lift_delta_m=0.037928`、`confirmation=constraint`、`gripper_ctrl=163.0`（闭合，**没有张开**）
+  ⇒ `lifted` 由 `constraint_activated` 这一支成立 ⇒ **载荷挂在焊缝上、不在夹爪里**。
+- s07 起步时刻：焊缝 `active=true`，右指 gap `0.03748072`，接触体只剩
+  `ur5e_rq2f85_left_coupler / left_follower / left_pad(×2) / left_spring_link` ⇒ 载荷贴左内侧。
+
+**根因**：`grasp_anchor` 是**共享 mocap 体**，MJCF 初值即 Piper 的 A 站抓取点
+`[0.280000000, -0.280000000, 0.025000000]`（`handoff_lab_joint.xml:481`）；抓取段激活
+`box_01_lift_constraint`（`active="false"` 初值，`xml:496`）时**锚点停在"上一次写入者"的陈旧位姿**
+上，且抬升**全段无人驱动**锚点（旧口径只在段末用 `_advance_with_grasp_anchor(0)` 摆一次，
+位置=指腹中点、姿态=单位四元数、**无激活偏移**）⇒ 焊缝把载荷硬拽到指腹中点并拧姿态。
+放置段早已把这件事做对（§11.23(41) 的 A/B/D 对照：只摆指腹中点首帧 48.30 → 115.59 N；
+「指腹中点 + 激活偏移」稳态 13.29/13.27 N 且载荷随指腹刚性同步），抓取段的抬升却用了被否掉的变体。
+
+**修法（声明驱动；缺省 = 旧口径逐位不变）**：新增 `grasp.lift_anchor_mode`
+（`finger_mid_identity` | `rigid_follow`）与 `grasp.require_contact_at_lift_end`；
+ur5e 基线声明 `rigid_follow` + `true`，Piper 不声明。`rigid_follow` 时**先摆锚点（载荷实测位姿）
+再激活焊缝**，按「指腹中点 + 激活瞬间偏移」逐拍驱动、weld 时姿态按「腕部 ⊗ 激活瞬间相对姿态」
+跟随（weld 判定取 `model.eq_type`，不猜名字后缀）；段末同步改同一口径；抬升结束**重新实测**
+双侧接触，声明为 `true` 时丢失即显式拒绝。`regrasp` 与 `rigid_follow` 同时声明 ⇒ 显式失败。
+契约先行：`pick_object.output.json` 的 evidence 增 `lift_anchor`（8 键）。
+新键穿三处声明链：`SEMANTIC_GRIPPER_KEYS`（scene_builder）、臂生成器转发、后端解析层。
+
+**修后实测**（joint-chain-fix1.log）：s06 结束时刻载荷↔两侧指腹
+`0.001261913 / 0.001261374 m`（对称），接触体含 `left_pad×4 / right_pad×4 / 两侧 spring_link`；
+evidence 里 `driven_through_lift=true`、`bilateral_contact_at_end=true`、
+载荷中心−指腹中点 `[0.002654535, 3.561e-06, 0.012862487]`；载荷↔左 pad gap 降到 `0.000074128 m`。
+s07 由"起步即拒（0.006 s）"推进到真正执行 `12.480728497263044 s`。
+
+**顺带记录一处管道坑**：臂报告是**中间层**（声明 → 臂报告 → 联合报告）。用错入口
+（`build_robot_pick_scene.py` 写的是"模型场景报告"）会把 `build/models/ur5-pick-scene.json`
+覆盖成**没有 `reference_poses`、`model_source` 为 null** 的形态 ⇒ 联合构建退出码 3 报
+`spec.model.derived_from_report 指向的报告没有 model_source.sha256`。
+正确入口：`PYTHONPATH=src:scripts python3 scripts/build_baseline.py --baseline config/ur5_simulation_baseline.yaml`
+（恢复判据：`model_source.sha256 = d9ef3ef9945b73685acd5135c8e6d07d0639dc1a4d35e748a813952c2656b0e1`）。
+
+## 11.55 抓取段留下的焊缝必须由放置段接管（2026-09-30，已修）
+
+**症状**：s07 越过前置判据后，绕行航点/承载面上方都跑完，在「抬升段」处被放置段自己的搬运判据拦下：
+`抬升段后失去夹持（载荷已脱离）⇒ 拒绝继续放置`（`_carry_grip_row`，12.48 s 处）。
+
+**根因**：抓取段抬升结束时焊缝是 `active` 的，而**步骤之间没有人驱动锚点**；放置段此前**没有
+`carry_constraint`** 声明 ⇒ 它既不重摆锚点也不跟随它，`_carry_grip_row` 走"双侧指腹接触"那一支
+⇒ 臂一动，焊缝就把载荷拴在冻结的锚点上、从夹口里拽出。
+
+**修法**：`config/ur5_simulation_baseline.yaml` 增 `grasp.carry_constraint`
+（镜像 Piper 侧声明块：`enabled/type=weld/equality_name=box_01_lift_constraint/
+anchor_body=grasp_anchor/solref[0.01,1.0]/solimp[0.9,0.95,0.01]/max_plant_steps_per_iteration=64`），
+差异两点：`release_gripper=false`（2F-85 的指腹就是锚点参照物，张爪会让参照漂移 ⇒ 判据保持
+"双侧指腹接触"）、`max_slip_m` **故意不声明**（只在 `release_gripper=true` 时被消费；
+"声明了就必须被消费"）。生成器新增该块的转发与校验（`release_gripper=false` 却给了 `max_slip_m`
+也显式失败）。注入器 `_inject_carry_constraint` 是**幂等**的（`body`/`equality` 已存在即跳过）
+⇒ 两台臂声明同一 equality/anchor 不会产生重复对象（联合模型仍只有一件焊缝）。
+
+**修后实测**（joint-chain-fix2.log）：s07 跨过「失去夹持」，绕行航点 / 承载面上方 / 下行三段全部跑完，
+新卡点 = `触地纠偏需要竖向移动 -0.303481989 m（载荷底面 0.308481989 − 承载面 0.005000000 −
+触地间隙 0.000000000），超过声明上限 max_vertical_m=0.050000000 m ⇒ 拒绝放置（不静默截断）`。
+
+**该数字的判读（下一处真因，已定位）**：构建期的放置四段不是按落点垫解的，而是按**托盘**解的 ——
+联合报告 `place_targets.targets` 里 `tray_01`（`nominal_pose_m=[0.45, 0.0, 0.345372]`）排在
+`place_pad_b`（`[0.7, 0.6, -0.005]`）**前面**，而 `_joint_place_resolution` 取**第一个**带
+`nominal_pose_m/size_m` 的接收体。佐证：ur5e 的 `place_above_positions` 与
+`place_descend_positions` 只差约 25 mrad（`shoulder_lift -0.8954729531744094` vs
+`-0.8699104741306182`），即"下行段"几乎没往下走。**修法**：给放置求解器一个**声明的接收体**
+（如 `robots[].reference_solver.place_target_id: place_pad_b`，缺省保持"取第一个"= 逐位不变），
+让构建期与运行期（`scenario.yaml` 的 `place_target_id`）指向同一个接收体；
+**不得**靠调大 `max_vertical_m` 掩盖（0.05 是"细纠偏"量级，0.30 m 属于"求解目标错了"）。
+
+**同期**：`s02b_dock_station_b` 仍为收敛窗口问题（本轮末态平移 `0.016298` < `0.030`、
+偏航 `1.852508°` vs `2.0`；历史 0.015604~0.016298 / 1.815910~2.281265°）⇒ 按实测收敛时间重定窗口（声明层）。
+
 ## 12. 下一步
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
 0a. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。
