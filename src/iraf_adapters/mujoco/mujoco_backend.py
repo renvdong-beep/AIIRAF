@@ -2863,6 +2863,20 @@ class MujocoBackend:
                 }
             restore()
         report["applied"] = True
+        # 纠偏时刻的关键量（2026-09-30 §11.36）：与 `PICK_SETTLED` 并排即可把"到位残差"拆成
+        # 「解算基准错」还是「执行/几何随时间变」——失败步骤的 evidence 不进报告，故走调试通路。
+        if os.environ.get("IRAF_DEBUG_PICK") == "1":
+            print("PICK_CORRECTION " + json.dumps({
+                "live_target_m": report["live_target_m"],
+                "nominal_grasp_point_m": report["nominal_grasp_point_m"],
+                "delta_m": report["decision"]["delta_world_m"],
+                "delta_norm_m": report["decision"]["norm_m"],
+                "required": report["decision"]["required"],
+                "phases": {key: {"target_point_m": info["target_point_m"],
+                                 "residual_m": info["residual_m"],
+                                 "axis_deg": info["axis_deg"]}
+                           for key, info in report["phases"].items()},
+            }, ensure_ascii=False), flush=True)
         return corrected, report
 
     def _measure_settled_alignment(self, declaration, target_body, left_body, right_body,
@@ -2890,6 +2904,11 @@ class MujocoBackend:
                 "sample": attempt,
                 "distance_m": round(float(alignment["center_distance_m"]), 9),
                 "center_delta_m": [round(float(v), 9) for v in alignment["center_delta_m"]],
+                # 现象定位用（2026-09-30 §11.36）：把"实测夹持区中点"与"实测目标点"一并留证，
+                # 便于与纠偏时刻的名义点/目标点**并排比对**（差 7 mm 的来源就靠这一对量拆开）。
+                "finger_center_position_m": [round(float(v), 9)
+                                             for v in alignment["finger_center_position_m"]],
+                "target_position_m": [round(float(v), 9) for v in alignment["target_position_m"]],
             })
         distances = [item["distance_m"] for item in history]
         report = {
@@ -2912,6 +2931,8 @@ class MujocoBackend:
                 "min_distance_m": report["min_distance_m"],
                 "max_distance_m": report["max_distance_m"], "spread_m": report["spread_m"],
                 "within_tolerance": report["within_tolerance"],
+                "target_position_m": history[-1].get("target_position_m"),
+                "finger_center_position_m": history[-1].get("finger_center_position_m"),
             }, ensure_ascii=False), flush=True)
         return report
 
