@@ -34,6 +34,10 @@ def main():
     parser.add_argument("--phase", default="home", choices=("home", "approach", "grasp", "lift"))
     parser.add_argument("--hold-ms", type=int, default=4000)
     parser.add_argument("--passes", type=int, default=4)
+    parser.add_argument("--initial", default="keyframe", choices=("keyframe", "declared"),
+                        help="保持过程的起始位形：keyframe（共享实现当前口径）/ declared（声明位形）")
+    parser.add_argument("--timestep", type=float, default=None,
+                        help="覆盖模型步长（s）；用于判死\"逐步数值颤动\"（周期 ≈ 2·dt）")
     parser.add_argument("--output", default="build/diagnostics/ur5e-hold-transient.json")
     args = parser.parse_args()
 
@@ -42,6 +46,9 @@ def main():
     gripper = entry.get("gripper") or {}
     name_map = entry.get("name_map") or {}
     model = mujoco.MjModel.from_xml_path(str(REPO / report["output"]))
+    if args.timestep is not None:
+        # 判死用：逐步数值颤动（周期 = 2·dt）随 dt 变小应**消失**，而物理极限环不会。
+        model.opt.timestep = float(args.timestep)
     data = mujoco.MjData(model)
     if int(getattr(model, "nkey", 0) or 0) > 0:
         mujoco.mj_resetDataKeyframe(model, data, 0)
@@ -75,6 +82,17 @@ def main():
         if actuator >= 0:
             finger_hold[actuator] = float(value)
 
+    # **起始位形**（2026-09-30 §11.35 对照实验）：共享实现当前从**关键帧**起步，于是保持过程要先
+    # 走完"关键帧 → 声明位形"的行程（home 相位实测 pan 1.2684 rad / elbow −0.9655 rad），期间可能
+    # 触发饱和⇒极限环。`declared` 则直接以声明位形为初值，回答"该位形本身能不能被保住"。
+    if args.initial == "declared":
+        for name in arm_names:
+            data.qpos[adrs[name]] = targets[name]
+        data.qvel[:] = 0.0
+        data.qacc[:] = 0.0
+        mujoco.mj_forward(model, data)
+        keyframe = {name: targets[name] for name in arm_names}
+
     # 每步记录（只为臂关节；4 s × 4 轮 = 8000 步，量小）
     trace = []
     for attempt in range(1, int(args.passes) + 1):
@@ -96,6 +114,13 @@ def main():
 
     window = max(1, int(round(0.5 / float(model.opt.timestep))))
     tail, before = trace[-window:], trace[-2 * window:-window]
+
+    # 振荡周期估计（2026-09-30 §11.35）：对末 0.5 s 的肘关节 qvel 数**符号变化次数**，
+    # 周期 ≈ 2·窗口/变化次数。若周期 ≈ 2·timestep ⇒ 逐步颤动（数值/积分器失稳）；
+    # 若是几十 ms 量级 ⇒ 物理极限环（饱和+耦合），两者修法完全不同。
+    signs = [1 if row["qvel"]["ur5e_elbow_joint"] >= 0 else -1 for row in tail]
+    crossings = sum(1 for a, b in zip(signs, signs[1:]) if a != b)
+    period = (2.0 * len(tail) / float(crossings)) if crossings else None
 
     def mean_abs(rows):
         return {name: round(float(np.mean([abs(row["qvel"][name]) for row in rows])), 9)
@@ -126,6 +151,12 @@ def main():
         "mean_abs_qvel_last_0p5s": mean_abs(tail),
         "mean_abs_qvel_prev_0p5s": mean_abs(before),
         "saturation_ratio_last_0p5s": sat_ratio(tail),
+        "oscillation": {
+            "sign_crossings_last_0p5s": crossings,
+            "period_samples": (round(period / float(model.opt.timestep), 3) if period else None),
+            "period_s": (round(period * float(model.opt.timestep), 6) if period else None),
+            "timestep_s": float(model.opt.timestep),
+        },
         "forcerange": forcerange,
         "final_qpos_rad": {k: trace[-1]["qpos"][k] for k in arm_names},
         "final_residual_rad": {k: round(trace[-1]["qpos"][k] - targets[k], 9) for k in arm_names},
