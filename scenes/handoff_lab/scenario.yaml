@@ -212,7 +212,11 @@ scenarios:
         robot: ur5e
         params:
           target_id: box_01
-          grasp_pose_from: joint_scene_target
+          # 位姿来源 = **运行期真值**（2026-09-30，docs/debug/2026-09-24-joint-model-dog-arm.md §11.27）：
+          # 目标在**运动载体（狗背托盘）**里 ⇒ 构建期标称位姿实测偏 9.506e-03 / 1.1073e-02 m
+          # （横向 ~5.3 mm + 竖向 +9.74 mm，逐轮不同）⇒ 由后端在执行时刻按目标体当前位姿解析。
+          # 真机替代路径 = 感知 Provider（同一 `pose_source` 语义，换来源不改契约）。
+          grasp_pose_from: live_target_body
           duration_ms: 8000
         criteria:
           pose_tolerance_m: 0.005

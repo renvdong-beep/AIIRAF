@@ -28,6 +28,13 @@ GRAVITY_FEEDFORWARD_LIMIT_RAD = 0.1
 #: `link6/link7/link8` 与 `piper_left_finger/piper_right_finger`，
 #: 结果换构型后要么静默用了错误几何、要么在运行时抛"缺少 body: link6"，
 #: 两种都难以定位。缺失即显式失败，并由场景生成器负责把配置里的声明写进 report。
+#: 抓取目标位姿的**来源口径**（`pick_object` 的 `grasp_pose.pose_source`）：
+#:   · `world_absolute`（缺省）= 调用方给出世界系坐标，后端在与目标体实测位姿的容差内核对；
+#:   · `live_target_body` = 位置/朝向取**目标体在执行时刻的位姿**（仿真真值 FK；真机应由感知
+#:     Provider 提供）。载具上的活体载荷必须用后者：构建期标称位姿实测偏 9.506e-03 ~
+#:     1.1073e-02 m（docs/debug/2026-09-24-joint-model-dog-arm.md §11.27）。
+PICK_POSE_SOURCES = ("world_absolute", "live_target_body")
+
 GRIPPER_GEOMETRY_FIELDS = (
     "wrist_body",
     "left_finger_body",
@@ -895,10 +902,38 @@ class MujocoBackend:
         target_body = self._body_id(target["body"])
         left_body = self._body_id(gripper["left_finger_body"])
         right_body = self._body_id(gripper["right_finger_body"])
-        requested = grasp_pose["position"]
+        # 目标位姿来源（2026-09-30，§11.27）：载具上的**活体载荷**用构建期标称位姿必然过期
+        # （实测 9.506e-03 / 1.1073e-02 m，且逐轮不同）⇒ 声明式来源 `live_target_body`：
+        # 位置与朝向都取**目标体在执行时刻的位姿**（仿真真值 FK；真机应由感知 Provider 给出）。
+        # 缺省 `world_absolute` ⇒ 行为与改动前逐位一致。
+        source = str(grasp_pose.get("pose_source") or "world_absolute")
+        if source not in PICK_POSE_SOURCES:
+            raise ValueError(
+                "grasp_pose.pose_source 不受支持: %r（可用: %s）"
+                % (source, list(PICK_POSE_SOURCES))
+            )
         with self._data_lock:
             mujoco.mj_forward(self.model, self.data)
             actual = tuple(float(value) for value in self.data.xpos[target_body])
+            actual_quat = tuple(float(value) for value in self.data.xquat[target_body])
+        if source == "live_target_body":
+            if "position" in grasp_pose or "orientation" in grasp_pose:
+                raise ValueError(
+                    "grasp_pose.pose_source=live_target_body 时不得同时给出 position/orientation"
+                    "（两份事实必然分叉；契约见 skills/pick_object/pick_object.input.json）"
+                )
+            requested = {"x": actual[0], "y": actual[1], "z": actual[2]}
+            grasp_pose = dict(grasp_pose)
+            grasp_pose["position"] = dict(requested)
+            grasp_pose["orientation"] = {
+                "x": actual_quat[1], "y": actual_quat[2], "z": actual_quat[3],
+                "w": actual_quat[0],
+            }
+        else:
+            requested = grasp_pose["position"]
+        adopted_quat = (actual_quat if source == "live_target_body"
+                        else (grasp_pose["orientation"].get("w"), grasp_pose["orientation"].get("x"),
+                              grasp_pose["orientation"].get("y"), grasp_pose["orientation"].get("z")))
         distance = math.sqrt(
             sum(
                 (actual[index] - float(requested[key])) ** 2
@@ -1459,6 +1494,11 @@ class MujocoBackend:
                 "lift_delta_m": round(
                     (float(self.data.xpos[target_body][2]) - before_lift_z), 6
                 ),
+                "pose_source": source,
+                "resolved_target_pose_m": [round(float(value), 9)
+                                           for value in (actual if source == "live_target_body"
+                                                         else (requested["x"], requested["y"], requested["z"]))],
+                "resolved_target_quat_wxyz": [round(float(value), 9) for value in adopted_quat],
                 "grasp_mode": grasp_mode,
                 "approach_axis": [round(float(value), 9) for value in approach_axis],
                 "grasp_alignment": alignment,
@@ -2537,8 +2577,12 @@ class MujocoBackend:
             # 缺失即由 `_declared_gripper_geometry` 显式失败。
             gripper_cfg = self._manipulation.get("gripper") or {}
             names = _declared_gripper_geometry(gripper_cfg)
-            left_geom_name = names["left_finger_geom"]
-            right_geom_name = names["right_finger_geom"]
+            # ⚠ 声明名 → 模型名一律走 `_model_name`（name_map）：联合世界里夹爪几何带前缀
+            # （声明 `rq2f85_left_pad1` / 模型 `ur5e_rq2f85_left_pad1`）。漏掉这一步时，
+            # 索引不到**按本体段**声明的 pad_boxes ⇒ 报"夹持区声明的 geom 不存在"
+            # （2026-09-30 实测：`夹持区声明的 geom 不存在: rq2f85_left_pad2`）。
+            left_geom_name = self._model_name(str(names["left_finger_geom"]))
+            right_geom_name = self._model_name(str(names["right_finger_geom"]))
             left_geom = mujoco.mj_name2id(
                 self.model, mujoco.mjtObj.mjOBJ_GEOM, str(left_geom_name)
             )
@@ -2552,7 +2596,8 @@ class MujocoBackend:
             # 左右单个 pad 的中点，两者会差一个固定几何量（UR5e + 2F-85 实测
             # 9.37mm，且随工具指向翻转而变号）。未声明 pad_boxes 时回退到
             # 左右代表接触面，保证 Piper 的既有行为逐位不变。
-            grip_region = [str(name) for name in (gripper_cfg.get("pad_boxes") or ())]
+            grip_region = [self._model_name(str(name))
+                           for name in (gripper_cfg.get("pad_boxes") or ())]
             if grip_region:
                 grip_positions = []
                 for name in grip_region:

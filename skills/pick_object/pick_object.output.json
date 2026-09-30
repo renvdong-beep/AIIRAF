@@ -221,6 +221,31 @@
           "minItems": 3,
           "maxItems": 3,
           "description": "实际使用的接近轴（世界系单位向量）"
+        },
+        "pose_source": {
+          "enum": [
+            "world_absolute",
+            "live_target_body"
+          ],
+          "description": "本次抓取用的目标位姿来源（与输入 `grasp_pose.pose_source` 一致）：`world_absolute` = 调用方给出的世界系坐标；`live_target_body` = 后端在**执行时刻**按目标体当前位姿解析（仿真真值 FK；真机应由感知 Provider 提供）。载具上的活体载荷必须用后者，见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.27。"
+        },
+        "resolved_target_pose_m": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "后端**实际采用**的目标体位置（世界系，m）。`live_target_body` 时即执行时刻的实测值，供判读\"位姿是否过期\"。"
+        },
+        "resolved_target_quat_wxyz": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 4,
+          "maxItems": 4,
+          "description": "后端**实际采用**的目标体姿态（世界系，wxyz）。"
         }
       }
     }

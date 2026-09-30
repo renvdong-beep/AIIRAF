@@ -3779,6 +3779,107 @@ delta_m    =[-0.0034982, -0.003944493, +0.009737022]
 判 `s06` 三项（`pose_tolerance_m` / `min_lift_delta_m` / `require_bilateral_contact`）；
 ④ 通过后接"放下（B 站旁台面）"与全链 ≥4 轮连跑。
 
+### §11.28 I3 收口：把四处"静默失败"显式化，并把 home 的不可达挡在构建期（2026-09-30）
+
+`nominal --world joint` 从"装配期被挡死"一路推到"臂到位残差 15.8 mm"，中间挖出**四处静默失败**。
+全部改动都遵守同一条纪律：**宁可构建期硬失败，也不让坏数字流到运行期**。
+
+**（1）`name_map` 跨本体混用 ⇒ 非主臂的控制权作用域被划成主臂的**
+`scripts/scenario.py` 里 `gripper`/`targets` 取**按本体的段**（I1b），而 `name_map` 仍取**顶层**
+（=主臂 piper 的）。后果：ur5e 后端 `_resolve_owned_actuators()` 按 piper 的映射划作用域，
+**它自己的指腹被自己的越界门禁拦下**：
+
+```
+控制权越界：执行器 ur5e_rq2f85_fingers_actuator 不属于本后端
+（拥有的通道：['piper_joint1', …, 'piper_joint8']）
+```
+
+修法：`name_map` 与本本体段同源（有段取段、无段才回退顶层 `manipulation.name_map`）。
+这不是门禁过严，而是**两份事实混用**。
+
+**（2）夹爪几何不走 `name_map` ⇒ 索引不到按本体段声明的 `pad_boxes`**
+`mujoco_backend._grasp_alignment_evidence` 直接用声明名查模型：联合世界里夹爪 geom 带前缀
+（声明 `rq2f85_left_pad1` / 模型 `ur5e_rq2f85_left_pad1`）⇒ `夹持区声明的 geom 不存在: rq2f85_left_pad2`。
+修法：左右指腹与 `pad_boxes` 一律经 `_model_name()` 解析（解析点覆盖所有"按声明名点对象"的入口）。
+
+**（3）A 方案落地：抓取目标位姿的**声明式来源**（契约先行）**
+`skills/pick_object/pick_object.input.json` 增 `grasp_pose.pose_source`：
+
+- `world_absolute`（缺省）= 调用方给世界系坐标（行为与改动前一致）；
+- `live_target_body` = 位置/朝向由后端按**目标体执行时刻位姿**解析（仿真真值 FK；真机换感知 Provider），
+  且**不得同时给坐标**（两份事实必然分叉）。
+
+配套：`output.json` 增 `evidence.{pose_source, resolved_target_pose_m, resolved_target_quat_wxyz}`；
+`PickObjectProvider` 按来源校验；`scripts/scenario.py` 的 `grasp_pose_from` 增 `live_target_body`
+（**故意不给坐标**）。效果：原先 `distance=0.011073 m > 0.005` 的前置一致性检查通过，s06 真的跑了
+（`wall_seconds 20.7`），失败点下移到运动之后。
+
+**（4）真因：home 参考姿态**本身压在托盘载荷里**（31.6 mm）**
+`scripts/probe_ur5e_unload_sweep.py`（`build/diagnostics/ur5e-unload-sweep.json`，`mj_geomDistance` 口径）：
+
+| 相位 | 指腹中点 | 臂↔载荷最小间距 |
+|---|---|---|
+| home | (0.4062, 0.3803, 0.4202) | **−0.031580 m（侵入 31.6 mm）** |
+| approach | (0.4500, 0.4500, 0.5354) | +0.107390 m |
+| grasp | (0.4500, 0.4500, 0.3754) | +0.004779 m |
+| lift | (0.4500, 0.4500, 0.4554) | +0.029877 m |
+
+扫描：`__initial__→home` 在 t=0.73 首次侵入；**`home→approach` 在 t=0.0 就已是 −0.031580**
+（起步即穿透）⇒ 载荷被顶出托盘。运行期相位序列印证：`HOME_HOLD` 末载荷 z=`0.38286116878166887`
+（在托盘里）→ `APPROACH` 末 z=`0.024784489159567647`（已落到台面）→ 门禁
+`末端未到达目标抓取位姿 distance=1.014681m`（指腹中点其实在 (0.450817, 0.452592, 0.377787)，
+即"臂到位、载荷没了"）。
+
+原因：UR5e 基线 `grasp.home_rise_m: 0.30` 在它自己的场景里 home 残差 `1.518e-07 m`；
+换到本联合场景后 home 目标（局部 z = 0.375372 + 0.16 + 0.30 = **0.835372**）**不可达**，
+而 **home/approach/lift 从来没有残差门禁**（只有 grasp 有）⇒ 残差 `4.233e-01 m` 的坏解被静默写进报告。
+
+**（5）声明式基线覆盖 + 逐相位门禁（本轮落地）**
+
+- `config/scene.schema.json` 增 `robots[].reference_solver.baseline_overrides`：场景对求解器基线的
+  嵌套覆盖（按层深合并；形状冲突即失败；生效值进报告）。**机型差异只进声明**这条纪律不变。
+- 构建期**逐相位残差门禁**：容差只取声明 `grasp.solver.tolerance_m`（本基线 `1.0e-05`）；
+  `home` 的残差由打包证据 `home_solved` 给出；**声明位形**（非 IK，如 Piper 的零位 home）
+  必须显式给 `home_source` 才免检（缺来源即失败，杜绝"没证据也放行"）。
+- 构建期**逐相位侵入检查**（home/approach/grasp/lift）：载荷按**声明目标**摆放
+  （原来摆在道具初始位 ⇒ "位形压在托盘载荷里"永远查不出来），夹爪键按声明跳过
+  （UR5e 的 `ur5e_rq2f85_fingers_actuator` 曾让整套检查 `skipped`），存在**非夹持区** geom 接触即
+  `EXIT_MODEL`。
+- 配套：`build_piper_baseline` 导出 `home_solved: null` + `home_source: declared_zero_pose`；
+  `raised_home_pose` 导出 `home_solved` + `home_source: raised_above_approach`。
+
+**home_rise 扫描（`scripts/probe_ur5e_home_rise_sweep.py`，决定声明值）**：
+
+| home_rise_m | home 残差 | FK 夹持区中点（独立核对） | 判定 |
+|---|---|---|---|
+| 0.05 | 1.668e-07 | (−0.450000066, −0.0, 0.585372153) | ✓（与期望差 2.2e-08） |
+| 0.10 | 2.989e-07 | (−0.450000121, −1e-09, 0.635372273) | ✓（差 1.54e-07） |
+| 0.15 | 2.410e-01 | (−0.504054, 0.025906, 0.451958) | ✗ 不可达 |
+| 0.20 | 3.340e-01 | (−0.524516, 0.035163, 0.411726) | ✗ |
+| 0.25 | 3.837e-01 | (−0.524469, 0.039816, 0.411069) | ✗ |
+| 0.30（基线原值） | **4.233e-01** | (−0.519715, 0.043762, 0.420188) | ✗ ← 静默进报告的那一个 |
+
+⇒ 声明 `baseline_overrides.grasp.home_rise_m: 0.10`（在 0.10~0.15 的可达边界下留余量）。
+
+**验收证据（本轮）**：
+
+- 构建 `BUILD_EXIT=0`（联合 + 单本体两个产物）；`scene_check --require-model` 退出码 0；
+- `per_robot[ur5e].reference_pose_resolution.phase_residuals`：
+  home `2.99e-07` / approach `1.44e-07` / grasp `6.7e-08` / lift `1.23e-07`，全 `source=ik`，
+  容差 `1e-05`；`baseline_overrides = {'grasp': {'home_rise_m': 0.1}}` 已留证；
+- `per_robot[piper]`：home `source=declared`（`declared_zero_pose`）、其余 `5.138e-06 / 8.122e-06 /
+  5.122e-06`；
+- 两台臂 `reference_pose_clearance_check.phases` 四相位 `non_pad_touching_target = []`
+  （ur5e 的 `ignored_keys=[ur5e_rq2f85_fingers_actuator]`、piper 的 `[piper_joint7, piper_joint8]`）；
+  标的位姿留证 = 声明目标（ur5e `0.45, 0.45, 0.375372`；piper `0.28, −0.28, 0.025`）；
+- **负向对照**：把 `home_rise_m` 改回 0.30 重建 ⇒ `per_robot[ur5e].resolved=False`（带原始错误，
+  **不再静默产出坏位形**）；
+- `nominal --world joint`：s01–s05b 仍全绿，s06 失败点收敛为
+  `末端未到达目标抓取位姿: distance=0.015812m tolerance=0.005000m
+  delta=[0.011634776373839473, −0.0023027294396569253, 0.010456260989722743]`
+  ⇒ 不再是"载荷被扫走（1.01 m）"，而是**关节解仍是构建期标称值、载荷被搬动过 ~16 mm**
+  （即 §11.27 第 ② 条）—— 这就是下一步要做的事（运行期按真值重解参考关节解）。
+
 ## 12. 下一步
 
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。

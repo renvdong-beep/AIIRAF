@@ -12,10 +12,14 @@
     },
     "grasp_pose": {
       "type": "object",
-      "required": ["frame_id", "position", "orientation"],
+      "required": ["frame_id"],
       "additionalProperties": false,
+      "description": "目标抓取位姿。`pose_source` 声明**位姿从哪里来**：`world_absolute`（缺省）= 调用方给出世界系坐标（`position`/`orientation` 必填）；`live_target_body` = 位置/朝向由后端按**目标体当前位姿**解析（载具上的活体载荷必须如此：构建期标称值实测偏 9.506e-03 ~ 1.1073e-02 m，见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.27），此时 `position`/`orientation` 不得给出（避免两份事实）。",
       "properties": {
         "frame_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "pose_source": {
+          "enum": ["world_absolute", "live_target_body"]
+        },
         "position": {
           "type": "object",
           "required": ["x", "y", "z"],
@@ -37,7 +41,26 @@
             "w": {"type": "number"}
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["pose_source"],
+            "properties": {"pose_source": {"const": "live_target_body"}}
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {"required": ["position"]},
+                {"required": ["orientation"]}
+              ]
+            }
+          },
+          "else": {
+            "required": ["position", "orientation"]
+          }
+        }
+      ]
     },
     "duration_ms": {"type": "integer", "minimum": 1, "maximum": 30000}
   }

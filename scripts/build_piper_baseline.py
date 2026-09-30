@@ -744,6 +744,11 @@ def build_reference_poses(root, baseline, target_id=None, target_xy_override_m=N
         "target_z_m": float(grasp_target[2]),
         "lift_offset_m": lift_offset,
         "home": home_qpos,
+        # home 在未声明 `grasp.raised_home` 时是**声明位形（零位）而非 IK 解** ⇒ 显式声明来源，
+        # 使联合侧的门禁能区分「没有 IK 残差可判（声明位形）」与「IK 残差超限」（§11.28）；
+        # 开了 raised_home 时由 `raised_home_pose` 覆盖成打包证据。
+        "home_solved": None,
+        "home_source": "declared_zero_pose",
         "approach": approach,
         "grasp": grasp,
         "lift": lift,

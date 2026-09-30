@@ -29,8 +29,11 @@ TINY_MODEL = """
   <worldbody>
     <body name="base_link"><geom name="dog_geom" size="0.05"/></body>
     <body name="box_01"><geom name="box_01_geom" size="0.02"/></body>
-    <body name="piper_base_link"><geom name="piper_dog_geom" size="0.03"/></body>
-    <body name="piper_link1">
+    <!-- 附加本体整体抬离道具（0.6 m）：本文件测的是 name_map 与解析口径，
+         但**逐相位侵入检查**（§11.28）会按几何判定 —— 全部摆在原点等于几何重叠，
+         检查会（正确地）拦下。故这里把附加本体放在物理上分离的位置。 -->
+    <body name="piper_base_link" pos="0 0 0.6"><geom name="piper_dog_geom" size="0.03"/></body>
+    <body name="piper_link1" pos="0 0 0.6">
       <joint name="piper_joint1" type="hinge"/>
       <geom name="piper_g1" size="0.05"/>
       <body name="piper_left_finger"><geom name="piper_left_finger_geom" size="0.01"/></body>
@@ -45,14 +48,18 @@ class JointNameMapBuildTests(unittest.TestCase):
 
     #: 桩求解器：只提供**声明契约**要求的形状（不碰真模型），使本测试聚焦 name_map。
     #: 契约见 `scene_builder._joint_reference_resolution`：entry(...) → {home, approach, grasp, lift}
-    #: + finger_height_correction_m（= 该场景下的 pad_offset_m）。
+    #: + finger_height_correction_m（= 该场景下的 pad_offset_m）+ **逐相位残差**（2026-09-30 §11.28：
+    #: 联合侧构建期用它判 IK 是否收敛，home 的残差由打包证据 `home_solved` 给出；缺残差即 fail-closed）。
     STUB_SOLVER = '''
 def build_reference_poses(root, baseline, target_xy_override_m=None, target_z_override_m=None):
     return {
         "home": {"joint1": 0.0},
-        "approach": {"joint_positions": {"joint1": 0.1}},
-        "grasp": {"joint_positions": {"joint1": 0.2}},
-        "lift": {"joint_positions": {"joint1": 0.3}},
+        "home_solved": {"position_error_m": 1.0e-07, "target_m": [0.0, 0.0, 0.0],
+                        "finger_center_m": [0.0, 0.0, 0.0]},
+        "home_source": "raised_above_approach",
+        "approach": {"joint_positions": {"joint1": 0.1}, "position_error_m": 1.0e-07},
+        "grasp": {"joint_positions": {"joint1": 0.2}, "position_error_m": 1.0e-07},
+        "lift": {"joint_positions": {"joint1": 0.3}, "position_error_m": 1.0e-07},
         "finger_height_correction_m": 0.0115,
     }
 '''
@@ -76,8 +83,10 @@ def build_reference_poses(root, baseline, target_xy_override_m=None, target_z_ov
 
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "stub_solver.py").write_text(self.STUB_SOLVER, encoding="utf-8")
-            # 求解器的 baseline 声明也必须**存在**（缺即失败，不给默认值）：桩里只写空文档。
-            (Path(tmp) / "stub_baseline.yaml").write_text("scene: {}\n", encoding="utf-8")
+            # 求解器的 baseline 声明也必须**存在**（缺即失败，不给默认值）：桩里写最小可判定文档 ——
+            # `grasp.solver.tolerance_m` 是**逐相位残差门禁的容差来源**（2026-09-30 §11.28，缺即失败）。
+            (Path(tmp) / "stub_baseline.yaml").write_text(
+                "scene: {}\ngrasp:\n  solver:\n    tolerance_m: 1.0e-05\n", encoding="utf-8")
             arm_report = Path(tmp) / "arm.json"
             arm_report.write_text(json.dumps({
                 "target_id": "box_01",

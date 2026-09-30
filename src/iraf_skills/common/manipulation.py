@@ -9,6 +9,8 @@ class PickObjectProvider:
     """只接受 Backend 以真实仿真状态确认的抓取结果。"""
 
     _CONFIRMATIONS = frozenset({"contact", "constraint", "gripper_state"})
+    #: 与 `skills/pick_object/pick_object.input.json` 的 `grasp_pose.pose_source` 同口径。
+    _POSE_SOURCES = ("world_absolute", "live_target_body")
 
     def __init__(self, profile, backend):
         self.profile = profile
@@ -49,8 +51,24 @@ class PickObjectProvider:
             output["evidence"] = evidence
         return output
 
-    @staticmethod
-    def _validate_pose(pose):
+    @classmethod
+    def _validate_pose(cls, pose):
+        """按**声明的来源**校验抓取位姿（2026-09-30，§11.27）。
+
+        `live_target_body`：坐标由 Backend 在**执行时刻**按目标体当前位姿解析
+        （仿真真值 FK；真机应由感知 Provider 提供）⇒ 这里**不校验不存在的数字**，
+        只拒绝"两份事实"（同时给坐标会让来源分叉）。缺省 `world_absolute` ⇒ 行为与改动前一致。
+        """
+        source = pose.get("pose_source", "world_absolute")
+        if source not in cls._POSE_SOURCES:
+            raise SkillRejected("抓取位姿来源不受支持: %r（可用: %s）"
+                                % (source, list(cls._POSE_SOURCES)))
+        if source == "live_target_body":
+            if "position" in pose or "orientation" in pose:
+                raise SkillRejected(
+                    "pose_source=live_target_body 时不得同时给出 position/orientation（两份事实必然分叉）"
+                )
+            return
         values = tuple(pose["position"].values()) + tuple(
             pose["orientation"].values()
         )

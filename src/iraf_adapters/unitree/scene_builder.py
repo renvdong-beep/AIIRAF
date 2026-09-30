@@ -1507,6 +1507,26 @@ def _measure_grip_height_m(model, gripper, targets):
                     "replaces": "pick 侧 pad_offset_m（含义不同，差 13.3 mm）"}
 
 
+def _deep_merge(base, overrides, path):
+    """按层深合并"声明式覆盖"（只服务 `robots[].reference_solver.baseline_overrides`）。
+
+    纯字典合并，不引入任何机型语义：**哪些数字该改由场景声明决定**，本函数只负责合并，
+    并把"覆盖打到非对象键上"这类形状错误显式失败（而不是静默替换掉整段配置）。
+    """
+    out = dict(base or {})
+    for key, value in overrides.items():
+        current = out.get(key)
+        if isinstance(value, dict):
+            if current is not None and not isinstance(current, dict):
+                _fail(EXIT_DECLARATION,
+                      "%s.%s 是对象，但基线里同名键不是对象（形状不一致，拒绝静默替换）"
+                      % (path, key))
+            out[key] = _deep_merge(current or {}, value, "%s.%s" % (path, key))
+        else:
+            out[key] = value
+    return out
+
+
 def _joint_reference_resolution(root, solver, placement, robot_id, targets, model, prefix):
     """在**臂基座系**重解参考姿态：目标换算 → **按声明**调用求解器 → 校验输出。
 
@@ -1577,6 +1597,16 @@ def _joint_reference_resolution(root, solver, placement, robot_id, targets, mode
         _fail(EXIT_REFERENCE, "robots.%s.reference_solver.baseline 不存在: %s"
               % (robot_id, baseline_path))
     baseline_doc = _read_yaml(baseline_path, "robots.%s.reference_solver.baseline" % robot_id)
+    # 场景侧**声明式覆盖**（2026-09-30 §11.28）：同一台臂在不同场景里可达工作空间不同，
+    # 基线的某个数字（实测 UR5e `grasp.home_rise_m: 0.30`）在本场景可能直接把 home 目标推出可达域。
+    # 覆盖只允许来自声明，生效值与来源一并进报告；缺省不覆盖（逐位不变）。
+    baseline_overrides = solver.get("baseline_overrides")
+    if baseline_overrides is not None:
+        if not isinstance(baseline_overrides, dict) or not baseline_overrides:
+            _fail(EXIT_DECLARATION,
+                  "robots.%s.reference_solver.baseline_overrides 必须是非空对象" % robot_id)
+        baseline_doc = _deep_merge(
+            baseline_doc, baseline_overrides, "robots.%s.reference_solver.baseline_overrides" % robot_id)
     # ⚠ **三个分量必须同口径**：全部是**臂基座系**的局部坐标（`local`，见上）。
     # 实测踩点（2026-09-28 §11.23(45)）：原先 z 传的是 `target_world[2]` ⇒ 基座在 z=0 时两种写法
     # 等价、这个错处一直休眠；把基座抬到 0.15 后，s03 立刻报"末端未到达目标抓取位姿
@@ -1593,6 +1623,18 @@ def _joint_reference_resolution(root, solver, placement, robot_id, targets, mode
         _fail(EXIT_MODEL, "robots.%s.reference_solver.entry 必须返回字典，实际 %r"
               % (robot_id, type(reference).__name__))
 
+    # ---- 每相位的**求解残差门禁**（2026-09-30 §11.28）----
+    # 为什么必须：此前只有 grasp 相位有门禁（姿态偏差 / 夹持中心一致性 / 工具指向），
+    # home/approach/lift **没有任何残差检查** ⇒ 一个**不可达**的 home 目标会被静默写进报告：
+    # 实测本联合场景里 home 目标（局部 z = 0.375372 + 0.16 + 0.30 = 0.835372）解出来的位形
+    # 夹持区只在 0.420188（残差 4.15e-01 m），而且该位形与托盘里的载荷**重叠 31.6 mm**
+    # ⇒ 运行期"把载荷扫出托盘"（症状离真因极远）。容差只来自声明（基线 `grasp.solver.tolerance_m`）。
+    tolerance = ((baseline_doc.get("grasp") or {}).get("solver") or {}).get("tolerance_m")
+    if (not isinstance(tolerance, (int, float)) or isinstance(tolerance, bool)
+            or float(tolerance) <= 0):
+        _fail(EXIT_DECLARATION,
+              "robots.%s.reference_solver.baseline 缺少 grasp.solver.tolerance_m（正数）："
+              "逐相位求解残差门禁的容差只能来自声明，缺声明即失败（不猜容差）" % robot_id)
     resolved = {}
     for phase, positions_key in REFERENCE_POSE_PHASES:
         pose = reference.get(phase)
@@ -1609,7 +1651,39 @@ def _joint_reference_resolution(root, solver, placement, robot_id, targets, mode
             if not isinstance(value, (int, float)) or isinstance(value, bool):
                 _fail(EXIT_MODEL, "参考姿态相位 %s 的关节 %s 不是数值：%r" % (phase, name, value))
             values[str(name)] = float(value)
-        resolved[phase] = {"positions": values, "requested_key": positions_key}
+        # home 的残差随 `home_solved` 给出（它才是 IK 的打包证据）；其余相位自带。
+        packed = reference.get("home_solved") if phase == "home" else pose
+        residual = packed.get("position_error_m") if isinstance(packed, dict) else None
+        home_source = reference.get("home_source") if phase == "home" else None
+        if (not isinstance(residual, (int, float)) or isinstance(residual, bool)):
+            # **声明位形**（非 IK 解）允许没有残差，但必须**显式声明来源**（`home_source` 字符串）：
+            # Piper 的零位 home 就是这一类。缺来源 ⇒ 无法区分"声明位形"与"求解器没给证据" ⇒ 失败。
+            if phase == "home" and isinstance(home_source, str) and home_source:
+                resolved[phase] = {
+                    "positions": values, "requested_key": positions_key,
+                    "residual_m": None, "residual_source": "declared",
+                    "declared_home_source": home_source,
+                    "note": "声明位形（非 IK 解）⇒ 无残差可判；改由**逐相位侵入检查**兜底（见 "
+                            "reference_pose_clearance_check.phases）",
+                }
+                continue
+            _fail(EXIT_MODEL,
+                  "robots.%s 的参考姿态相位 %s 没有 `position_error_m`（无法判定 IK 是否收敛）："
+                  "求解器契约要求每相位给出残差；home 的残差由其打包证据 `home_solved` 给出，"
+                  "声明位形（非 IK）则必须给出 `home_source` 字符串" % (robot_id, phase))
+        if float(residual) > float(tolerance):
+            _fail(EXIT_REFERENCE,
+                  "参考姿态相位 %s 的求解残差 %.9f m 超过声明容差 %.9f m ⇒ 该位形不可用（目标不可达"
+                  "或 IK 落在另一分支）。此前的实现会把它**静默写进报告**，运行期表现为"
+                  "「末端未到达目标抓取位姿」或「把载荷扫出接收体」（§11.28）"
+                  % (phase, float(residual), float(tolerance)))
+        resolved[phase] = {
+            "positions": values, "requested_key": positions_key,
+            "residual_m": round(float(residual), 9), "residual_source": "ik",
+            # 目标与实测都留证：只看残差看不出"目标本身写错"（历史踩点：目标点定义错一层）
+            "target_m": (packed.get("target_m") if isinstance(packed, dict) else None),
+            "solved_position_m": (packed.get("finger_center_m") if isinstance(packed, dict) else None),
+        }
     pad_offset = reference.get("finger_height_correction_m")
     if not isinstance(pad_offset, (int, float)) or isinstance(pad_offset, bool):
         _fail(EXIT_MODEL, "参考姿态求解结果缺少 finger_height_correction_m（= 该场景下的 "
@@ -1627,6 +1701,8 @@ def _joint_reference_resolution(root, solver, placement, robot_id, targets, mode
         "local_xy_radius_m": round(float(np.linalg.norm(local[:2])), 9),
         "reference": reference,
         "baseline_doc": baseline_doc,
+        "baseline_overrides": (baseline_overrides if baseline_overrides else None),
+        "phase_residual_tolerance_m": float(tolerance),
         "resolved": resolved,
         "pad_offset_m": round(float(pad_offset), 9),
     }
@@ -2323,7 +2399,12 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
         model, out_gripper, targets,
         declared_pose_tolerance_m=report.get("pose_tolerance_m"))
     # 侵入自检（同一次 FK）：指腹中点对了不等于姿态可用 —— 臂的其它 geom 可能已经插进方块。
-    reference_pose_clearance = _reference_pose_clearance_check(model, out_gripper, targets, prefix)
+    # 2026-09-30 §11.28：**覆盖四个相位**，且载荷按**声明目标**摆放（否则查不出 home 压在托盘载荷里）。
+    reference_pose_clearance = _reference_pose_clearance_check(
+        model, out_gripper, targets, prefix,
+        target_pose_m=resolution["target_world_m"],
+        target_quat_wxyz=(targets[0].get("quaternion_wxyz") if targets else None))
+    _assert_phases_clear(reference_pose_clearance, robot_id)
     return {"gripper": out_gripper, "targets": targets,
             "target_id": (targets[0]["id"] if targets else report.get("target_id")),
             "vision": report.get("vision"),
@@ -2345,6 +2426,15 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
                 "feedforward_source": feedforward_source,
                 "feedforward_evidence": feedforward_evidence,
                 "feedforward_alignment": feedforward_alignment,
+                # 逐相位的求解残差与声明式覆盖留证（2026-09-30 §11.28）：只看"构建通过"看不出
+                # 某个相位是声明位形还是 IK 解，也看不出场景覆盖了基线的哪些数字。
+                "phase_residuals": {
+                    phase: {"residual_m": info.get("residual_m"),
+                            "source": info.get("residual_source"),
+                            "declared_home_source": info.get("declared_home_source")}
+                    for phase, info in (resolution.get("resolved") or {}).items()},
+                "phase_residual_tolerance_m": resolution.get("phase_residual_tolerance_m"),
+                "baseline_overrides": resolution.get("baseline_overrides"),
                 "replaced_phases": replaced,
                 "note": ("参考姿态与 pad_offset 均由**联合模型 + 本 placement** 重解"
                          "（求解器按 `robots[].reference_solver` 声明调用）；"
@@ -2354,7 +2444,8 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
                 "改写成 <prefix>name 当且仅当 <prefix>name 在联合模型事实里、且 name 不在"}
 
 
-def _reference_pose_clearance_check(model, gripper, targets, prefix):
+def _reference_pose_clearance_check(model, gripper, targets, prefix,
+                                    target_pose_m=None, target_quat_wxyz=None):
     """重解姿态下"臂与目标几何是否侵入"的构建期判据（**无阈值**：接触即侵入）。
 
     为什么必须（2026-09-24 实测）：`_reference_pose_check` 只核对**指腹中点**的位置（本场景 5.663e-06
@@ -2378,11 +2469,11 @@ def _reference_pose_clearance_check(model, gripper, targets, prefix):
                    if box_geom else -1)
     if box_id < 0 or box_geom_id < 0:
         return {"skipped": "联合模型里找不到目标 body/geom: %r / %r" % (box_body, box_geom)}
-    positions = {str(joint): float(value)
-                 for joint, value in (gripper.get("grasp_positions") or {}).items()}
-    if not positions:
-        return {"skipped": "gripper 段没有 grasp_positions，无法做侵入检查"}
     pads = {str(gripper.get(key) or "") for key in ("left_finger_geom", "right_finger_geom")}
+    # 夹爪键（开合执行器/关节）不是臂位形的一部分：按声明跳过并留痕，**不再让整次检查跳过**
+    #（历史踩点：UR5e 的 `*_rq2f85_fingers_actuator` 让整个侵入检查返回
+    # `skipped: 联合模型里找不到关节` ⇒ 第二台臂的侵入检查**从未真正跑过**）。
+    gripper_keys = _declared_gripper_keys(gripper)
 
     def describe(geom_id):
         """geom 的标签与归属：**必须**走 `geom_bodyid`，不能靠名字前缀。
@@ -2399,42 +2490,126 @@ def _reference_pose_clearance_check(model, gripper, targets, prefix):
         return label, (str(body) if body else "<未命名 body#%d>" % body_id)
 
     data = mujoco.MjData(model)
-    for joint, value in positions.items():
-        joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, joint)
-        if joint_id < 0:
-            return {"skipped": "联合模型里找不到关节 %r" % joint}
-        data.qpos[int(model.jnt_qposadr[joint_id])] = value
-    mujoco.mj_forward(model, data)
-    violations = []
-    for index in range(int(data.ncon)):
-        contact = data.contact[index]
-        ids = (int(contact.geom1), int(contact.geom2))
-        if box_geom_id not in ids:
+    # 载荷按**声明目标**摆好（2026-09-30 §11.28 的关键一步）：构建期方块在道具初始位（台面），
+    # 而本臂要抓的是**声明目标**（UR5e 是**狗背托盘里的**载荷，世界 (0.45, 0.45, 0.375372)）
+    # ⇒ 不搬过去，home/approach 位形的侵入在构建期**永远查不出来**（实测：home 位形与托盘里的载荷
+    # 重叠 31.6 mm，而构建期"无接触"通过，运行期把载荷扫出托盘）。
+    placed = None
+    if target_pose_m is not None:
+        free_joints = [index for index in range(int(model.njnt))
+                       if int(model.jnt_bodyid[index]) == int(box_id)
+                       and int(model.jnt_type[index]) == int(mujoco.mjtJoint.mjJNT_FREE)]
+        if len(free_joints) != 1:
+            placed = {"skipped": "目标体没有唯一的 freejoint（%d 个）⇒ 无法按声明目标摆放"
+                      % len(free_joints)}
+        else:
+            adr = int(model.jnt_qposadr[free_joints[0]])
+            data.qpos[adr:adr + 3] = [float(value) for value in target_pose_m]
+            quat = (list(target_quat_wxyz) if target_quat_wxyz
+                    else [1.0, 0.0, 0.0, 0.0])
+            data.qpos[adr + 3:adr + 7] = [float(value) for value in quat]
+            placed = {"position_m": [round(float(v), 9) for v in target_pose_m],
+                      "quaternion_wxyz": [round(float(v), 9) for v in quat],
+                      "source": "declaration（本臂在本场景的抓取目标）"}
+
+    def phase_violations(section):
+        """把臂摆到该相位位形，收集与目标体的接触对（返回 (violations, ignored_keys)）。"""
+        ignored = []
+        for joint, value in section.items():
+            name = str(joint)
+            if name in gripper_keys:
+                ignored.append(name)
+                continue
+            joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+            if joint_id < 0:
+                ignored.append(name)
+                continue
+            data.qpos[int(model.jnt_qposadr[joint_id])] = float(value)
+        mujoco.mj_forward(model, data)
+        found = []
+        for index in range(int(data.ncon)):
+            contact = data.contact[index]
+            ids = (int(contact.geom1), int(contact.geom2))
+            if box_geom_id not in ids:
+                continue
+            other_id = ids[1] if ids[0] == box_geom_id else ids[0]
+            label, body = describe(other_id)
+            # 只关心**附加本体**的 geom（按宿主 body 的前缀界定）；台面/道具/主本体的接触不属本判据。
+            if not body.startswith(str(prefix)):
+                continue
+            found.append({"geom": label, "body": body, "is_pad": label in pads,
+                          "dist_m": round(float(contact.dist), 6)})
+        found.sort(key=lambda item: item["dist_m"])
+        return found, ignored
+
+    phases = {}
+    for phase, positions_key in REFERENCE_POSE_PHASES:
+        section = gripper.get(positions_key)
+        if not isinstance(section, dict) or not section:
+            phases[phase] = {"skipped": "gripper 段没有 %s，该相位未做侵入检查" % positions_key}
             continue
-        other_id = ids[1] if ids[0] == box_geom_id else ids[0]
-        label, body = describe(other_id)
-        # 只关心**附加本体**的 geom（按宿主 body 的前缀界定）；台面/道具/主本体的接触不属本判据。
-        if not body.startswith(str(prefix)):
-            continue
-        violations.append({"geom": label, "body": body, "is_pad": label in pads,
-                           "dist_m": round(float(contact.dist), 6)})
-    violations.sort(key=lambda item: item["dist_m"])
+        found, ignored = phase_violations(section)
+        phases[phase] = {
+            "positions_key": positions_key,
+            "checked": True,
+            "command": {key: round(float(value), 9) for key, value in section.items()},
+            "arm_geoms_touching_target": found,
+            "pad_touching_target": [item for item in found if item["is_pad"]],
+            "non_pad_touching_target": [item for item in found if not item["is_pad"]],
+            "ignored_keys": ignored,
+        }
+    grasp_phase = phases.get("grasp") or {}
+    if not grasp_phase.get("checked"):
+        return {"skipped": grasp_phase.get("skipped", "gripper 段没有 grasp_positions，无法做侵入检查")}
+    violations = grasp_phase["arm_geoms_touching_target"]
     return {
         "checked": True,
         "target_body": box_body, "target_geom": box_geom,
-        "commanded_grasp": {key: round(value, 9) for key, value in positions.items()},
+        "target_pose": placed,
+        "commanded_grasp": grasp_phase["command"],
         "arm_geoms_touching_target": violations,
-        "pad_touching_target": [item for item in violations if item["is_pad"]],
-        "non_pad_touching_target": [item for item in violations if not item["is_pad"]],
+        "pad_touching_target": grasp_phase["pad_touching_target"],
+        "non_pad_touching_target": grasp_phase["non_pad_touching_target"],
         "overlapping": bool(violations),
+        # 逐相位结果（2026-09-30 新增）：home/approach/lift 同样必须不侵入 —— 实测 home 位形
+        # 与托盘里的载荷重叠 31.6 mm 会把载荷扫出托盘（§11.28）。
+        "phases": phases,
         "note": ("归属按 `geom_bodyid` → 宿主 body 的前缀判定（**不看 geom 名**：本场景臂的 link geom 无名，"
                  "按名字过滤会漏掉真正侵入方块的那一个 —— 实测 `<未命名#66>(piper_link6)` 与 "
                  "`box_01_geom` 重叠 −0.014516 m）。判据与臂自己场景一致"
                  "（`validate_grasp_pose`：张开时手指不与任何物体接触）："
                  "**存在接触对即几何侵入**（无阈值）。侵入会把臂顶离姿态 ⇒ 静态保持不达标，"
                  "而运行期只表现为「未到达抓取位姿 / 未确认已抓取」；修法在求解器层"
-                 "（朝向约束 + 碰撞校验），见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.6。"),
+                 "（朝向约束 + 碰撞校验），见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.6。"
+                 "载荷按**声明目标**摆放（不是道具初始位）：否则查不出\"位形压在托盘载荷里\"。"),
     }
+
+
+def _assert_phases_clear(clearance, robot_id):
+    """构建期硬门禁：home/approach/grasp/lift **逐相位**都不得有非夹持区 geom 侵入目标体。
+
+    为什么必须（2026-09-30 §11.28 实测）：UR5e 的 home 位形与**托盘里的载荷**重叠 31.6 mm，
+    运行期表现为"把载荷扫出托盘、随后门禁报 1.01 m 偏差"，而构建期只查 grasp 相位、
+    且载荷摆在道具初始位（台面）⇒ 完全看不见。判据口径沿用既有那条（**接触即侵入**，
+    夹持区 pad 不算 —— 它就是用来夹的）。
+    """
+    phases = (clearance or {}).get("phases") or {}
+    if not phases:
+        _fail(EXIT_MODEL,
+              "robots.%s 的逐相位侵入检查没有结果（%s）：该检查是硬门禁，缺结果不得放行"
+              % (robot_id, (clearance or {}).get("skipped", "缺少 phases 键")))
+    bad = {phase: info["non_pad_touching_target"] for phase, info in phases.items()
+           if info.get("checked") and info.get("non_pad_touching_target")}
+    if bad:
+        detail = "; ".join(
+            "%s: %s" % (phase, [[item["geom"], item["body"], item["dist_m"]] for item in items])
+            for phase, items in sorted(bad.items()))
+        _fail(EXIT_MODEL,
+              "robots.%s 的参考姿态有相位侵入目标体（载荷按**声明目标**摆放，非夹持区 geom）：%s "
+              "⇒ 该位形会在运行期把载荷顶开/扫出接收体（实测 home 与托盘载荷重叠 31.6 mm "
+              "即把载荷扫出托盘）。修法：用声明让该相位远离目标（如 "
+              "`robots[].reference_solver.baseline_overrides` 调 home 高度），或修求解器"
+              % (robot_id, detail))
 
 
 def _reference_pose_check(model, gripper, targets, declared_pose_tolerance_m=None):

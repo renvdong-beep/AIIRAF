@@ -508,10 +508,24 @@ def resolve_param_sources(step, binding, root):
     if "grasp_pose_from" not in params:
         return
     source = str(params.pop("grasp_pose_from"))
-    if source not in ("report_target", "joint_scene_target"):
+    if source not in ("report_target", "joint_scene_target", "live_target_body"):
         raise ScenarioError(
-            "步骤 %s 的 grasp_pose_from=%r 不受支持（可用：report_target / joint_scene_target）"
+            "步骤 %s 的 grasp_pose_from=%r 不受支持"
+            "（可用：report_target / joint_scene_target / live_target_body）"
             % (step["id"], source), EXIT_DECLARATION)
+    if source == "live_target_body":
+        # **运行期真值来源**（2026-09-30，§11.27）：目标体位姿由**后端在执行时刻**解析
+        # （载具上的活体载荷必须如此：构建期标称值实测偏 9.506e-03 ~ 1.1073e-02 m，逐轮不同）。
+        # 本函数故意**不给坐标**——给一份就会与后端解出的真值分叉（两份事实，AGENTS.md 5.3）。
+        target_id = str(params.get("target_id") or "")
+        if not target_id:
+            raise ScenarioError(
+                "步骤 %s 的 grasp_pose_from=live_target_body 需要 target_id（后端按它找目标体）"
+                % step["id"], EXIT_DECLARATION)
+        params["grasp_pose"] = {"frame_id": "world", "pose_source": "live_target_body"}
+        step["params"] = params
+        step["param_sources"] = {"grasp_pose": {"from": "live_target_body", "target_id": target_id}}
+        return
     if not isinstance(binding, dict):
         raise ScenarioError(
             "步骤 %s 声明了 grasp_pose_from 但本体没有机型声明绑定（无法找到场景报告）"
@@ -859,7 +873,17 @@ def build_backend_config(root, declaration, spec):
     # fail-closed：报告已是联合报告（声明了 manipulation.attached_robot）却没有 name_map ⇒ 拒绝装配 ——
     # 否则臂会等到第一次运动才报"找不到关节或执行器: joint1"，那时已经跑了一半。
     attached = (report.get("manipulation") or {}).get("attached_robot")
-    name_map = (report.get("manipulation") or {}).get("name_map")
+    # ⚠ name_map 必须与 gripper/targets **同一来源**（2026-09-30 实测踩点）：原来固定取**顶层**
+    # （=主臂 piper 的），而 gripper/targets 取**按本体的段** ⇒ 非主臂后端的
+    # `_resolve_owned_actuators()` 按 piper 的 name_map 划作用域（拥有的通道 = piper_joint1..8），
+    # 于是它自己的指腹执行器被自己的越界门禁拦下：
+    #   `控制权越界：执行器 ur5e_rq2f85_fingers_actuator 不属于本后端（拥有的通道：[piper_joint…]）`
+    # 这不是门禁过严，而是**两份事实混用**：控制权作用域必须由本本体自己的段界定。
+    # 有按本体的段 ⇒ 取段里的；没有段（单臂形状的报告）⇒ 顶层 `manipulation` 就是本本体的。
+    if section is not None:
+        name_map = source.get("name_map")
+    else:
+        name_map = (report.get("manipulation") or {}).get("name_map")
     # **联合报告的所有权校验**（2026-09-29 新增，多臂场景的硬门禁）：
     # `manipulation`/`gripper`/`targets` 只描述 `scene.model.joint_manipulator` 指定的**那一台**臂。
     # 若本机型声明的 report 指向一份 `attached_robot ≠ 本本体` 的联合报告，装配出来的后端会去驱动

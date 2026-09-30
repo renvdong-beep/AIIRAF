@@ -903,6 +903,18 @@ def raised_home_pose(root, baseline, target_id, reference, scene_builder=None):
         raise ValueError(
             "HOME 抬高姿态求解残差过大: %.9f m" % result.position_error_m
         )
+    # 打包残差证据一并导出（2026-09-30 §11.28）：联合模式的构建门禁要求**每个相位**都能判定
+    # IK 是否收敛，而 `home` 的扁平关节解本身不带残差 ⇒ 挂到 `reference["home_solved"]`
+    # （joint 侧 `_joint_reference_resolution` 直接读它；缺它即 fail-closed，不静默放行）。
+    reference["home_solved"] = {
+        "joint_positions": {name: float(value) for name, value in result.joint_positions.items()},
+        "finger_center_m": [float(v) for v in result.solved_position_m],
+        "target_m": [float(v) for v in result.target_position_m],
+        "position_error_m": float(result.position_error_m),
+        "iterations": int(getattr(result, "iterations", 0) or 0),
+        "source": "raised_home_pose",
+    }
+    reference["home_source"] = "raised_above_approach"
     return {name: float(value) for name, value in result.joint_positions.items()}
 
 
