@@ -149,6 +149,9 @@ robots:
       module: scripts/build_robot_baseline.py
       entry: build_reference_poses
       baseline: config/ur5_simulation_baseline.yaml
+      # 本臂在**本联合场景**里的目标是 **B 站托盘里的载荷**（世界系）：
+      # 托盘名义承载面 0.350372 + 载荷半高 0.025 = 0.375372；站位 (0.45,0.45) 距基座 (0.45,0.90) 0.45 m ✓
+      target_override_world_m: [0.45, 0.45, 0.375372]
     placement:
       pos_m: [0.45, 0.90, 0.0]
       quat_wxyz: [0.707106781186548, 0.0, 0.0, 0.707106781186548]

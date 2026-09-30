@@ -1558,6 +1558,15 @@ def _joint_reference_resolution(root, solver, placement, robot_id, targets, mode
     mujoco.mj_forward(model, data)
     target_world = np.asarray(data.xpos[body_id], dtype=float)
     local = rotation.T @ (target_world - np.asarray(pos, dtype=float))
+    # 按臂的**世界系目标覆盖**（I1b/I3，2026-09-29）：某些臂在本联合场景里的抓取目标**不是**场景
+    # 道具的默认位置（实测：UR5e 基座 (0.45,0.90) 朝 −y，而默认目标台面方块 (0.28,−0.28) 距基座
+    # 1.18 m > 可达 1.05 m ⇒ 姿态翻反向分支：夹爪指向偏差 171.715 deg / 开合轴 32.670 deg，limit 3 deg）。
+    # 目标由 `robots[].reference_solver.target_override_world_m` 声明（世界系 xyz），缺省不覆盖
+    # ⇒ 行为与改动前逐位一致。下面 entry 调用传的 xy/z override 由此**自动**变成覆盖后的值。
+    _target_override = (solver or {}).get("target_override_world_m")
+    if isinstance(_target_override, (list, tuple)) and len(_target_override) == 3:
+        target_world = np.asarray([float(v) for v in _target_override], dtype=float)
+        local = rotation.T @ (target_world - np.asarray(pos, dtype=float))
 
     entry, module_path = _load_declared_callable(root, solver, robot_id, "reference_solver")
     baseline_path = Path(str(solver["baseline"]))
