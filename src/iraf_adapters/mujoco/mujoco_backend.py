@@ -2881,6 +2881,7 @@ class MujocoBackend:
         # 「解算基准错」还是「执行/几何随时间变」——失败步骤的 evidence 不进报告，故走调试通路。
         if os.environ.get("IRAF_DEBUG_PICK") == "1":
             print("PICK_CORRECTION " + json.dumps({
+                "sim_time_s": round(float(self.data.time), 6),
                 "live_target_m": report["live_target_m"],
                 "nominal_grasp_point_m": report["nominal_grasp_point_m"],
                 "delta_m": report["decision"]["delta_world_m"],
@@ -2909,12 +2910,31 @@ class MujocoBackend:
         attempts = max(1, int(declaration["align_max_attempts"]))
         settle_ms = max(1, int(phase_ms) // 4)
         history = []
+        # 接收体/托盘的 xyz 与**仿真时刻**（2026-09-30 §11.43）：判"目标是不是在窗口内漂移"、
+        # 以及漂移率（mm/s）—— 只记 z 且无时刻是上一轮的取证缺口。
+        carrier_body_id, carrier_name = None, None
+        for record in (self._place_targets or {}).values():
+            body_name = record.get("body") if isinstance(record, dict) else None
+            if not body_name:
+                continue
+            ident = int(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, str(body_name)))
+            if ident >= 0:
+                carrier_body_id, carrier_name = ident, str(body_name)
+                break
+
+        def _snapshot():
+            carrier = None
+            if carrier_body_id is not None:
+                carrier = [round(float(v), 9) for v in self.data.xpos[carrier_body_id]]
+            return {"sim_time_s": round(float(self.data.time), 6),
+                    "carrier_body": carrier_name, "carrier_xyz_m": carrier}
+
         for attempt in range(1, attempts + 1):
             if attempt > 1:
                 self._advance_for(settle_ms)
             alignment = self._grasp_alignment_evidence(target_body, left_body, right_body,
                                                        approach_axis)
-            history.append({
+            history.append({**_snapshot(),
                 "sample": attempt,
                 "distance_m": round(float(alignment["center_distance_m"]), 9),
                 "center_delta_m": [round(float(v), 9) for v in alignment["center_delta_m"]],
