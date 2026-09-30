@@ -94,6 +94,26 @@ def main():
     if tolerance is None:
         tolerance = 0.005
     residual = None if target is None else float(np.linalg.norm(pad_mid - np.asarray(target)))
+    # ---- **夹口高度**口径（2026-09-29，I3）：顶抓时"指腹中点低于载荷中心"是**正常几何**
+    # （指腹夹的是载荷腰身上部），因此判据不能直接比 pad_mid 与载荷中心，而要比
+    #   `grasp_height_measured = pad_mid_z − 载荷中心 z`  与  `grasp_height_declared`
+    # 后者来自该臂**自己的报告**（`gripper.pad_offset_m`，即它的指腹-载荷高度关系声明），
+    # 残差 ≤ 容差才算"抓取位形正确"。两个量都留痕，避免只报一个数看不出偏差归属。
+    declared_height = None
+    try:
+        scene_text_full = (REPO / "scenes/handoff_lab/scene.yaml").read_text(encoding="utf-8")
+        marker2 = "manipulation_report: "
+        idx2 = scene_text_full.find(marker2)
+        if idx2 >= 0:
+            end2 = scene_text_full.find("\n", idx2)
+            arm_report_path = scene_text_full[idx2 + len(marker2):end2].strip()
+            arm_doc = json.loads((REPO / arm_report_path).read_text(encoding="utf-8"))
+            declared_height = (arm_doc.get("gripper") or {}).get("pad_offset_m")
+    except Exception:  # noqa: BLE001 —— 读不到就只报实测量（不猜）
+        declared_height = None
+    measured_height = None if target is None else float(pad_mid[2] - float(target[2]))
+    height_residual = (None if (measured_height is None or not isinstance(declared_height, (int, float)))
+                       else abs(float(measured_height) - float(declared_height)))
     out = {
         "arm": args.arm,
         "model": report["output"],
@@ -102,6 +122,10 @@ def main():
         "residual_m": None if residual is None else round(residual, 9),
         "tolerance_m": tolerance,
         "pass": None if residual is None else bool(residual <= tolerance),
+        "grasp_height_measured_m": None if measured_height is None else round(measured_height, 9),
+        "grasp_height_declared_m": declared_height,
+        "grasp_height_residual_m": None if height_residual is None else round(height_residual, 9),
+        "pass_grasp_height": None if height_residual is None else bool(height_residual <= tolerance),
         "arm_joints_applied": sorted(applied),
         "skipped_keys": sorted(skipped),
         "gripper_keys_declared": sorted(gripper_keys),
