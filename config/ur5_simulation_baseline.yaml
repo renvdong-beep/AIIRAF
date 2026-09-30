@@ -127,6 +127,10 @@ grasp:
   # 未知姿态运行时：接近方向取自目标顶面法向；
   # 法向与竖直夹角超过该值时回退竖直抓取，避免侧面进近导致 pad 撞台面。
   max_tilt_deg: 30.0
+  # 抬升段的**抓取锚点夹具**（require_friction_lift=false 时由场景注入 weld + mocap body）：
+  # 名字由声明给出 ⇒ 联合世界里多台臂可**共用同一件场景级夹具**（2026-09-30 §11.30；
+  # 硬编码 `<目标>_lift_anchor` 会与先注入的那台同名冲突）。缺省仍是旧名。
+  lift_anchor_body: grasp_anchor
   # --- 抓取段的**运行期闭环纠偏**（2026-09-30 §11.29）---
   # 为什么需要：构建期的参考关节解按**标称目标**求；联合世界里目标会被搬动
   # （狗背托盘里的载荷：横向 ~5.3 mm + 竖向 ~9.74 mm）⇒ 臂"到位"了但夹口没对准载荷，
@@ -234,7 +238,10 @@ acceptance:
   # 求解残差必须显著小于门禁容差，避免用临界解伪造成功
   solver_error_factor: 0.1
   # true 时不使用抓取锚点焊接夹具，抬升位移必须完全由双指摩擦力承担
-  require_friction_lift: true
+  # ⚠ 2026-09-30 §11.30 定案：本臂在**联合世界**里把这条改为 false —— 实测 true（纯摩擦）只能抬
+  # 起 0.002016 m（要求 ≥0.02），而联合模型里已存在现成的场景级夹具（weld `box_01_lift_constraint`
+  # + mocap body `grasp_anchor`；Piper 靠它抬 0.079958 m）⇒ 与 Piper 同口径，**不靠放宽判据**。
+  require_friction_lift: false
 
 # --- 统一入口声明（AGENTS.md 6.4 金路径）---
 # scripts/build_baseline.py 与 scripts/verify_pick.py 按本段分派实现，

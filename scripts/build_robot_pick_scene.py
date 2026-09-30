@@ -301,7 +301,11 @@ def build_scene(source, output, target_id=None, half_size=0.030, config=None,
 
     # --- 3) 抓取锚点夹具（require_friction_lift=false 时使用）---
     if not bool(acceptance.get("require_friction_lift", False)):
-        anchor_name = selected_id + "_lift_anchor"
+        # 锚点体名可由 `grasp.lift_anchor_body` 声明（2026-09-30 §11.30）：联合世界里
+        # **多台臂共用同一件场景级夹具**（mocap body）时，硬编码 `<目标>_lift_anchor` 会与
+        # 先注入的那台冲突（同名不同 body1）。缺省仍是旧名 ⇒ 单臂场景行为不变。
+        anchor_name = str((config.get("grasp") or {}).get("lift_anchor_body")
+                          or (selected_id + "_lift_anchor"))
         anchor_pos = target_position.copy()
         ET.SubElement(
             world,
@@ -452,6 +456,10 @@ def build_scene(source, output, target_id=None, half_size=0.030, config=None,
     }
     if not bool(acceptance.get("require_friction_lift", False)):
         gripper["lift_constraint"] = LIFT_CONSTRAINT_TEMPLATE % selected_id
+        # 后端在抬升段要驱动该锚点跟随指腹中点（`_advance_with_grasp_anchor`）⇒ 名字必须进报告；
+        # 与场景里注入的 body 名**同源**（声明 `grasp.lift_anchor_body`，缺省旧名）。
+        gripper["lift_anchor_body"] = str((config.get("grasp") or {}).get("lift_anchor_body")
+                                          or (selected_id + "_lift_anchor"))
     # 抓取段的**运行期闭环纠偏**声明（2026-09-30 §11.29）：构建期的关节解按**标称目标**求，
     # 而联合世界里目标会被搬动（狗背托盘里的载荷：实测偏差 15.812 mm > 判据 5 mm）⇒ 运行期按
     # **实测**目标重解下压/抬升两段。声明只来自基线（`grasp.grasp_pose_correction`），

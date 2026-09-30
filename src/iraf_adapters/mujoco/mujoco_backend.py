@@ -2866,6 +2866,19 @@ class MujocoBackend:
         if os.environ.get("IRAF_DEBUG_PICK") != "1":
             return None
         alignment = self._grasp_alignment_evidence(target_body, left_body, right_body, approach_axis)
+        # 接收体/托盘高度一并留证（2026-09-30 §11.31）：载荷在接近段"跑掉"时，必须能一眼分辨
+        # 「载荷在托盘上滑动」与「托盘（随载体）整体下沉」—— 两者的修法完全不同。
+        carrier_z = None
+        carrier_body = None
+        for record in (self._place_targets or {}).values():
+            body_name = record.get("body") if isinstance(record, dict) else None
+            if not body_name:
+                continue
+            ident = int(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, str(body_name)))
+            if ident >= 0:
+                carrier_body = str(body_name)
+                carrier_z = round(float(self.data.xpos[ident][2]), 9)
+                break
         # ⚠ 前缀必须是 **PICK_TRACE**：既有的 `_log_pick_phase` 打的是 `PICK_PHASE <NAME>`，
         #   两套格式共用前缀会让 grep/解析混在一起（我第一版解析脚本就因此崩溃）。
         print("PICK_TRACE " + json.dumps({
@@ -2876,6 +2889,8 @@ class MujocoBackend:
             "center_distance_m": alignment["center_distance_m"],
             "finger_center_position_m": alignment["finger_center_position_m"],
             "target_position_m": alignment["target_position_m"],
+            "carrier_body": carrier_body,
+            "carrier_z_m": carrier_z,
             "joint_qpos": alignment["joint_qpos"],
         }, ensure_ascii=False), flush=True)
         return alignment
