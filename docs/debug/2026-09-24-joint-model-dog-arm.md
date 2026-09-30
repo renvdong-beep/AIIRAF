@@ -3957,8 +3957,52 @@ body2="box_01" active="false" …/>`（Piper 路径注入，Piper 的 `lift_delt
 ⇒ 下一步：把 UR5e 的该声明改成与 Piper 同口径（`require_friction_lift: false` + 锚点体
 `grasp_anchor`），重建两份产物后复跑——**这是声明修正，不是放宽判据**。
 
-## 12. 下一步
+### §11.31 I3 第五步：下压后"停稳复量" + 前馈重算判死 + 静差下限量化（2026-09-30）
 
+**（1）试过"下压后再闭环纠一步"：更差 ⇒ 撤回**
+把纠偏做成迭代闭环（量→纠→复量，`align_max_attempts`）后实测**变差**：
+`center_distance_m` 5.862 mm → **11.176 mm**。原因：下压后指腹已落在载荷两侧，任何修正位移都在
+**推着载荷走**（自己追自己）。⇒ 下压后只**测量**不动臂（连续采样 N 次 + `settle_ms`），
+用样本 `spread` 分辨"静差（≈0）"与"尚未停稳（漂移）"；调试输出 `PICK_SETTLED`。
+
+**（2）UR5e 的重力前馈重算被自己的门禁拦下（判死）**
+给本臂声明 `reference_solver.feedforward_entry: build_reference_feedforward`
+（`scripts/build_robot_baseline.py` 里的入口**转发**到共享实现，避免第二份口径）后，构建期在
+**联合模型**上重算失败：
+
+```
+重力前馈验证未通过: 静态保持 4000ms × 最多 4 轮后最大关节误差 0.049653448 rad（限 0.001000000 rad）
+残余={'ur5e_shoulder_pan_joint': -0.000122308, 'ur5e_shoulder_lift_joint': -0.000263351,
+      'ur5e_elbow_joint': 0.049653448, 'ur5e_wrist_1_joint': 0.026336102, ...}
+每轮=[{'pass': 1, 'worst_residual_rad': 0.049861021}, …]   ← 收敛极慢
+```
+
+⇒ 该声明**暂时注释**（保持链路可用），并把判死记录写进 `scenes/handoff_lab/scene.yaml`。
+
+**（3）静差下限量化（新探针 `scripts/probe_ur5e_joint_actuator_semantics.py`）**
+只读模型事实，逐关节给 `gaintype/gainprm/biastype/biasprm/gear/forcerange` 与
+`静态误差下限 = |τ_g| / (gear·kp)`（= 单靠前馈能压到的下限）：
+
+| 关节 | kp | gear | forcerange | τ_g (N·m) | 静差下限 (rad) |
+|---|---|---|---|---|---|
+| shoulder_pan | 2000 | 1 | ±150 | 0.0 | 0 |
+| shoulder_lift | 2000 | 1 | ±150 | −14.766657 | 0.007383329 |
+| **elbow** | 2000 | 1 | ±150 | **−20.896743** | **0.010448372** |
+| wrist_1 | 500 | 1 | ±28 | −2.414616209 | 0.004829232 |
+| wrist_2 | 500 | 1 | ±28 | 0.000340792 | 6.82e-07 |
+| wrist_3 | 500 | 1 | ±28 | 4e-08 | 0 |
+
+**最差静差下限 = 0.010448372 rad，而声明容差 = 0.001000000 rad（差 10.4 倍）**，实测 4 轮只到
+0.049653448 rad ⇒ **本臂在联合模型里的伺服刚度不足以达到声明的前馈容差**（`gear = 1` ⇒ 公式没漏
+传动比）。这正是 §12 里**已登记的技术债 0b（附加本体的执行器刚度口径声明化）**：
+联合模型必须与臂自己场景同一伺服刚度（Piper 侧 10000/2000/500/50/20/5，臂侧 200~450），
+而不是靠放宽 `tolerance_rad` 或抓取判据来"通过"。
+
+**（4）当前 s06 卡点（稳定复现）**
+`末端未到达目标抓取位姿: distance=0.005937m tolerance=0.005000m`
+（相位级 DESCEND 与 DESCEND_GATE 两帧相同 ⇒ 已停稳，属**静差**，即 §11.31(3) 的直接后果）。
+
+## 12. 下一步
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
 0a. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。
 0b. **（2026-09-24 新增）** 附加本体的执行器刚度口径声明化（联合模型里的臂必须与臂自己场景同一口径：Profile 声明 → 构建器按声明注入 `kp = max(arm_position_kp, 关节阻尼×ratio)`）；验收判据 = §11.6 的静态保持残余表；通过后再把 `feedforward_entry` 加回 `reference_solver`。
