@@ -15,6 +15,13 @@ import numpy as np
 import yaml
 
 from iraf_adapters.mujoco.plant import MujocoPlant, PlantError, PlantOwnershipError
+# 抓取段纠偏的**声明键/模式枚举**与构建期同一处（`scripts/build_robot_pick_scene.py` 也用这两个），
+# 避免"构建期接受、运行期拒绝"这类口径漂移。
+from iraf_adapters.mujoco.payload_facts import (
+    GRASP_POSE_CORRECTION_KEYS,
+    GRASP_POSE_CORRECTION_MODES,
+    resolve_grasp_pose_correction,
+)
 from iraf_skills.common.trajectory import quintic_position
 
 #: 伺服前馈（重力静差补偿）的单关节上限，单位 rad。
@@ -1008,6 +1015,21 @@ class MujocoBackend:
             self._move_trajectory(approach_positions, phase_ms, self._pick_ctrl_offsets("approach"),
                                   pin_body=pin_target)
             self.dump_pick_phase("APPROACH", phase_ms, target_body, left_body, right_body, approach_axis)
+        # ---- 抓取段**运行期纠偏**（2026-09-30 §11.29）----
+        # 构建期的关节解按**标称目标**求；目标被搬动过（卸载步实测偏 15.812 mm）时夹口对不准。
+        # 声明存在即按**实测**目标重解下压/抬升两段（三条门禁在方法内，不收敛即拒绝）。
+        lift_positions_for_run = gripper.get("lift_positions")
+        pose_correction_evidence = None
+        correction_declaration = gripper.get("grasp_pose_correction")
+        if correction_declaration:
+            _overrides, pose_correction_evidence = self._correct_grasp_column(
+                correction_declaration,
+                {"grasp": grasp_positions, "lift": gripper.get("lift_positions")},
+                target_body)
+            pose_correction_evidence["pose_source"] = source
+            if _overrides:
+                grasp_positions = _overrides.get("grasp", grasp_positions)
+                lift_positions_for_run = _overrides.get("lift", lift_positions_for_run)
         if grasp_positions:
             self._log_pick_phase("DESCEND", target_body)
             self._move_trajectory(grasp_positions, phase_ms, self._pick_ctrl_offsets("grasp"),
@@ -1418,7 +1440,8 @@ class MujocoBackend:
                                  % (lift_path_mode,))
             # **抬升段夹爪语义**（§11.23(48)）：`hold` ⇒ 目标取**抓取瞬间实测的 ctrl**，
             # 不再下发 `closed`（实测抬升段持续合拢 3.89 mm，配合"上缘夹持"把载荷翻滚出 50.59°）。
-            lift_positions = gripper["lift_positions"]
+            lift_positions = (lift_positions_for_run if lift_positions_for_run
+                              else gripper["lift_positions"])
             if str(gripper.get("lift_gripper") or "closed") == "hold":
                 lift_positions = {str(k): float(v) for k, v in lift_positions.items()}
                 with self._data_lock:
@@ -1499,6 +1522,9 @@ class MujocoBackend:
                                            for value in (actual if source == "live_target_body"
                                                          else (requested["x"], requested["y"], requested["z"]))],
                 "resolved_target_quat_wxyz": [round(float(value), 9) for value in adopted_quat],
+                # 抓取段运行期纠偏的完整留证（声明 / 决策 / 各相位残差、姿态、侵入与修正后的关节解）；
+                # 缺声明时为 null（不纠偏）。
+                "grasp_pose_correction": pose_correction_evidence,
                 "grasp_mode": grasp_mode,
                 "approach_axis": [round(float(value), 9) for value in approach_axis],
                 "grasp_alignment": alignment,
@@ -2654,6 +2680,178 @@ class MujocoBackend:
             },
         }
 
+    def _correct_grasp_column(self, declaration, positions_by_phase, target_body):
+        """按**运行期实测目标**重解抓取列（下压段与抬升段）。声明式、有界、失败即拒绝。
+
+        为什么（2026-09-30 §11.29 实测）：构建期的参考关节解是按**标称目标**求的，而目标会被搬动
+        （狗背托盘里的载荷实测偏 15.812 mm）⇒ 臂"到位"了但夹口没对准载荷，运行期门禁报
+        `末端未到达目标抓取位姿 distance=0.015812m tolerance=0.005000m`。修法是**运行期按实测目标
+        重解**，而不是放宽判据。
+
+        口径与构建期一致：夹持区 = 声明 `pad_boxes` 的中点；抓取点 = 夹持区中点 − 轴·`pad_offset_m`。
+        三条门禁（任一不过即 `ValueError`，不静默继续）：IK 残差 ≤ 声明、腕→夹持区轴相对名义轴
+        的夹角 ≤ 声明、纠偏位形下**非夹持区**臂 geom 不得与载荷接触。
+
+        返回 `(需要覆盖的 {相位: 位置字典}, 证据)`；`{}` 表示不必修正（证据仍给）。
+        """
+        from iraf_core.kinematics import solve_position_ik
+
+        gripper = self._manipulation["gripper"]
+        pad_names = [self._model_name(str(name)) for name in (gripper.get("pad_boxes") or ())]
+        if not pad_names:
+            raise ValueError("grasp_pose_correction 需要 gripper.pad_boxes（夹持区口径）")
+        pad_points = []
+        for name in pad_names:
+            ident = int(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, name))
+            if ident < 0:
+                raise ValueError("夹持区 geom 在模型里不存在: " + name)
+            pad_points.append({"kind": "geom", "id": ident})
+        arm_joints = []
+        for key in (positions_by_phase.get("grasp") or {}):
+            joint_id = int(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT,
+                                             self._model_name(str(key))))
+            if joint_id >= 0:
+                arm_joints.append((str(key), joint_id))
+        if not arm_joints:
+            raise ValueError("grasp_positions 里没有可解的臂关节键（纠偏无从下手）")
+        axis = self._unit_axis(gripper.get("pad_offset_axis"))
+        pad_offset = float(gripper.get("pad_offset_m", 0.0) or 0.0)
+
+        wrist_body = int(mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_BODY, self._model_name(str(gripper.get("wrist_body") or ""))))
+        # 本本体在联合模型里的对象名集合（控制作用域同源）：纠偏位形的侵入只按**本本体**判定。
+        arm_scope = {str(value) for value in self._name_map.values()}
+        for key in ("wrist_body", "left_finger_body", "right_finger_body",
+                    "left_finger_geom", "right_finger_geom"):
+            if gripper.get(key):
+                arm_scope.add(self._model_name(str(gripper[key])))
+        arm_scope.update(pad_names)
+
+        with self._data_lock:
+            mujoco.mj_forward(self.model, self.data)
+            live = np.asarray(self.data.xpos[target_body], dtype=float).copy()
+            backup = {joint_id: float(self.data.qpos[int(self.model.jnt_qposadr[joint_id])])
+                      for _, joint_id in arm_joints}
+
+            def apply(positions):
+                """把臂摆到该相位解并返回 (抓取点, 腕→夹持区单位轴)。"""
+                for key, joint_id in arm_joints:
+                    value = positions.get(key)
+                    if value is None:
+                        raise ValueError("相位位置字典缺少臂关节 %s（纠偏要求两段同键）" % key)
+                    self.data.qpos[int(self.model.jnt_qposadr[joint_id])] = float(value)
+                mujoco.mj_forward(self.model, self.data)
+                midpoint = np.mean([self.data.geom_xpos[point["id"]] for point in pad_points], axis=0)
+                axis_now = None
+                if wrist_body >= 0:
+                    vector = np.asarray(midpoint, dtype=float) - np.asarray(self.data.xpos[wrist_body],
+                                                                           dtype=float)
+                    norm = float(np.linalg.norm(vector))
+                    axis_now = (vector / norm) if norm > 1e-9 else None
+                return np.asarray(midpoint, dtype=float) - axis * pad_offset, axis_now
+
+            nominal, nominal_axis = {}, {}
+            for key in ("grasp", "lift"):
+                section = positions_by_phase.get(key)
+                if isinstance(section, dict) and section:
+                    nominal[key], nominal_axis[key] = apply(section)
+            if "grasp" not in nominal:
+                raise ValueError("grasp_positions 缺失，无法做抓取段纠偏")
+            delta = live - nominal["grasp"]
+            decision = resolve_grasp_pose_correction(declaration, delta.tolist())
+            report = {
+                "declaration": {str(k): v for k, v in dict(declaration).items()},
+                "decision": decision,
+                "live_target_m": [round(float(v), 9) for v in live],
+                "nominal_grasp_point_m": [round(float(v), 9) for v in nominal["grasp"]],
+                "phases": {},
+            }
+
+            def restore():
+                for joint_id, value in backup.items():
+                    self.data.qpos[int(self.model.jnt_qposadr[joint_id])] = value
+                mujoco.mj_forward(self.model, self.data)
+
+            if decision["refused"]:
+                restore()
+                raise ValueError("抓取段纠偏被拒（%s）：%s" % (declaration.get("mode"),
+                                                            decision["reason"]))
+            if not decision["required"]:
+                restore()
+                report["applied"] = False
+                return {}, report
+
+            target_geom_ids = {index for index in range(int(self.model.ngeom))
+                               if int(self.model.geom_bodyid[index]) == int(target_body)}
+            corrected = {}
+            for key in ("grasp", "lift"):
+                section = positions_by_phase.get(key)
+                if not isinstance(section, dict) or not section:
+                    continue
+                target_point = nominal[key] + delta
+                apply(section)                             # 从**名义解**播种 ⇒ 落在同一分支
+                result = solve_position_ik(
+                    self.model, self.data, target_point,
+                    [joint_id for _, joint_id in arm_joints], pad_points,
+                    iterations=int(declaration["ik_iterations"]),
+                    step=float(declaration["ik_step"]),
+                    tolerance_m=float(declaration["ik_tolerance_m"]))
+                if float(result.position_error_m) > float(declaration["ik_tolerance_m"]):
+                    raise ValueError(
+                        "抓取段纠偏未收敛（%s 相位）：残差 %.9f m > 声明 %.9f m "
+                        "⇒ 拒绝按未收敛的位形继续（不伪造到达）"
+                        % (key, float(result.position_error_m),
+                           float(declaration["ik_tolerance_m"])))
+                # 姿态门禁：腕 → 夹持区轴相对**名义解**同一轴的夹角
+                _, axis_now = apply({**section, **result.joint_positions})
+                axis_deg = None
+                if axis_now is not None and nominal_axis.get(key) is not None:
+                    cosine = float(np.clip(float(np.dot(axis_now, nominal_axis[key])), -1.0, 1.0))
+                    axis_deg = float(np.degrees(np.arccos(cosine)))
+                    if axis_deg > float(declaration["max_axis_deg"]):
+                        raise ValueError(
+                            "抓取段纠偏把夹爪姿态带歪了（%s 相位）：腕→夹持区轴偏 %.3f° > 声明 %.3f° "
+                            "⇒ 拒绝（歪着夹会把载荷顶飞）"
+                            % (key, axis_deg, float(declaration["max_axis_deg"])))
+                # 侵入门禁：纠偏位形下**非夹持区**的本本体 geom 不得与载荷接触
+                intrusion = []
+                for index in range(int(self.data.ncon)):
+                    contact = self.data.contact[index]
+                    ids = (int(contact.geom1), int(contact.geom2))
+                    if target_geom_ids.isdisjoint(ids):
+                        continue
+                    other = ids[1] if ids[0] in target_geom_ids else ids[0]
+                    geom_name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, other)
+                    body_name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_BODY,
+                                                  int(self.model.geom_bodyid[other]))
+                    if geom_name in pad_names:
+                        continue                  # 夹持区就该接触（它是用来夹的）
+                    if str(geom_name) in arm_scope or str(body_name) in arm_scope:
+                        intrusion.append({"geom": str(geom_name), "body": str(body_name),
+                                          "dist_m": round(float(contact.dist), 6)})
+                if intrusion:
+                    raise ValueError(
+                        "抓取段纠偏后的位形有非夹持区侵入载荷（%s 相位）：%s ⇒ 拒绝"
+                        % (key, intrusion))
+                merged = dict(section)
+                for key_name, joint_id in arm_joints:
+                    model_name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_JOINT, joint_id)
+                    if model_name in result.joint_positions:
+                        merged[key_name] = float(result.joint_positions[str(model_name)])
+                corrected[key] = merged
+                report["phases"][key] = {
+                    "target_point_m": [round(float(v), 9) for v in target_point],
+                    "residual_m": round(float(result.position_error_m), 9),
+                    "iterations": int(result.iterations),
+                    "axis_deg": (None if axis_deg is None else round(axis_deg, 6)),
+                    "intrusion": intrusion,
+                    "qpos_corrected": {str(k): round(float(v), 9)
+                                       for k, v in result.joint_positions.items()},
+                }
+            restore()
+        report["applied"] = True
+        return corrected, report
+
     def dump_pick_phase(self, phase, ms, target_body, left_body, right_body, approach_axis):
         """相位级观测（`IRAF_DEBUG_PICK=1` 时打印）——pick 与探针**共用同一实现**，保证可比。
 
@@ -3759,6 +3957,35 @@ class MujocoBackend:
             if not math.isfinite(max_tilt) or not 0.0 <= max_tilt <= 90.0:
                 raise ValueError("max_tilt_deg 必须在 0..90 之间")
             gripper["max_tilt_deg"] = max_tilt
+            # 抓取段的**运行期闭环纠偏**声明（2026-09-30 §11.29）：缺省 None = 不纠偏（行为与改动前一致）。
+            raw_pick_correction = raw_gripper.get("grasp_pose_correction")
+            if raw_pick_correction is None:
+                gripper["grasp_pose_correction"] = None
+            else:
+                if not isinstance(raw_pick_correction, dict) or not raw_pick_correction:
+                    raise ValueError("grasp_pose_correction 必须是对象（含 mode）")
+                correction_mode = str(raw_pick_correction.get("mode") or "")
+                if correction_mode not in GRASP_POSE_CORRECTION_MODES:
+                    raise ValueError("grasp_pose_correction.mode 必须是 %s，实际: %r"
+                                     % ("/".join(GRASP_POSE_CORRECTION_MODES), correction_mode))
+                unknown_correction = sorted(set(raw_pick_correction) - set(GRASP_POSE_CORRECTION_KEYS))
+                if unknown_correction:
+                    raise ValueError("grasp_pose_correction 含未知字段: " + str(unknown_correction))
+                required_correction_keys = ["residual_tolerance_m", "max_correction_m"]
+                if correction_mode == "resolved":
+                    required_correction_keys += ["ik_iterations", "ik_step", "ik_tolerance_m",
+                                                 "max_axis_deg"]
+                for key in required_correction_keys:
+                    value = raw_pick_correction.get(key)
+                    if (not isinstance(value, (int, float)) or isinstance(value, bool)
+                            or not math.isfinite(float(value)) or not float(value) > 0):
+                        raise ValueError("grasp_pose_correction.%s 必须是正有限数（实际 %r）"
+                                         % (key, value))
+                gripper["grasp_pose_correction"] = {
+                    str(key): (int(raw_pick_correction[key]) if key == "ik_iterations"
+                               else raw_pick_correction[key])
+                    for key in required_correction_keys}
+                gripper["grasp_pose_correction"]["mode"] = correction_mode
             friction_flag = raw_gripper.get("require_friction_lift")
             gripper["require_friction_lift"] = bool(friction_flag) if friction_flag is not None else False
             constraint = raw_gripper.get("lift_constraint")

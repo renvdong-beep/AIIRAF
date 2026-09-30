@@ -359,3 +359,77 @@ def resolve_place_pose_correction(declaration, nominal_pose_m, live_pose_m):
         report["ik_step"] = float(declaration["ik_step"])
         report["max_residual_m"] = float(declaration["max_residual_m"])
     return report
+
+
+#: 抓取段**运行期闭环纠偏**的模式（`gripper.grasp_pose_correction.mode`）：
+#:   · `measure_only`：只量"名义解与实测目标的偏差"并写进证据，**不做任何修正**（默认保守档）；
+#:   · `resolved`    ：按实测目标重解下压/抬升两段的关节解（有界、逐次留证、不收敛即拒绝）。
+#: 与放置侧的 `PLACE_POSE_CORRECTION_MODES` 是**两条独立声明**（抓取与放置的物理约束不同）。
+GRASP_POSE_CORRECTION_MODES = ("measure_only", "resolved")
+
+
+def resolve_grasp_pose_correction(declaration, delta_m):
+    """决定是否按**运行期实测目标**重解抓取列；并把本次偏差写成可判读的证据（纯函数，不碰模型）。
+
+    为什么必须（2026-09-30 §11.29 实测）：构建期的参考关节解是**按标称目标**求的，而联合世界里
+    目标会被搬动（狗背托盘里的载荷：实测横向 5.3 mm + 竖向 9.74 mm；卸载步门禁实测
+    `distance=0.015812 m > 0.005`）⇒ 臂到位了、但夹口没对准载荷。修法是运行期按**实测**目标
+    重解，而不是放宽门禁。
+
+    口径（全部来自声明，实现层不写默认值）：
+      · `residual_tolerance_m`：偏差不超过它 ⇒ 不必修正（`required=false`，仍留证）；
+      · `max_correction_m`    ：**上限**。超过它说明"不是小偏差，而是目标/参考解本身错了"
+        ⇒ `refused=true`，调用方必须显式失败（不静默截断、不按名义解继续）。
+    """
+    if not isinstance(declaration, dict) or not declaration:
+        raise ValueError("grasp_pose_correction 必须是对象（含 mode；实现层不给默认值）")
+    mode = str(declaration.get("mode") or "")
+    if mode not in GRASP_POSE_CORRECTION_MODES:
+        raise ValueError("grasp_pose_correction.mode 必须是 %s，实际: %r"
+                         % ("/".join(GRASP_POSE_CORRECTION_MODES), mode))
+    delta = [float(value) for value in delta_m]
+    if len(delta) != 3:
+        raise ValueError("抓取偏差必须是 3 维（世界系），实际 %r" % (delta_m,))
+    norm = float(np.linalg.norm(np.asarray(delta, dtype=float)))
+    tolerance = declaration.get("residual_tolerance_m")
+    limit = declaration.get("max_correction_m")
+    for key, value in (("residual_tolerance_m", tolerance), ("max_correction_m", limit)):
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or not float(value) > 0:
+            raise ValueError("grasp_pose_correction 必须声明正的 %s（实现层不写默认值），实际: %r"
+                             % (key, value))
+    if float(limit) <= float(tolerance):
+        raise ValueError(
+            "grasp_pose_correction.max_correction_m (%.9f) 必须大于 residual_tolerance_m (%.9f)："
+            "否则\"需要修正\"的区间为空（声明自相矛盾）" % (float(limit), float(tolerance)))
+    report = {
+        "mode": mode,
+        "delta_world_m": [round(value, 9) for value in delta],
+        "norm_m": round(norm, 9),
+        "residual_tolerance_m": float(tolerance),
+        "max_correction_m": float(limit),
+        "within_tolerance": norm <= float(tolerance),
+        "within_limit": norm <= float(limit),
+        "required": (mode == "resolved") and norm > float(tolerance),
+        "refused": norm > float(limit),
+    }
+    if report["refused"]:
+        report["reason"] = ("实测目标与名义解相差 %.9f m 超过声明上限 %.9f m ⇒ 这不是\"小偏差\"，"
+                            "而是目标/参考解本身有问题 ⇒ 拒绝按名义解继续（不静默截断）"
+                            % (norm, float(limit)))
+    elif report["within_tolerance"]:
+        report["reason"] = "偏差 %.9f m 在声明容差 %.9f m 之内 ⇒ 无需修正" % (norm, float(tolerance))
+    elif mode == "measure_only":
+        report["reason"] = ("偏差 %.9f m 超容差，但声明 mode=measure_only ⇒ 只留证不修正"
+                            % norm)
+    else:
+        report["reason"] = ("偏差 %.9f m 超容差且在上限 %.9f m 之内 ⇒ 按实测目标重解抓取列"
+                            % (norm, float(limit)))
+    return report
+
+
+#: `gripper.grasp_pose_correction` 允许出现的键（构建期与运行期**同一份**，
+#: 避免"构建期接受、运行期拒绝"或反之；未知字段一律显式失败）。
+GRASP_POSE_CORRECTION_KEYS = (
+    "mode", "residual_tolerance_m", "max_correction_m",
+    "ik_iterations", "ik_step", "ik_tolerance_m", "max_axis_deg",
+)

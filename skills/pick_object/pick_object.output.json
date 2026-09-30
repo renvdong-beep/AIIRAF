@@ -229,6 +229,57 @@
           ],
           "description": "本次抓取用的目标位姿来源（与输入 `grasp_pose.pose_source` 一致）：`world_absolute` = 调用方给出的世界系坐标；`live_target_body` = 后端在**执行时刻**按目标体当前位姿解析（仿真真值 FK；真机应由感知 Provider 提供）。载具上的活体载荷必须用后者，见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.27。"
         },
+        "grasp_pose_correction": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "description": "抓取段**运行期闭环纠偏**的完整留证（§11.29）：构建期关节解按标称目标求，目标被搬动后夹口对不准 ⇒ 声明 `gripper.grasp_pose_correction` 时按**实测**目标重解下压/抬升两段。缺声明为 null（不纠偏）。",
+          "required": [
+            "applied",
+            "decision",
+            "live_target_m",
+            "nominal_grasp_point_m",
+            "phases"
+          ],
+          "properties": {
+            "applied": {
+              "type": "boolean",
+              "description": "本次是否真的改了关节解（偏差在声明容差内 ⇒ false，仍留证）"
+            },
+            "pose_source": {
+              "type": "string",
+              "description": "本次抓取用的目标位姿来源（与 evidence.pose_source 同源）"
+            },
+            "declaration": {
+              "type": "object",
+              "description": "生效的声明（原样留证：模式、容差、上限、IK 参数）"
+            },
+            "decision": {
+              "type": "object",
+              "description": "纯函数决策结果：delta_world_m / norm_m / within_tolerance / within_limit / required / refused / reason"
+            },
+            "live_target_m": {
+              "type": "array",
+              "items": {"type": "number"},
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "执行时刻实测的目标体位置（世界系，m）"
+            },
+            "nominal_grasp_point_m": {
+              "type": "array",
+              "items": {"type": "number"},
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "构建期名义解下的抓取点（世界系，m；= 夹持区中点 − 轴·pad_offset_m）"
+            },
+            "phases": {
+              "type": "object",
+              "description": "逐相位纠偏留证（grasp / lift）：目标点、IK 残差、迭代数、腕→夹持区轴偏角（度）、侵入对、修正后的关节解"
+            }
+          }
+        },
         "resolved_target_pose_m": {
           "type": "array",
           "items": {

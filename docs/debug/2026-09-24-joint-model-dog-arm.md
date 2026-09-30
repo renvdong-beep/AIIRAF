@@ -3880,6 +3880,50 @@ delta_m    =[-0.0034982, -0.003944493, +0.009737022]
   ⇒ 不再是"载荷被扫走（1.01 m）"，而是**关节解仍是构建期标称值、载荷被搬动过 ~16 mm**
   （即 §11.27 第 ② 条）—— 这就是下一步要做的事（运行期按真值重解参考关节解）。
 
+### §11.29 I3 第四步：抓取段**运行期闭环纠偏**（2026-09-30）
+
+**问题**：构建期的参考关节解按**标称目标**求；目标被搬动过（卸载步实测偏差
+`[0.011634776…, −0.002302729…, 0.01045626…]`，门禁报 `distance=0.015812 m > 0.005 m`）⇒
+臂"到位"了但夹口没对准载荷。**不放宽判据**，改成运行期按**实测**目标重解。
+
+**落地（全部声明驱动，实现层不写默认值）**：
+
+- `config/ur5_simulation_baseline.yaml: grasp.grasp_pose_correction`（声明）→
+  `scripts/build_robot_pick_scene.py` 校验并写进报告 `gripper.grasp_pose_correction` →
+  `scene_builder.SEMANTIC_GRIPPER_KEYS` 放行（语义键，不参与前缀改写）→
+  后端 `_parse_manipulation_config` 解析（未知字段/未知模式/缺参数一律显式失败）。
+  声明值：`mode: resolved`、`residual_tolerance_m: 0.002`、`max_correction_m: 0.05`、
+  `ik_iterations: 400`、`ik_step: 0.5`、`ik_tolerance_m: 0.0005`、`max_axis_deg: 3.0`。
+- 纯决策函数 `payload_facts.resolve_grasp_pose_correction(declaration, delta_m)`：
+  超容差才修正；**超上限即 `refused`**（"不是小偏差，而是目标/参考解本身错了"⇒ 调用方显式失败）。
+- 后端 `MujocoBackend._correct_grasp_column`：用 core 的位置型 IK
+  （`iraf_core.kinematics.solve_position_ik`，**不新增机型分支**）把夹持区中点移到实测目标，
+  对 **grasp 与 lift 两段**各自重解（种子=名义解 ⇒ 落在同一分支），并且**三条门禁**：
+  ① IK 残差 ≤ 声明；② 腕→夹持区轴相对名义轴的夹角 ≤ 声明；③ 纠偏位形下**非夹持区**
+  本本体 geom 不得与载荷接触。任一不过 ⇒ `ValueError`（不伪造到达）。
+- 契约先行：`pick_object.output.json` 增 `evidence.grasp_pose_correction`
+  （`applied/pose_source/declaration/decision/live_target_m/nominal_grasp_point_m/phases`）。
+- 回归：`tests/unit/test_grasp_pose_correction.py`（11 项，含实测偏差向量与解析层各拒绝路径）。
+
+**实测（`nominal --world joint`）**：
+
+- ✅ **到位门禁通过**：不再出现 `末端未到达目标抓取位姿`（纠偏生效）。
+- ✅ **无回归**：`s01`–`s05b` 全绿；Piper 的 s03：`force_ok=true`、`lifted=true`、
+  `lift_delta_m=0.079315`（与改动前同级）。
+- ⚠️ `s06` 新失败点：**`Backend 未确认目标已抓取`**（Provider 的确认门禁）。定深证据：
+  `force_ok=true`（双侧指腹接触 ✓）、`lifted=false`、**`lift_delta_m=0.002016 m`**（要求 ≥ 0.02）。
+- 载荷高度轨迹（相位级 dump，本次运行）：`HOME_HOLD 0.3847935625159164` →
+  `APPROACH 0.36863705780658107`（**下降 16.156 mm**）→ `DESCEND 0.3677505459430411` →
+  `GRIP_CLOSE 0.3674842995902061` → `LIFT 0.36546195142607457`（**没抬起来**）。
+- 同轮 s04/s05b：`place_offset_from_tray_center_m=0.035338039`、
+  `accept_offset_from_target_center_m=0.033093213`、`accept_resting_gap_m=−0.005069019`
+  ⇒ 载荷**离托盘中心 33 mm**（托盘是 0.24×0.16 的无挡边平板）。
+
+**下一步（待定案）**：载荷在 `APPROACH` 段就下沉了 16.2 mm，而纠偏目前只覆盖 `grasp`/`lift`
+（`home`/`approach` 仍按标称解）⇒ 需要把**接近段也纳入纠偏**（同一 Δ 平移整列，使下压仍近似竖直
+穿过实测载荷），并复核“离中心 33 mm 的载荷 + 无挡边托盘”在接近/下压时的接触。**不得**用放宽
+`min_lift_delta_m` 或抓取确认口径来"通过"。
+
 ## 12. 下一步
 
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。

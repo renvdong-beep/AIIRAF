@@ -28,6 +28,10 @@ from pathlib import Path
 
 import mujoco
 import numpy as np
+
+# 抓取段纠偏的**模式枚举**与运行期同一处（`payload_facts`）：构建期与运行期必须同口径，
+# 否则会出现"构建期接受、运行期拒绝"（本会话在放置侧踩过同类坑，见 §11.25(f-4) 的枚举链）。
+from iraf_adapters.mujoco.payload_facts import GRASP_POSE_CORRECTION_MODES
 import yaml
 
 from iraf_adapters.mujoco.scene_lighting import inject_lights
@@ -448,6 +452,33 @@ def build_scene(source, output, target_id=None, half_size=0.030, config=None,
     }
     if not bool(acceptance.get("require_friction_lift", False)):
         gripper["lift_constraint"] = LIFT_CONSTRAINT_TEMPLATE % selected_id
+    # 抓取段的**运行期闭环纠偏**声明（2026-09-30 §11.29）：构建期的关节解按**标称目标**求，
+    # 而联合世界里目标会被搬动（狗背托盘里的载荷：实测偏差 15.812 mm > 判据 5 mm）⇒ 运行期按
+    # **实测**目标重解下压/抬升两段。声明只来自基线（`grasp.grasp_pose_correction`），
+    # 实现层不给默认值；**缺声明 = 不纠偏**（行为与改动前一致）。
+    _pick_correction = (config.get("grasp") or {}).get("grasp_pose_correction")
+    if _pick_correction is not None:
+        if not isinstance(_pick_correction, dict) or not _pick_correction:
+            raise ValueError("grasp.grasp_pose_correction 必须声明为对象（含 mode；实现层不给默认值）")
+        _mode = str(_pick_correction.get("mode") or "")
+        if _mode not in GRASP_POSE_CORRECTION_MODES:
+            raise ValueError("grasp.grasp_pose_correction.mode 必须是 %s，实际: %r"
+                             % ("/".join(GRASP_POSE_CORRECTION_MODES), _pick_correction.get("mode")))
+        # 这两个键**任何模式都要有**（`measure_only` 也要判"是否超容差/超上限"）
+        for _key in ("residual_tolerance_m", "max_correction_m"):
+            _value = _pick_correction.get(_key)
+            if not isinstance(_value, (int, float)) or isinstance(_value, bool) or not float(_value) > 0:
+                raise ValueError("grasp_pose_correction 必须声明正的 %s（实现层不写默认值），实际: %r"
+                                 % (_key, _value))
+        if _mode == "resolved":
+            for _key in ("ik_iterations", "ik_step", "ik_tolerance_m", "max_axis_deg"):
+                _value = _pick_correction.get(_key)
+                if (not isinstance(_value, (int, float)) or isinstance(_value, bool)
+                        or not float(_value) > 0):
+                    raise ValueError(
+                        "grasp_pose_correction.mode=resolved 时必须声明正的 %s（实现层不写默认值），"
+                        "实际: %r" % (_key, _value))
+        gripper["grasp_pose_correction"] = dict(_pick_correction)
     if reference is not None:
         gripper["pad_offset_m"] = float(reference.get("finger_height_correction_m", 0.0))
         gripper["pad_offset_axis"] = [
