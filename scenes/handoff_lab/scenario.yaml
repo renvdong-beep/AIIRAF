@@ -222,6 +222,19 @@ scenarios:
           pose_tolerance_m: 0.005
           min_lift_delta_m: 0.02
           require_bilateral_contact: true
+      - id: s07_place_at_b_table
+        action: place_object
+        robot: ur5e
+        params:
+          # 卸载后把方块放到**B 站旁台面的落点垫**（I4-a 的 A 方案；点 (0.70,0.60) 已证明可解，§11.48）
+          place_target_id: place_pad_b
+          payload_id: box_01
+          duration_ms: 8000
+        criteria:
+          require_release: true
+          require_payload_in_tray: true
+          # 允许偏移 = 垫半宽 0.09 − 载荷半宽 0.025 = 0.065（按声明尺寸推出，与托盘判据 0.06 同法）
+          max_offset_from_tray_center_m: 0.065
     faults: []
 
   fault_sensor_loss:

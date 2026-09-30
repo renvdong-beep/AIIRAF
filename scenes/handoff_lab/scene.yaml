@@ -151,7 +151,10 @@ robots:
     #   横向残差 9.4e-6；腕→指腹轴朝下 dot 1.0）。
     # ⇒ 声明 `pick_object`（该臂 Profile 已声明此能力；本场景的验收由 I3 的卸载步承担）。
     # ⚠ 声明能力 ≠ 已验收：卸载步（s06）跑绿后才有本场景的验收证据，未绿则按纪律剔回。
-    capabilities: [pick_object]
+    # 【I4-a 2026-09-30】声明放置能力：卸载后把方块放到台面落点垫（s07）。
+    # ⚠ 声明 ≠ 已验收：s07 跑绿后才有本场景的验收证据，未绿则按纪律剔回。
+    # 能力五处同步：本文件 + 策略 allowed_skills + 适配器 CAPABILITY_METHODS/IMPLEMENTED + 机型规范词表。
+    capabilities: [pick_object, place_object]
     manipulation_report: build/models/ur5-pick-scene.json
     reference_solver:
       module: scripts/build_robot_baseline.py
@@ -369,7 +372,10 @@ props:
     static: true
     geometry:
       type: box
-      size_m: [0.06, 0.06, 0.01]
+      # 尺寸由**判据**推出（2026-09-30 §11.52）：允许落点偏移 = 垫半宽 − 载荷半宽。
+      # 取半宽 0.09（0.18×0.18）⇒ 允许偏移 0.09 − 0.025 = **0.065 m**，与托盘判据 0.06 同级
+      # （托盘 0.24×0.16 的半宽 0.08 − 0.025 = 0.055，判据取 0.06）。中心点仍是已证明可解的 (0.70,0.60)。
+      size_m: [0.18, 0.18, 0.01]
     mass_kg: 0.05
     friction: "1.4 0.03 0.001"
     rgba: [0.35, 0.45, 0.30, 1.0]

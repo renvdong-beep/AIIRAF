@@ -35,7 +35,7 @@ spec:
   # 视觉验收见 scripts/verify_pick.py --skill visual_pick。
   # 注：装配期能力契约是单向的（declared ⊆ implemented）；
   # 若将来去掉 vision 段，须同时去掉本行，否则策略层会放行必然失败的任务。
-  capabilities: [move_joint, pick_object, visual_pick, stop]
+  capabilities: [move_joint, pick_object, visual_pick, place_object, stop]
   # 结构化差异声明：把关节语义、夹爪位形、Home 位姿与相机视角
   # 从脚本魔数收敛为 profile 数据，换机械臂只需替换本文件。
   joint_roles:
