@@ -1775,8 +1775,11 @@ def _joint_place_resolution(root, solver, resolution, place_targets, arm_report,
             positions = {rename(name): float(value)
                          for name, value in (pose.get("joint_positions") or {}).items()}
             key = "place_%s_positions" % str(phase)
-            merged = dict(out_gripper.get("lift_positions") or {})
+            _gkeys = _declared_gripper_keys(out_gripper)
+            merged = {str(k): v for k, v in (out_gripper.get("lift_positions") or {}).items()
+                      if str(k) in _gkeys}
             merged.update(positions)
+            _assert_positions_are_joints(model, merged, key)
             out_gripper[key] = merged
             written[key] = {"replaced_joints": sorted(positions),
                             "position_error_m": pose.get("position_error_m")}
@@ -1925,6 +1928,38 @@ def _joint_place_resolution(root, solver, resolution, place_targets, arm_report,
     if record is None:
         _fail(EXIT_REFERENCE, "place_targets 里没有任何带 nominal_pose_m 与 size_m 的接收体")
     return record
+
+
+
+def _declared_gripper_keys(gripper):
+    """声明的**夹爪关节键**（`open_positions` / `closed_positions` 的键）。
+
+    为什么需要（2026-09-29 实测）：重解只产出**臂关节**的关节解，夹爪键必须原样保留；
+    而"先拷贝旧字典再 update"的写法会把**臂关节的旧键**一并留下 —— 对 UR5e 就是
+    `ur5e_shoulder_pan`（执行器名，模型里确实存在）与 `ur5e_shoulder_pan_joint`（关节名）**两套共存**，
+    轨迹回放按名解析时会拿到 -1（要么静默跳过、要么运行期报错）。Piper 未暴露：
+    它的旧键与重解键同名、被 update 覆盖 ⇒ 只剩一套。
+    """
+    keys = set()
+    for name in ("open_positions", "closed_positions"):
+        section = gripper.get(name)
+        if isinstance(section, dict):
+            keys |= {str(key) for key in section}
+    return keys
+
+
+def _assert_positions_are_joints(model, positions, label):
+    """构建期自证：位置字典的**每个键**都必须是联合模型里真实存在的**关节**（缺一即失败）。
+
+    口径与后端一致（后端按 `name_map` → 模型关节名解析）；这里用编译后的模型直接校验，
+    把"键名错一层"（执行器名/旧场景名）挡在构建期，而不是留给运行期的轨迹回放。
+    """
+    bad = [str(name) for name in positions
+           if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, str(name)) < 0]
+    if bad:
+        _fail(EXIT_MODEL,
+              "%s 的位置字典里这些键不是联合模型里的关节: %s"
+              "（重解结果必须覆盖臂关节；夹爪键只能来自声明）" % (label, sorted(bad)))
 
 
 def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, declared_names=None,
@@ -2081,9 +2116,11 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
     replaced = {}
     for phase, positions_key in REFERENCE_POSE_PHASES:
         positions = dict(resolution["resolved"][phase]["positions"])
-        merged = dict(out_gripper.get(positions_key) or {})
-        if not merged:
-            _fail(EXIT_REFERENCE, "臂侧报告的 gripper 缺少 %s，无法在它之上覆写重解结果"
+        _gkeys = _declared_gripper_keys(out_gripper)
+        merged = {str(k): v for k, v in (out_gripper.get(positions_key) or {}).items()
+                  if str(k) in _gkeys}
+        if not merged and not _gkeys:
+            _fail(EXIT_REFERENCE, "臂侧报告的 gripper 缺少 %s 且未声明夹爪键，无法在它之上覆写重解结果"
                   % positions_key)
         diff = []
         for name, value in positions.items():

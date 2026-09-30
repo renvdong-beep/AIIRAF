@@ -47,12 +47,25 @@ def main():
     model = mujoco.MjModel.from_xml_path(str(REPO / report["output"]))
     data = mujoco.MjData(model)
     mujoco.mj_forward(model, data)
+    # 只对**臂关节**求解：夹爪键（声明里的 open/closed positions，UR5e 是执行器名
+    # `ur5e_rq2f85_fingers_actuator`）与 tendon 无关本自检，跳过并单独登记（不是"假设错"而是口径不同）。
+    gripper_keys = set()
+    for _key in ("open_positions", "closed_positions"):
+        _section = gripper.get(_key)
+        if isinstance(_section, dict):
+            gripper_keys |= {str(k) for k in _section}
+    applied, skipped = {}, []
     for name, value in positions.items():
         jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
         if jid < 0:
-            print(json.dumps({"error": "联合模型里没有关节 %r" % name}, ensure_ascii=False))
-            return 2
+            skipped.append(str(name))
+            continue
         data.qpos[int(model.jnt_qposadr[jid])] = value
+        applied[str(name)] = float(value)
+    if not applied:
+        print(json.dumps({"error": "grasp_positions 里没有任何可在联合模型解析的关节",
+                          "skipped": skipped}, ensure_ascii=False))
+        return 2
     mujoco.mj_forward(model, data)
 
     pads = []
@@ -89,6 +102,9 @@ def main():
         "residual_m": None if residual is None else round(residual, 9),
         "tolerance_m": tolerance,
         "pass": None if residual is None else bool(residual <= tolerance),
+        "arm_joints_applied": sorted(applied),
+        "skipped_keys": sorted(skipped),
+        "gripper_keys_declared": sorted(gripper_keys),
         "pad_span_m": round(span, 6),
         "wrist_to_pad_axis": None if axis_norm is None else [round(float(v), 6) for v in axis_norm],
         "axis_down_dot": None if axis_norm is None else round(float(-axis_norm[2]), 6),
