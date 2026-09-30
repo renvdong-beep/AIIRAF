@@ -41,6 +41,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--report", default="build/scenes/handoff_lab/handoff_lab_joint.json")
     parser.add_argument("--arm", default="ur5e")
+    parser.add_argument("--phase", default="grasp",
+                        choices=("home", "approach", "grasp", "lift"))
+    parser.add_argument("--hold-ms", type=int, default=4000)
+    parser.add_argument("--passes", type=int, default=4)
     parser.add_argument("--output", default="build/diagnostics/ur5e-actuator-semantics.json")
     args = parser.parse_args()
 
@@ -54,9 +58,9 @@ def main():
     def model_name(text):
         return name_map.get(str(text), str(text))
 
-    # 参考姿态（grasp）摆好，量该位形下的重力矩
+    # 参考姿态（指定相位）摆好，量该位形下的重力矩
     arm_positions = {}
-    for key, value in (gripper.get("grasp_positions") or {}).items():
+    for key, value in (gripper.get("%s_positions" % args.phase) or {}).items():
         jid = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, model_name(key)))
         if jid >= 0:
             arm_positions[str(jid)] = float(value)
@@ -132,7 +136,136 @@ def main():
         else:
             entry["commanded_within_ctrlrange"] = None
         headroom.append(entry)
-    result = {"arm": args.arm, "report": str(REPO / args.report), "model": report["output"],
+    # --- 保持仿真 + 逐关节饱和/夹断判定（2026-09-30 §11.33 下一步）---
+    # 口径与 `iraf_core.kinematics.gravity_hold_ctrl` 一致：每轮**替换**补偿 c = τ_g(q)/kp，
+    # ctrl = 声明角 + c；非臂通道（腱驱动夹爪）按声明值写 ctrl。跑完给出：
+    #   目标 / 末轮补偿 / 静止角 / 残余 / 残余×kp（= 未被补偿掉的力矩）vs forcerange / ctrl+补偿 vs ctrlrange
+    arm_names = [mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, int(text))
+                 for text in arm_positions]
+    rows_by_joint = {row["joint"]: row for row in rows}
+    hold = mujoco.MjData(model)
+    if int(getattr(model, "nkey", 0) or 0) > 0:
+        mujoco.mj_resetDataKeyframe(model, hold, 0)
+    for text, value in arm_positions.items():
+        hold.qpos[int(model.jnt_qposadr[int(text)])] = value
+    hold.qvel[:] = 0.0
+    hold.qfrc_applied[:] = 0.0
+    finger_hold = {}
+    for key, value in (gripper.get("%s_positions" % args.phase) or {}).items():
+        name = model_name(key)
+        if int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, name)) >= 0:
+            finger_hold[name] = float(value)
+    mujoco.mj_forward(model, hold)
+    steps = max(1, int(round(float(args.hold_ms) / 1000.0 / float(model.opt.timestep))))
+    trace, last_compensation = [], {}
+    for attempt in range(1, int(args.passes) + 1):
+        bias = np.asarray(hold.qfrc_bias, dtype=float)
+        for name in arm_names:
+            row = rows_by_joint[name]
+            joint_id = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name))
+            actuator = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, row["actuator"]))
+            kp = float(row["kp_used_by_formula"])
+            last_compensation[name] = float(bias[int(model.jnt_dofadr[joint_id])]) / kp
+            hold.ctrl[actuator] = float(arm_positions[str(joint_id)]) + last_compensation[name]
+        for name, value in finger_hold.items():
+            actuator = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, name))
+            hold.ctrl[actuator] = value
+        for _ in range(steps):
+            mujoco.mj_step(model, hold)
+        residual = {}
+        for name in arm_names:
+            joint_id = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name))
+            residual[name] = round(float(hold.qpos[int(model.jnt_qposadr[joint_id])])
+                                   - float(arm_positions[str(joint_id)]), 9)
+        trace.append({"pass": attempt,
+                      "worst_residual_rad": max(abs(v) for v in residual.values()),
+                      "residual_rad": residual})
+    settled = {}
+    for name in arm_names:
+        row = rows_by_joint[name]
+        joint_id = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name))
+        actuator = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, row["actuator"]))
+        kp = float(row["kp_used_by_formula"])
+        residual = trace[-1]["residual_rad"][name]
+        compensation = last_compensation.get(name, 0.0)
+        commanded = float(arm_positions[str(joint_id)]) + compensation
+        ctrlrange = [float(v) for v in model.actuator_ctrlrange[actuator]]
+        forcerange = [float(v) for v in model.actuator_forcerange[actuator]]
+        torque_uncompensated = kp * residual
+        settled[name] = {
+            "target_rad": float(arm_positions[str(joint_id)]),
+            "compensation_rad": round(compensation, 9),
+            "commanded_rad": round(commanded, 9),
+            "settled_rad": round(float(hold.qpos[int(model.jnt_qposadr[joint_id])]), 9),
+            "residual_rad": residual,
+            "residual_x_kp_n_m": round(torque_uncompensated, 6),
+            "qfrc_bias_initial_n_m": row.get("qfrc_bias_n_m"),
+            "forcerange": forcerange,
+            "ctrlrange": ctrlrange,
+            "commanded_outside_ctrlrange": (None if ctrlrange[0] == ctrlrange[1]
+                                            else not (ctrlrange[0] <= commanded <= ctrlrange[1])),
+            # 判读：残余×kp 就是"没能被伺服补掉的力矩"；它接近 forcerange ⇒ 饱和
+            "saturation_ratio": (None if forcerange[0] == forcerange[1] == 0 else
+                                 round(abs(torque_uncompensated)
+                                       / max(abs(forcerange[0]), abs(forcerange[1])), 6)),
+        }
+    # 接触取证（2026-09-30 §11.33）：`qfrc_bias` **不含接触力** ⇒ 若该位形上有接触，
+    # 前馈永远补不掉那一份（残余×kp 就是接触等效力矩）。这里把接触对与法向力打出来判死。
+    contacts = []
+    for index in range(int(hold.ncon)):
+        contact = hold.contact[index]
+        ids = (int(contact.geom1), int(contact.geom2))
+        names = [mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, gid) or "<未命名#%d>" % gid
+                 for gid in ids]
+        bodies = [mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY,
+                                    int(model.geom_bodyid[gid])) or "<未命名>" for gid in ids]
+        if not any(str(body).startswith(str(args.arm)) for body in bodies):
+            continue
+        force = np.zeros(6)
+        mujoco.mj_contactForce(model, hold, index, force)
+        contacts.append({"geoms": names, "bodies": bodies,
+                         "dist_m": round(float(contact.dist), 9),
+                         "normal_force_n": [round(float(v), 6) for v in force[:3]]})
+    # 被动力量取证（2026-09-30 §11.33）：`qfrc_bias` = 重力+科氏，**不含** `qfrc_passive`
+    # （关节 stiffness/damping 与弹簧）。若残余×kp ≈ qfrc_passive 的量级，则前馈折算口径缺这一项。
+    passive = []
+    passive_forces = np.asarray(hold.qfrc_passive, dtype=float).copy()
+    for name in arm_names:
+        joint_id = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name))
+        dof = int(model.jnt_dofadr[joint_id])
+        passive.append({
+            "joint": name,
+            "jnt_stiffness": float(model.jnt_stiffness[joint_id]),
+            "dof_damping": float(model.dof_damping[dof]),
+            "qfrc_passive_n_m": round(float(passive_forces[dof]), 6),
+            "qfrc_bias_n_m": round(float(hold.qfrc_bias[dof]), 6),
+            "residual_x_kp_n_m": settled.get(name, {}).get("residual_x_kp_n_m"),
+        })
+    # 约束力取证（2026-09-30 §11.33，最后一项力源）：`qfrc_constraint` = 等式（weld/connect）与
+    # 限位约束施加的力，**既不在 qfrc_bias 也不在 qfrc_passive** ⇒ 前馈永远补不掉。
+    constraint = []
+    constraint_forces = np.asarray(hold.qfrc_constraint, dtype=float).copy()
+    for name in arm_names:
+        joint_id = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name))
+        dof = int(model.jnt_dofadr[joint_id])
+        constraint.append({"joint": name,
+                           "qfrc_constraint_n_m": round(float(constraint_forces[dof]), 6),
+                           "residual_x_kp_n_m": settled.get(name, {}).get("residual_x_kp_n_m")})
+    equalities = []
+    for index in range(int(model.neq)):
+        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_EQUALITY, index)
+        equalities.append({"name": str(name), "type": int(model.eq_type[index]),
+                           "active0": bool(model.eq_active0[index]),
+                           "active_now": bool(hold.eq_active[index]) if hasattr(hold, "eq_active") else None})
+    result = {"arm": args.arm, "phase": args.phase,
+              "constraint_forces": constraint,
+              "equalities": equalities,
+              "passive_forces": passive,
+              "contacts_at_hold": contacts,
+              "hold": {"hold_ms": int(args.hold_ms), "passes": int(args.passes),
+                       "worst_residual_rad": trace[-1]["worst_residual_rad"],
+                       "trace": trace, "settled": settled},
+              "report": str(REPO / args.report), "model": report["output"],
               "declared_tolerance_rad": 0.001,
               "ctrl_headroom": headroom,
               "worst_static_error_lower_bound_rad": round(worst, 9),
