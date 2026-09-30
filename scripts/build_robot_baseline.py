@@ -938,6 +938,27 @@ def build_reference_feedforward(model, reference, baseline, prefix="", gripper_p
     return shared.build_reference_feedforward(model, reference, baseline, prefix, gripper_positions)
 
 
+def build_place_reference_poses(root, baseline, target_local_m, payload_half_m, grip_height_m,
+                                clearance_m, touch_clearance_m, transit_local_m=None,
+                                seed_positions=None):
+    """放置四段关节解入口（**共享实现转发**；契约与 Piper 侧同名函数完全一致）（2026-09-30 §11.49）。
+
+    为什么共享而不是复制：放置段的几何/判据逻辑（above/descend/release/retreat、夹口高度、
+    触地间隙、净间隙）只依赖**声明 + 模型**，与机型无关；复制一份必然口径漂移
+    （本会话已因"同一逻辑两处各写一份"踩过多次，见 §11.31 的同法处置）。
+    本入口把调用转发到 `scripts/build_piper_baseline.py` 的通用实现，差异只在各自的 `baseline` 文档。
+    """
+    import importlib
+    import sys
+    scripts_dir = str(Path(__file__).resolve().parent)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    shared = importlib.import_module("build_piper_baseline")
+    return shared.build_place_reference_poses(root, baseline, target_local_m, payload_half_m,
+                                              grip_height_m, clearance_m, touch_clearance_m,
+                                              transit_local_m, seed_positions)
+
+
 def build(root, baseline_path, scene_path, calibration_path=None, target_id=None):
     """校验模型来源、求解参考姿态、生成受控场景并校验。
 

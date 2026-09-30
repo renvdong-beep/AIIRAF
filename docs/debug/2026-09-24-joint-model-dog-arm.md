@@ -4464,6 +4464,35 @@ ur5e 基线补 place 侧契约（place_entry / carry_gripper / place_pose_correc
 声明落点时按此表取**中位偏保守**的 (0.70, 0.60)：r=0.3905（可达带 [0.0429, 1.0279] 的中段）、
 距狗走廊两向净距 0.250/0.150 m。
 
+### §11.49/§11.50 I4-a 施工：声明落地、四处同族缺口修完、共享放置求解器判死并回退（2026-09-30）
+
+**已落地（保留）**
+1. **② 世界固定接收体**：`scenes/handoff_lab/scene.yaml: props[].place_pad_b`
+   （`kind: box`、`static: true`、`receiving: true`、`size_m [0.06,0.06,0.01]`、`pose z=-0.005` ⇒ 顶面 z=0.0），
+   依据 §11.48（可达带/残差 9.76e-08/姿态 0.0073°/裕度 5 点/净距）。`SCENE_CHECK_PASSED` ✓
+2. **③ ur5e 基线的 place 侧声明**（结构镜像 Piper，数值先镜像、待按本臂实测重定）：
+   `carry_gripper: hold`、`lift_gripper: closed`、`place_settle_ms: 3000`、
+   `place_clearance_m: 0.05`、`place_touch_clearance_m: 0.0`、`place_pose_correction{...}`。
+   ⚠ 这些键在 `place_entry` 开启后才会被消费（当前入口已注释，见下）。
+3. **④ 转发入口**：`scripts/build_robot_baseline.build_place_reference_poses`（转发到共享实现）。
+
+**施工中修掉的四处同族缺口（都是"腱驱动夹爪/声明覆盖"这一族）**
+| # | 位置 | 症状 | 处置 |
+|---|---|---|---|
+| 1 | `_measure_grip_height_m` | `夹口高度实测：抓取位形里的关节 'ur5e_rq2f85_fingers_actuator' 不在联合模型里` | 非关节键按**执行器名**识别并跳过 + 留证 `grip_channels_skipped` |
+| 2 | 同上（载荷中心 z） | 量得 0.340996940 m（用 `targets[].position_m`＝初始台面 0.025，而本臂目标是**声明覆盖的托盘** 0.375372） | 改用**解析时的目标** `resolution.target_world_m[2]`（第四处"标称目标又出现"） |
+| 3 | 同上（合理性闸） | 修 #2 后量得 **−0.009375060 m**，被 `0.0 < height` 拦下 | 闸门改判**绝对值**（符号由夹爪几何决定；该值与独立探针 §11.33 逐位吻合 ✓） |
+| 4 | 基线缺键 | `缺少 grasp.place_touch_clearance_m` | 按 Piper 同值补（0.0，依据见 §11.25(f-4)） |
+
+**判死（本轮的结论）**：`place_entry` **不能**靠"共享转发"开启 ——
+`build_piper_baseline.build_place_reference_poses` **不是机型无关的**：
+转发后报 `Piper mesh 不存在: build/models/ur5e_2f85/base_0.obj`（内部按 Piper 的资产名找网格）。
+而开启入口会让本臂 `resolved=False`（整段解不出）⇒ **破坏当前能过的 s06** ⇒ **已回退**（入口注释，
+保留其余 I4-a 改动）。回退后 `ur5e resolved=True`、`piper resolved=True`、JOINT/SINGLE/SCENE_CHECK=0 ✓。
+
+**下一轮的前置**：把该放置求解器的**机型无关部分抽到 `iraf_core`**（四段几何/夹口高度/触地间隙/判据），
+**资产来源由各基线声明**；抽取完成后再开 `place_entry` 并新增 `s07_place_at_b_table`。
+
 ## 12. 下一步
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
 0a. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。

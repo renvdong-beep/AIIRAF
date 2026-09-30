@@ -131,6 +131,28 @@ grasp:
   # 名字由声明给出 ⇒ 联合世界里多台臂可**共用同一件场景级夹具**（2026-09-30 §11.30；
   # 硬编码 `<目标>_lift_anchor` 会与先注入的那台同名冲突）。缺省仍是旧名。
   lift_anchor_body: grasp_anchor
+  # --- 放置段（I4-a，2026-09-30 §11.49）--- 结构**镜像 Piper 侧**（本臂自己的数值待按其实测分布重定）
+  # 为什么先镜像：放置四段的几何/判据逻辑与机型无关（共享实现），差异应在声明里体现；
+  # 先取 Piper 的结构与数值把链路打通，落地后**按 ur5e 自己的实测分布**重定（§11.44 的做法）。
+  # 放置段几何（I4-a，§11.49）：先镜像 Piper 的值，落地后按本臂实测重定
+  place_clearance_m: 0.05        # 接近/抬离段的净间隙
+  place_touch_clearance_m: 0.0   # 下降终点让载荷最低点停在承载面上方多少（0 = 贴面；Piper 同值，
+                                 # 依据：正值只会抬高松手高度 ⇒ 落距变大，见 §11.25(f-4)/(f-5)）
+  carry_gripper: hold            # 搬运段夹爪语义：按实测 ctrl 保持（避免持续合拢把载荷挤出夹口）
+  lift_gripper: closed           # 抬升段：下发该相位的闭合命令（2F-85 为 163 = 校准过的贴合力）
+  place_settle_ms: 3000          # 放下后落稳窗口（Piper 同值；落地后按本臂实测重定）
+  place_pose_correction:
+    mode: touchdown
+    max_lateral_m: 0.05
+    touch_clearance_m: 0.0
+    max_vertical_m: 0.05
+    residual_tolerance_m: 0.001
+    touchdown_step_fraction: 0.3
+    touchdown_max_iterations: 10
+    lateral_tolerance_m: 0.035
+    ik_iterations: 800
+    ik_step: 0.5
+    max_residual_m: 0.0001
   # --- 抓取段的**运行期闭环纠偏**（2026-09-30 §11.29）---
   # 为什么需要：构建期的参考关节解按**标称目标**求；联合世界里目标会被搬动
   # （狗背托盘里的载荷：横向 ~5.3 mm + 竖向 ~9.74 mm）⇒ 臂"到位"了但夹口没对准载荷，

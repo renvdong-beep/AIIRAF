@@ -1508,7 +1508,7 @@ def _load_declared_callable(root, declaration, robot_id, purpose):
     return entry, module_path
 
 
-def _measure_grip_height_m(model, gripper, targets):
+def _measure_grip_height_m(model, gripper, targets, target_override_z_m=None):
     """在**已验证的 pick 抓取位形**上 FK，实测「指腹中点 − 载荷中心」= 夹口高度（m）。
 
     为什么必须实测（2026-09-29 §11.25(f-2)）：place 段原先复用 pick 侧的 `pad_offset_m`，而那个名字
@@ -1527,13 +1527,27 @@ def _measure_grip_height_m(model, gripper, targets):
     if not all(pad_names):
         _fail(EXIT_REFERENCE, "无法实测夹口高度：报告 gripper 未声明 left/right_finger_geom")
     target = (targets or [{}])[0]
-    if target.get("position_m") is None:
+    if target_override_z_m is None and target.get("position_m") is None:
         _fail(EXIT_REFERENCE, "无法实测夹口高度：目标缺少 position_m（联合模型 FK 结果）")
+    # ⚠ 载荷中心必须用**解析时的目标**（2026-09-30 §11.50，第四处同族问题）：本臂的抓取目标由
+    # `reference_solver.target_override_world_m` 声明覆盖（托盘 0.375372），而 `targets[].position_m`
+    # 是道具在**初始状态**的 FK（台面 0.025）⇒ 两者相差 0.341 m，量出的夹口高度直接被合理性闸拦下。
     data = mujoco.MjData(model)
     mujoco.mj_forward(model, data)
+    skipped_channels = []
     for name, value in positions.items():
         joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
         if joint_id < 0:
+            # ⚠ **夹爪通道**（2026-09-30 §11.50，第三处同族缺口）：腱驱动夹爪在声明里给的是**执行器名**
+            # （2F-85 的 `rq2f85_fingers_actuator`），不是关节 ⇒ 原来直接 fail-closed，导致本臂的
+            # **放置段解析整体解不出**（`ur5e resolved=False`）。这一族的另两处（前馈的 held_actuators、
+            # 侵入检查的 gripper_keys）已分别修过 —— 处置一致：**按执行器名识别并跳过**，
+            # 同时**留证**（指腹中点因此用模型当前的手指状态；对"张开"指令与关键帧一致的情形无偏）。
+            actuator_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, name)
+            if actuator_id >= 0:
+                skipped_channels.append({"channel": str(name), "value": float(value),
+                                         "kind": "actuator"})
+                continue
             _fail(EXIT_REFERENCE, "夹口高度实测：抓取位形里的关节 %r 不在联合模型里" % name)
         data.qpos[int(model.jnt_qposadr[joint_id])] = value
     mujoco.mj_forward(model, data)
@@ -1544,16 +1558,23 @@ def _measure_grip_height_m(model, gripper, targets):
             _fail(EXIT_REFERENCE, "夹口高度实测：指腹 geom %r 不在联合模型里" % name)
         points.append(np.asarray(data.geom_xpos[geom_id], dtype=float))
     pad_mid_z = float((points[0] + points[1])[2] / 2.0)
-    payload_center_z = float(target["position_m"][2])
+    payload_center_z = (float(target_override_z_m) if target_override_z_m is not None
+                        else float(target["position_m"][2]))
     height = pad_mid_z - payload_center_z
-    # 合理性闸：夹口高度是"指腹在载荷中心上方多少"，本场景量级 1~5 cm；越界说明位形/位姿不匹配
-    if not (0.0 < height < 0.2):
+    # 合理性闸（2026-09-30 §11.50 修订）：夹口高度是"指腹中点相对载荷中心的**偏移**"，
+    # 量级 ≤2 cm；**符号由该臂的夹爪几何决定**（Piper 为正、UR5e+2F-85 实测为负
+    # −0.009375060 m，与独立探针逐位吻合）⇒ 闸门改为对**绝对值**判定，避免把几何约定当成物理约束。
+    # 越界仍然显式失败（说明位形/位姿不匹配）。
+    if not (abs(height) < 0.2):
         _fail(EXIT_MODEL,
-              "夹口高度实测不合理（%.9f m；pad_mid_z=%.9f − 载荷中心 z=%.9f）："
+              "夹口高度实测不合理（%.9f m；pad_mid_z=%.9f − 载荷中心 z=%.9f，|值| ≥ 0.2 m）："
               "检查报告里的 grasp_positions 与 targets[].position_m 是否来自同一模型"
               % (height, pad_mid_z, payload_center_z))
     return height, {"grip_height_m": height, "pad_mid_z_m": pad_mid_z,
                     "payload_center_z_m": payload_center_z, "pad_geoms": pad_names,
+                    # 被跳过的**夹爪通道**（§11.50）：腱驱动夹爪只有执行器名 ⇒ 不参与 qpos 设定，
+                    # 指腹中点因此按模型当前的手指状态量（张开的声明值与关键帧一致时无偏）。
+                    "grip_channels_skipped": skipped_channels,
                     "source": "FK@报告 gripper.grasp_positions（联合模型）",
                     "replaces": "pick 侧 pad_offset_m（含义不同，差 13.3 mm）"}
 
@@ -1831,7 +1852,9 @@ def _joint_place_resolution(root, solver, resolution, place_targets, arm_report,
         # 由 `_joint_manipulation` 在本模型上算得），不能用臂侧报告里的坐标
         # （那是臂自己场景的位置，联合场景可能不同）。
         grip_height, grip_evidence = _measure_grip_height_m(
-            model, out_gripper, pick_targets or (arm_report or {}).get("targets") or [])
+            model, out_gripper, pick_targets or (arm_report or {}).get("targets") or [],
+            target_override_z_m=float((resolution.get("target_world_m") or [None, None, None])[2])
+            if resolution.get("target_world_m") else None)
         # 触地间隙：必须由声明给出（缺声明即失败，不猜）
         touch_clearance = (baseline_doc.get("grasp") or {}).get("place_touch_clearance_m")
         if (not isinstance(touch_clearance, (int, float)) or isinstance(touch_clearance, bool)
