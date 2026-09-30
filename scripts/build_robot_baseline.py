@@ -918,6 +918,26 @@ def raised_home_pose(root, baseline, target_id, reference, scene_builder=None):
     return {name: float(value) for name, value in result.joint_positions.items()}
 
 
+def build_reference_feedforward(model, reference, baseline, prefix="", gripper_positions=None):
+    """重力前馈重算入口（**共享实现**；契约与 Piper 侧同名函数完全一致）（2026-09-30 §11.31）。
+
+    为什么共享而不是复制一份：`增量 = τ_g / kp` 只依赖**模型 + 声明参数**，与机型无关；复制一份
+    必然口径漂移（本会话已因"同一逻辑两处各写一份"踩过多次）。因此本入口把调用**转发**到
+    `scripts/build_piper_baseline.py` 的通用实现，两边的差异只体现在各自的 `baseline` 文档里。
+
+    触发场景：场景的 `robots[].reference_solver.feedforward_entry` 声明本入口 ⇒ 联合构建器在
+    **运行期同款模型**上重算前馈（执行器增益与臂自己场景不同 ⇒ 直接继承会按增益比例失真，
+    表现为"指令位形到了、停稳位形差几毫米"的静差；实测本臂联合世界里该静差 5.862 mm）。
+    """
+    import importlib
+    import sys
+    scripts_dir = str(Path(__file__).resolve().parent)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    shared = importlib.import_module("build_piper_baseline")
+    return shared.build_reference_feedforward(model, reference, baseline, prefix, gripper_positions)
+
+
 def build(root, baseline_path, scene_path, calibration_path=None, target_id=None):
     """校验模型来源、求解参考姿态、生成受控场景并校验。
 

@@ -479,7 +479,8 @@ def build_scene(source, output, target_id=None, half_size=0.030, config=None,
                 raise ValueError("grasp_pose_correction 必须声明正的 %s（实现层不写默认值），实际: %r"
                                  % (_key, _value))
         if _mode == "resolved":
-            for _key in ("ik_iterations", "ik_step", "ik_tolerance_m", "max_axis_deg"):
+            for _key in ("ik_iterations", "ik_step", "ik_tolerance_m", "max_axis_deg",
+                         "align_max_attempts"):
                 _value = _pick_correction.get(_key)
                 if (not isinstance(_value, (int, float)) or isinstance(_value, bool)
                         or not float(_value) > 0):

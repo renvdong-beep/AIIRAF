@@ -432,4 +432,7 @@ def resolve_grasp_pose_correction(declaration, delta_m):
 GRASP_POSE_CORRECTION_KEYS = (
     "mode", "residual_tolerance_m", "max_correction_m",
     "ik_iterations", "ik_step", "ik_tolerance_m", "max_axis_deg",
+    #: 到位前的**闭环复量**次数上限（量→纠→复量；2026-09-30 §11.31）：单次解算只能保证
+    #: "指令位形"落在容差内，而**实际停稳位形**还差一个 PD 静差 ⇒ 必须复量复纠。
+    "align_max_attempts",
 )

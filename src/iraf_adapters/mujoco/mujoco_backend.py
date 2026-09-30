@@ -1040,6 +1040,11 @@ class MujocoBackend:
             self._move_trajectory(grasp_positions, phase_ms, self._pick_ctrl_offsets("grasp"),
                                   pin_body=pin_target)
             self.dump_pick_phase("DESCEND", phase_ms, target_body, left_body, right_body, approach_axis)
+        # 下压后的**停稳复量**（2026-09-30 §11.31）：只测量不动臂 —— 试过"下压后再纠一步"的闭环，
+        # 结果更差（5.862 mm → 11.176 mm：指腹已在载荷两侧，任何修正都在推着载荷走）。
+        if correction_declaration and grasp_positions:
+            pose_correction_evidence["settled_alignment"] = self._measure_settled_alignment(
+                correction_declaration, target_body, left_body, right_body, approach_axis, phase_ms)
         # 对齐门禁必须用目标实际姿态推出的接近轴换算抓取点：
         # 目标倾斜时仍按固定竖直轴减 pad_offset 会把抓取点算错半个高度。
         # 门禁前的紧邻取样：与 DESCEND 的 dump 比对即可判别"DESCEND 之后状态是否被改动"
@@ -2779,8 +2784,11 @@ class MujocoBackend:
 
             if decision["refused"]:
                 restore()
-                raise ValueError("抓取段纠偏被拒（%s）：%s" % (declaration.get("mode"),
-                                                            decision["reason"]))
+                raise ValueError(
+                    "抓取段纠偏被拒（%s）：%s | live_target_m=%s nominal_grasp_point_m=%s"
+                    % (declaration.get("mode"), decision["reason"],
+                       [round(float(v), 6) for v in live],
+                       [round(float(v), 6) for v in nominal["grasp"]]))
             if not decision["required"]:
                 restore()
                 report["applied"] = False
@@ -2856,6 +2864,56 @@ class MujocoBackend:
             restore()
         report["applied"] = True
         return corrected, report
+
+    def _measure_settled_alignment(self, declaration, target_body, left_body, right_body,
+                                   approach_axis, phase_ms):
+        """下压后的**停稳复量**：连续采样 N 次（N = 声明 `align_max_attempts`），留证到位残差。
+
+        为什么这样（2026-09-30 §11.31 实测教训）：先做过"下压后再纠一步"的闭环，结果**更差**
+        （5.862 mm → 11.176 mm）—— 那时指腹已经在载荷两侧，任何修正位移都在**推着载荷走**，
+        越纠越偏（自己追自己）。因此下压后只**测量**，不动臂；单次解算与停稳位形之间的差额
+        （PD 静差）改由**声明的前馈**治（见场景 `reference_solver.feedforward_entry`）。
+        多次采样还能分辨"静差"与"尚未停稳"（后者样本间会漂移）。
+
+        返回证据 dict；**不做任何运动**（除采样间隔的推进），也不改判据。
+        """
+        tolerance = float(declaration["residual_tolerance_m"])
+        attempts = max(1, int(declaration["align_max_attempts"]))
+        settle_ms = max(1, int(phase_ms) // 4)
+        history = []
+        for attempt in range(1, attempts + 1):
+            if attempt > 1:
+                self._advance_for(settle_ms)
+            alignment = self._grasp_alignment_evidence(target_body, left_body, right_body,
+                                                       approach_axis)
+            history.append({
+                "sample": attempt,
+                "distance_m": round(float(alignment["center_distance_m"]), 9),
+                "center_delta_m": [round(float(v), 9) for v in alignment["center_delta_m"]],
+            })
+        distances = [item["distance_m"] for item in history]
+        report = {
+            "samples": len(history),
+            "settle_ms": settle_ms,
+            "tolerance_m": tolerance,
+            "min_distance_m": min(distances),
+            "max_distance_m": max(distances),
+            "spread_m": round(max(distances) - min(distances), 9),
+            "within_tolerance": [item["distance_m"] <= tolerance for item in history],
+            # 判读提示：spread ≈ 0 ⇒ 已停稳，残差是**静差**（治前馈）；spread 大 ⇒ 还在动（治时序）
+            "note": ("下压后只测量不动臂（闭环纠偏会把载荷推走，见 §11.31）；残差超出容差时，"
+                     "先看 spread：≈0 是静差（前馈问题），否则是尚未停稳（时序问题）"),
+            "history": history,
+        }
+        # 失败步骤的 evidence 不会进报告 ⇒ 用既有的调试通路把结论打出来（默认关闭）。
+        if os.environ.get("IRAF_DEBUG_PICK") == "1":
+            print("PICK_SETTLED " + json.dumps({
+                "samples": report["samples"], "tolerance_m": report["tolerance_m"],
+                "min_distance_m": report["min_distance_m"],
+                "max_distance_m": report["max_distance_m"], "spread_m": report["spread_m"],
+                "within_tolerance": report["within_tolerance"],
+            }, ensure_ascii=False), flush=True)
+        return report
 
     def dump_pick_phase(self, phase, ms, target_body, left_body, right_body, approach_axis):
         """相位级观测（`IRAF_DEBUG_PICK=1` 时打印）——pick 与探针**共用同一实现**，保证可比。
@@ -3994,7 +4052,7 @@ class MujocoBackend:
                 required_correction_keys = ["residual_tolerance_m", "max_correction_m"]
                 if correction_mode == "resolved":
                     required_correction_keys += ["ik_iterations", "ik_step", "ik_tolerance_m",
-                                                 "max_axis_deg"]
+                                                 "max_axis_deg", "align_max_attempts"]
                 for key in required_correction_keys:
                     value = raw_pick_correction.get(key)
                     if (not isinstance(value, (int, float)) or isinstance(value, bool)
@@ -4002,7 +4060,8 @@ class MujocoBackend:
                         raise ValueError("grasp_pose_correction.%s 必须是正有限数（实际 %r）"
                                          % (key, value))
                 gripper["grasp_pose_correction"] = {
-                    str(key): (int(raw_pick_correction[key]) if key == "ik_iterations"
+                    str(key): (int(raw_pick_correction[key])
+                               if key in ("ik_iterations", "align_max_attempts")
                                else raw_pick_correction[key])
                     for key in required_correction_keys}
                 gripper["grasp_pose_correction"]["mode"] = correction_mode
