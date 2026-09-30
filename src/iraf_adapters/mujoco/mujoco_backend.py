@@ -1614,8 +1614,14 @@ class MujocoBackend:
             raise ValueError("接收体 %s 未声明 size_m（无法判「载荷是否落在承载面内」）" % place_target_id)
         pad_offset = float(gripper.get("pad_offset_m") or 0.0)
         approach_offset = float(gripper.get("pregrasp_offset_m") or 0.0)
-        if pad_offset <= 0 or approach_offset <= 0:
-            raise ValueError("接收体放置需要报告声明 gripper.pad_offset_m 与 gripper.pregrasp_offset_m")
+        # ⚠ `pad_offset_m` 允许为 **0**（2026-09-30 §11.52，第七处同族缺口）：它把"夹持区中点"折算到
+        # "抓取点"，取 0 表示两者重合 —— 这是**机型几何**决定的合法值（UR5e+2F-85 实测 0.0，
+        # 抓取侧的到位门禁一直按 0.0 工作 ✓）；原先要求 > 0 会把本臂的放置路径直接判错。
+        # `pregrasp_offset_m` 仍是"接近段抬多少"，必须为正（没有负/零语义）。
+        if pad_offset < 0 or approach_offset <= 0:
+            raise ValueError(
+                "接收体放置需要报告声明非负的 gripper.pad_offset_m 与正的 gripper.pregrasp_offset_m"
+                "（实际 pad_offset=%r / pregrasp_offset=%r）" % (pad_offset, approach_offset))
         tray_body = self._body_id(record["body"])
         payload_body = self._body_id(payload["body"])
         # 放置点纠偏：**实测**接收体位姿 vs 构建期名义位姿（是否施加由声明 mode 决定；
