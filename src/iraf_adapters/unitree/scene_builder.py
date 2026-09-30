@@ -3235,9 +3235,20 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
                         "manipulation_report": str(attached_report),
                         "error": "%s: %s" % (type(error).__name__, str(error)[:400])}
                     continue
+            _override = ((attached_entity.get("reference_solver") or {})
+                         .get("target_override_world_m"))
+            _first_target = ((record.get("targets") or [{}]) or [{}])[0]
             per_robot[attached_id] = {
                 "resolved": True, "prefix": "%s_" % attached_id,
                 "manipulation_report": str(attached_report),
+                # **本场景的抓取目标**（I3，2026-09-29）：位置取声明覆盖（缺则退回目标体的 FK 位姿），
+                # 朝向取目标体在联合模型里的姿态。用途：运行期 `grasp_pose_from: joint_scene_target`
+                # 据此构造 `pick_object` 的判据位姿 —— 对"托盘里的活体载荷"而言，臂侧报告里的
+                # 初始位姿是错的（那是台面上的位置），必须用本场景的目标。
+                "joint_scene_target_m": (
+                    [float(v) for v in _override] if isinstance(_override, (list, tuple)) and len(_override) == 3
+                    else _first_target.get("position_m")),
+                "joint_scene_target_quat_wxyz": _first_target.get("quaternion_wxyz"),
                 "gripper": record.get("gripper"), "targets": record.get("targets"),
                 "target_id": record.get("target_id"), "vision": record.get("vision"),
                 "name_map": record.get("name_map"), "name_map_facts": record.get("name_map_facts"),

@@ -508,10 +508,10 @@ def resolve_param_sources(step, binding, root):
     if "grasp_pose_from" not in params:
         return
     source = str(params.pop("grasp_pose_from"))
-    if source != "report_target":
+    if source not in ("report_target", "joint_scene_target"):
         raise ScenarioError(
-            "步骤 %s 的 grasp_pose_from=%r 不受支持（可用：%s）"
-            % (step["id"], source, list(PARAM_SOURCE_KEYS)), EXIT_DECLARATION)
+            "步骤 %s 的 grasp_pose_from=%r 不受支持（可用：report_target / joint_scene_target）"
+            % (step["id"], source), EXIT_DECLARATION)
     if not isinstance(binding, dict):
         raise ScenarioError(
             "步骤 %s 声明了 grasp_pose_from 但本体没有机型声明绑定（无法找到场景报告）"
@@ -526,6 +526,32 @@ def resolve_param_sources(step, binding, root):
     if not report_path.is_file():
         raise ScenarioError("场景报告不存在：%s（先跑构建入口生成）" % report_path, EXIT_REFERENCE)
     report = json.loads(report_path.read_text(encoding="utf-8"))
+    if source == "joint_scene_target":
+        # **本场景目标**（I3）：托盘/载体上的活体载荷 ⇒ 臂侧报告里的初始位姿是错的，
+        # 用联合报告的 `manipulation.per_robot[<本体>].joint_scene_target_m/_quat_wxyz`（构建期已解好）。
+        robot_id = str(((binding.get("declaration_document") or {}).get("robot") or {}).get("id") or "")
+        entry_pr = (((report.get("manipulation") or {}).get("per_robot") or {}).get(robot_id) or {})
+        position = entry_pr.get("joint_scene_target_m")
+        quat = entry_pr.get("joint_scene_target_quat_wxyz")
+        if not (robot_id and entry_pr.get("resolved") is True
+                and isinstance(position, list) and len(position) == 3
+                and isinstance(quat, list) and len(quat) == 4):
+            raise ScenarioError(
+                "步骤 %s 的 grasp_pose_from=joint_scene_target 需要联合报告里 "
+                "manipulation.per_robot[%s] 已解且带 joint_scene_target_m(3)/_quat_wxyz(4)：实际 %r / %r"
+                % (step["id"], robot_id or "<缺本体 id>", position, quat), EXIT_REFERENCE)
+        params["grasp_pose"] = {
+            "frame_id": "world",
+            "position": {"x": float(position[0]), "y": float(position[1]), "z": float(position[2])},
+            "orientation": {"x": float(quat[1]), "y": float(quat[2]), "z": float(quat[3]),
+                            "w": float(quat[0])},
+        }
+        step["params"] = params
+        step["param_sources"] = {"grasp_pose": {"from": "joint_scene_target", "report": _rel(report_path),
+                                                "robot": robot_id,
+                                                "source_pose": {"position_m": [float(v) for v in position],
+                                                                "quaternion_wxyz": [float(v) for v in quat]}}}
+        return
     target_id = str(params.get("target_id"))
     entry = next((item for item in (report.get("targets") or [])
                   if isinstance(item, dict) and str(item.get("id")) == target_id), None)

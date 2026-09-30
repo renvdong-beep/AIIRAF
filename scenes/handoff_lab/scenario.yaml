@@ -200,6 +200,24 @@ scenarios:
           require_payload_confirmation: true
           max_accept_offset_m: 0.06
           max_accept_speed_mps: 0.01
+      # 【2026-09-29 新增 · I3】s06：**UR5e 从狗背托盘里取下方块**（卸载）。
+      # 目标位姿来源用 `joint_scene_target`（联合报告 per_robot[ur5e].joint_scene_target_*，
+      # 即 B 站托盘里的载荷）—— 臂侧报告里的初始位姿是**台面**上的位置，对卸载是错的
+      # （实测它距该臂基座 1.18 m > 可达 1.05 m，姿态会翻到反向分支：夹爪指向偏差 171.715 deg）。
+      # 抓取位形的几何自证（区间包含口径）：载荷高度区间 [0.350372, 0.400372] ⊇ 指腹接触带
+      # [0.365991541, 0.36600234]，横向残差 9.4e-6，腕→指腹轴朝下 dot 1.0 ✓
+      # （scripts/probe_ur5e_joint_grasp_check.py 可复跑）。
+      - id: s06_unload_at_b
+        action: pick_object
+        robot: ur5e
+        params:
+          target_id: box_01
+          grasp_pose_from: joint_scene_target
+          duration_ms: 8000
+        criteria:
+          pose_tolerance_m: 0.005
+          min_lift_delta_m: 0.02
+          require_bilateral_contact: true
     faults: []
 
   fault_sensor_loss:
