@@ -1107,7 +1107,8 @@ def _attach_robots(staging, scene, root, attached_ids):
         # 对象名。采集必须在 `attach` **之前** —— attach 之后这些名字一律带上前缀，问不回原名。
         # 只收集后端能按名字解析的种类（body/geom/site/joint）：执行器与关节在 Piper 上同名，
         # 由关节解析覆盖；mesh/material 由 MjSpec 自己改写引用，不进这张表。
-        declared_sets = {"bodies": set(), "geoms": set(), "sites": set(), "joints": set()}
+        declared_sets = {"bodies": set(), "geoms": set(), "sites": set(), "joints": set(),
+                     "actuators": set()}
 
         def _collect_names(kind, items):
             """收集某一类的对象名；同时把 body 的**子对象**按自己的类别归档。
@@ -1125,7 +1126,9 @@ def _attach_robots(staging, scene, root, attached_ids):
                         if nested_name:
                             declared_sets[attribute].add(nested_name)
 
-        for bucket in ("bodies", "geoms", "sites", "joints"):
+        # `actuators` 也要收集（2026-09-29）：臂侧 gripper 引用执行器名（如 rq2f85_fingers_actuator），
+        # 它必须进 name_map 才能被后端按声明名解析到联合模型里的 ur5e_ 前缀名。
+        for bucket in ("bodies", "geoms", "sites", "joints", "actuators"):
             _collect_names(bucket, getattr(child, bucket, []) or [])
         declared_names = {key: sorted(value) for key, value in declared_sets.items()}
         # 关键帧 ctrl：附加本体的执行器必须**按声明保持初值**（否则位置执行器把它们驱到零位，
@@ -1945,15 +1948,19 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
     def exists(name):
         """名字是否存在于**联合模型**里（任意 kind）——用编译后的模型校验，不看文本。"""
         text = str(name)
+        # ⚠ ACTUATOR 也要在内（2026-09-29 实测）：`attach` 同样给**执行器**加前缀
+        # （联合模型里是 `ur5e_rq2f85_fingers_actuator`），而臂侧报告的 gripper 会引用执行器名
+        # ⇒ 原来只查 body/geom/site/joint/camera/material/texture 会让第二台臂的段解不出来
+        #（实测：`…引用的名字 rq2f85_fingers_actuator 在联合模型里既不存在原名也不存在 ur5e_ 前缀名`）。
         for kind in (mj.mjtObj.mjOBJ_BODY, mj.mjtObj.mjOBJ_GEOM, mj.mjtObj.mjOBJ_SITE,
-                     mj.mjtObj.mjOBJ_JOINT, mj.mjtObj.mjOBJ_CAMERA, mj.mjtObj.mjOBJ_MATERIAL,
-                     mj.mjtObj.mjOBJ_TEXTURE):
+                     mj.mjtObj.mjOBJ_JOINT, mj.mjtObj.mjOBJ_ACTUATOR, mj.mjtObj.mjOBJ_CAMERA,
+                     mj.mjtObj.mjOBJ_MATERIAL, mj.mjtObj.mjOBJ_TEXTURE):
             if mj.mj_name2id(model, kind, text) >= 0:
                 return True
         return False
 
     known = set()
-    for bucket in ("bodies", "geoms", "sites", "joints", "cameras"):
+    for bucket in ("bodies", "geoms", "sites", "joints", "actuators", "cameras"):
         for name in ((joint_facts or {}).get(bucket) or []):
             known.add(str(name))
 
@@ -2020,7 +2027,7 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
     # 只对被 manipulation 引用的名字 fail-closed（上方 rename），其余只留痕 —— attach 可能丢弃对象，
     # 把它当构建失败会误伤；但"声明名既不在原名也不在前缀名里"必须能被人看见。
     buckets = {"mapped": [], "identical": [], "conflicts": [], "missing": []}
-    declared = {"bodies": [], "geoms": [], "sites": [], "joints": []}
+    declared = {"bodies": [], "geoms": [], "sites": [], "joints": [], "actuators": []}
     for bucket in declared:
         for value in ((declared_names or {}).get(bucket) or []):
             text = str(value)
