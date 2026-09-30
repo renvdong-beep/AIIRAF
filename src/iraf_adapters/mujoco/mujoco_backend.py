@@ -1525,7 +1525,7 @@ class MujocoBackend:
                 ),
                 flush=True,
             )
-        return {
+        result = {
             "target_id": target_id,
             "grasped": bool(force_ok and lifted),
             "confirmation": "constraint" if constraint_activated else "contact",
@@ -1564,6 +1564,28 @@ class MujocoBackend:
                 # 该追踪是**调试仪器**：只在 `IRAF_DEBUG_PICK=1` 时逐行打印（stdout 即产物）。
             },
         }
+        # 抓取确认结果（2026-09-30 §11.47）：失败步骤的 evidence **不进报告** ⇒ "未确认目标已抓取"
+        # 这类失败在报告里只有一句 Provider 的措辞，无法判读是哪一项不达标（双侧接触/力/抬升）。
+        # 这里在调试通路里把确认量的**实参**原样打出来（与 PICK_SETTLED/PICK_CORRECTION 同风格）。
+        if os.environ.get("IRAF_DEBUG_PICK") == "1":
+            evidence_payload = result["evidence"]
+            print("PICK_RESULT " + json.dumps({
+                "target_id": str(target_id),
+                "grasped": bool(result["grasped"]),
+                "confirmation": str(result["confirmation"]),
+                "bilateral_contact": evidence_payload.get("bilateral_contact"),
+                "force_ok": evidence_payload.get("force_ok"),
+                "lifted": evidence_payload.get("lifted"),
+                "lift_delta_m": evidence_payload.get("lift_delta_m"),
+                "lift_peak_delta_m": evidence_payload.get("lift_peak_delta_m"),
+                "lift_attitude_max_deg": evidence_payload.get("lift_attitude_max_deg"),
+                "center_distance_m": (evidence_payload.get("grasp_alignment") or {}).get(
+                    "center_distance_m"),
+                "min_normal_force_n_declared": gripper.get("min_normal_force_n"),
+                "forces": {key: value for key, value in evidence_payload.items()
+                           if "force" in str(key) and isinstance(value, (int, float))},
+            }, ensure_ascii=False), flush=True)
+        return result
 
     def place_object(self, place_target_id, payload_id, duration_ms, lease):
         """把当前夹持的载荷放到接收体（承载面）上：下行至**接触**→开夹爪→抬离。

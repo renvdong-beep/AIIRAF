@@ -31,8 +31,8 @@ def _latest_report():
 
 
 def _extract(log_text):
-    """从日志里取 `PICK_SETTLED` / `PICK_CORRECTION`（都与 pickup 的到位/纠偏直接相关）。"""
-    settled, correction = [], []
+    """从日志里取 `PICK_SETTLED` / `PICK_CORRECTION` / `PICK_RESULT`（抓取确认的实参，§11.47）。"""
+    settled, correction, results = [], [], []
     for line in log_text.splitlines():
         if line.startswith("PICK_SETTLED "):
             try:
@@ -47,7 +47,12 @@ def _extract(log_text):
                                    "nominal_grasp_point_m": payload.get("nominal_grasp_point_m")})
             except json.JSONDecodeError:
                 pass
-    return settled, correction
+        elif line.startswith("PICK_RESULT "):
+            try:
+                results.append(json.loads(line.split("PICK_RESULT ", 1)[1]))
+            except json.JSONDecodeError:
+                pass
+    return settled, correction, results
 
 
 def _distance_from_reason(reason):
@@ -97,11 +102,14 @@ def main(argv=None):
                     record["s06_status"] = item[1]
         except Exception as error:  # noqa: BLE001
             record["report_error"] = "%s: %s" % (type(error).__name__, error)
-        settled, correction = _extract(completed.stdout or "")
+        settled, correction, results = _extract(completed.stdout or "")
         if settled:
             record["settled"] = settled[-1]
         if correction:
             record["correction"] = correction
+        if results:
+            # 抓取确认的实参（§11.47）：区分"未确认抓取"到底是双侧接触 / 力 / 抬升哪一项不达标。
+            record["pick_results"] = results
         rounds.append(record)
         out_path.write_text(json.dumps({"runs": rounds}, ensure_ascii=False, indent=2),
                             encoding="utf-8")     # 每轮即时落盘（可中途判读）
