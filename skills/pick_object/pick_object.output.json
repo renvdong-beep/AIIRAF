@@ -244,6 +244,14 @@
             "phases"
           ],
           "properties": {
+            "pre_descend": {
+              "type": "object",
+              "description": "**下压前的二次纠偏**（§11.40）：实测「纠偏测量点太早」（接近+下压几秒内载荷随载体漂 5.2 mm，而手臂执行只差 0.35 mm）⇒ 在接近完成后、下压之前**再量再解一次**（此时指腹悬在载荷上方无接触）。结构与顶层相同（declaration/decision/live_target_m/nominal_grasp_point_m/phases）。"
+            },
+            "settled_alignment": {
+              "type": "object",
+              "description": "下压后的**停稳复量**（§11.31）：连续采样 N 次（N = 声明 align_max_attempts），给 min/max/spread/within_tolerance 与逐样本的指腹中点/目标点；只测量不动臂（下压后再纠会推着载荷走）。"
+            },
             "applied": {
               "type": "boolean",
               "description": "本次是否真的改了关节解（偏差在声明容差内 ⇒ false，仍留证）"

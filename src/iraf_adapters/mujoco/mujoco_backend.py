@@ -1034,7 +1034,21 @@ class MujocoBackend:
             self._move_trajectory(approach_positions, phase_ms, self._pick_ctrl_offsets("approach"),
                                   pin_body=pin_target)
             self.dump_pick_phase("APPROACH", phase_ms, target_body, left_body, right_body, approach_axis)
-        # ---- 抓取段**运行期纠偏**已在上方（接近段之前）完成：这里不再重复纠偏 ----
+        # ---- 下压前的**二次纠偏**（2026-09-30 §11.40 实测驱动）----
+        # 实测：纠偏（在接近之前）量到的目标与"下压停稳时"的目标相差 **5.2015 mm（横向）**
+        # （托盘随载体在几秒内沉降/平移 ⇒ 载荷跟着走），而手臂执行本身只差 0.35 mm
+        # ⇒ 残差的主项是**测量过期**，不是执行精度。此处在接近完成后、下压之前**再量再解一次**：
+        # 此时指腹还悬在载荷上方 16 cm（无接触），纠偏是安全的。声明与三条门禁完全相同。
+        if correction_declaration and grasp_positions and approach_positions:
+            _again, again_evidence = self._correct_grasp_column(
+                correction_declaration,
+                {"grasp": grasp_positions, "lift": gripper.get("lift_positions")},
+                target_body)
+            again_evidence["pose_source"] = source
+            pose_correction_evidence["pre_descend"] = again_evidence
+            if _again:
+                grasp_positions = _again.get("grasp", grasp_positions)
+                lift_positions_for_run = _again.get("lift", lift_positions_for_run)
         if grasp_positions:
             self._log_pick_phase("DESCEND", target_body)
             self._move_trajectory(grasp_positions, phase_ms, self._pick_ctrl_offsets("grasp"),
