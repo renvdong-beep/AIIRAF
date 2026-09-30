@@ -111,7 +111,7 @@ def build_reference_feedforward(model, reference, baseline, prefix="", gripper_p
 
 def build_place_reference_poses(root, baseline, target_local_m, payload_half_m, grip_height_m,
                                 clearance_m, touch_clearance_m, transit_local_m=None,
-                                seed_positions=None):
+                                seed_positions=None, scene_builder=None):
     """按**臂基座系**里的接收体目标解出放置四段（关节空间），供后端**回放**。
 
     为什么是构建期解而不是运行期 IK（2026-09-28，docs/debug/2026-09-24-joint-model-dog-arm.md §11.16）：
@@ -144,7 +144,11 @@ def build_place_reference_poses(root, baseline, target_local_m, payload_half_m, 
     grasp_cfg = baseline.get("grasp") or {}
     workdir = Path(tempfile.mkdtemp(prefix="piper-place-"))
     probe_scene = workdir / "probe-scene.xml"
-    build_scene(source, probe_scene, target_id=target_cfg.get("id", "box_01"),
+    # ⚠ **场景生成器必须可注入**（2026-09-30 §11.51）：本函数先前直接调用**本模块**（Piper 专属）的
+    # `build_scene`，它按 Piper 的资产名解析网格 ⇒ 被别的机型转发调用时报
+    # `Piper mesh 不存在: .../ur5e_2f85/base_0.obj`（§11.50 判死）。处置与 `raised_home_pose` 的
+    # `scene_builder=` 参数**同一先例**：缺省仍是 Piper 的（行为逐位不变），其它机型由调用方注入自己的。
+    (scene_builder or build_scene)(source, probe_scene, target_id=target_cfg.get("id", "box_01"),
                 half_size=float(target_cfg.get("half_size_m", 0.03)), config=baseline)
     model = mujoco.MjModel.from_xml_path(str(probe_scene))
     data = mujoco.MjData(model)
@@ -161,9 +165,13 @@ def build_place_reference_poses(root, baseline, target_local_m, payload_half_m, 
                          ("touch_clearance_m", touch_clearance_m)):
         if not np.isfinite(float(value)):
             raise ValueError("%s 必须是有限数，实际 %r" % (label, value))
-    if float(grip_height_m) <= 0.0 or float(payload_half_m) <= 0.0:
-        raise ValueError("grip_height_m 与 payload_half_m 必须为正（实际 %r / %r）"
-                         % (grip_height_m, payload_half_m))
+    # ⚠ `grip_height_m` 的**符号由该臂的夹爪几何决定**（2026-09-30 §11.51，与 §11.50 的合理性闸同一
+    # 处置）：Piper 实测为正，UR5e+2F-85 实测为 **−0.009375060 m**（指腹中点低于载荷中心）。
+    # 原来要求"必须为正"会把后者直接判错；改为"有限 + |值| 在合理界内（< 0.2 m）"，`payload_half_m`
+    # 仍必须为正（载荷半高是几何量，没有负值语义）。
+    if abs(float(grip_height_m)) >= 0.2 or float(payload_half_m) <= 0.0:
+        raise ValueError("grip_height_m 必须在 (−0.2, 0.2) 内且 payload_half_m 必须为正"
+                         "（实际 %r / %r）" % (grip_height_m, payload_half_m))
     if float(touch_clearance_m) < 0.0:
         raise ValueError("touch_clearance_m 必须 ≥ 0（实际 %r）" % (touch_clearance_m,))
     # 下降终点的高度：让**载荷最低点**停在承载面上方 touch_clearance 处

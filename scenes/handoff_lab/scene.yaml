@@ -175,7 +175,9 @@ robots:
       # 而开启本入口会让本臂 `resolved=False`（本臂整段解不出）⇒ **会破坏当前能过的 s06** ⇒ 先注释。
       # 前置（下一轮）：把该求解器的**机型无关部分抽到 core**（几何/四段/判据），资产来源由各基线声明；
       # 在抽取完成前不开启本入口。已落地的其它 I4-a 改动（`place_pad_b` 接收体声明）保留。
-      # place_entry: build_place_reference_poses
+      # 【§11.51 已修】共享实现改为**可注入场景生成器**（缺省仍是 Piper 的 ⇒ 对 Piper 逐位不变），
+      # 本臂转发时注入自己的 `build_robot_pick_scene.build_scene` ⇒ 资产按其自身声明解析。
+      place_entry: build_place_reference_poses
       # **本场景对基线的覆盖**（§11.28，实测驱动）：基线的 `grasp.home_rise_m: 0.30` 在该臂自己的场景里
       # 得到 home 残差 1.5e-07 m；换到本场景（目标距基座 0.45 m、载荷在托盘里）后 home 目标
       # （局部 z = 0.375372 + 0.16 + 0.30 = 0.835372）**不可达** ⇒ 解出的 home 位形夹持区只在 0.420188

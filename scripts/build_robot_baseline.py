@@ -954,9 +954,12 @@ def build_place_reference_poses(root, baseline, target_local_m, payload_half_m, 
     if scripts_dir not in sys.path:
         sys.path.insert(0, scripts_dir)
     shared = importlib.import_module("build_piper_baseline")
+    # **注入本机型自己的场景生成器**（§11.51）：共享实现内部要用它来建探测场景并解析资产；
+    # 缺省（不注入）时它会用 Piper 的生成器 ⇒ 按 Piper 资产名找网格 ⇒ 本机型必然失败。
     return shared.build_place_reference_poses(root, baseline, target_local_m, payload_half_m,
                                               grip_height_m, clearance_m, touch_clearance_m,
-                                              transit_local_m, seed_positions)
+                                              transit_local_m, seed_positions,
+                                              scene_builder=build_scene)
 
 
 def build(root, baseline_path, scene_path, calibration_path=None, target_id=None):

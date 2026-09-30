@@ -1929,7 +1929,8 @@ def _joint_place_resolution(root, solver, resolution, place_targets, arm_report,
             merged = {str(k): v for k, v in (out_gripper.get("lift_positions") or {}).items()
                       if str(k) in _gkeys}
             merged.update(positions)
-            _assert_positions_are_joints(model, merged, key)
+            _assert_positions_are_joints(model, merged, key,
+                                         gripper_keys=_declared_gripper_keys(out_gripper))
             out_gripper[key] = merged
             written[key] = {"replaced_joints": sorted(positions),
                             "position_error_m": pose.get("position_error_m")}
@@ -2098,14 +2099,17 @@ def _declared_gripper_keys(gripper):
     return keys
 
 
-def _assert_positions_are_joints(model, positions, label):
-    """构建期自证：位置字典的**每个键**都必须是联合模型里真实存在的**关节**（缺一即失败）。
+def _assert_positions_are_joints(model, positions, label, gripper_keys=()):
+    """构建期自证：位置字典里**除声明的夹爪键之外**，每个键都必须是联合模型里的**关节**。
 
-    口径与后端一致（后端按 `name_map` → 模型关节名解析）；这里用编译后的模型直接校验，
-    把"键名错一层"（执行器名/旧场景名）挡在构建期，而不是留给运行期的轨迹回放。
+    ⚠ 2026-09-30 §11.51 修订：原实现要求**每个键**都是关节 ⇒ 对**腱驱动夹爪**（2F-85 只有执行器名
+    `rq2f85_fingers_actuator`）会把合法声明判错，本臂的放置段解析因此解不出（`ur5e resolved=False`）。
+    处置与 §11.28 的侵入检查同法：**声明的夹爪通道**（`open_positions`/`closed_positions` 的键）允许
+    出现且不参与关节校验；其余键仍必须解析到关节（"键名错一层"照旧挡在构建期）。
     """
-    bad = [str(name) for name in positions
-           if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, str(name)) < 0]
+    allowed = {str(key) for key in (gripper_keys or ())}
+    bad = [str(name) for name in positions if str(name) not in allowed
+           and mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, str(name)) < 0]
     if bad:
         _fail(EXIT_MODEL,
               "%s 的位置字典里这些键不是联合模型里的关节: %s"
