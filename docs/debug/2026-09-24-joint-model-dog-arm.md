@@ -4209,6 +4209,42 @@ wrist_2 饱和比 0.0、残余 elbow **−8.2e-08 / 0.0 rad**）；并且**前�
 再跑 s06；`s06` 本身在 dt=0.001 下已测到"已停稳（spread 1.9933e-05）+ 残余 0.007381 m"，
 其 x 分量 −7.19 mm 的来源仍待并排拆解（`PICK_CORRECTION` / `PICK_SETTLED` 已就位）。
 
+### §11.39 触地纠偏按新动力学重调 → 全链 7/8 全绿，s06 只差 0.244 mm（2026-09-30）
+
+**（1）s04 触地纠偏重调（声明层，未放松任何判据）**
+新动力学（附加本体 armature 0.5）下，原声明 `touchdown_step_fraction: 0.5 / touchdown_max_iterations: 6`
+收敛不到判据内：`触地纠偏迭代 6 次后仍未到位：剩余竖向 0.001331352 m（载荷底面 0.341362100 −
+承载面 0.342693452）超过容差 0.001 m` ⇒ 改**更细步长 + 更多迭代**（`0.3 / 10`），
+`residual_tolerance_m` 与所有验收判据**不动**。
+
+**（2）piper 臂侧报告的正确重建口径（踩坑留档）**
+`build_piper_baseline.py` 的**报告 JSON 走 stdout**（`print(json.dumps(scene))`，含 `reference_poses`），
+而脚本自身落盘的 JSON **不含** `reference_poses` ⇒ 正确命令是
+`PYTHONPATH=src:scripts python3 scripts/build_piper_baseline.py > build/models/piper-pick-scene.json`
+（我第一次按"文件写者"理解重建，导致报告缺 24 键的 `reference_poses`、联合构建以退出码 3 失败；
+已按此命令恢复：`reference_poses` 24 键、`pregrasp_offset_m 0.04` ✓）。
+
+**（3）全链复跑（`nominal --world joint`，RUN_EXIT=5）**
+
+| 步骤 | 结果 |
+|---|---|
+| s01 / s02_dock / s03_pick / **s04_place_in_tray** / s05 / **s02b_dock_station_b** / s05b | **全部 SUCCEEDED** ✓（7/8） |
+| s06_unload_at_b | FAILED：`末端未到达目标抓取位姿 distance=0.005244 m`（容差 0.005000） |
+
+**（4）s06 残差分解（`PICK_SETTLED`，已停稳）**
+
+```
+samples 3, min 0.005186111, max 0.005240701, spread_m 5.459e-05   ← 已停稳（55 µm）
+target_position_m        = [0.433004435, 0.452515177, 0.367556227]   ← 载荷实测
+finger_center_position_m = [0.428152203, 0.451869476, 0.369428088]   ← 夹持区中点（pad_boxes 均值）
+delta                    = [-0.004856742, -0.000645689, +0.001868203] ⇒ 系统性 **x −4.857 mm** 为主
+```
+
+对比：dt=0.002 旧态 5.937 mm、dt=0.001 测得 7.381 mm ⇒ armature 修复 + 前馈重算后为 **5.244 mm**
+（**只差 0.244 mm**）。残余是**系统性横向偏移**（spread 仅 55 µm，前馈已精确）⇒ 下一轮按 §11.36 的
+`PICK_CORRECTION` / `PICK_SETTLED` 并排拆解：**纠偏解算的基准点**（名义 pad 中点，含手指状态）
+与 **执行后的 pad 中点**之间的那 ~4.9 mm 是从哪一项几何口径来的。
+
 ## 12. 下一步
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
 0a. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。
