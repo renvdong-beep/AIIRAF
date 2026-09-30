@@ -530,6 +530,55 @@ def build_scene(source, output, target_id=None, half_size=0.030, config=None,
                         "grasp_pose_correction.mode=resolved 时必须声明正的 %s（实现层不写默认值），"
                         "实际: %r" % (_key, _value))
         gripper["grasp_pose_correction"] = dict(_pick_correction)
+    # 搬运段抓取约束（2026-09-30 §11.55）：**镜像 Piper 侧**的声明块形状（同一 equality/anchor），
+    # 差异只在数值与 `release_gripper`。缺失 ⇒ **不写键**（放置段退回"只看双侧指腹接触"，
+    # 即本臂此前的行为）；给出 ⇒ 逐项校验（乱填必须显式失败）。
+    _carry = (config.get("grasp") or {}).get("carry_constraint") or {}
+    if _carry:
+        if not isinstance(_carry, dict):
+            raise ValueError("grasp.carry_constraint 必须是对象")
+        _carry_type = str(_carry.get("type") or "")
+        if _carry_type not in ("connect", "weld"):
+            raise ValueError("grasp.carry_constraint.type 必须是 connect 或 weld（实际 %r）："
+                             "搬运要不要约束旋转必须由声明决定" % _carry_type)
+        _carry_equality = str(_carry.get("equality_name") or "")
+        _carry_anchor = str(_carry.get("anchor_body") or "")
+        if bool(_carry.get("enabled", False)) and not (_carry_equality and _carry_anchor):
+            raise ValueError("grasp.carry_constraint.enabled=true 时必须声明 equality_name 与 anchor_body")
+        _carry_solref = _carry.get("solref")
+        _carry_solimp = _carry.get("solimp")
+        if (not isinstance(_carry_solref, (list, tuple)) or len(_carry_solref) != 2
+                or not isinstance(_carry_solimp, (list, tuple)) or len(_carry_solimp) != 3):
+            raise ValueError("grasp.carry_constraint 必须声明 solref（2 个数）与 solimp（3 个数）："
+                             "实测 solref 0.01 太软会让载荷在 xy 漂移约 3 cm")
+        _carry_steps = _carry.get("max_plant_steps_per_iteration")
+        if (not isinstance(_carry_steps, int) or isinstance(_carry_steps, bool)
+                or _carry_steps <= 0):
+            raise ValueError("grasp.carry_constraint 必须声明正的 max_plant_steps_per_iteration")
+        _carry_release = bool(_carry.get("release_gripper", False))
+        _carry_slip = _carry.get("max_slip_m")
+        # `max_slip_m` 只在**张爪搬运**（release_gripper=true）时才被运行期消费 ⇒ 只在那种情形要求它，
+        # 否则就是"声明了却不被消费"（AGENTS.md 6.2）。
+        if _carry_release and not (isinstance(_carry_slip, (int, float))
+                                   and not isinstance(_carry_slip, bool) and float(_carry_slip) > 0):
+            raise ValueError("grasp.carry_constraint.release_gripper=true 时必须声明正的 max_slip_m"
+                             "（张爪后不能看指腹接触，只能用焊缝滑移阈值）")
+        if not _carry_release and _carry_slip is not None:
+            raise ValueError("grasp.carry_constraint.release_gripper=false 时不应声明 max_slip_m"
+                             "（运行期不消费它；判据是双侧指腹接触）—— 要么删掉，要么改 release_gripper")
+        gripper["carry_constraint"] = {
+            "enabled": bool(_carry.get("enabled", False)),
+            "type": _carry_type,
+            "equality_name": _carry_equality,
+            "anchor_body": _carry_anchor,
+            "solref": [float(v) for v in _carry_solref],
+            "solimp": [float(v) for v in _carry_solimp],
+            "release_gripper": _carry_release,
+            "max_slip_m": (float(_carry_slip) if isinstance(_carry_slip, (int, float))
+                           and not isinstance(_carry_slip, bool) else 0.0),
+            "max_plant_steps_per_iteration": int(_carry_steps),
+            "source": "ur5_simulation_baseline.yaml:grasp.carry_constraint",
+        }
     if reference is not None:
         gripper["pad_offset_m"] = float(reference.get("finger_height_correction_m", 0.0))
         gripper["pad_offset_axis"] = [

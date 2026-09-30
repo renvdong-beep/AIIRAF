@@ -144,6 +144,24 @@ grasp:
   # 判据里的 `bilateral_contact` 是抬升**之前**（合爪段）量的，不代表结束时刻 —— 正是这个盲区
   # 让"零接触却报 lifted=true"的那次运行通过。开启后结束时刻丢失双侧接触即**显式拒绝**。
   require_contact_at_lift_end: true
+  # 搬运段抓取约束（I4-a 2026-09-30 §11.55）—— 结构**镜像 Piper 侧**（同一 equality、同一 anchor）：
+  # 为什么必须有：抓取段抬升结束时焊缝是 active 的，而**步骤之间没人驱动锚点**（放置段此前没有
+  # carry_constraint ⇒ 它既不重摆锚点也不驱动它）⇒ s07 一移动，焊缝就把载荷拴在冻结的锚点上、
+  # 从夹口里拽出，放置段自己的搬运判据报「抬升段后失去夹持（载荷已脱离）」（实测 12.48 s 处失败）。
+  # 声明后放置段按同一协议接管：激活时把锚点摆到「载荷实测位姿」并按「指腹中点 + 激活偏移」逐拍
+  # 驱动，放下的那一步**先释放焊缝再张开夹爪**（`place_object` ③ 段）。
+  # `release_gripper: false`：本臂不像 Piper 那样在搬运中张爪（2F-85 的指腹就是锚点参照物，
+  # 张爪会让参照漂移）⇒ 判据保持"双侧指腹接触"；`max_slip_m` 只在 release_gripper=true 时被消费，
+  # 因此**故意不声明**（声明了就必须被消费，见 AGENTS.md 6.2）。
+  carry_constraint:
+    enabled: true
+    type: weld
+    equality_name: box_01_lift_constraint
+    anchor_body: grasp_anchor
+    solref: [0.01, 1.0]
+    solimp: [0.9, 0.95, 0.01]
+    release_gripper: false
+    max_plant_steps_per_iteration: 64
   # --- 放置段（I4-a，2026-09-30 §11.49）--- 结构**镜像 Piper 侧**（本臂自己的数值待按其实测分布重定）
   # 为什么先镜像：放置四段的几何/判据逻辑与机型无关（共享实现），差异应在声明里体现；
   # 先取 Piper 的结构与数值把链路打通，落地后**按 ur5e 自己的实测分布**重定（§11.44 的做法）。
