@@ -1962,6 +1962,103 @@ def _assert_positions_are_joints(model, positions, label):
               "（重解结果必须覆盖臂关节；夹爪键只能来自声明）" % (label, sorted(bad)))
 
 
+def _channel_joint_id(model, name):
+    """把"控制通道名"解析到它驱动的**关节 id**（构建期，纯模型事实；判不出即 None）。
+
+    为什么需要（2026-09-30 实测，§11.26）：**同一条控制通道在不同场景里有两个名字** ——
+    UR5e 的关节叫 `shoulder_pan_joint`（关节名），执行器叫 `shoulder_pan`（执行器名）。
+    臂侧报告的 `gravity_feedforward` 用**执行器名**，而联合侧重解后的位置指令用**关节名**
+    ⇒ 后端的"前馈通道 ⊆ 位置通道"声明检查把整个装配挡死（退出码 4，`ur5e_joint.yaml`：
+    `gravity_feedforward.home 含未在该段位置指令中声明的通道: ['ur5e_elbow', ...]`）。
+
+    判定"是同一个通道"的**唯一可靠依据**是模型自己的执行器传动表（`actuator_trnid`），
+    **不猜名字后缀**（猜 `_joint` 会在不遵循该约定的机型上引入新的错配）。
+
+    返回：`mjOBJ_JOINT` 命中 ⇒ 该关节 id；`mjOBJ_ACTUATOR` 且 `trntype` 是关节 ⇒ `trnid[0]`；
+    名字不存在、或该执行器不是"直接驱动某个关节"（腱驱动等）⇒ `None`（不参与对账）。
+    """
+    text = str(name)
+    joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, text)
+    if joint_id >= 0:
+        return int(joint_id)
+    actuator_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, text)
+    if actuator_id < 0:
+        return None
+    if int(model.actuator_trntype[actuator_id]) != int(mujoco.mjtTrn.mjTRN_JOINT):
+        return None
+    joint_id = int(model.actuator_trnid[actuator_id, 0])
+    return int(joint_id) if joint_id >= 0 else None
+
+
+def _align_feedforward_channels(model, gripper, source):
+    """把 `gravity_feedforward` 的通道名统一到**该段位置指令的通道名**（构建期自证）。
+
+    两侧都用 `_channel_joint_id` 解析到同一个关节 id ⇒ 同一条通道的不同叫法（执行器名 ↔
+    关节名）能对上。**对不上即显式失败**：前馈被静默丢弃的表现是"精度莫名不达标"
+    （UR5e 纯 PD 执行器静差 ≈ 15 mm/0.015 rad），而且越查越像机械/物理问题。
+
+    未知段名、缺少对应位置指令也在这里前置失败（后端有同样口径的检查，但构建期更早、
+    且能带上是哪台本体/哪个场景的信息）。
+
+    返回 `(对齐后的 gravity_feedforward, 证据)`；证据逐段记录 `renamed`（改名对）与
+    `unmapped`（对不上的通道）。Piper 的关节名与通道名同名 ⇒ 该函数对它**逐位无改动**。
+    """
+    declared = gripper.get("gravity_feedforward") or {}
+    if not declared:
+        return {}, {"checked": True, "source": source, "phases": {},
+                    "note": "未声明前馈（零前馈）：真机或已做重力补偿的模型行为不变"}
+    known_phases = [phase for phase, _ in REFERENCE_POSE_PHASES]
+    unknown_phases = sorted(set(declared) - set(known_phases))
+    if unknown_phases:
+        _fail(EXIT_MODEL, "gravity_feedforward 含未知段名 %s（只允许 %s）"
+              % (unknown_phases, known_phases))
+    aligned_all = {}
+    phases = {}
+    for phase, positions_key in REFERENCE_POSE_PHASES:
+        offsets = declared.get(phase)
+        if offsets is None:
+            continue
+        positions = gripper.get(positions_key) or {}
+        if not positions:
+            _fail(EXIT_MODEL, "gravity_feedforward.%s 缺少对应的 %s 声明（前馈必须挂在位置指令上）"
+                  % (phase, positions_key))
+        index = {}
+        for key in positions:
+            joint_id = _channel_joint_id(model, key)
+            if joint_id is not None:
+                index.setdefault(joint_id, str(key))
+        aligned, renamed, unmapped, conflicts = {}, [], [], []
+        for name, value in offsets.items():
+            joint_id = _channel_joint_id(model, name)
+            target = index.get(joint_id) if joint_id is not None else None
+            if target is None:
+                unmapped.append(str(name))
+                continue
+            if target in aligned:
+                conflicts.append(str(name))
+                continue
+            aligned[target] = float(value)
+            if target != str(name):
+                renamed.append({"from": str(name), "to": target})
+        if unmapped:
+            _fail(EXIT_MODEL,
+                  "重力前馈 %s 有通道在该段位置指令里对不上（%s）：前馈键必须与位置指令"
+                  "一一对应（前缀漏掉/键名错一层会让前馈静默失效，表现为「精度莫名不达标」）"
+                  % (phase, sorted(unmapped)))
+        if conflicts:
+            _fail(EXIT_MODEL,
+                  "重力前馈 %s 有多个通道指向同一位姿通道（%s）：通道映射有歧义，需人工裁定"
+                  % (phase, sorted(conflicts)))
+        aligned_all[phase] = aligned
+        phases[phase] = {"positions_key": positions_key, "channels": len(aligned),
+                         "renamed": renamed}
+    return aligned_all, {
+        "checked": True, "source": source, "phases": phases,
+        "rule": ("前馈通道名 → 该段位置指令的通道名：一律按模型自己的 actuator_trnid 判"
+                 "「同一条控制通道」，不猜名字后缀；对不上即构建失败"),
+    }
+
+
 def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, declared_names=None,
                         reference_solver=None, placement=None, robot_id=None, place_targets=None,
                         carrier_trunk=None):
@@ -2198,21 +2295,21 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
         feedforward, feedforward_evidence = _joint_reference_feedforward(
             root, reference_solver, model, resolution, prefix, gripper_positions)
         gravity_feedforward = {}
-        for phase, positions_key in REFERENCE_POSE_PHASES:
-            offsets = (feedforward or {}).get(phase)
+        for phase, offsets in (feedforward or {}).items():
             if not offsets:
                 continue
-            declared_keys = set(out_gripper.get(positions_key) or {})
-            unknown = sorted(set(offsets) - declared_keys)
-            if unknown:
-                _fail(EXIT_MODEL,
-                      "重算的重力前馈 %s 含该段位置指令里不存在的通道 %s（前馈键必须与位置指令"
-                      "一一对应：前缀漏掉会让前馈静默失效，表现为「精度莫名不达标」）"
-                      % (phase, unknown))
-            gravity_feedforward[phase] = {str(name): float(value)
-                                          for name, value in offsets.items()}
+            gravity_feedforward[str(phase)] = {str(name): float(value)
+                                               for name, value in offsets.items()}
         out_gripper["gravity_feedforward"] = gravity_feedforward
         feedforward_source = "resolved_for_joint_model"
+    # ---- 前馈通道 ↔ 位置通道对账（**继承与重解两条路径都必须过**）----
+    # 为什么必须（2026-09-30 §11.26）：继承来的前馈用**臂侧通道名**（UR5e 是执行器名
+    # `shoulder_pan`），而重解后的位置指令用**关节名**（`ur5e_shoulder_pan_joint`）——两者
+    # 是同一条控制通道 ⇒ 后端的"前馈通道 ⊆ 位置通道"声明检查把**整个装配**挡死（退出码 4）。
+    # 修正一律在**构建期**完成（按模型自己的 actuator_trnid 判同一通道），**不放宽后端那条检查**：
+    # 它正是唯一挡住该缺陷的东西，放宽它等于放走"前馈静默失效"（症状是"精度莫名不达标"）。
+    out_gripper["gravity_feedforward"], feedforward_alignment = _align_feedforward_channels(
+        model, out_gripper, feedforward_source)
     # FK 自检（构建期，防"静默继承场景专属参考姿态"）----
     # 为什么必须（2026-09-24 实测，docs/debug/2026-09-24-joint-model-dog-arm.md §11.3/§11.4）：
     # 上一轮继承来的 `*_positions` 是**在臂自己基座系里求解的关节解**（MJCF 的 qpos 是局部量）；
@@ -2247,6 +2344,7 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
                 "place_reference": place_record,
                 "feedforward_source": feedforward_source,
                 "feedforward_evidence": feedforward_evidence,
+                "feedforward_alignment": feedforward_alignment,
                 "replaced_phases": replaced,
                 "note": ("参考姿态与 pad_offset 均由**联合模型 + 本 placement** 重解"
                          "（求解器按 `robots[].reference_solver` 声明调用）；"

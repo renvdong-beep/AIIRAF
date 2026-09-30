@@ -906,9 +906,17 @@ class MujocoBackend:
             )
         )
         if distance > target["pose_tolerance_m"]:
+            # 分量必须打全（2026-09-30）：只报欧氏距离时无法分辨"请求位姿过时（载荷被搬动过）"
+            # 与"两侧坐标口径不同（局部/世界、abs/rel）"——这两类修法完全不同。
+            delta = [actual[index] - float(requested[key])
+                     for index, key in enumerate(("x", "y", "z"))]
             raise ValueError(
                 "抓取位姿与目标位置不一致: "
-                f"distance={distance:.6f}m tolerance={target['pose_tolerance_m']:.6f}m"
+                f"distance={distance:.6f}m tolerance={target['pose_tolerance_m']:.6f}m "
+                f"target_body={target['body']} "
+                f"requested_m={[round(float(requested[key]), 9) for key in ('x', 'y', 'z')]} "
+                f"actual_m={[round(value, 9) for value in actual]} "
+                f"delta_m={[round(value, 9) for value in delta]}"
             )
 
         # 未知姿态支持：由目标姿态推出接近方向（= 顶面法向）。

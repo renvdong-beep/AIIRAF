@@ -3689,6 +3689,96 @@ spread = 0.0（min = median = max）
    `payload_in_tray`、`retreat_delta_m`；④ 能力声明（profile / 场景 / 适配器 / provider 四处同步）
    + 成功与拒绝两条路径的回归测试；⑤ `nominal --world joint` 判 s04，再补 s05 载荷确认。
 
+### §11.26 第二台臂装配被挡死的真因：**前馈通道与位置指令不同口径**（2026-09-30，I3 第一步）
+
+**症状（精确到一行）**：`scenario.py run --world joint` ⇒ `RUN_EXIT=4`、s06 未执行，
+`后端装配失败（mujoco_arm / config/machines/ur5e_joint.yaml）`：
+
+```
+gravity_feedforward.home 含未在该段位置指令中声明的通道:
+['ur5e_elbow','ur5e_shoulder_lift','ur5e_shoulder_pan','ur5e_wrist_1','ur5e_wrist_2','ur5e_wrist_3']
+```
+
+**真因（用构建产物对账，不猜）**——联合报告 `manipulation.per_robot[ur5e].gripper` 里两套键：
+
+| 段 | 键 | 口径 |
+|---|---|---|
+| `home_positions` / `approach_positions` / `grasp_positions` / `lift_positions` | `ur5e_shoulder_pan_joint` … | **关节名**（重解后按联合模型关节写回） |
+| `gravity_feedforward.*` | `ur5e_shoulder_pan` … | **执行器名**（`feedforward_entry: null` ⇒ 从臂侧报告继承，臂侧用的是执行器名） |
+
+UR5e 的**同一条控制通道有两个名字**（关节 `shoulder_pan_joint` / 执行器 `shoulder_pan`）；
+Piper 没暴露该问题是因为它的关节名与通道名同名（`joint1…8` 改名后两侧一致）。
+后端的声明检查（`mujoco_backend.py:_parse_manipulation_config`：`set(前馈) ⊆ set(位置)`）
+把整个装配挡死。**该检查是正确的**（它正是本轮唯一挡住缺陷的东西），故**不放宽它**。
+
+**修法（构建期完成，不改后端）**：`scene_builder` 新增
+`_channel_joint_id()` / `_align_feedforward_channels()`——把前馈通道名统一到**该段位置指令的通道名**，
+判据一律取模型自己的执行器传动表 `actuator_trnid`（**不猜名字后缀**：关节名 ⇒ 自身关节 id；
+执行器名且 `trntype == mjTRN_JOINT` ⇒ `trnid[0]`）。对不上、缺位置指令、未知段名、多通道映射到同一
+通道一律**构建期显式失败**（`EXIT_MODEL`）；证据写进
+`reference_pose_resolution.feedforward_alignment`（逐段 `renamed` 对）。
+
+**实测证据**（`scripts/build_scene.py --robot unitree_go2 --attach piper --attach ur5e`）：
+
+- 构建 `BUILD_EXIT=0`；`scene_check --require-model` 退出码 `0`；
+- `per_robot[ur5e].reference_pose_resolution.feedforward_alignment`：
+  `source=inherited_from_arm_report`、四段各 `channels=6`，
+  `renamed=[{from: ur5e_shoulder_pan, to: ur5e_shoulder_pan_joint}, …]`（6 条 × 4 段）；
+  对齐后 `set(ff.home) ⊆ set(home_positions)` = `True`；
+- `per_robot[piper]` 同字段 `renamed=[]`（名字本就一致 ⇒ **逐位无改动**，由单测钉住）；
+- `tests/unit/test_feedforward_channel_alignment.py`（8 项，含"执行器名改写""同名不动""对不上即失败"
+  "未知段名""缺位置指令"）全绿。
+
+**修后 s06 真的执行了**（装配通过）⇒ 卡点下移到下一层，见 §11.27。
+
+### §11.27 I3 的新阻塞：UR5e 的**抓取目标位姿是构建期标称值，载荷实际被搬动过**（2026-09-30）
+
+`nominal --world joint`（`RUN_EXIT=5`：7 步全绿 + s06 FAILED）：
+
+```
+抓取位姿与目标位置不一致: distance=0.011073m tolerance=0.005000m
+target_body=box_01
+requested_m=[0.45, 0.45, 0.375372]
+actual_m   =[0.4465018, 0.446055507, 0.385109022]
+delta_m    =[-0.0034982, -0.003944493, +0.009737022]
+```
+
+（前一次运行同口径 `distance=0.009506m` ⇒ **逐轮不同**，说明是运行期状态差异而不是固定的口径错。）
+
+**量化分解**（把分量打全才分得清"请求位姿过时"与"坐标口径不同"——故顺手把该错误信息补全为
+`requested_m`/`actual_m`/`delta_m` 三分量）：
+
+- 横向偏差 `5.278 mm`（`sqrt(0.0034982² + 0.003944493²)`）—— 来自 s04 的放置落点
+  （本轮 `place_offset_from_tray_center_m=0.025400155`、`place_settled_gap_m=-0.00066621`）；
+- **竖向 `+9.737 mm`** ⇒ 载荷底面 = `0.385109022 − 0.025 = 0.360109022`，即**运行期托盘实际承载面
+  比构建期标称值 `0.350372` 高约 `9.74 mm`**（狗在 B 站停靠后的背部姿态 ≠ 构建期标称姿态）。
+
+**两个后果（第二个才是真难点）**：
+
+1. `pick_object` 前置一致性检查（`actual = xpos[box_01]` vs 请求位姿）在 5 mm 容差下必然不过；
+2. **参考关节解 `grasp_positions` 也是构建期按标称位姿解出的** ⇒ 即使把请求位姿改成真值，
+   臂仍会走到"标称位置"，指腹中点相对**实际**载荷中心偏 ~10 mm ⇒ 门禁
+   （`_grasp_alignment_evidence`，容差同为 `pose_tolerance_m=0.005`）依旧不过。
+
+**可选方案（决策点，待定案后落地）**：
+
+- **A（推荐）**：给 `pick_object` 增加**声明的目标位姿来源** `grasp_pose.pose_source: live_target_body`
+  （契约先行：先改 `pick_object.input.json`），语义 = "位置/朝向取**目标体当前位姿**（仿真真值 FK；
+  真机应由感知 Provider 提供）"，并在证据里写 `pose_source` 与解析出的位姿；同时让后端在
+  **运行期按该位姿重解参考关节解**（复用已声明的参考姿态求解器契约，与构建期同一条路径）。
+  代价：IDL + 后端 + 证据 + 回归测试；收益：不伪造、可复跑到真机（换 Provider 即可）。
+- **B**：把 `grasp_pose_from: joint_scene_target` 的**竖向**改为按运行期实测承载面（`tray_top`）
+  动态推导，横向仍取构建期；只在"载体姿态变化"这一维度上真值化，工程量小；
+  但仍需解决参考关节解的重解（否则第 2 条依旧失败）。
+- **C**：先把 s06 的判据放宽（例如容差 0.02）——**不做**：这是把"够不到载具上的载荷"
+  包成通过，违反铁律 1.5/1.6；且第 2 条并不会因此消失。
+
+**下一轮顺序（建议）**：① 定案 A/B 之一并写进 `scenario.yaml` 注释与
+`.hermes/plans/2026-09-29-dual-arm-shuttle-demo.md`；② 先做"运行期重解参考关节解"这一半
+（它是能否真正抓起的前提），再用 A/B 的真值来源喂它；③ 复跑 `nominal --world joint`，
+判 `s06` 三项（`pose_tolerance_m` / `min_lift_delta_m` / `require_bilateral_contact`）；
+④ 通过后接"放下（B 站旁台面）"与全链 ≥4 轮连跑。
+
 ## 12. 下一步
 
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
