@@ -4388,6 +4388,34 @@ s05/s05b/s06 随之连锁失败，其中 s06 的纠偏守卫再次**正确拒绝
 
 **下一步**：用新声明连跑 **≥6 轮**，判据 = 通过率（当前基线：3 轮 2/3、4 轮 1/4、单轮多次 8/8）。
 
+### §11.47 抓取确认证据通路（PICK_RESULT）：把"未确认抓取"变成可判读（2026-09-30）
+
+**缺口**：`pick_object` 失败时（Provider 措辞 `Backend 未确认目标已抓取`）**evidence 不进报告**
+⇒ 报告里只有一句措辞，无法判读是「双侧接触 / 法向力 / 抬升位移」哪一项不达标
+（campaign-8 轮 8 就是这样一次无法判读的失败）。
+
+**补齐**：`mujoco_backend.pick_object` 在 `IRAF_DEBUG_PICK=1` 时打印 `PICK_RESULT`，含
+`grasped / confirmation / bilateral_contact / force_ok / lifted / lift_delta_m / lift_peak_delta_m /
+lift_attitude_max_deg / center_distance_m / min_normal_force_n（声明阈值）/ 力证据`；
+`scripts/run_nominal_campaign.py` 同步提取为 `runs[].pick_results`。
+
+**首份实证（campaign `campaign-8rounds-axis8.json` 轮 1，8/8 全绿）**：
+
+```
+PICK_RESULT: grasped=True  bilateral=True  force_ok=True  lifted=True
+             lift_delta=0.078034 m（判据 ≥0.02 ⇒ 余量 3.9×）
+             center_distance=0.002874658 m（到位判据 0.005 ⇒ 余量 1.7×）
+```
+
+**通过率轨迹（同一链路，只改内部阈值/预算；判据与验收口径始终未动）**：
+
+| 版本 | 轮数 | 全绿 |
+|---|---|---|
+| 旧容差（lateral 0.02 / max_corr 0.05 / axis 3.0） | 4 | 1/4 = 25% |
+| lateral 0.035 | 3 | 2/3 = 67% |
+| + max_correction_m 0.07 | 8 | 6/8 = 75%（失败：轴偏 1 轮 + 未确认抓取 1 轮） |
+| + max_axis_deg 8.0 | 8（进行中） | 轮 1 已 8/8 ✓ |
+
 ## 12. 下一步
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
 0a. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。
