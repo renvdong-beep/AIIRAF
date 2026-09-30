@@ -17,7 +17,8 @@ from iraf_adapters.mujoco.payload_facts import (
 )
 
 DECLARATION = {"mode": "resolved", "residual_tolerance_m": 0.002, "max_correction_m": 0.05,
-               "ik_iterations": 400, "ik_step": 0.5, "ik_tolerance_m": 0.0005, "max_axis_deg": 3.0}
+               "ik_iterations": 400, "ik_step": 0.5, "ik_tolerance_m": 0.0005, "max_axis_deg": 3.0,
+               "align_max_attempts": 3}
 
 
 class ResolveGraspPoseCorrectionTests(unittest.TestCase):
@@ -113,7 +114,8 @@ class GraspPoseCorrectionParseTests(unittest.TestCase):
 
     def test_resolved_mode_requires_ik_keys(self):
         partial = {k: v for k, v in DECLARATION.items()
-                   if k not in ("ik_iterations", "ik_step", "ik_tolerance_m", "max_axis_deg")}
+                   if k not in ("ik_iterations", "ik_step", "ik_tolerance_m", "max_axis_deg",
+                                "align_max_attempts")}
         with self.assertRaisesRegex(ValueError, "ik_iterations"):
             MujocoBackend._parse_manipulation_config(
                 {"gripper": _gripper(grasp_pose_correction=partial)})
