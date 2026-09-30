@@ -42,6 +42,17 @@ GRAVITY_FEEDFORWARD_LIMIT_RAD = 0.1
 #:     1.1073e-02 m（docs/debug/2026-09-24-joint-model-dog-arm.md §11.27）。
 PICK_POSE_SOURCES = ("world_absolute", "live_target_body")
 
+#: 抬升段焊缝锚点的**驱动口径**（`grasp.lift_anchor_mode`，2026-09-30 §11.54）：
+#:   · `finger_mid_identity`（缺省 = 旧口径）= 锚点只在抬升**段末**摆一次，位置取指腹中点、
+#:     姿态取单位四元数、**不带激活瞬间的载荷偏移**。它是 Piper 上"恰好成立"的口径：
+#:     Piper 的锚点 MJCF 初值就在它自己的抓取点上，且载荷中心离指腹中点仅 ~2.5 mm。
+#:   · `rigid_follow` = 激活瞬间把锚点摆到**载荷实测位姿**（消掉陈旧锚点初值差），并按
+#:     「指腹中点 + 激活瞬间偏移」逐拍跟随、姿态按「腕部 ⊗ 激活瞬间相对姿态」跟随
+#:     （与放置段 §11.23(41) 同一实现口径）。
+#: 为什么必须声明化（实测）：UR5e+2F-85 走旧口径时，s06 卸载步"达标"而载荷实测被拖离夹口
+#: 10.1/14.0 cm、零接触（载荷挂在焊缝上、不在夹爪里）⇒ 下一步的放置前置判据正确地拒绝。
+LIFT_ANCHOR_MODES = ("finger_mid_identity", "rigid_follow")
+
 GRIPPER_GEOMETRY_FIELDS = (
     "wrist_body",
     "left_finger_body",
@@ -1137,14 +1148,90 @@ class MujocoBackend:
         # —— 它只在**预抬段**激活、`REGRASP_CLOSE` 之后立即撤销，最终搬运仍由摩擦承担。
         if bool(gripper.get("require_friction_lift")):
             equality_name = None
+        # ---- 焊缝锚点的**驱动口径**（2026-09-30 §11.54）----
+        # 实测根因：s06 卸载步曾"达标"（`lifted=true`）而**载荷被拖离夹口 10.1/14.0 cm、零接触**。
+        # 机制不是夹爪张开，而是**锚点协议**：`grasp_anchor` 是共享 mocap 体，激活焊缝时它停在
+        # **上一次写入者**的陈旧位姿上（MJCF 初值就是 Piper 的 A 站抓取点 (0.28,−0.28,0.025)），
+        # 而抬升全段**无人驱动**锚点（旧口径只在段末用 `_advance_with_grasp_anchor(0)` 摆一次，
+        # 且是"指腹中点 + 单位姿态 + **无偏移**"）⇒ 载荷被硬拽到指腹中点、姿态被拧成单位四元数。
+        # 放置段早已把这件事做对（§11.23(41) 的 A/B/D 对照：只摆指腹中点首帧 48.30→115.59 N；
+        # 「指腹中点 + 激活瞬间偏移」稳态 13.29/13.27 N 且载荷随指腹刚性同步），本段却没有。
+        # 口径由**声明**给出（`grasp.lift_anchor_mode`），缺省 = 旧口径（Piper 逐位不变）。
+        lift_anchor_mode = str(gripper.get("lift_anchor_mode") or "finger_mid_identity")
+        if lift_anchor_mode not in LIFT_ANCHOR_MODES:
+            raise ValueError(
+                "gripper.lift_anchor_mode 只允许 %s（实际 %r）：不认识的口径必须显式失败，"
+                "不能静默按旧口径跑" % (list(LIFT_ANCHOR_MODES), lift_anchor_mode))
+        lift_anchor_evidence = {
+            "mode": lift_anchor_mode,
+            "driven_through_lift": False,
+            "activation_offset_m": None,
+            "activation_rel_quat_wxyz": None,
+            "constraint_active_at_end": None,
+            "bilateral_contact_at_end": None,
+            "payload_minus_pad_mid_at_end_m": None,
+            "held_at_end": None,
+        }
+        # 抬升段的 anchor 钩子（`rigid_follow` 才非空；`finger_mid_identity` 保持旧行为）
+        lift_anchor_kwargs = {}
         if force_ok and equality_name:
             equality_id = mujoco.mj_name2id(
                 self.model, mujoco.mjtObj.mjOBJ_EQUALITY, equality_name
             )
             if equality_id < 0:
                 raise ValueError("抓取约束不存在: " + str(equality_name))
-            self.data.eq_active[equality_id] = 1
-            constraint_activated = True
+            if lift_anchor_mode == "rigid_follow":
+                anchor_name = gripper.get("lift_anchor_body")
+                if not anchor_name:
+                    raise ValueError(
+                        "gripper.lift_anchor_mode=rigid_follow 需要 gripper.lift_anchor_body"
+                        "（锚点体名）：没有锚点就无法把载荷刚性地挂在夹口上")
+                anchor_body = self._body_id(str(anchor_name))
+                anchor_mocap = int(self.model.body_mocapid[anchor_body])
+                if anchor_mocap < 0:
+                    raise ValueError("抬升焊缝的锚点必须是 mocap body: " + str(anchor_name))
+                with self._data_lock:
+                    left_point = np.asarray(self.data.xpos[left_body], dtype=float)
+                    right_point = np.asarray(self.data.xpos[right_body], dtype=float)
+                    finger_mid = (left_point + right_point) / 2.0
+                    payload_now = np.asarray(self.data.xpos[target_body], dtype=float)
+                    activation_offset = payload_now - finger_mid
+                    # ⚠ **先摆锚点、再激活**（同放置段 §11.23(41)）：直接激活等于让约束第一步
+                    # 消掉"陈旧锚点 → 载荷"的初值差 ⇒ 硬拽出夹口。
+                    self.data.mocap_pos[anchor_mocap] = payload_now.copy()
+                    activation_rel_quat = None
+                    # 约束类型取自**模型事实**（`eq_type`），不猜名字后缀：weld 约束 6 个自由度，
+                    # 只跟随位置会让焊缝姿态与工具转动互相拧、持续泵入能量（§11.23(41) 实测）。
+                    if int(self.model.eq_type[equality_id]) == int(mujoco.mjtEq.mjEQ_WELD):
+                        payload_quat = np.asarray(self.data.xquat[target_body], dtype=float)
+                        wrist_quat = np.asarray(
+                            self.data.xquat[self._body_id(str(gripper["wrist_body"]))],
+                            dtype=float)
+                        activation_rel_quat = _quat_mul(_quat_conj(wrist_quat), payload_quat)
+                        self.data.mocap_quat[anchor_mocap] = payload_quat.copy()
+                    else:
+                        self.data.mocap_quat[anchor_mocap] = (1.0, 0.0, 0.0, 0.0)
+                    self.data.eq_active[equality_id] = 1
+                lift_anchor_kwargs = {
+                    "anchor_body": str(anchor_name),
+                    "anchor_follow": (str(gripper["left_finger_body"]),
+                                      str(gripper["right_finger_body"])),
+                    "anchor_offset": activation_offset,
+                }
+                if activation_rel_quat is not None:
+                    lift_anchor_kwargs["anchor_wrist"] = str(gripper["wrist_body"])
+                    lift_anchor_kwargs["anchor_rel_quat"] = activation_rel_quat
+                lift_anchor_evidence.update({
+                    "driven_through_lift": True,
+                    "activation_offset_m": [round(float(v), 9) for v in activation_offset],
+                    "activation_rel_quat_wxyz": (None if activation_rel_quat is None
+                                                 else [round(float(v), 9)
+                                                       for v in activation_rel_quat]),
+                })
+                constraint_activated = True
+            else:
+                self.data.eq_active[equality_id] = 1
+                constraint_activated = True
         with self._data_lock:
             before_lift_z = float(self.data.xpos[target_body][2])
         # （判据口径的覆盖在抬升段开始处执行：此处 `regrasp_evidence` 尚未定义）
@@ -1477,31 +1564,79 @@ class MujocoBackend:
                         if jid >= 0 and act >= 0 and str(name) in lift_positions:
                             lift_positions[str(name)] = float(self.data.ctrl[act])
             self._log_pick_phase("LIFT", target_body)
+            if lift_anchor_kwargs and _rg_anchor_kwargs:
+                raise ValueError(
+                    "regrasp 与 lift_anchor_mode=rigid_follow 同时声明了抬升段的锚点驱动"
+                    "（两套 offset/姿态口径会互相覆盖）⇒ 显式失败，请只保留一套")
+            lift_kwargs = dict(_rg_anchor_kwargs)
+            lift_kwargs.update(lift_anchor_kwargs)
             if lift_path_mode == "approach_then_lift" and approach_positions:
                 half = max(1, lift_ms // 2)
                 self._move_trajectory(approach_positions, half,
                                       self._pick_ctrl_offsets("approach"),
-                                      sampler=_lift_sampler)
+                                      sampler=_lift_sampler, **lift_kwargs)
                 self._move_trajectory(
                     lift_positions, max(1, lift_ms - half),
-                    self._pick_ctrl_offsets("lift"), sampler=_lift_sampler)
+                    self._pick_ctrl_offsets("lift"), sampler=_lift_sampler, **lift_kwargs)
             else:
                 # LIFT 段同样驱动 anchor（新口径下约束保持到抬升结束 ⇒ 锚点必须跟随，否则拔河）
                 self._move_trajectory(
                     lift_positions, lift_ms, self._pick_ctrl_offsets("lift"),
-                    sampler=_lift_sampler, **_rg_anchor_kwargs)
+                    sampler=_lift_sampler, **lift_kwargs)
             if constraint_activated and gripper.get("lift_anchor_body"):
-                self._advance_with_grasp_anchor(0, target_body, left_body, right_body, gripper["lift_anchor_body"])
+                # 段末同步必须与**同一口径**（2026-09-30 §11.54）：旧口径这里是
+                # 「指腹中点 + 单位姿态 + 无偏移」⇒ 载荷被硬拽到指腹中点、姿态被拧平
+                # （实测该步把载荷从夹口里拽出 10.1/14.0 cm）。
+                self._advance_with_grasp_anchor(
+                    0, target_body, left_body, right_body, gripper["lift_anchor_body"],
+                    anchor_offset=lift_anchor_kwargs.get("anchor_offset"),
+                    anchor_wrist=lift_anchor_kwargs.get("anchor_wrist"),
+                    anchor_rel_quat=lift_anchor_kwargs.get("anchor_rel_quat"))
             else:
                 self._advance_for(0, contact_bodies=(target_body, left_body, right_body))
             with self._data_lock:
                 after_lift_z = float(self.data.xpos[target_body][2])
+            # ---- 抬升结束时**重新实测**"载荷还在不在夹口里"（2026-09-30 §11.54）----
+            # 判据里的 `bilateral` 是**抬升之前**（合爪段）量的，不代表结束时刻；旧口径曾因此让
+            # "载荷被拖离夹口 10.1/14.0 cm、零接触"的那次运行拿到 `lifted=true` —— 而下一步
+            # （放到台面）的前置判据"双侧指腹必须同时接触"立刻正确地拒绝了它。
+            # 声明 `grasp.require_contact_at_lift_end`（缺省 false = 旧口径逐位不变）。
+            require_contact_at_lift_end = bool(gripper.get("require_contact_at_lift_end"))
+            bilateral_at_end = self._has_bilateral_contact(target_body, left_body, right_body)
+            with self._data_lock:
+                _pad_end = [np.asarray(self.data.geom_xpos[g], dtype=float)
+                            for g in pad_geoms if int(g) >= 0]
+                payload_minus_pad_mid_at_end = (
+                    np.asarray(self.data.xpos[target_body], dtype=float)
+                    - np.mean(_pad_end, axis=0) if _pad_end else None)
+                constraint_active_at_end = None
+                if equality_name:
+                    # 按**名字**再解析一次：`equality_id` 只在"力达标"分支里赋值，直接引用会在
+                    # force_ok=False 时 NameError（.get 的坑：一次运行可能没走到那一支）
+                    _eq_end = int(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_EQUALITY,
+                                                    str(equality_name)))
+                    if _eq_end >= 0:
+                        constraint_active_at_end = bool(self.data.eq_active[_eq_end])
+            lift_anchor_evidence.update({
+                "constraint_active_at_end": constraint_active_at_end,
+                "bilateral_contact_at_end": bool(bilateral_at_end),
+                "payload_minus_pad_mid_at_end_m": (
+                    None if payload_minus_pad_mid_at_end is None
+                    else [round(float(v), 9) for v in payload_minus_pad_mid_at_end]),
+                "held_at_end": bool(bilateral_at_end),
+            })
+            if require_contact_at_lift_end and not bilateral_at_end:
+                raise ValueError(
+                    "抬升结束时不满足夹持（双侧指腹未同时接触）⇒ 拒绝返回成功（不伪造成功）："
+                    "载荷中心 − 指腹中点 = %s m，焊缝 active=%s，锚点口径=%s"
+                    % (lift_anchor_evidence["payload_minus_pad_mid_at_end_m"],
+                       constraint_active_at_end, lift_anchor_mode))
             lifted = (
                 after_lift_z - before_lift_z
                 >= gripper["min_lift_delta_m"]
                 and (
-                    constraint_activated
-                    or self._has_bilateral_contact(target_body, left_body, right_body)
+                    (constraint_activated and not require_contact_at_lift_end)
+                    or bilateral_at_end
                 )
             )
         self.stopped = False
@@ -1559,6 +1694,9 @@ class MujocoBackend:
                 "lift_attitude_max_deg": (None if lift_attitude["max_deg"] is None
                                           else round(lift_attitude["max_deg"], 6)),
                 "regrasp": regrasp_evidence,
+                # 抬升段焊缝锚点的驱动口径与**结束时**的夹持存活性（2026-09-30 §11.54）：
+                # 契约见 `skills/pick_object/pick_object.output.json` 的 `evidence.lift_anchor`。
+                "lift_anchor": lift_anchor_evidence,
                 # ⚠ LIFT 段逐样本追踪**不进 evidence**：`pick_object.output.json` 是
                 # `additionalProperties: false` 的契约（契约先行）⇒ 新字段必须先改契约才允许。
                 # 该追踪是**调试仪器**：只在 `IRAF_DEBUG_PICK=1` 时逐行打印（stdout 即产物）。
@@ -1584,6 +1722,11 @@ class MujocoBackend:
                 "min_normal_force_n_declared": gripper.get("min_normal_force_n"),
                 "forces": {key: value for key, value in evidence_payload.items()
                            if "force" in str(key) and isinstance(value, (int, float))},
+                # 步骤交接前的**夹持存活性**（2026-09-30 §11.54）：把载荷/指腹位置、间距、
+                # 夹爪 ctrl+qpos 在**返回那一刻**量出来 ⇒ 与下一步的拒绝理由对账。
+                "handoff_state": self._grasp_liveness_diagnostics(
+                    target_body, left_body, right_body),
+                "lift_anchor": lift_anchor_evidence,
             }, ensure_ascii=False), flush=True)
         return result
 
@@ -1712,8 +1855,17 @@ class MujocoBackend:
         right_finger = self._body_id(gripper["right_finger_body"])
         if not (self._any_contact_between(payload_body, left_finger)
                 and self._any_contact_between(payload_body, right_finger)):
+            # 取证（2026-09-30 §11.54）：**只报布尔量无法判读**是哪一种机制 —— 载荷被放掉
+            # / 臂被带走 / 载荷被顶开 ⇒ 把两侧事实量（位置、间距、夹爪 ctrl+qpos、约束状态、
+            # 载荷当前接触体）一并给出来，失败原因自解释。
+            liveness = self._grasp_liveness_diagnostics(payload_body, left_finger, right_finger)
+            if os.environ.get("IRAF_DEBUG_PLACE") == "1":
+                print("PLACE_GATE " + json.dumps({"place_target_id": str(place_target_id),
+                                                  "payload_id": str(payload_id),
+                                                  **liveness}, ensure_ascii=False), flush=True)
             raise ValueError(
-                "当前未夹持载荷 %s（双侧指腹未同时接触）⇒ 拒绝放置（不伪造成功）" % payload_id)
+                "当前未夹持载荷 %s（双侧指腹未同时接触）⇒ 拒绝放置（不伪造成功）；"
+                "交接状态实测：%s" % (payload_id, json.dumps(liveness, ensure_ascii=False)))
 
         from iraf_core.kinematics import lowest_mesh_point_z, solve_position_ik
         from iraf_adapters.mujoco.payload_facts import check_carry_cadence
@@ -3400,11 +3552,131 @@ class MujocoBackend:
         由 loopback 三基准回归证明）；全植物急停属于**场景层**的职责，不在单控制器后端里做。
         """
         with self._data_lock:
+            # ⚠ **夹爪通道不归零**（2026-09-30 §11.53/§11.54）：`ctrl = 0` 的语义由**夹爪约定**决定 ——
+            # Piper 的 open=±0.035 / closed=0.0 ⇒ 0 是"闭合"（归零无害，所以这个坑一直没暴露）；
+            # UR5e+2F-85 的 open=0.0 / closed=163.0 ⇒ **0 是"完全张开"** ⇒ 步骤收尾归零 = **释放载荷**
+            # （实测：s06 卸载达标后，s07 起步即报「未夹持载荷（双侧指腹未同时接触）」）。
+            # 安全停机**不得由"0 的巧合"决定载荷去留** ⇒ 夹爪保持**当前值**；
+            # "停机是否释放载荷"属安全语义，须另行**声明**（工作项，见 §11.53）。
+            gripper_channels = self._declared_gripper_channels()
             for name in self._owned_actuators:
                 index = self._actuators.get(name)
-                if index is not None:
-                    self.data.ctrl[index] = 0.0
+                if index is None:
+                    continue
+                if name in gripper_channels:
+                    continue
+                self.data.ctrl[index] = 0.0
             self.stopped = True
+
+    def _declared_gripper_channels(self):
+        """返回**声明的夹爪通道**在模型里的执行器名集合（`open_positions`/`closed_positions` 的键）。
+
+        口径与构建期一致：键可以是**关节名**（Piper）或**执行器名**（2F-85 腱驱动）⇒ 两种都解析。
+        用途：安全停机时**不归零**这些通道（§11.53：`ctrl=0` 对 2F-85 是"完全张开" = 释放载荷）。
+        """
+        gripper = (self._manipulation or {}).get("gripper") or {}
+        declared = set()
+        for key in ("open_positions", "closed_positions"):
+            section = gripper.get(key)
+            if isinstance(section, dict):
+                declared |= {str(name) for name in section}
+        channels = set()
+        for name in declared:
+            model_name = self._model_name(name)
+            if int(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, model_name)) >= 0:
+                channels.add(model_name)
+                continue
+            joint_id = int(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, model_name))
+            if joint_id < 0:
+                continue
+            for index in range(int(self.model.nu)):
+                if int(self.model.actuator_trnid[index, 0]) == joint_id:
+                    actuator_name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR,
+                                                      index)
+                    if actuator_name:
+                        channels.add(str(actuator_name))
+                    break
+        return channels
+
+    def _grasp_liveness_diagnostics(self, payload_body, left_body, right_body):
+        """步骤交界处的**夹持存活性**取证（2026-09-30 §11.54）。
+
+        为什么需要：s06 卸载达标（`bilateral_contact=True`、抬升 41.8 mm）之后，s07 起步即报
+        「未夹持载荷」—— 只报一句布尔量**无法区分**三种机制：
+          ① 载荷被放掉（夹爪张开/焊缝撤销）② 臂被带走（指腹离开载荷）③ 载荷被别的东西顶开。
+        这里把两侧的**事实量**都量出来：载荷/指腹位置、载荷↔指腹 geom 最小间距（负=侵入）、
+        夹爪通道的 ctrl 与 qpos、抬升约束名与激活状态、载荷当前与哪些体接触。
+        """
+        with self._data_lock:
+            mujoco.mj_forward(self.model, self.data)
+
+            def _geoms_of(body_id):
+                return [g for g in range(int(self.model.ngeom))
+                        if int(self.model.geom_bodyid[g]) == int(body_id)]
+
+            def _min_dist(geoms_a, geoms_b):
+                best = None
+                for ga in geoms_a:
+                    for gb in geoms_b:
+                        d = float(mujoco.mj_geomDistance(self.model, self.data,
+                                                         int(ga), int(gb), 1.0, None))
+                        if best is None or d < best:
+                            best = d
+                return best
+
+            payload_geoms = _geoms_of(payload_body)
+            left_geoms = _geoms_of(left_body)
+            right_geoms = _geoms_of(right_body)
+
+            def _body_name(body_id):
+                name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_BODY, int(body_id))
+                return str(name) if name else str(int(body_id))
+
+            contact_partners = []
+            for index in range(int(self.data.ncon)):
+                contact = self.data.contact[index]
+                bodies = {int(self.model.geom_bodyid[int(contact.geom1)]),
+                          int(self.model.geom_bodyid[int(contact.geom2)])}
+                if int(payload_body) not in bodies:
+                    continue
+                other = next(item for item in bodies if item != int(payload_body))
+                contact_partners.append(_body_name(other))
+
+            gripper_ctrl = {}
+            gripper_qpos = {}
+            for index in range(int(self.model.nu)):
+                name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, index)
+                if not name or str(name) not in self._declared_gripper_channels():
+                    continue
+                gripper_ctrl[str(name)] = round(float(self.data.ctrl[index]), 6)
+                joint_id = int(self.model.actuator_trnid[index, 0])
+                address = int(self.model.jnt_qposadr[joint_id])
+                gripper_qpos[str(name)] = round(float(self.data.qpos[address]), 6)
+
+            gripper_decl = (self._manipulation or {}).get("gripper") or {}
+            constraint_name = gripper_decl.get("lift_constraint")
+            constraint_active = None
+            if constraint_name:
+                eq_id = int(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_EQUALITY,
+                                              str(constraint_name)))
+                if eq_id >= 0:
+                    constraint_active = bool(self.data.eq_active[eq_id])
+
+            diagnostics = {
+                "payload_xyz_m": [round(float(v), 9) for v in self.data.xpos[payload_body]],
+                "left_finger_xyz_m": [round(float(v), 9) for v in self.data.xpos[left_body]],
+                "right_finger_xyz_m": [round(float(v), 9) for v in self.data.xpos[right_body]],
+                "payload_left_gap_m": (None if not (payload_geoms and left_geoms)
+                                       else round(_min_dist(payload_geoms, left_geoms), 9)),
+                "payload_right_gap_m": (None if not (payload_geoms and right_geoms)
+                                        else round(_min_dist(payload_geoms, right_geoms), 9)),
+                "gripper_ctrl": gripper_ctrl,
+                "gripper_qpos": gripper_qpos,
+                "lift_constraint": (str(constraint_name) if constraint_name else None),
+                "lift_constraint_active": constraint_active,
+                "payload_contact_bodies": sorted(contact_partners),
+            }
+        return diagnostics
 
     def _resolve_owned_actuators(self):
         """本后端**拥有**的执行器名集合（控制权作用域）。
@@ -3780,7 +4052,16 @@ class MujocoBackend:
                 "pinned_pose_quat_wxyz": [round(float(v), 9) for v in pose[1]],
                 "pinned_steps": steps}
 
-    def _advance_with_grasp_anchor(self, duration_ms, target_body, left_body, right_body, anchor_name):
+    def _advance_with_grasp_anchor(self, duration_ms, target_body, left_body, right_body,
+                                   anchor_name, *, anchor_offset=None, anchor_wrist=None,
+                                   anchor_rel_quat=None):
+        """推进 `duration_ms`，每步把焊缝锚点摆到「指腹中点（+ 可选激活偏移）」。
+
+        `anchor_offset`/`anchor_wrist`/`anchor_rel_quat`（2026-09-30 §11.54，缺省 None ⇒ 与改动前
+        逐位相同）：`lift_anchor_mode=rigid_follow` 必须按「指腹中点 + 激活瞬间的载荷偏移」和
+        「腕部 ⊗ 激活瞬间相对姿态」驱动锚点 —— 只摆指腹中点会把载荷硬拽出夹口（放置段
+        §11.23(41) 的 A/B/D 对照：首帧 48.30 → 115.59 N，载荷落地）。
+        """
         anchor_body = self._body_id(anchor_name)
         mocap_id = int(self.model.body_mocapid[anchor_body])
         if mocap_id < 0:
@@ -3791,8 +4072,18 @@ class MujocoBackend:
                 self._safe_stop_controls()
                 break
             with self._data_lock:
-                self.data.mocap_pos[mocap_id] = (self.data.xpos[left_body] + self.data.xpos[right_body]) / 2.0
-                self.data.mocap_quat[mocap_id] = (1.0, 0.0, 0.0, 0.0)
+                _point = (np.asarray(self.data.xpos[left_body], dtype=float)
+                          + np.asarray(self.data.xpos[right_body], dtype=float)) / 2.0
+                if anchor_offset is not None:
+                    _point = _point + np.asarray(anchor_offset, dtype=float)
+                self.data.mocap_pos[mocap_id] = _point
+                if anchor_rel_quat is not None and anchor_wrist is not None:
+                    _wrist = np.asarray(self.data.xquat[self._body_id(str(anchor_wrist))],
+                                        dtype=float)
+                    self.data.mocap_quat[mocap_id] = _quat_mul(
+                        _wrist, np.asarray(anchor_rel_quat, dtype=float))
+                else:
+                    self.data.mocap_quat[mocap_id] = (1.0, 0.0, 0.0, 0.0)
             self.step()
 
     def _has_bilateral_contact(self, target_body, left_body, right_body):
@@ -4169,6 +4460,20 @@ class MujocoBackend:
                 if not isinstance(anchor_body, str) or not anchor_body:
                     raise ValueError("lift_anchor_body 必须是非空字符串")
                 gripper["lift_anchor_body"] = anchor_body
+            # 抬升段锚点驱动口径与"结束时必须仍在夹口里"（2026-09-30 §11.54）：
+            # 未声明时保持 None（= 旧口径 / 不检查），声明了就必须是合法取值（fail-closed）。
+            anchor_mode = raw_gripper.get("lift_anchor_mode")
+            if anchor_mode is not None:
+                if anchor_mode not in LIFT_ANCHOR_MODES:
+                    raise ValueError(
+                        "lift_anchor_mode 只允许 %s（实际 %r）"
+                        % (list(LIFT_ANCHOR_MODES), anchor_mode))
+                gripper["lift_anchor_mode"] = anchor_mode
+            require_contact_at_end = raw_gripper.get("require_contact_at_lift_end")
+            if require_contact_at_end is not None:
+                if not isinstance(require_contact_at_end, bool):
+                    raise ValueError("require_contact_at_lift_end 必须是布尔（缺省即不检查）")
+                gripper["require_contact_at_lift_end"] = require_contact_at_end
             # 构型相关的名字必须**原样保留**：本解析器只对已知字段做
             # 类型校验，但下面的字段是"由配置声明替代写死名字"的载体，
             # 不在这里透传就会在运行时被静默丢弃——

@@ -1433,7 +1433,7 @@ SEMANTIC_GRIPPER_KEYS = ("close_hold", "approach_hold", "carry_gripper", "lift_p
                          "regrasp", "carry_constraint", "place_settle_ms", "place_pose_correction",
                          "grasp_pose_correction",
                          "lift_gripper", "lift_constraint", "require_friction_lift",
-                         "lift_anchor_body")
+                         "lift_anchor_body", "lift_anchor_mode", "require_contact_at_lift_end")
 
 #: `robots[].reference_solver` 的必需键（缺键或缺文件即显式失败，不给默认值）：
 REFERENCE_SOLVER_KEYS = ("module", "entry", "baseline")

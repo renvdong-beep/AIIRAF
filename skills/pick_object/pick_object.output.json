@@ -270,14 +270,18 @@
             },
             "live_target_m": {
               "type": "array",
-              "items": {"type": "number"},
+              "items": {
+                "type": "number"
+              },
               "minItems": 3,
               "maxItems": 3,
               "description": "执行时刻实测的目标体位置（世界系，m）"
             },
             "nominal_grasp_point_m": {
               "type": "array",
-              "items": {"type": "number"},
+              "items": {
+                "type": "number"
+              },
               "minItems": 3,
               "maxItems": 3,
               "description": "构建期名义解下的抓取点（世界系，m；= 夹持区中点 − 轴·pad_offset_m）"
@@ -305,6 +309,94 @@
           "minItems": 4,
           "maxItems": 4,
           "description": "后端**实际采用**的目标体姿态（世界系，wxyz）。"
+        },
+        "lift_anchor": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "description": "抬升段**焊缝锚点的驱动口径**留痕（2026-09-30 §11.54）。为什么必须留：s06 卸载步曾\"达标\"（`lifted=true`）而实测**载荷被拖离夹口 10.1/14.0 cm、零接触**——锚点是共享 mocap 体，激活时停在**上一次写入者**的陈旧位姿、且抬升全段无人驱动 ⇒ 载荷挂在焊缝上而非握在夹爪里。`mode=rigid_follow` 表示锚点在激活瞬间摆到载荷实测位姿、并按声明的「指腹中点 + 激活偏移」跟随（与放置段 §11.23(41) 同一口径）；`finger_mid_identity` 是旧口径（指腹中点 + 单位姿态、无偏移）。",
+          "required": [
+            "mode",
+            "driven_through_lift",
+            "activation_offset_m",
+            "activation_rel_quat_wxyz",
+            "constraint_active_at_end",
+            "bilateral_contact_at_end",
+            "payload_minus_pad_mid_at_end_m",
+            "held_at_end"
+          ],
+          "properties": {
+            "mode": {
+              "enum": [
+                "finger_mid_identity",
+                "rigid_follow"
+              ],
+              "description": "声明的驱动口径（场景基线 `grasp.lift_anchor_mode`，缺省旧口径）。"
+            },
+            "driven_through_lift": {
+              "type": "boolean",
+              "description": "锚点在**抬升全段**是否被逐拍驱动（旧口径只在段末摆一次）。"
+            },
+            "activation_offset_m": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "激活瞬间的「载荷中心 − 指腹中点」（世界系，m）；旧口径为 null。"
+            },
+            "activation_rel_quat_wxyz": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "number"
+              },
+              "minItems": 4,
+              "maxItems": 4,
+              "description": "激活瞬间的「腕部⁻¹ ⊗ 载荷」姿态（wxyz）；非 weld 或旧口径为 null。"
+            },
+            "constraint_active_at_end": {
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "description": "抬升结束时焊缝是否仍激活（null = 本次未用焊缝）。"
+            },
+            "bilateral_contact_at_end": {
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "description": "抬升结束时双侧指腹是否同时接触载荷（实测）。"
+            },
+            "payload_minus_pad_mid_at_end_m": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "抬升结束时「载荷中心 − 指腹中点」（世界系，m）。"
+            },
+            "held_at_end": {
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "description": "结束时载荷是否仍在夹口内（= bilateral_contact_at_end；门禁用值）。"
+            }
+          }
         }
       }
     }

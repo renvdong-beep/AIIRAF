@@ -35,6 +35,8 @@ from iraf_adapters.mujoco.payload_facts import (
     GRASP_POSE_CORRECTION_MODES,
     PLACE_POSE_CORRECTION_MODES,
 )
+# 抬升段锚点驱动口径的**唯一事实来源**（后端常量）：生成器只做声明校验与透传，不复制取值集合。
+from iraf_adapters.mujoco.mujoco_backend import LIFT_ANCHOR_MODES
 import yaml
 
 from iraf_adapters.mujoco.scene_lighting import inject_lights
@@ -463,6 +465,21 @@ def build_scene(source, output, target_id=None, half_size=0.030, config=None,
         # 与场景里注入的 body 名**同源**（声明 `grasp.lift_anchor_body`，缺省旧名）。
         gripper["lift_anchor_body"] = str((config.get("grasp") or {}).get("lift_anchor_body")
                                           or (selected_id + "_lift_anchor"))
+        # 抬升段锚点的**驱动口径**与"结束时必须仍在夹口里"（I4-a 2026-09-30 §11.54，第 9 处缺口）：
+        # 后端抬升段读的同样是**报告**里的这两个键；不转发 ⇒ 运行期退回旧口径（把载荷硬拽出夹口）。
+        # 声明即消费：给出即校验取值（乱填必须显式失败），不给则**不写键**（旧口径逐位不变）。
+        _anchor_mode = (config.get("grasp") or {}).get("lift_anchor_mode")
+        if _anchor_mode is not None:
+            if _anchor_mode not in LIFT_ANCHOR_MODES:
+                raise ValueError("grasp.lift_anchor_mode 只允许 %s（实际 %r）"
+                                 % (list(LIFT_ANCHOR_MODES), _anchor_mode))
+            gripper["lift_anchor_mode"] = str(_anchor_mode)
+        _require_contact_at_end = (config.get("grasp") or {}).get("require_contact_at_lift_end")
+        if _require_contact_at_end is not None:
+            if not isinstance(_require_contact_at_end, bool):
+                raise ValueError("grasp.require_contact_at_lift_end 必须是布尔（实际 %r）"
+                                 % (_require_contact_at_end,))
+            gripper["require_contact_at_lift_end"] = bool(_require_contact_at_end)
     # 放置段声明**转发进报告**（I4-a 2026-09-30 §11.52，第 8 处同族缺口）：运行期 `place_object`
     # 读的是**报告**里的 `place_settle_ms` / `lift_gripper` / `place_pose_correction`，
     # 生成器不转发 ⇒ 运行期报「缺少 place_pose_correction 声明（grasp.place_pose_correction）：
