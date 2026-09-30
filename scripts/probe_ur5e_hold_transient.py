@@ -38,6 +38,9 @@ def main():
                         help="保持过程的起始位形：keyframe（共享实现当前口径）/ declared（声明位形）")
     parser.add_argument("--timestep", type=float, default=None,
                         help="覆盖模型步长（s）；用于判死\"逐步数值颤动\"（周期 ≈ 2·dt）")
+    parser.add_argument("--armature", type=float, default=None,
+                        help="给**本臂关节**加转子惯量（kg·m²）；不收敛时的标准数值稳定手段，"
+                             "且不动 kp/kv（厂商标定）")
     parser.add_argument("--output", default="build/diagnostics/ur5e-hold-transient.json")
     args = parser.parse_args()
 
@@ -75,6 +78,11 @@ def main():
         gains[name] = float(model.actuator_gainprm[actuator][0])
         dofs[name] = int(model.jnt_dofadr[joint_id])
         adrs[name] = int(model.jnt_qposadr[joint_id])
+    armature_before = {name: float(model.dof_armature[dofs[name]]) for name in arm_names}
+    if args.armature is not None:
+        # 判死/定值用：转子惯量是显式积分下 PD 伺服失稳的标准对策，且**不动 kp/kv**。
+        for name in arm_names:
+            model.dof_armature[dofs[name]] = float(args.armature)
 
     finger_hold = {}
     for key, value in section.items():
