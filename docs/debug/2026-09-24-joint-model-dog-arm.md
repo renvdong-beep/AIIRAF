@@ -4493,6 +4493,35 @@ ur5e 基线补 place 侧契约（place_entry / carry_gripper / place_pose_correc
 **下一轮的前置**：把该放置求解器的**机型无关部分抽到 `iraf_core`**（四段几何/夹口高度/触地间隙/判据），
 **资产来源由各基线声明**；抽取完成后再开 `place_entry` 并新增 `s07_place_at_b_table`。
 
+### §11.53 s06 达标但 s07 起步"未夹持载荷"：**步骤交界处把 ctrl 归零** + 两种夹爪约定（2026-09-30）
+
+**实测**（9 步链，RUN_EXIT=5）：
+- `s06_unload_at_b` **SUCCEEDED**：报告 `grasp_center_distance_m=0.0031204159215376783`（判据 0.005）、
+  `grasp_lift_delta_m=0.064432`（判据 0.02）、`grasp_bilateral_contact=1.0`；
+  `PICK_RESULT`：`grasped=True / bilateral=True / force_ok=True / lifted=True`。
+- 紧接着的 `s07_place_at_b_table` 起步即拒：`当前未夹持载荷 box_01（双侧指腹未同时接触）⇒ 拒绝放置`
+  ⇒ **载荷在两步交界处被放掉了**。
+
+**机制（同一段代码 + 两种夹爪约定 ⇒ 症状相反）**
+
+| 机型 | `open_positions` | `closed_positions` | ctrl = 0 的语义 | 交界处归零的后果 |
+|---|---|---|---|---|
+| Piper | `joint7: +0.035, joint8: −0.035` | `0.0` | **闭合** | 仍夹着载荷 ⇒ 从未暴露 |
+| UR5e + 2F-85 | `rq2f85_fingers_actuator: **0.0**` | `163.0` | **完全张开** | 张开、载荷掉落 |
+
+⇒ 处置方向（**声明/实现层，按"保持"语义，不是放宽判据**）：步骤交接时的"保持当前位姿"必须
+**同时锁存夹爪通道**（若沿用"归零"则要按声明判断该通道的"保持值"）；安全停机路径的夹爪语义需单独
+声明（"停机是否释放载荷"是安全语义，不能由 0 的巧合决定）。
+
+**同期**：`s02b_dock_station_b` 三次运行都是"damped_hold 超时 12.000 s"，而**末态误差都在容差内**
+（平移 0.015604~0.016201 < 0.030；偏航 1.815910~2.281265° vs 2.0）⇒ 是**收敛窗口**问题，
+按实测收敛时间重定窗口（声明层）。
+
+**本轮同时修掉第 8 处缺口**：ur5e 的场景生成器未把 place 侧声明转发进报告 ⇒ 运行期报
+`缺少 place_pose_correction 声明（grasp.place_pose_correction）：实现层不给默认值`；
+已镜像 Piper 的转发块（`place_settle_ms` / `lift_gripper` / `place_pose_correction`，缺声明即失败）。
+验证：ur5e 报告现含 `place_settle_ms=3000` / `lift_gripper=closed` / `place_pose_correction{mode: touchdown}`。
+
 ## 12. 下一步
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
 0a. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。

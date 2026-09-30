@@ -31,7 +31,10 @@ import numpy as np
 
 # 抓取段纠偏的**模式枚举**与运行期同一处（`payload_facts`）：构建期与运行期必须同口径，
 # 否则会出现"构建期接受、运行期拒绝"（本会话在放置侧踩过同类坑，见 §11.25(f-4) 的枚举链）。
-from iraf_adapters.mujoco.payload_facts import GRASP_POSE_CORRECTION_MODES
+from iraf_adapters.mujoco.payload_facts import (
+    GRASP_POSE_CORRECTION_MODES,
+    PLACE_POSE_CORRECTION_MODES,
+)
 import yaml
 
 from iraf_adapters.mujoco.scene_lighting import inject_lights
@@ -460,6 +463,28 @@ def build_scene(source, output, target_id=None, half_size=0.030, config=None,
         # 与场景里注入的 body 名**同源**（声明 `grasp.lift_anchor_body`，缺省旧名）。
         gripper["lift_anchor_body"] = str((config.get("grasp") or {}).get("lift_anchor_body")
                                           or (selected_id + "_lift_anchor"))
+    # 放置段声明**转发进报告**（I4-a 2026-09-30 §11.52，第 8 处同族缺口）：运行期 `place_object`
+    # 读的是**报告**里的 `place_settle_ms` / `lift_gripper` / `place_pose_correction`，
+    # 生成器不转发 ⇒ 运行期报「缺少 place_pose_correction 声明（grasp.place_pose_correction）：
+    # 实现层不给默认值」。与 Piper 侧同结构：声明透传，**缺声明即失败**。
+    _place_settle_ms = (config.get("grasp") or {}).get("place_settle_ms")
+    if (not isinstance(_place_settle_ms, int) or isinstance(_place_settle_ms, bool)
+            or _place_settle_ms <= 0):
+        raise ValueError("grasp.place_settle_ms 必须是正整数（缺声明即失败，不给默认值；实际 %r）"
+                         % (_place_settle_ms,))
+    gripper["place_settle_ms"] = int(_place_settle_ms)
+    _lift_gripper = (config.get("grasp") or {}).get("lift_gripper")
+    if not isinstance(_lift_gripper, str) or not _lift_gripper:
+        raise ValueError("grasp.lift_gripper 必须是非空字符串（缺声明即失败；实际 %r）"
+                         % (_lift_gripper,))
+    gripper["lift_gripper"] = str(_lift_gripper)
+    _place_correction = (config.get("grasp") or {}).get("place_pose_correction")
+    if not isinstance(_place_correction, dict) or not _place_correction:
+        raise ValueError("grasp.place_pose_correction 必须声明为对象（含 mode；实现层不给默认值）")
+    if str(_place_correction.get("mode") or "") not in PLACE_POSE_CORRECTION_MODES:
+        raise ValueError("grasp.place_pose_correction.mode 必须是 %s，实际: %r"
+                         % ("/".join(PLACE_POSE_CORRECTION_MODES), _place_correction.get("mode")))
+    gripper["place_pose_correction"] = dict(_place_correction)
     # 抓取段的**运行期闭环纠偏**声明（2026-09-30 §11.29）：构建期的关节解按**标称目标**求，
     # 而联合世界里目标会被搬动（狗背托盘里的载荷：实测偏差 15.812 mm > 判据 5 mm）⇒ 运行期按
     # **实测**目标重解下压/抬升两段。声明只来自基线（`grasp.grasp_pose_correction`），
