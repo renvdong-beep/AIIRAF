@@ -4876,6 +4876,22 @@ FL_hip    ↔ ur5e_wrist_2_link          28
   ② **场景/航点几何**：抬高搬运高度或改道，让腕部真正越过狗身（需要①给出的最小净空数字来定，
      不能靠猜）。
 
+**① 已落地（构建期运动扫描，`_joint_place_resolution`），但实测暴露了它自己的边界 —— 必须如实记**：
+- 实现：按回放顺序（transit→above→descend→retreat）逐段五次多项式插值、每段采样 12 点做 FK，
+  查「臂 geom vs 本体外 geom」接触；当前**只告警**并把数字写进
+  `place_reference.path_contact_count` / `path_contacts`（几何修好后再升级为声明驱动的硬门禁）。
+- 实测：`ur5e path_contact_count = 192`（piper = 0），但**内容不对**——几乎全是
+  `above→descend 夹爪 ↔ place_pad_b / world(台面)`（最坏 dist = **−0.028484 m**），
+  **没有一条腕部↔FL_hip**。
+- **两条边界（下一轮必须先解决，否则这个门禁"既漏报又误报"）**：
+  1. **载体位姿**：构建期 FK 用的是模型里的**载体初始位姿**（狗在出生点），而运行期碰撞发生在
+     **狗停到 B 站**时 ⇒ §11.63 那类碰撞**结构上看不见**。要让它有意义，构建期必须拿到
+     「该步时载体的实际位姿」（站位帧是声明事实，但要接进 `_joint_place_resolution` 的输入）。
+  2. **预期接触**：放置位形处指腹本来就夹着载荷贴在垫面上 ⇒ 夹爪↔垫/台面的接触有真有假，
+     需要按"预期接触白名单"（垫/载荷 vs 夹爪）过滤，否则误报。
+- 结论：**在 1、2 解决之前，运行期的 `PLACE_TRACE.arm_contacts`（§11.63）才是可信诊断**；
+  构建期门禁暂不能作为判据。
+
 ## 12. 下一步
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
 0a. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。

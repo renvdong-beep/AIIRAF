@@ -2088,6 +2088,67 @@ def _joint_place_resolution(root, solver, resolution, place_targets, arm_report,
         if waypoint_contacts:
             _fail(EXIT_MODEL, "放置航点与载体/场景发生接触（构建期 FK 自检）：%s ⇒ 会撞上并推走载体，"
                   "需调整航点或摆放（见 §11.17）" % waypoint_contacts[:3])
+        # ---- **运动途中**扫描（2026-09-30 §11.63）----
+        # 为什么必须：上面的航点自检只查**端点**。实测 s07：UR5e 的**腕部本体**在 transit/above/descend
+        # **三段的途中**持续撞狗（`arm_contacts`：base_link↔wrist_2 ×121、tray_01↔wrist_1 ×69、
+        # FL_hip↔wrist_1 ×52、FL_hip↔wrist_2 ×28），端点却都"通过" ⇒ **构建期全绿、运行期才炸**，
+        # 而且症状表现为"臂跟不上轨迹/落点偏 0.12 m"，很难反推到几何。
+        # 口径：按**回放顺序**（transit→above→descend→retreat）逐段取五次多项式插值，采样做 FK，
+        # 查「臂 geom vs 本体外 geom」接触。
+        # ⚠ 本检查当前**只记录 + 告警**（与下面 `axes_flipped` 同一档）：几何尚未修好时把它当硬门禁
+        # 会形成死锁（修几何要的正是它给出的净空数字）；几何修好后应升级为**声明驱动**的硬门禁。
+        path_contacts = []
+        _poses_all = poses.get("poses") or {}
+        _ordered = [key for key in ("transit", "above", "descend", "retreat")
+                    if isinstance(_poses_all.get(key), dict) and _poses_all.get(key)]
+
+        def _declared_joints(section):
+            out = {}
+            for name, value in (section.get("joint_positions") or {}).items():
+                joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, rename(str(name)))
+                if joint_id >= 0:
+                    out[int(joint_id)] = float(value)
+            return out
+
+        _path_samples = 12
+        for _frm, _to in zip(_ordered, _ordered[1:]):
+            _start, _end = _declared_joints(_poses_all[_frm]), _declared_joints(_poses_all[_to])
+            _common = sorted(set(_start) & set(_end))
+            if not _common:
+                continue
+            for _index in range(1, _path_samples):
+                _frac = _index / float(_path_samples)
+                _w = 10 * _frac ** 3 - 15 * _frac ** 4 + 6 * _frac ** 5
+                data.qpos[:] = 0.0
+                for _joint_id in _common:
+                    data.qpos[int(model.jnt_qposadr[_joint_id])] = (
+                        _start[_joint_id] + (_end[_joint_id] - _start[_joint_id]) * _w)
+                mujoco.mj_forward(model, data)
+                for _ci in range(int(data.ncon)):
+                    _contact = data.contact[_ci]
+                    _bodies = [int(model.geom_bodyid[_contact.geom1]),
+                               int(model.geom_bodyid[_contact.geom2])]
+                    _names = [str(mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, item) or "")
+                              for item in _bodies]
+                    _arm = [name for name in _names if name.startswith(prefix)]
+                    _other = [name for name in _names if not name.startswith(prefix)]
+                    if _arm and _other:
+                        _other_id = _bodies[_names.index(_other[0])]
+                        path_contacts.append({
+                            "from": str(_frm), "to": str(_to), "fraction": round(_frac, 3),
+                            "arm_body": _arm[0], "other_body": _other[0],
+                            "carrier": bool(_in_carrier_subtree(_other_id)),
+                            "dist_m": round(float(_contact.dist), 6)})
+        if path_contacts:
+            _pairs = {}
+            for _item in path_contacts:
+                _key = "%s→%s %s↔%s" % (_item["from"], _item["to"],
+                                        _item["arm_body"], _item["other_body"])
+                _pairs[_key] = _pairs.get(_key, 0) + 1
+            print("[scene_builder] 警告：放置**运动途中**臂本体与场景接触 %d 处（%s…）最坏 dist=%.6f m"
+                  " ⇒ 运行期会被碰撞拽离指令轨迹（§11.63）。本检查当前只告警；几何修好后升级为硬门禁。"
+                  % (len(path_contacts), sorted(_pairs)[:4],
+                     min(_item["dist_m"] for _item in path_contacts)), flush=True)
         # 夹爪轴半球**诊断**：每段的"腕→指腹"轴与**pick 抬升段**的轴比对（对照必须是被验证过的那一段，
         # 不能拿放置段自己当基准 —— 第一版就是拿 transit 自比 ⇒ 全部"通过"、什么也没发现）。
         # 轴翻到相反半球说明位置型 IK 落到了翻转分支；**根因可能是"该放置姿态在几何上不可达"**
@@ -2121,6 +2182,9 @@ def _joint_place_resolution(root, solver, resolution, place_targets, arm_report,
                   # 航点高度口径留证（§11.58）：max(当前抬升高度, 承载面接近高度)
                   "transit_height": transit_evidence,
                   "waypoint_contacts": waypoint_contacts,
+                  # 运动途中扫描（§11.63）：当前只告警，但数字进报告以便按最小净空定几何
+                  "path_contact_count": len(path_contacts),
+                  "path_contacts": path_contacts[:20],
                   "lift_axis_world": ([round(float(v), 9) for v in lift_axis_world]
                                       if lift_axis_world is not None else None),
                   "axes_flipped_vs_pick_lift": axes_flipped,
