@@ -4935,6 +4935,23 @@ i=102 after_above 0.361069  wrist_1_link↔tray_01(-0.0008)  （段末再稳定 
 
 **新工具**：`PLACE_TRACE.arm_track_rad`（逐拍跟踪误差，已入库；只读、不改时序）。
 
+**候选①（力矩/限幅）已实测否掉**（`scripts/probe_pose_torque_limits.py`，`place_above` 位形）：
+
+```
+关节                  qfrc_bias    forcerange    gainprm0   纯 PD 静差 |τ|/gain
+ur5e_shoulder_lift    -28.1984     [-150,150]     2000       0.0141 rad
+ur5e_elbow            -12.5954     [-150,150]     2000       0.0063 rad
+ur5e_wrist_1           -0.1004      [-28,28]       500       0.0002 rad
+ur5e_wrist_2            0.4043      [-28,28]       500       0.0008 rad
+```
+
+⇒ 力矩远低于限幅（28.2 vs 150 N·m），静差量级 **0.014 rad**，**解释不了 0.5 rad**。
+综合 §11.62（静态保持 1.35e-7）、§11.64（单调增长、零接触）与本条 ⇒ **"回放跟不上"既不是力矩、
+也不是位形可达性、也不是接触**。剩余嫌疑集中在两处（下一轮）：
+① **伺服 ↔ 指令节拍的相互作用**（§11.56 同一家族：guest 每个控制拍之间植物前进 ~8 步，
+   指令更新率与伺服带宽的关系需要直接量：逐拍记录 `qvel` 与"指令增量/植物步数"）；
+② **搬运焊缝（carry_constraint）在运动中的相互作用**（静止时不存在 ⇒ 与"静态保持能过"不矛盾）。
+
 ## 12. 下一步
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
 0a. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。
