@@ -4613,6 +4613,120 @@ anchor_body=grasp_anchor/solref[0.01,1.0]/solimp[0.9,0.95,0.01]/max_plant_steps_
 **同期**：`s02b_dock_station_b` 仍为收敛窗口问题（本轮末态平移 `0.016298` < `0.030`、
 偏航 `1.852508°` vs `2.0`；历史 0.015604~0.016298 / 1.815910~2.281265°）⇒ 按实测收敛时间重定窗口（声明层）。
 
+## 11.56 s06 到位残差 = "解算基准过期 33 秒"；下压段分段纠偏（2026-09-30，已修）
+
+**症状**：s06（UR5e 卸载抓取）的到位判据 `pose_tolerance_m = 0.005 m`，实测残差在
+**0.0012~0.0083 m** 之间间歇 ⇒ 演示轮会随机落在"抓到/没抓到"。3 轮连跑（`handoff-round-{1,2,3}.log`）：
+
+| 轮 | 残差 (m) | 载荷漂移率 HOME→APPROACH / APPROACH→DESCEND | DESCEND→门禁增量 |
+|----|----------|---------------------------------------------|------------------|
+| 1 | 0.002941875 | 0.000093 / 0.000084 m/s | 0.000037 m |
+| 2 | 0.003333336 | 0.000088 / 0.000080 m/s | 0.000233 m |
+| 3 | 0.003338753 | 0.000086 / 0.000084 m/s | 0.000166 m |
+
+轮 2 交接时双侧指腹间距 0.000199823 / 0.000201925 m（0.2 mm，双侧 pad 接触 ✓）。
+
+**根因（已定量）**：残差 = **载荷漂移率 × 曝光窗口**，不是噪声、不是解算精度。
+载荷在狗背托盘里以 **0.080~0.093 mm/s 单向漂移**（接触求解器蠕变）；最后一次纠偏（t=1082.79）
+到门禁（t=1115.71）之间隔着 **32.9 s 仿真时间** ⇒ 0.085 mm/s × 33 s ≈ **2.8 mm**，与实测
+2.94/3.33/3.34 mm 对上。**纠偏自身残差只有 0.35 mm 级**（`PICK_CORRECTION.phases[*].residual_m`）
+⇒ 残差几乎全部是"解算基准过期 33 秒"。演示轮的 0.007822 m（`delta=[+0.003382,-0.000522,+0.007034]`，
+z 向多 7 mm）是同一机制在更慢漂移率的窗口里放大的结果。
+
+**为什么窗口有 33 秒（时间放大，已判死为 owner 领先）**：s06 的 `duration_ms=8000`、
+`phase_ms=1600 ms`（每相位标称 1.6 s），但实测相邻相位推进 **27.28 s**（= 27.28/1.6 = **17.05x**）。
+新增调试通路 `IRAF_DEBUG_GUEST_STEPS=1` → `PICK_STEP_ACCT`（`mujoco_backend._record_guest_step_wait`
+/ `_report_guest_step_accounting`），实测：
+
+```
+ur5_mujoco APPROACH  calls=801 req=4000 act=9463 scope_amp=2.366  small(count=1) 800→6258 (7.82x) max_over=24
+ur5_mujoco DESCEND   calls=801 req=4000 act=9519 scope_amp=2.380  small(count=1) 800→6314 (7.89x) max_over=24
+piper_mujoco APPROACH calls=801 req=4000 act=11258 scope_amp=2.815 small(count=1) 800→8053 (10.07x) max_over=59
+```
+
+- **不是记账 bug**：`_wait_for_guest_steps` 的 `target = before + count` 正确；settle 段
+  `req=3200 → act=3205`（1.02x，精确）；`before/after` 记账一致。
+- 真因是 **owner 领先**：臂是 guest，时间由 owner（Go2 驻留线程连续 `stand`）推进；
+  `wait_until` 轮询间隔 = `timestep` = 2 ms，而 owner 实测约 **3900 步/s** ⇒ 每次唤醒植物已前进
+  **~7.8 步** ⇒ 轨迹段逐拍 `count=1` 的循环被放大 **7.8x**（piper 是 10.1x，因该臂自身每拍算得更快）。
+- 记账内 2.37x + guest 计算间隙（`_set_controls`/五次多项式/采样）里 owner 自走未记账的步
+  ⇒ 相位总放大 **3.4x**（27.28 s / 8 s）。标称 `duration_ms` 在联合世界里只是**下界**。
+
+**修法（只动内部停止条件，未动 0.005 判据）**：新增声明
+`grasp_pose_correction.descend_splits: K`（正整数；缺省 1 = 单段，逐位不变）。
+
+- 把下压段拆成 K 个子段，**每个子段之前**用新鲜实测目标重解剩余下压（`_correct_grasp_column`）；
+  IK 解算**不推进植物** ⇒ 几乎不占仿真时间（实测 `PICK_CORRECTION.sim_time_s` 与上一相位 dump 只差
+  0.01 s）；子段目标 = 接近位形 +（本次重解位形 − 接近位形）× i/K；
+- 子段稳定窗口按 K 等比缩放（`_move_trajectory` 新增可选 `settle_ms`）⇒ 否则 K 段各稳定
+  4×phase_ms、总稳定时间放大 K 倍，反而拉长窗口；
+- 下压前半段指腹离载荷还有 8~16 cm（实测 APPROACH 末中心距 0.160 m、DESCEND 末 0.0029 m）⇒ 中途重解安全；
+- **不在下压之后纠偏**（§11.31：指腹已在载荷两侧，越纠越偏）。
+
+**K 的反推**（不放宽判据）：取历史残差分布上界 0.008228 m，要求最坏 ≤ 内部容差
+`residual_tolerance_m = 0.002 m` ⇒ K ≥ 0.008228/0.002 = 4.11 ⇒ **K = 5**
+（窗口 ≈ 27.2/5 + 0.9 = 6.3 s ⇒ 预期最坏 ≈ 1.6 mm）。
+
+**声明链三处同步**：`payload_facts.GRASP_POSE_CORRECTION_KEYS`（运行期允许键）、
+`scripts/build_robot_pick_scene.py`（构建期校验）、基线 `config/ur5_simulation_baseline.yaml`；
+运行期解析层（`mujoco_backend` 的 `grasp_pose_correction` 解析）显式保留该键。
+
+**产物重建**（改了基线 ⇒ 必须重建臂报告再重建联合产物）：
+
+```bash
+PYTHONPATH=src python3 scripts/build_baseline.py --baseline config/ur5_simulation_baseline.yaml
+PYTHONPATH=src python3 scripts/build_scene.py --scene scenes/handoff_lab --robot unitree_go2 --attach piper --attach ur5e
+PYTHONPATH=src python3 scripts/scene_check.py --scene scenes/handoff_lab --require-model
+```
+
+⚠ **本条入口的坑（本轮实测，浪费一次）**：Piper 侧的标准命令是
+`build_piper_baseline.py > build/models/piper-pick-scene.json`（报告打在 **stdout**），
+把它**照搬**到 UR5e 侧会坏：`build_robot_baseline.build()` 自己就把报告写到
+`build/models/ur5-pick-scene.json`（`output.with_suffix(".json")`），而 `build_baseline.py` 的 stdout
+只有 `iraf.baseline-build/v1` **摘要** ⇒ 重定向与构建器抢同一个文件，产出"摘要 + 半个报告"的
+坏 JSON（第一次 `json.load` 直接 `Extra data: line 13`）。**UR5e 侧的标准命令不带重定向**；
+判据仍是 `reference_poses` 32 键 + `model_source.sha256` 为 64 位十六进制。
+
+**修后预期与验收**：单轮 `IRAF_DEBUG_GUEST_STEPS=1` 看 `PICK_STEP_ACCT` 的 DESCEND 子段数与门禁残差；
+`scripts/probe_handoff_handover.py --rounds N` 连跑看通过率与最坏残差；K 按实测分布调，**不放宽 0.005**。
+
+## 11.58 s07 放置：航点高度口径 + "斜插"= 载荷穿托盘（2026-09-30，部分已修）
+
+**承接 §11.55 的"下一处真因"**：给 ur5e 的 `reference_solver` 补 `place_target_id: place_pad_b`
+（构建期与运行期指向同一接收体）之后，运行期错误从
+`触地纠偏需要竖向移动 -0.306778733 m > max_vertical_m` 变成
+`抬升段后失去夹持（载荷已脱离）⇒ 拒绝继续放置`——即**翻到了下一处真因**。
+
+**逐拍取证**（`IRAF_DEBUG_PLACE=1 IRAF_DEBUG_PLACE_STRIDE=1`，`build/diagnostics/s07-stride1.log`）：
+- 载荷的接触对象几乎全程含 `tray_01`（狗背托盘）；与托盘的接触法向力
+  **37.4 → 111.2 → 177.1 → 223.6 N**（载荷仅 40 g）；与**指腹**的力有一长段（控制拍 51–326）**恒为 0**；
+- 载荷底面在 transit 段从 0.42480 单调降到 0.29831，而托盘顶面 0.34286 ⇒ 段内低 22.5~44.6 mm
+  ⇒ 方块被**按着穿过托盘**；`pad_span_m` 在 `carry_gripper: hold` 下仍走了 9 mm。
+
+**第一处已修（航点高度口径）**：旧口径用「承载面高度 + 载荷半高 + 夹口高 + 净间隙」定 transit 的 z
+⇒ 目标是**低位**（落点垫 z≈0.005）时航点被压到 0.0706（远低于拾取高度 0.4460），臂从拾取点出发就一路下降。
+改为 `max(当前抬升高度, 承载面接近高度)`（当前抬升高度由联合模型 FK 从 `lift_positions` 实测）：
+- 修后 `transit_height = {lift_pad_z_m: 0.445996889, bearing_pad_z_m: 0.07062494, used_z_m: 0.445996889, source: current_lift_height}`；
+- 复跑实测：transit 段载荷底面 **0.42285 → 0.42164（基本不动）**（旧口径 0.42480 → 0.29831）；
+- **piper 侧航点逐位未变**（product diff 仅 13 个叶键：ur5e 的 transit 关节解 + 两处 inert 证据键）。
+
+**第二处真因（已判死，未修）**：把 transit 抬起来只是把碰撞**挪到下一段**。构建期航点本身是**对的**
+（`scripts/probe_ur5e_place_waypoint_fk.py` 在联合模型上 FK：transit 指腹中点 `[0.4500, 0.4500, 0.4460]`、
+above `[0.7000, 0.6000, 0.0706]`、descend `[0.7000, 0.6000, 0.0206]`，与落点垫 (0.70, 0.60, 0.005) 对齐；
+`place_target_id=place_pad_b` 已生效）。但**运行期 `after_above` 的指腹中点在 `[0.7340, 0.4040, 0.2613]`**
+—— 臂**根本没到 above**（目标 `[0.7000, 0.6000, 0.0706]`）。
+原因：`transit → above` 是一次**关节空间直线插值**，在 0.25 m 横移的同时下降 0.375 m ⇒ 轨迹**斜插**，
+方块在仍在托盘上方时就降到托盘顶面以下、被托盘挡住 ⇒ 载荷（经焊缝刚性跟随指腹）把臂拽住，永远到不了 above。
+
+**修法（下一步）**：插入一个**在搬运高度水平移到目标 xy** 的航点，让下降只发生在最后一程：
+- 求解器多返回一段（如 `transfer`）→ 构建期写 `place_transfer_positions` → 后端按
+  `transit → transfer → above → descend → retreat` 回放；**缺该段即跳过**（piper 逐位不变）；
+- 同时把 §11.58 第一处那个"航点高度不得低于当前搬运高度"作为**构建期不变量**保留（已落）。
+- 可选：给 ur5e 声明 `place_lift_clearance_m`，把"越过载体顶面"的净空显式化（现在靠 max() 隐式保证）。
+
+**新增探针**：`scripts/probe_ur5e_place_waypoint_fk.py`（构建期航点 FK 对账：分辨
+"构建期解错了"与"运行期没到位"，本轮正是用它把责任判给后者）。
+
 ## 12. 下一步
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
 0a. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。
