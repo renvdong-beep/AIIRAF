@@ -4845,6 +4845,37 @@ armature   pick_grasp   pick_lift    place_above   place_descend
 载荷中心相对垫子中心的 xy 随时间），判偏移是在**接触建立前**（轨迹/跟踪问题）还是**接触建立后**
 （被接触推开）丢的——两者修法完全不同。
 
+## 11.63 s07 真因：UR5e **腕部本体**搬运时撞狗身/托盘（构建期航点门禁的盲区，2026-09-30 判死）
+
+**取证**：给 `PLACE_TRACE` 的行加 `arm_contacts`（**本本体 geom ↔ 本体外**的接触清单，
+只读 `data.contact`、不做 `mj_forward` ⇒ 轻量、不扰动时序；见 `mujoco_backend._arm_outer_contacts`）。
+一轮 `IRAF_DEBUG_PLACE=1` 的 ur5e place 段（154 样本）统计：
+
+```
+box_01  ↔ ur5e_rq2f85_left_pad        423   （正常夹持）
+box_01  ↔ ur5e_rq2f85_right_pad       284
+box_01  ↔ left/right_spring_link      124 / 100
+base_link ↔ ur5e_wrist_2_link         121   ← 臂撞底座
+tray_01   ↔ ur5e_wrist_1_link          69   ← 臂撞狗背托盘
+FL_hip    ↔ ur5e_wrist_1_link          52   ← 臂撞狗前左髋
+FL_hip    ↔ ur5e_wrist_2_link          28
+出现段落：transit 33 / above 41 / descend 50 个样本（三段全程都在擦）
+```
+
+**判死**：UR5e 搬运时**腕部本体**与狗身（FL_hip）、狗背托盘（tray_01）、底座（base_link）
+**持续碰撞** ⇒ 这股力把臂拽离指令轨迹（§11.62 量到的 0.2~0.53 rad 跟踪误差、以及"段末稳定 6.4 s
+仍差 0.30 rad"）⇒ 落点偏 0.12 m ⇒ 被 `max_lateral_m` 拒绝。
+把落点垫从 (0.70,0.60) 外移到 (0.78,0.70)（§11.60）**只解决了载荷擦髋，没解决臂本体擦髋**——
+因为腕部要越过狗身才能把载荷送出去。
+
+**盲区（这是本会话反复出现的模式）**：`_joint_place_resolution` 的航点自检只做
+「**航点** FK 时 **臂 geom vs 载体**」，**运动途中（航点之间）**以及"臂 vs 场景其他物件"都没查
+⇒ 构建期全绿、运行期才炸。**修法（下一步，两件一起做）**：
+  ① **构建期运动扫描**：沿回放的 quintic 轨迹采样若干控制点做 FK，查「臂 geom vs 载体/场景」接触
+     ⇒ 把这一类问题变成**构建期**失败（与 §11.17 的航点门禁同一思路，只是把"端点"扩成"路径"）；
+  ② **场景/航点几何**：抬高搬运高度或改道，让腕部真正越过狗身（需要①给出的最小净空数字来定，
+     不能靠猜）。
+
 ## 12. 下一步
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
 0a. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。

@@ -2135,7 +2135,8 @@ class MujocoBackend:
                                                  for pair in snapshot["payload_contacts"]}),
                        "nearest": [[item["body"], item["geom"], item["distance_m"]]
                                    for item in snapshot["payload_neighbors"]],
-                       "gripper": state, "note": note}
+                       "gripper": state, "note": note,
+                       "arm_contacts": self._arm_outer_contacts()}
                 phase_trace.append(row)
                 if os.environ.get("IRAF_DEBUG_PLACE") == "1":
                     print("PLACE_TRACE " + json.dumps(row, ensure_ascii=False), flush=True)
@@ -2162,6 +2163,7 @@ class MujocoBackend:
                    "gripper_state": _gripper_state(),
                    "commanded_closed": {str(k): float(v) for k, v in
                                         (gripper.get("closed_positions") or {}).items()},
+                   "arm_contacts": self._arm_outer_contacts(),
                    "note": note}
             phase_trace.append(row)
             if os.environ.get("IRAF_DEBUG_PLACE") == "1":
@@ -3973,6 +3975,32 @@ class MujocoBackend:
         gripper = self._manipulation.get("gripper") or {}
         offsets = (gripper.get("gravity_feedforward") or {}).get(str(phase))
         return dict(offsets) if offsets else {}
+
+    def _arm_outer_contacts(self):
+        """**本本体 geom ↔ 本体外**的接触清单（运动途中判"臂擦了东西"；2026-09-30 §11.63）。
+
+        为什么需要：构建期航点自检只查**航点**（`_joint_place_resolution` 的 waypoint FK）的
+        「臂 geom vs 载体」，**运动途中（航点之间）**与「臂 vs 场景其它物件」都没查 ⇒ 反复出现
+        "构建期全绿、运行期才炸"。本函数只读当前 `data.contact`，不做 `mj_forward`（轻量，
+        与 `IRAF_DEBUG_PICK_STRIDE` 同款纪律：观测不得改变被观测对象）。
+        """
+        scope = {str(value) for value in (self._name_map or {}).values()}
+        if not scope:
+            return []
+        hits = []
+        with self._data_lock:
+            for index in range(int(self.data.ncon)):
+                contact = self.data.contact[index]
+                ids = (int(contact.geom1), int(contact.geom2))
+                names = [str(mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_BODY,
+                                               int(self.model.geom_bodyid[item])) or "")
+                         for item in ids]
+                inside = [name for name in names if name in scope]
+                outside = [name for name in names if name not in scope]
+                if len(inside) == 1 and outside:
+                    hits.append({"arm_body": inside[0], "other_body": outside[0],
+                                 "dist_m": round(float(contact.dist), 6)})
+        return hits
 
     def _move_trajectory(self, target_positions, duration_ms, ctrl_offsets=None, sampler=None,
                          pin_body=None, anchor_body=None, anchor_follow=(), anchor_offset=None,
