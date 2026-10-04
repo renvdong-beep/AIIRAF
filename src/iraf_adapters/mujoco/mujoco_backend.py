@@ -2136,7 +2136,8 @@ class MujocoBackend:
                        "nearest": [[item["body"], item["geom"], item["distance_m"]]
                                    for item in snapshot["payload_neighbors"]],
                        "gripper": state, "note": note,
-                       "arm_contacts": self._arm_outer_contacts()}
+                       "arm_contacts": self._arm_outer_contacts(),
+                       "arm_track_rad": self._arm_track_error()}
                 phase_trace.append(row)
                 if os.environ.get("IRAF_DEBUG_PLACE") == "1":
                     print("PLACE_TRACE " + json.dumps(row, ensure_ascii=False), flush=True)
@@ -2164,6 +2165,7 @@ class MujocoBackend:
                    "commanded_closed": {str(k): float(v) for k, v in
                                         (gripper.get("closed_positions") or {}).items()},
                    "arm_contacts": self._arm_outer_contacts(),
+                   "arm_track_rad": self._arm_track_error(),
                    "note": note}
             phase_trace.append(row)
             if os.environ.get("IRAF_DEBUG_PLACE") == "1":
@@ -3975,6 +3977,29 @@ class MujocoBackend:
         gripper = self._manipulation.get("gripper") or {}
         offsets = (gripper.get("gravity_feedforward") or {}).get(str(phase))
         return dict(offsets) if offsets else {}
+
+    def _arm_track_error(self):
+        """臂关节的**跟踪误差** `|qpos − ctrl|`（逐关节，仅关节名 → 弧度）。
+
+        为什么直读 ctrl（2026-09-30 §11.64）：位置伺服下 `ctrl` 就是该拍的**指令**（含前馈偏置），
+        与 `qpos` 之差即"没跟上多少"；不需要把 `_move_trajectory` 里的五次多项式目标再接线出来。
+        用途：判 §11.63 的**因果顺序**——臂↔狗接触发生时，臂是**已经**偏离指令（滞后在前）还是
+        尚未偏离（碰撞在前）。只读，不做 `mj_forward`。
+        """
+        out = {}
+        with self._data_lock:
+            for name in self._arm_joint_names():
+                joint_id = int(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT,
+                                                 self._model_name(str(name))))
+                if joint_id < 0:
+                    continue
+                actuator = next((index for index in range(int(self.model.nu))
+                                 if int(self.model.actuator_trnid[index, 0]) == joint_id), -1)
+                if actuator < 0:
+                    continue
+                qpos = float(self.data.qpos[int(self.model.jnt_qposadr[joint_id])])
+                out[str(name)] = round(abs(qpos - float(self.data.ctrl[actuator])), 6)
+        return out
 
     def _arm_outer_contacts(self):
         """**本本体 geom ↔ 本体外**的接触清单（运动途中判"臂擦了东西"；2026-09-30 §11.63）。
