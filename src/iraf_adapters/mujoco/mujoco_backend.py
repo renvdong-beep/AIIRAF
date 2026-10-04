@@ -1039,6 +1039,51 @@ class MujocoBackend:
         lift_positions_for_run = gripper.get("lift_positions")
         pose_correction_evidence = None
         correction_declaration = gripper.get("grasp_pose_correction")
+
+        def _pick_stride_sampler(phase_label):
+            """抓取段的**逐拍**采样（`IRAF_DEBUG_PICK_STRIDE>0` 时开；缺省 None ⇒ 逐位不变）。
+
+            为什么需要（2026-09-30 §11.59）：s06 到位残差是"漂移率 × 曝光窗口"，而漂移率
+            实测呈**稳态 ~0.08~0.13 mm/s + 罕见突滑 ~1.0 mm/s（一次 ~7 mm）**（11 份日志 17 样本）。
+            相位边界（`dump_pick_phase`）只在段的端点取样，看不到突滑是"平滑漂移"还是"离散事件"
+            ⇒ 无法判该治接触参数还是治窗口。本通路与 `IRAF_DEBUG_PLACE_STRIDE` 同款、共用
+            `PICK_TRACE` 行格式（既有的 `scripts/probe_grasp_window_drift.py` 可直接解析）。
+            """
+            try:
+                stride = int(os.environ.get("IRAF_DEBUG_PICK_STRIDE", "0") or "0")
+            except (TypeError, ValueError):
+                return None
+            if stride <= 0:
+                return None
+            # ⚠ 逐拍行必须**轻量**（2026-09-30 §11.59 教训）：直接复用 `dump_pick_phase`（含
+            # `mj_forward` + 完整 alignment + json）会把 guest 的控制节拍显著拖慢 ⇒ 观测改变被观测
+            # 对象（实测那轮 s02b 偏航 3.685244°、s06 首纠偏实测目标离名义解 0.426277346 m 被拒）。
+            # 这里只读**已经更新过**的 `data.xpos` / `data.geom_xpos`，不做任何 mj_forward。
+            pad_geom_ids = []
+            for key in ("left_finger_geom", "right_finger_geom"):
+                geom_name = gripper.get(key)
+                if not geom_name:
+                    continue
+                geom_id = int(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, str(geom_name)))
+                if geom_id >= 0:
+                    pad_geom_ids.append(geom_id)
+
+            def _hook(step, elapsed):
+                if step % stride:
+                    return
+                data = self.data
+                pads = [data.geom_xpos[geom_id] for geom_id in pad_geom_ids]
+                pad_mid = (None if not pads else
+                           [round(float(sum(float(p[i]) for p in pads) / len(pads)), 9)
+                            for i in range(3)])
+                print("PICK_STEP " + json.dumps({
+                    "phase": str(phase_label), "step": int(step),
+                    "sim_time_s": round(float(data.time), 6),
+                    "plant_step_index": int(self.plant.step_index),
+                    "payload_m": [round(float(v), 9) for v in data.xpos[target_body]],
+                    "pad_mid_m": pad_mid,
+                }, ensure_ascii=False), flush=True)
+            return _hook
         if correction_declaration:
             _overrides, pose_correction_evidence = self._correct_grasp_column(
                 correction_declaration,
@@ -1053,7 +1098,7 @@ class MujocoBackend:
         if approach_positions:
             self._log_pick_phase("APPROACH", target_body)
             self._move_trajectory(approach_positions, phase_ms, self._pick_ctrl_offsets("approach"),
-                                  pin_body=pin_target)
+                                  pin_body=pin_target, sampler=_pick_stride_sampler("APPROACH"))
             self.dump_pick_phase("APPROACH", phase_ms, target_body, left_body, right_body, approach_axis)
         # ---- 下压前的**二次纠偏**（2026-09-30 §11.40 实测驱动）----
         # 实测：纠偏（在接近之前）量到的目标与"下压停稳时"的目标相差 **5.2015 mm（横向）**
@@ -1106,7 +1151,9 @@ class MujocoBackend:
                         raise ValueError("下压分段：重解位形与接近位形没有共同关节键（无法插值）")
                     self._log_pick_phase("DESCEND_%d_%d" % (split_index, descend_splits), target_body)
                     self._move_trajectory(sub_target, chunk_ms, self._pick_ctrl_offsets("grasp"),
-                                          pin_body=pin_target, settle_ms=chunk_settle_ms)
+                                          pin_body=pin_target, settle_ms=chunk_settle_ms,
+                                          sampler=_pick_stride_sampler(
+                                              "DESCEND_%d_%d" % (split_index, descend_splits)))
                     if _sub:
                         grasp_positions = _sub.get("grasp", grasp_positions)
                         lift_positions_for_run = _sub.get("lift", lift_positions_for_run)
@@ -1116,7 +1163,7 @@ class MujocoBackend:
             else:
                 self._log_pick_phase("DESCEND", target_body)
                 self._move_trajectory(grasp_positions, phase_ms, self._pick_ctrl_offsets("grasp"),
-                                      pin_body=pin_target)
+                                      pin_body=pin_target, sampler=_pick_stride_sampler("DESCEND"))
             self.dump_pick_phase("DESCEND", phase_ms, target_body, left_body, right_body, approach_axis)
         # 下压后的**停稳复量**（2026-09-30 §11.31）：只测量不动臂 —— 试过"下压后再纠一步"的闭环，
         # 结果更差（5.862 mm → 11.176 mm：指腹已在载荷两侧，任何修正都在推着载荷走）。

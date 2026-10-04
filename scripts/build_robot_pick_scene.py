@@ -537,6 +537,17 @@ def build_scene(source, output, target_id=None, half_size=0.030, config=None,
                         "grasp_pose_correction.descend_splits 必须是 ≥1 的整数（实际 %r）："
                         "子段数决定下压段重解次数" % (_splits,))
         gripper["grasp_pose_correction"] = dict(_pick_correction)
+    # 下压段的**载荷保持**（2026-09-30 §11.59）：`pin_payload` = 接近/下压（及合爪窗口）期间把载荷
+    # 复位到它自己的位姿，等价真机上"台面摩擦抵住刚性指腹的侧向推力"（本模型台面摩擦 ~0.4 N，
+    # 小于下压产生的侧向合力：实测刚性指腹把 0.39 N 的载荷推开 1.44 cm，见 §11.23(19)(20)）。
+    # 缺声明 = 不写该键（后端按 none 处理，逐位不变；Piper 侧显式声明 none）。
+    _approach_hold = (config.get("grasp") or {}).get("approach_hold")
+    if _approach_hold is not None:
+        _hold_mode = str(_approach_hold)
+        if _hold_mode not in ("pin_payload", "none"):
+            raise ValueError("grasp.approach_hold 只允许 pin_payload|none（实际 %r）："
+                             "下压段要不要钉住载荷必须由声明给出" % (_hold_mode,))
+        gripper["approach_hold"] = _hold_mode
     # 搬运段抓取约束（2026-09-30 §11.55）：**镜像 Piper 侧**的声明块形状（同一 equality/anchor），
     # 差异只在数值与 `release_gripper`。缺失 ⇒ **不写键**（放置段退回"只看双侧指腹接触"，
     # 即本臂此前的行为）；给出 ⇒ 逐项校验（乱填必须显式失败）。
