@@ -361,6 +361,11 @@
               "type": "string",
               "description": "可选入口，契约：place_entry(root, baseline_doc, target_local_m, payload_half_m, pad_offset_m, clearance_m) → {poses: {above/descend/retreat: 关节解}}；构建期解出**放置四段**的关节空间解（后端只回放），理由见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.16。"
             },
+            "place_target_id": {
+              "type": "string",
+              "minLength": 1,
+              "description": "**放置接收体**（可选）：构建期放置求解器要用 `place_targets.targets` 里的哪一个接收体。缺省 = 取第一个带 nominal_pose_m/size_m 的（旧行为，逐位不变）。为什么必须可声明（§11.57 实测）：联合报告里 tray_01 排在 place_pad_b 前面，first-fit 会让「该放落点垫」的臂也按**托盘**求解 ⇒ 下行段几乎不动（肩抬升只差约 25 mrad），运行期报「触地纠偏需要竖向移动 -0.316 m > max_vertical_m」——这是「求解目标错了」，不是上限太小。必须与 scenario.yaml 里运行期的 place_target_id 指向同一接收体。"
+            },
             "feedforward_entry": {
               "type": "string",
               "description": "可选入口，契约：feedforward_entry(model, reference, baseline_doc, prefix) → ({相位: {模型内关节名: ctrl 增量}}, 证据)；用于在**运行期同款模型**上重算重力前馈（两个模型的执行器增益不同 ⇒ 继承值按增益比例失真）。"
