@@ -4099,6 +4099,27 @@ class MujocoBackend:
             elapsed = step * float(self.model.opt.timestep)
             values = quintic_position(starts, [commands[name] for name in names], duration_ms / 1000.0, elapsed)
             self._set_controls(dict(zip(names, values)))
+            # ---- 指令直采（2026-09-30 §11.68；`IRAF_DEBUG_TRACE_CMD=1` 时开，缺省关）----
+            # 为什么必须直接采：放置段"回放跟不上"的现象与所有**从外部反推**的机制（力矩/节拍/接触/
+            # 伺服）都对不上 ⇒ 必须把"这一拍到底写了什么 ctrl、臂在哪"原样打出来，不再推断。
+            if os.environ.get("IRAF_DEBUG_TRACE_CMD") == "1" and step % max(1, int(os.environ.get("IRAF_DEBUG_TRACE_CMD_STRIDE", "50"))) == 0:
+                sample = {}
+                for channel, value in zip(names, values):
+                    actuator = self._actuators.get(channel)
+                    qpos = None
+                    if actuator is not None:
+                        joint_id = int(self.model.actuator_trnid[int(actuator), 0])
+                        qpos = round(float(self.data.qpos[int(self.model.jnt_qposadr[joint_id])]), 6)
+                    sample[str(channel)] = {
+                        "quintic": round(float(value), 6),
+                        "offset": round(float(offsets.get(channel, 0.0)), 6),
+                        "ctrl": (round(float(self.data.ctrl[int(actuator)]), 6) if actuator is not None else None),
+                        "qpos": qpos}
+                print("TRACE_CMD " + json.dumps({
+                    "invocation": int(getattr(self, "_pick_invocation", 0)),
+                    "step": int(step), "steps": int(steps), "elapsed_s": round(elapsed, 4),
+                    "sim_time_s": round(float(self.data.time), 4), "sample": sample,
+                }, ensure_ascii=False), flush=True)
             if anchor_mocap is not None and anchor_follow:
                 # 约束焊接的 anchor 跟随**指腹中点**（与 _advance_with_grasp_anchor 同口径）；
                 # `anchor_offset`（可选）是激活瞬间的「载荷重心 − 指腹中点」⇒ anchor 取
