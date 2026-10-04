@@ -366,6 +366,11 @@
               "minLength": 1,
               "description": "**放置接收体**（可选）：构建期放置求解器要用 `place_targets.targets` 里的哪一个接收体。缺省 = 取第一个带 nominal_pose_m/size_m 的（旧行为，逐位不变）。为什么必须可声明（§11.57 实测）：联合报告里 tray_01 排在 place_pad_b 前面，first-fit 会让「该放落点垫」的臂也按**托盘**求解 ⇒ 下行段几乎不动（肩抬升只差约 25 mrad），运行期报「触地纠偏需要竖向移动 -0.316 m > max_vertical_m」——这是「求解目标错了」，不是上限太小。必须与 scenario.yaml 里运行期的 place_target_id 指向同一接收体。"
             },
+            "place_carrier_frame": {
+              "type": "string",
+              "minLength": 1,
+              "description": "**放置时载体（狗）停在哪一站**（可选，写成模型里的 worldbody 帧名，如 handoff_station_frame_b）。缺省 = 用模型里的**载体初始位姿**（旧行为，逐位不变）。为什么必须可声明（§11.63 实测）：构建期的航点/路径自检是在「载体在出生点」的 FK 上做的，而运行期碰撞发生在**狗停到站位**时（实测 UR5e 腕部本体撞狗前左髋 FL_hip ×80、撞托盘 ×69、撞底座 ×121）⇒ 不声明站位时，这类碰撞**结构上看不见**，只能运行期才炸。声明后构建期把载体摆到该帧位姿再 FK，净空数字才有意义。"
+            },
             "feedforward_entry": {
               "type": "string",
               "description": "可选入口，契约：feedforward_entry(model, reference, baseline_doc, prefix) → ({相位: {模型内关节名: ctrl 增量}}, 证据)；用于在**运行期同款模型**上重算重力前馈（两个模型的执行器增益不同 ⇒ 继承值按增益比例失真）。"

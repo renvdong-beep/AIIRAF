@@ -2064,8 +2064,34 @@ def _joint_place_resolution(root, solver, resolution, place_targets, arm_report,
 
         waypoint_contacts = []
         data = mujoco.MjData(model)
-        for phase_name, pose in (poses.get("poses") or {}).items():
+        # ---- 载体位姿（2026-09-30 §11.63）：构建期 FK 必须把载体摆到**放置时它实际所在**的位姿 ----
+        # 站位帧是场景 `frames:` 注入的 worldbody site ⇒ 直接按帧名从模型解析，不需要新的数据通道。
+        # 缺声明 = 用模型里的载体初始位姿（旧行为，逐位不变）。
+        carrier_frame = str(solver.get("place_carrier_frame") or "").strip()
+        carrier_site_id, carrier_free_qpos = -1, None
+        if carrier_frame:
+            carrier_site_id = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, carrier_frame))
+            if carrier_site_id < 0:
+                _fail(EXIT_REFERENCE,
+                      "reference_solver.place_carrier_frame=%s 在模型里不是 site"
+                      "（应写场景 frames 段注入的 worldbody 帧名）" % carrier_frame)
+            _free_joint = next((index for index in range(int(model.njnt))
+                                if int(model.jnt_bodyid[index]) == int(carrier_root)
+                                and int(model.jnt_type[index]) == int(mujoco.mjtJoint.mjJNT_FREE)), None)
+            if _free_joint is None:
+                _fail(EXIT_MODEL, "载体的主干上找不到 freejoint：无法按站位摆放后再做 FK"
+                      "（place_carrier_frame=%s）" % carrier_frame)
+            carrier_free_qpos = int(model.jnt_qposadr[_free_joint])
+
+        def _reset_pose_state():
+            """把状态复位到"该步时的世界"：其它全零 + 载体摆到声明的站位帧。"""
             data.qpos[:] = 0.0
+            if carrier_site_id >= 0 and carrier_free_qpos is not None:
+                data.qpos[carrier_free_qpos:carrier_free_qpos + 3] = model.site_pos[carrier_site_id]
+                data.qpos[carrier_free_qpos + 3:carrier_free_qpos + 7] = model.site_quat[carrier_site_id]
+
+        for phase_name, pose in (poses.get("poses") or {}).items():
+            _reset_pose_state()
             mujoco.mj_forward(model, data)
             for joint_name, joint_value in (pose.get("joint_positions") or {}).items():
                 joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT,
@@ -2119,7 +2145,7 @@ def _joint_place_resolution(root, solver, resolution, place_targets, arm_report,
             for _index in range(1, _path_samples):
                 _frac = _index / float(_path_samples)
                 _w = 10 * _frac ** 3 - 15 * _frac ** 4 + 6 * _frac ** 5
-                data.qpos[:] = 0.0
+                _reset_pose_state()
                 for _joint_id in _common:
                     data.qpos[int(model.jnt_qposadr[_joint_id])] = (
                         _start[_joint_id] + (_end[_joint_id] - _start[_joint_id]) * _w)
@@ -2175,6 +2201,7 @@ def _joint_place_resolution(root, solver, resolution, place_targets, arm_report,
                   "solver": {"module": str(module_path), "entry": str(solver["place_entry"]),
                              "baseline": str(baseline_path.resolve())},
                   "place_target_id": item.get("id"),
+                  "carrier_frame": (carrier_frame or None),
                   "seed_positions": {str(k): round(float(v), 9) for k, v in seed_positions.items()},
                   "gripper_axes": axes,
                   "transit_local_m": ([round(float(v), 9) for v in transit_local]

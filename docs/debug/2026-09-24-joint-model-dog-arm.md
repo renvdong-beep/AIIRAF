@@ -4892,6 +4892,20 @@ FL_hip    ↔ ur5e_wrist_2_link          28
 - 结论：**在 1、2 解决之前，运行期的 `PLACE_TRACE.arm_contacts`（§11.63）才是可信诊断**；
   构建期门禁暂不能作为判据。
 
+**A 已落地（把"载体位姿"接进构建期 FK）：部分解决，仍未复现腕部撞狗**
+- 契约：`reference_solver.place_carrier_frame`（可选，写模型里 worldbody 帧名；缺省 = 载体初始位姿）。
+- 实现：`_joint_place_resolution` 按帧名解析 site，把载体主干的 freejoint 摆到该帧位姿后再做
+  航点/路径 FK（`_reset_pose_state()`）；piper 未声明 ⇒ `carrier_frame=None`、`path_contact_count=0`
+  逐位不变。声明：`scenes/handoff_lab/scene.yaml` 的 ur5e `place_carrier_frame: handoff_station_frame_b`。
+- **实测仍未复现**：`ur5e path_contact_count` 仍是 **192**，内容仍全是
+  `above→descend 夹爪↔place_pad_b/world`，**依然没有腕部↔FL_hip**。
+- ⇒ 剩下三个待查方向（下一轮，按成本排序）：
+  ① 扫描里**非臂关节全被置 0**（狗的腿关节也是 0 ⇒ 腿的姿态与运行期不同；髋体位置随躯干、
+     按理不受影响，但要实测确认）；
+  ② **运行期的臂滞后**（0.2~0.53 rad）可能正是"撞上去"的那一侧 —— 即命令轨迹本来擦不到，
+     是撞了之后才滞后的（因果方向需要证据：先有一帧"实际位姿擦狗"才谈得上滞后）；
+  ③ 站位帧的位姿 ≠ 运行期躯干实际位姿（s02b 停靠本身有 0.0157~0.0173 m / 1.9~2.3° 残差）。
+
 ## 12. 下一步
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
 0a. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。
