@@ -4952,6 +4952,18 @@ ur5e_wrist_2            0.4043      [-28,28]       500       0.0008 rad
    指令更新率与伺服带宽的关系需要直接量：逐拍记录 `qvel` 与"指令增量/植物步数"）；
 ② **搬运焊缝（carry_constraint）在运动中的相互作用**（静止时不存在 ⇒ 与"静态保持能过"不矛盾）。
 
+**§11.66 焊缝实验：对 `above` 段不确定（不重复做）**
+临时把 ur5e 的 `grasp.carry_constraint.enabled` 置 `false`（只改声明、实验后**已改回** `true` 并重建）
+跑一轮，结果：
+- s06 仍 SUCCEEDED（抓取段用的是 `lift_constraint`，不含 carry 焊缝）；
+- s07 在**绕行航点**就被自己的判据拒掉（无焊缝时 2F-85 的触点判据会抖）⇒ **`above` 段根本没跑到**，
+  无法比较；
+- 能比的是 `transit` 段：焊缝 ON vs OFF 的逐拍跟踪误差**几乎一样**
+  （末值 0.009772 vs 0.009907，量级 0.01 rad）⇒ **transit 与焊缝无关**。
+⇒ 该实验**对 `above` 不确定**：要重复必须先放宽/绕过放置段的入口判据（会动判据 ⇒ 不做）。
+**结论**：`above` 段跟踪失败的根因仍**未定**；下一步改走候选①（逐拍量 `qvel` 与"指令增量/植物步数"
+的关系），它不需要绕过任何判据。
+
 ## 12. 下一步
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
 0a. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。
