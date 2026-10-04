@@ -424,6 +424,16 @@ class MujocoBackend:
         # 后端不提供任何机型默认路径，未声明即"只能读请求显式给出的证据"。
         self._vision = _parse_vision_config(vision_config)
         self._realtime = bool(realtime)
+        # 时间放大取证（2026-09-30 §11.56）：guest 每次 `_wait_for_guest_steps` 的
+        # 「请求步数 vs 实际推进步数」累计。默认关闭（`IRAF_DEBUG_GUEST_STEPS=1` 打开），
+        # 用于判定残差窗口是"记账 bug"还是"owner 领先导致 wait 立刻返回"。
+        # `small_*` 单独统计 count<=2 的调用（= `_move_trajectory` 逐拍 `_advance_for(0)`）——
+        # 轨迹段才是被放大成数十秒的那一段。
+        self._guest_step_accounting = {
+            "calls": 0, "requested": 0, "actual": 0,
+            "small_calls": 0, "small_requested": 0, "small_actual": 0,
+            "max_overshoot": 0, "reported": None,
+        }
         self._reset_metrics()
         # 离屏显示通道：惰性创建，供 render_frames 使用（与物理步进解耦）。
         width, height = display_size
@@ -1061,9 +1071,52 @@ class MujocoBackend:
                 grasp_positions = _again.get("grasp", grasp_positions)
                 lift_positions_for_run = _again.get("lift", lift_positions_for_run)
         if grasp_positions:
-            self._log_pick_phase("DESCEND", target_body)
-            self._move_trajectory(grasp_positions, phase_ms, self._pick_ctrl_offsets("grasp"),
-                                  pin_body=pin_target)
+            # ---- 下压段**分段纠偏**（2026-09-30 §11.56）----
+            # 联合世界里臂是 guest，节拍被 owner（动物驻留线程）拖长：实测下压相位推进 27.28 s
+            # 仿真时间（标称 8 s，`phase_ms=1600`），而载荷在托盘里以 ~0.085 mm/s 漂移
+            # ⇒ 从"最后一次用实测目标重解"到门禁之间的 33 s 曝光窗口就是到位残差的主项
+            # （实测 2.94/3.33/3.34 mm 全部对上 0.085 mm/s × 33 s）。
+            # 修法：把下压拆成 K 个子段，**每个子段之前**用新鲜实测目标重解（IK 不推进植物，
+            # 实测只花 0.01 s 仿真时间）⇒ 最后一次解算到门禁的窗口 ≈ 1/K。
+            # 下压前半段指腹离载荷还有 8~16 cm（实测接近末 0.160 m、下压末 0.0029 m）⇒ 安全。
+            descend_splits = 1
+            if correction_declaration:
+                descend_splits = int(correction_declaration.get("descend_splits") or 1)
+            descend_splits = max(1, descend_splits)
+            if descend_splits > 1 and correction_declaration and approach_positions:
+                anchor_config = {str(name): float(value) for name, value in approach_positions.items()}
+                chunk_ms = max(1, int(phase_ms) // descend_splits)
+                # 稳定窗口按子段等比缩放（否则 K 段各稳定 4×phase_ms ⇒ 总稳定时间放大 K 倍）
+                chunk_settle_ms = max(1, max(250, min(16000, int(phase_ms) * 4)) // descend_splits)
+                split_evidence = []
+                for split_index in range(1, descend_splits + 1):
+                    _sub, sub_evidence = self._correct_grasp_column(
+                        correction_declaration,
+                        {"grasp": grasp_positions, "lift": gripper.get("lift_positions")},
+                        target_body)
+                    sub_evidence["pose_source"] = source
+                    sub_evidence["split"] = [split_index, descend_splits]
+                    split_evidence.append(sub_evidence)
+                    solved = _sub.get("grasp") or grasp_positions
+                    fraction = float(split_index) / float(descend_splits)
+                    sub_target = {
+                        name: anchor_config[name] + (float(solved[name]) - anchor_config[name]) * fraction
+                        for name in solved if name in anchor_config}
+                    if not sub_target:
+                        raise ValueError("下压分段：重解位形与接近位形没有共同关节键（无法插值）")
+                    self._log_pick_phase("DESCEND_%d_%d" % (split_index, descend_splits), target_body)
+                    self._move_trajectory(sub_target, chunk_ms, self._pick_ctrl_offsets("grasp"),
+                                          pin_body=pin_target, settle_ms=chunk_settle_ms)
+                    if _sub:
+                        grasp_positions = _sub.get("grasp", grasp_positions)
+                        lift_positions_for_run = _sub.get("lift", lift_positions_for_run)
+                pose_correction_evidence["descend_splits"] = {
+                    "splits": descend_splits, "chunk_ms": chunk_ms,
+                    "chunk_settle_ms": chunk_settle_ms, "phases": split_evidence}
+            else:
+                self._log_pick_phase("DESCEND", target_body)
+                self._move_trajectory(grasp_positions, phase_ms, self._pick_ctrl_offsets("grasp"),
+                                      pin_body=pin_target)
             self.dump_pick_phase("DESCEND", phase_ms, target_body, left_body, right_body, approach_axis)
         # 下压后的**停稳复量**（2026-09-30 §11.31）：只测量不动臂 —— 试过"下压后再纠一步"的闭环，
         # 结果更差（5.862 mm → 11.176 mm：指腹已在载荷两侧，任何修正都在推着载荷走）。
@@ -3195,7 +3248,36 @@ class MujocoBackend:
             "carrier_z_m": carrier_z,
             "joint_qpos": alignment["joint_qpos"],
         }, ensure_ascii=False), flush=True)
+        self._report_guest_step_accounting(str(phase))
         return alignment
+
+    def _report_guest_step_accounting(self, phase_name):
+        """把「guest 请求步数 vs 植物实际推进步数」按相位打出来（`IRAF_DEBUG_GUEST_STEPS=1`）。
+
+        一次控制迭代 = 一次 `_wait_for_guest_steps`。轨迹段逐拍请求 1 步，若实际推进 ≫1 步，
+        说明 owner（驻留线程）在 guest 等待期间并发推进 ⇒ 相位在仿真时间上被放大（§11.56）。
+        """
+        if os.environ.get("IRAF_DEBUG_GUEST_STEPS") != "1":
+            return None
+        acc = self._guest_step_accounting
+        keys = ("calls", "requested", "actual", "small_calls", "small_requested", "small_actual")
+        previous = acc.get("reported") or {key: 0 for key in keys}
+        scope = {key: acc[key] - previous.get(key, 0) for key in keys}
+        print("PICK_STEP_ACCT " + json.dumps({
+            "robot": str(getattr(self.profile, "name", "")),
+            "phase": phase_name,
+            "sim_time_s": round(float(self.data.time), 6),
+            "plant_step_index": int(self.plant.step_index),
+            "scope": scope,                       # 本相位
+            "total": {key: acc[key] for key in keys},   # 至本相位末累计
+            "scope_amplification": (round(scope["actual"] / scope["requested"], 6)
+                                    if scope["requested"] else None),
+            "small_amplification": (round(acc["small_actual"] / acc["small_requested"], 6)
+                                    if acc["small_requested"] else None),
+            "max_overshoot_steps": acc["max_overshoot"],
+        }, ensure_ascii=False), flush=True)
+        acc["reported"] = {key: acc[key] for key in keys}
+        return scope
 
     def _arm_joint_names(self):
         """返回 profile 声明为 arm 角色的关节名（按 profile.joints 顺序）。
@@ -3847,7 +3929,8 @@ class MujocoBackend:
 
     def _move_trajectory(self, target_positions, duration_ms, ctrl_offsets=None, sampler=None,
                          pin_body=None, anchor_body=None, anchor_follow=(), anchor_offset=None,
-                         anchor_wrist=None, anchor_rel_quat=None, cadence_sink=None):
+                         anchor_wrist=None, anchor_rel_quat=None, cadence_sink=None,
+                         settle_ms=None):
         # `pin_body`（可选）：**逐步**把该 body 的 freejoint 复位到本段开始时的位姿。
         # 用途（2026-09-28 §11.23(21)）：接近/下压段的刚性指腹会把 0.39 N 的载荷推开 1.44 cm，
         # 之后的合爪/抬升就丢了它 —— 真机上这段位移由**台面摩擦**抵住，本模型的台面摩擦
@@ -3964,7 +4047,12 @@ class MujocoBackend:
         # 而 4 秒时只走 61%、2 秒时只走 41%。
         # 注意这里不能按"段时长"缩放：调用方传入的是每段时长（总时长/5），
         # 按它缩放会把稳定窗口压到 4 秒以内，joint1 永远到不了位。
-        settle_ms = max(250, min(16000, int(duration_ms) * 4))
+        # `settle_ms`（可选，2026-09-30 §11.56）：下压分段时由调用方显式给出每段的稳定窗口
+        # （否则 K 段各按 `duration_ms×4` 稳定 ⇒ 总稳定时间被放大 K 倍，反而拉长曝光窗口）。
+        if settle_ms is None:
+            settle_ms = max(250, min(16000, int(duration_ms) * 4))
+        else:
+            settle_ms = max(1, int(settle_ms))
         self._set_controls(commands)
         self._advance_for(settle_ms)
 
@@ -3979,10 +4067,32 @@ class MujocoBackend:
         if self._plant_guest_timeout_factor is None:
             raise PlantError("guest 缺少 plant_guest_timeout_factor（装配期本应拒绝装配）")
         count = int(count)
-        target = self.plant.step_index + count
+        before = int(self.plant.step_index)
+        target = before + count
         timeout = abs(float(self.plant.timestep)) * count * self._plant_guest_timeout_factor
         self.plant.wait_until(target, timeout=timeout, poll_seconds=abs(float(self.plant.timestep)))
+        # 记账取证（§11.56）：请求 count 步，实际推进 = after - before。
+        # owner（驻留线程）在 guest 等待期间**并发推进** ⇒ 实际常常 > count（owner 领先）。
+        self._record_guest_step_wait(count, before, int(self.plant.step_index))
         return {joint: float(self.last_positions[joint]) for joint in self.profile.joints}
+
+    def _record_guest_step_wait(self, count, before, after):
+        """累计「guest 请求步数 vs 植物实际推进步数」（`IRAF_DEBUG_GUEST_STEPS=1` 时）。"""
+        if os.environ.get("IRAF_DEBUG_GUEST_STEPS") != "1":
+            return
+        acc = self._guest_step_accounting
+        delta = int(after) - int(before)
+        acc["calls"] += 1
+        acc["requested"] += int(count)
+        acc["actual"] += delta
+        if int(count) <= 2:
+            acc["small_calls"] += 1
+            acc["small_requested"] += int(count)
+            acc["small_actual"] += delta
+        overshoot = delta - int(count)
+        if overshoot > acc["max_overshoot"]:
+            acc["max_overshoot"] = overshoot
+        return None
 
     def _advance_for(self, duration_ms, contact_bodies=None):
         bilateral = False
@@ -4448,6 +4558,14 @@ class MujocoBackend:
                                else raw_pick_correction[key])
                     for key in required_correction_keys}
                 gripper["grasp_pose_correction"]["mode"] = correction_mode
+                # 下压段子段数（2026-09-30 §11.56）：可选；缺省即 1（单段 = 旧行为）。
+                if raw_pick_correction.get("descend_splits") is not None:
+                    splits = raw_pick_correction["descend_splits"]
+                    if (not isinstance(splits, int) or isinstance(splits, bool) or splits < 1):
+                        raise ValueError(
+                            "grasp_pose_correction.descend_splits 必须是 ≥1 的整数（实际 %r）"
+                            % (splits,))
+                    gripper["grasp_pose_correction"]["descend_splits"] = int(splits)
             friction_flag = raw_gripper.get("require_friction_lift")
             gripper["require_friction_lift"] = bool(friction_flag) if friction_flag is not None else False
             constraint = raw_gripper.get("lift_constraint")

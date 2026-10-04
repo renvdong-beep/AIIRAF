@@ -1839,8 +1839,24 @@ def _joint_place_resolution(root, solver, resolution, place_targets, arm_report,
     rotation = _quat_to_matrix(placement["quat_wxyz"])
     base_pos = np.asarray(placement["pos_m"], dtype=float)
     # 臂基座的高度取**模型实测**（放置目标在基座系里，z 必须相对同一个原点）
+    # ---- 接收体选择（2026-09-30 §11.57 修）----
+    # `reference_solver.place_target_id` **声明时必须以它为准**；缺声明 = 取第一个（旧行为，逐位不变）。
+    # 为什么必须（§11.55 实测）：联合报告 `place_targets.targets` 里 `tray_01` 排在 `place_pad_b`
+    # 前面，first-fit 会让"该放落点垫"的臂也按**托盘**求解 ⇒ 下行段几乎不动（肩抬升只差约 25 mrad），
+    # 运行期报 `触地纠偏需要竖向移动 -0.316249480 m > max_vertical_m=0.050000000`。
+    # 这不是"上限太小"，是**求解目标错了** ⇒ 只能在声明层对齐构建期与运行期（`scenario.yaml` 的
+    # `place_target_id`）指向同一接收体，不得靠调大 max_vertical_m 掩盖。
+    declared_target_id = solver.get("place_target_id")
+    candidates = targets
+    if declared_target_id is not None:
+        declared_target_id = str(declared_target_id)
+        candidates = [item for item in targets if str(item.get("id")) == declared_target_id]
+        if not candidates:
+            _fail(EXIT_REFERENCE,
+                  "reference_solver.place_target_id=%s 不在场景 place_targets 里（现有：%s）"
+                  % (declared_target_id, [str(item.get("id")) for item in targets]))
     record = None
-    for item in targets:
+    for item in candidates:
         if item.get("nominal_pose_m") is None or item.get("size_m") is None:
             continue
         top_world = np.asarray(item["nominal_pose_m"], dtype=float) + np.asarray(
@@ -1904,10 +1920,46 @@ def _joint_place_resolution(root, solver, resolution, place_targets, arm_report,
                     if norm > 1e-9:
                         lift_axis_world = [float(v) for v in (axis / norm)]
         transit_local = None
+        transit_evidence = None
         if transit_world is not None:
             lift_local = rotation.T @ (transit_world - base_pos)
-            transit_local = [float(lift_local[0]), float(lift_local[1]),
-                             float(local[2] + float(payload_half) + grip_height + clearance)]
+            # ---- 航点高度必须**不低于当前搬运高度**（2026-09-30 §11.58 修）----
+            # 旧口径只用「承载面高度 + 载荷半高 + 夹口高 + 净间隙」定航点 z ⇒ 当目标是**低位**
+            # （如台面落点垫 z≈0.005）时，航点被压到比拾取点低得多，臂会**边横移边下降**、
+            # 把载荷按着穿过沿途的载体（狗背托盘）。实测（s07，`IRAF_DEBUG_PLACE_STRIDE=1`）：
+            # 载荷底面从 0.42480 单调降到 0.29831，而托盘顶面 0.34286 ⇒ 段内低 22.5~44.6 mm，
+            # 载荷↔托盘接触力 37.4 → 111.2 → 177.1 → 223.6 N，指腹被顶开（力掉到 0 后猛合）
+            # ⇒ 段末判「失去夹持」。
+            # 正确口径 = max(当前抬升高度, 承载面接近高度)：**先平移到目标上方，再竖直下降**。
+            # 当前抬升高度用**联合模型 FK** 从报告的 lift_positions 实测（不抄数字）。
+            bearing_pad_z = float(local[2] + float(payload_half) + grip_height + clearance)
+            # ---- 航点 xy 的来源（2026-09-30 §11.58 第二处修）----
+            # `grasp.place_transit_xy`（缺省 `lift` = 旧行为，逐位不变）：
+            #   · `lift`   —— 航点停在**抬升点 xy**（拾取点正上方）：横移发生在**下一段**
+            #                  (`transit → above`)，那一段同时在下降 ⇒ 轨迹斜插。
+            #   · `target` —— 航点直接到**接收体 xy**：横移在搬运高度完成，`above` 只做竖直下降。
+            # 为什么必须有 `target` 档（实测）：ur5e 的目标（台面落点垫 z≈0.005）比拾取点低 0.375 m，
+            # 斜插那一段会让方块在仍在狗背托盘上方时就降到托盘顶面以下被挡住 ⇒ 载荷经焊缝把臂拽住，
+            # 运行期 `after_above` 指腹中点实测 `[0.7340, 0.4040, 0.2613]`，而构建期解是
+            # `[0.699996, 0.600002, 0.070632]` ⇒ 臂**根本没到 above**（构建期解本身是对的，
+            # 用 `scripts/probe_ur5e_place_waypoint_fk.py` FK 对账判死）。
+            transit_xy_source = str((baseline_doc.get("grasp") or {}).get("place_transit_xy") or "lift")
+            if transit_xy_source not in ("lift", "target"):
+                _fail(EXIT_REFERENCE,
+                      "基线 %s 的 grasp.place_transit_xy 只允许 lift / target（实际 %r）："
+                      "航点横移发生在哪一段必须由声明给出" % (baseline_path.name, transit_xy_source))
+            if transit_xy_source == "target":
+                transit_xy = [float(local[0]), float(local[1])]
+            else:
+                transit_xy = [float(lift_local[0]), float(lift_local[1])]
+            transit_local = [transit_xy[0], transit_xy[1],
+                             max(float(lift_local[2]), bearing_pad_z)]
+            transit_evidence = {"lift_pad_z_m": round(float(lift_local[2]), 9),
+                                "bearing_pad_z_m": round(bearing_pad_z, 9),
+                                "used_z_m": round(transit_local[2], 9),
+                                "xy_source": transit_xy_source,
+                                "source": ("current_lift_height" if float(lift_local[2]) > bearing_pad_z
+                                           else "bearing_approach_height")}
         # IK 种子 = 已验证的 pick **抬升位形**（把模型名还原成声明名：报告里是 piper_jointN）
         seed_positions = {}
         for name, value in (out_gripper.get("lift_positions") or {}).items():
@@ -2066,6 +2118,8 @@ def _joint_place_resolution(root, solver, resolution, place_targets, arm_report,
                   "gripper_axes": axes,
                   "transit_local_m": ([round(float(v), 9) for v in transit_local]
                                       if transit_local else None),
+                  # 航点高度口径留证（§11.58）：max(当前抬升高度, 承载面接近高度)
+                  "transit_height": transit_evidence,
                   "waypoint_contacts": waypoint_contacts,
                   "lift_axis_world": ([round(float(v), 9) for v in lift_axis_world]
                                       if lift_axis_world is not None else None),
@@ -2077,7 +2131,11 @@ def _joint_place_resolution(root, solver, resolution, place_targets, arm_report,
                            "后端只回放；运行期以实测接收体位姿判据（见 place_object 证据）。")}
         break
     if record is None:
-        _fail(EXIT_REFERENCE, "place_targets 里没有任何带 nominal_pose_m 与 size_m 的接收体")
+        _fail(EXIT_REFERENCE,
+              ("place_targets 里没有任何带 nominal_pose_m 与 size_m 的接收体"
+               "（声明的 place_target_id=%s 命中但缺 nominal_pose_m/size_m）"
+               % declared_target_id) if declared_target_id is not None
+              else "place_targets 里没有任何带 nominal_pose_m 与 size_m 的接收体")
     return record
 
 

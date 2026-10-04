@@ -529,6 +529,13 @@ def build_scene(source, output, target_id=None, half_size=0.030, config=None,
                     raise ValueError(
                         "grasp_pose_correction.mode=resolved 时必须声明正的 %s（实现层不写默认值），"
                         "实际: %r" % (_key, _value))
+            # 下压段子段数（2026-09-30 §11.56）：可选；给出即必须是 ≥1 的整数（缺省 1 = 单段）。
+            _splits = _pick_correction.get("descend_splits")
+            if _splits is not None:
+                if (not isinstance(_splits, int) or isinstance(_splits, bool) or _splits < 1):
+                    raise ValueError(
+                        "grasp_pose_correction.descend_splits 必须是 ≥1 的整数（实际 %r）："
+                        "子段数决定下压段重解次数" % (_splits,))
         gripper["grasp_pose_correction"] = dict(_pick_correction)
     # 搬运段抓取约束（2026-09-30 §11.55）：**镜像 Piper 侧**的声明块形状（同一 equality/anchor），
     # 差异只在数值与 `release_gripper`。缺失 ⇒ **不写键**（放置段退回"只看双侧指腹接触"，

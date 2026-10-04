@@ -181,6 +181,11 @@ robots:
       # 【§11.51 已修】共享实现改为**可注入场景生成器**（缺省仍是 Piper 的 ⇒ 对 Piper 逐位不变），
       # 本臂转发时注入自己的 `build_robot_pick_scene.build_scene` ⇒ 资产按其自身声明解析。
       place_entry: build_place_reference_poses
+      # **接收体（构建期对齐运行期，§11.57）**：联合报告 `place_targets.targets` 里 `tray_01` 排在
+      # `place_pad_b` 前面，而 first-fit 会让本臂也按**托盘**解放置四段 ⇒ 下行段几乎不动
+      # （肩抬升只差约 25 mrad），运行期报 `触地纠偏需要竖向移动 -0.316249480 m > max_vertical_m=0.050`。
+      # 本臂该放的是**落点垫**（与 `scenario.yaml` 的 s07 `place_target_id: place_pad_b` 同一接收体）。
+      place_target_id: place_pad_b
       # **本场景对基线的覆盖**（§11.28，实测驱动）：基线的 `grasp.home_rise_m: 0.30` 在该臂自己的场景里
       # 得到 home 残差 1.5e-07 m；换到本场景（目标距基座 0.45 m、载荷在托盘里）后 home 目标
       # （局部 z = 0.375372 + 0.16 + 0.30 = 0.835372）**不可达** ⇒ 解出的 home 位形夹持区只在 0.420188
