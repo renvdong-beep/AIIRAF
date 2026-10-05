@@ -11,7 +11,9 @@ cd "$(dirname "$0")/.."
 
 ROUNDS="${1:-5}"
 REPORT="build/acceptance/handoff_lab/nominal/report.json"
-OUT="build/diagnostics/passrate.json"
+# ⚠ 每批**独立**文件（2026-09-30 修：旧版把所有批次追加进同一个 passrate.json，
+# 而 `round` 号每批从 1 重新开始 ⇒ 两批混在一起、序号重号，判读时极易张冠李戴）。
+OUT="build/diagnostics/passrate-$(date +%Y%m%d-%H%M%S).json"
 
 for i in $(seq 1 "$ROUNDS"); do
   log="build/diagnostics/passrate-round${i}.log"
