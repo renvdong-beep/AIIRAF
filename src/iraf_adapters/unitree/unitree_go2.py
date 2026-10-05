@@ -30,6 +30,7 @@ import os
 import yaml
 import threading
 import sys
+import time
 
 import numpy as np
 
@@ -1956,6 +1957,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         # owner 步记账（2026-10-05 §11.88 步2 诊断）：闸门只约束 **guest**；这里量 **owner 自己这一步**
         # 实际推进步数与"声明时长应推进步数"是否一致。同配置两轮若不等 ⇒ owner 步仍被挂钟污染。
         _owner_steps_before = int(self.plant.step_index)
+        _owner_wall_started = time.monotonic()
         report = self.locomote(
             {"vx_mps": approach_speed, "vy_mps": 0.0, "wz_rad_s": 0.0},
             total_s * 1000.0, lease, execution_id=execution_id, command_provider=provider,
@@ -2011,6 +2013,8 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         # 本段**只量不改**（改 `phase_elapsed` 会动到 `stop` 共用的站定机制，必须先用相关性坐实）。
         if _dock_trace is not None:
             import json as _json
+            _owner_wall_s = time.monotonic() - _owner_wall_started
+            _client_stats = report.get("client") or {}
             _halt = report.get("halt") or {}
             _zero_since = _halt.get("zero_command_since_s")
             _frozen = _halt.get("frozen_elapsed_s")
@@ -2028,6 +2032,14 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 # owner 步记账（§11.88 步2 诊断）：实际推进步数 vs 声明时长应推进步数
                 "owner_steps": int(self.plant.step_index) - _owner_steps_before,
                 "owner_steps_expected": int(round(total_s / float(self.plant.timestep))),
+                # MPC 子进程的**墙钟时限**计数（§11.88 步2：异常轮"特别快"的第一嫌疑）：
+                # `process_client` 的单次调用预算是墙钟 200 ms，超时/崩溃/重启都走另一支 ⇒
+                # 这些计数是"结果与常规轮不同"的直接线索。该步墙钟耗时一并记（快轮 = 可疑轮）。
+                "owner_wall_s": round(_owner_wall_s, 3),
+                "mpc_calls": (_client_stats or {}).get("calls"),
+                "mpc_timeouts": (_client_stats or {}).get("timeouts"),
+                "mpc_crashes": (_client_stats or {}).get("crashes"),
+                "mpc_restarts": (_client_stats or {}).get("restarts"),
                 "final_pos_m": translation_error_m,
                 "final_yaw_deg": math.degrees(yaw_error),
                 "pass_pos": translation_error_m <= position_tolerance_m,
