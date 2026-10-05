@@ -5206,6 +5206,24 @@ s07 SUCCEEDED  place_offset_from_tray_center_m = 0.046425465（验收 0.065 ✓�
 整链：9 步 **8 绿**（s01/s02/s03/s04/s05/s05b/s06/s07），唯一红 = s02b_dock_station_b（停靠地板）
 ```
 
+**§11.79 按站控制容差（已落地，契约先行）：s02b 的失败模式**前移了一步**（2026-09-30）**
+**契约**：`dock_for_handoff.stations[站名]` 从"只有帧名字符串"扩展为**两种形状**——
+字符串（旧行为，逐位不变）或 `{frame: <帧名>[, approach_position_tolerance_m, approach_yaw_tolerance_rad]}`；
+纯函数 `dock._station_frame` / `dock.station_control_overrides`，适配器在读控制容差处应用覆盖，
+**不变式照旧**（控制容差必须严于调用方验收容差，"只允许收紧"）。
+**声明**：`config/go2_joint.yaml` 的 `handoff_b` 给 `approach_position_tolerance_m: 0.020`
+（> 实测地板 0.0183，< 验收 0.030）与 `approach_yaw_tolerance_rad: 0.034`（1.948°，< 验收 2.0°）。
+**依据**：B 站末态平移 0.017725~0.018303 m、偏航 1.58~1.71° **都在验收内**，却进不了全局控制容差
+（0.015 m / 1.0°）⇒ 12 s 超时；A 站同容差能过 ⇒ **是"地板 > 控制容差"，不是窗口问题**。
+
+**实测（`stationtol-round1.log`）**：s02b 失败模式**从** `停靠超时 12.000 s 未进入容差`
+**变为** `DOCK_DRIFTED：保持后超出容差：平移 0.011416 m（判据 0.030000）/ 偏航 2.636303°（判据 2.000000）`
+⇒ **按站容差生效（狗现在进得去容差了）**；同轮 **s06 + s07 都 SUCCEEDED**。
+⇒ s02b 的**下一处真因**：**保持窗太长**——本方法到位后仍"跑满 `timeout_s(12) + settle_s(1) + 0.5`"
+≈ **13.5 s**，期间狗自身漂移（既有记录 ≈0.69 mm/s）⇒ 偏航漂到 2.636° 越过验收 2.0°。
+**修法方向**：到位 + `settle_s` 完成后**提前返回**（不必跑满 timeout），或缩短 `timeout_s`
+（声明层，既有记录已因同一原因 60→20→12）。**注意**：不得放宽验收（0.030 / 2.0 是场景判据）。
+
 ## 12. 下一步
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
 0a. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。
