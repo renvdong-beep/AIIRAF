@@ -1687,14 +1687,28 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
             fired_faults = step_faults
             records.append(record)
             continue
+        # 步号跨度留证（2026-10-05 §11.88 量测③的判法）：量"派发前 → 让位后 → 步结束"三段步数。
+        # 目的：`_yield_residency_to_step` 让位时，驻留线程若在 hold 周期中途会**继续推进到周期结束**
+        # ⇒ owner 步开始前那段步数（before→dispatch）可能逐轮不同（= 挂钟相关）。这是"可复现性"
+        # 目前唯一未闭合的通道。`IRAF_DEBUG_PLANT_SPAN=1` 时每步打一行（9 行/轮，零逐拍开销）。
+        _span_plant = _plant_of_residency(residency)
+        _span = None
+        if _span_plant is not None and os.environ.get("IRAF_DEBUG_PLANT_SPAN") == "1":
+            _span = {"id": str(step["id"]), "before": int(_span_plant.step_index)}
         yield_record = _yield_residency_to_step(residency, step["robot"])
-        # 需求闸门（§11.87）：只在 guest 步期间开 ⇒ guest 的请求量 = 植物推进量（无挂钟相关超出量）
+        if _span is not None and _span_plant is not None:
+            _span["dispatch"] = int(_span_plant.step_index)
         _set_step_demand_gate(residency, step["robot"], True)
         try:
             executed = _dispatch_step(runtime_state, step, correlation, key)
         finally:
             _set_step_demand_gate(residency, step["robot"], False)
             _resume_residency_after_step(residency, yield_record, step["id"])
+            if _span is not None and _span_plant is not None:
+                _span["after"] = int(_span_plant.step_index)
+                _span["pre_dispatch_steps"] = _span["dispatch"] - _span["before"]
+                _span["step_steps"] = _span["after"] - _span["dispatch"]
+                print("PLANT_STEP_SPAN " + json.dumps(_span, ensure_ascii=False), flush=True)
         executed["plant_residency_yielded"] = bool(yield_record.get("paused"))
         records.append(executed)
     return records
