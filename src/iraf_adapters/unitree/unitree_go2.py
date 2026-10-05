@@ -1953,6 +1953,9 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         # 走同一段 locomote（含 MPC 契约 §4 的失败路径），逐拍指令由上面的 provider 给。
         # 到位后要**保持的世界位置** = 目标帧的 xy（与判据测的同一对量）
         target_pose_for_hold = frame_pose()
+        # owner 步记账（2026-10-05 §11.88 步2 诊断）：闸门只约束 **guest**；这里量 **owner 自己这一步**
+        # 实际推进步数与"声明时长应推进步数"是否一致。同配置两轮若不等 ⇒ owner 步仍被挂钟污染。
+        _owner_steps_before = int(self.plant.step_index)
         report = self.locomote(
             {"vx_mps": approach_speed, "vy_mps": 0.0, "wz_rad_s": 0.0},
             total_s * 1000.0, lease, execution_id=execution_id, command_provider=provider,
@@ -2022,6 +2025,9 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 "freeze_delay_s": (None if (_zero_since is None or _frozen is None)
                                    else round(float(_frozen) - float(_zero_since), 4)),
                 "frozen": _frozen is not None,
+                # owner 步记账（§11.88 步2 诊断）：实际推进步数 vs 声明时长应推进步数
+                "owner_steps": int(self.plant.step_index) - _owner_steps_before,
+                "owner_steps_expected": int(round(total_s / float(self.plant.timestep))),
                 "final_pos_m": translation_error_m,
                 "final_yaw_deg": math.degrees(yaw_error),
                 "pass_pos": translation_error_m <= position_tolerance_m,
