@@ -5448,6 +5448,31 @@ round2  a pos=0.0285692719673323 yaw=-0.424694730557289   b pos=0.02772943867337
 **续**：闸门仍**缺省关**（opt-in），本轮未改动任何判据/物理参数；两处缺口（B 偏航 0.0087°、A 平移 1.4 mm）
 现在都是**可复现的定点**，下一步按 §11.86 结论 1/3 逐项收。
 
+**§11.87 附（同日续）：闸门从环境变量**升级为声明**——联合世界缺声明即失败**
+
+可复现性是**验收口径**，不能依赖隐式环境变量（AGENTS.md 5.3）。已落成：
+· 契约：`config/scene.schema.json` 新增顶层 `plant_demand_gate`（布尔，含长说明）；`scenes/handoff_lab/scene.yaml`
+  显式 `plant_demand_gate: true`；`scene_check` 通过（`SCENE_CHECK_PASSED`）。
+· 消费：`scenario.py::_apply_plant_demand_gate` —— `world=joint` **必须**声明（缺声明/非布尔即
+  `EXIT_DECLARATION` 显式失败，与 `world_physics` 同一纪律）；非联合世界**不读该键**（单本体逐位不变）；
+  生效值与来源（声明/环境覆盖）打成一行 `PLANT_DEMAND_GATE {...}` 进日志。
+· 实验覆盖改为 `IRAF_PLANT_DEMAND_GATE_OVERRIDE=0/1`（仅排查用），原 `IRAF_PLANT_DEMAND_GATE` 已从
+  `plant.py` 移除（不留隐式开关）。
+
+**踩到一个必须记住的次序坑**：`_apply_plant_demand_gate` 起初放在**驻留线程启动之后** ⇒ 从"启动驻留"到
+"施加闸门"之间有一段**自由推进窗口**（挂钟相关）⇒ 起点步号逐轮不同，**可复现性就丢在这一小段上**
+（实测：同代码同声明，B 给出 −2.4205° 而不是 −2.0087°）。修法：**闸门必须在启动驻留线程之前施加**。
+
+**验证（`build/diagnostics/gate-decl-v7-round{1,2}.log`，声明路径、无任何环境覆盖）**：
+```
+轮1  PLANT_DEMAND_GATE {declared: true, override: null, effective: true, source: "声明"}
+     a pos=0.02856927196733233 yaw=-0.424694730557289  b pos=0.02772943867337479 yaw=-2.008732329045354
+轮2  a pos=0.02856927196733233 yaw=-0.424694730557289  b pos=0.02772943867337479 yaw=-2.008732329045354
+```
+⇒ **两轮逐位一致**，且与"环境开关时代"的闸门开结果**完全相同**（−2.008732329045354）⇒ 声明路径与
+实验路径等价。另：`IRAF_PLANT_DEMAND_GATE_OVERRIDE=0`（旧行为）下 A 站仍逐位
+`0.02856927196733233 / −0.424694730557289` ⇒ 关闸门路径未受影响。
+
 **§11.86 量测①：冻结延迟不是变量（假设否掉）；真正决定 B 站成败的是"联合世界的挂钟相关步进"**
 
 按"先量不修"补了 `DOCK_HALT` 留证（`IRAF_DEBUG_DOCK=1`）。字段路径已确认：locomote 报告的
