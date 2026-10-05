@@ -2649,6 +2649,29 @@ class MujocoBackend:
         offset_from_center = float(np.linalg.norm(
             np.asarray([final["payload_center"][0] - final["tray_top"][0],
                         final["payload_center"][1] - final["tray_top"][1]], dtype=float)))
+        # 各相位步数账（2026-10-05 §11.88 量测⑤ 的口径纪律）：**内存累计 + 段末一行**。
+        # 为什么必须这样做：place 里存在**时序敏感分支** —— 实测"每步一行 print"或"dump 2.5 MB 轨迹"
+        # 都能把同一路径的总步数翻到另一支（`span-round*` 70501/85500/108000 vs `placetrace-round*`
+        # ≈100500，而各自批次内稳定）⇒ 逐行探测会改变被探测对象。本账只读**已在内存**的 `phase_trace`
+        # （每个相位的首现步号），段末打一行，扰动与 `PICK_STEP_ACCT` 同量级。
+        # 用途：判"总步数不同"到底翻在哪个相位上（`__total__` 与逐相位增量一起看）。
+        if os.environ.get("IRAF_DEBUG_PLACE_ACCT") == "1":
+            _first = {}
+            _order = []
+            for _row in phase_trace:
+                _ph = _row.get("phase")
+                if _ph is not None and _ph not in _first:
+                    _first[_ph] = _row.get("plant_step_index")
+                    _order.append(_ph)
+            _acct = {}
+            for _index, _ph in enumerate(_order):
+                _next_first = _first[_order[_index + 1]] if _index + 1 < len(_order) else None
+                if isinstance(_first[_ph], int) and isinstance(_next_first, int):
+                    _acct[_ph] = _next_first - _first[_ph]
+            _acct["__first_step_index__"] = _first[_order[0]] if _order else None
+            _acct["__total_steps__"] = (int(self.plant.step_index) - int(_first[_order[0]])
+                                        if _order and isinstance(_first[_order[0]], int) else None)
+            print("PLACE_STEP_ACCT " + json.dumps(_acct, ensure_ascii=False), flush=True)
         evidence = {
             "place_target_body": record["body"],
             "payload_body": payload["body"],
