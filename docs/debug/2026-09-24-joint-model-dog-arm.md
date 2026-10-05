@@ -5495,6 +5495,47 @@ s04 的失败原因（确定性，非随机）：
 下一步（已排好）：在**声明 dt 口径**下把 s04 的放置落点收回 0.05 以内、再把 s02b 的 0.0087° 收掉 ——
 两者现在都是**定点**，改动是否有效可以直接用"这两组数变没变"来判。
 
+**§11.88 声明 dt 口径下的第一处定点已收：s04 横向纠偏预算 0.05 → 0.07（判据一个没动）**
+
+**症状（确定性）**：`plant_demand_gate: true` 之后 s04 稳定 FAILED，错误码 `IRAF-EXECUTION-FAILED`：
+```
+横向纠偏需要移动 0.065435588 m（载荷中心 [0.466961, 0.036557] − 托盘中心 [0.4119344213404156, 0.0011466649885913676]），
+超过声明上限 max_lateral_m=0.050000000 m ⇒ 拒绝放置
+```
+**判读（关键，别当成"落下去了但落偏"）**：这**不是**场景判据（`max_offset_from_tray_center_m: 0.06`）不达标，
+而是 **Piper 自己的纠偏预算**（`config/piper_simulation_baseline.yaml: place_pose_correction.max_lateral_m`）
+把这次纠偏**拒绝**了 ⇒ fail-closed。判据管**结果**，预算管"这次纠偏是否可信"；把预算压到判据之下 =
+把"能被纠回域内的落点"判成假失败（与 §11.77 在 UR5e 侧犯过、并已更正的是同一类错误）。
+
+**改法（只动一处声明）**：`max_lateral_m: 0.05 → 0.07`（与 UR5e 侧同值，§11.77 已论证的"按验收域反推"），
+并在配置里写明依据与余量。判据、控制容差、场景一律未动。
+
+**产物重建（改基线必须重建，本仓老坑）**：
+```bash
+PYTHONPATH=src:scripts python3 scripts/build_piper_baseline.py > build/models/piper-pick-scene.json
+PYTHONPATH=src python3 scripts/build_scene.py --scene scenes/handoff_lab --robot unitree_go2 --attach piper --attach ur5e
+PYTHONPATH=src python3 scripts/scene_check.py --scene scenes/handoff_lab --require-model   # SCENE_CHECK_PASSED
+```
+
+**结果（`build/diagnostics/gate-decl-v8-round1.log`）**：整链回到 **8 绿，唯一红 = s02b**（且为确定性）：
+```
+s01 SUCCEEDED | s02 SUCCEEDED dock_translation_error_m=0.0285692719673323
+s03 SUCCEEDED grasp_center_distance_m=0.00163591433008873
+s04 SUCCEEDED place_offset_from_tray_center_m=0.007227051   ← 判据 0.06，余量 52.8 mm
+s05 SUCCEEDED | s02b FAILED | s05b SUCCEEDED
+s06 SUCCEEDED grasp_center_distance_m=0.00206511419220812（判据 0.005）
+s07 SUCCEEDED place_offset_from_tray_center_m=0.044944807（验收 0.065）
+```
+**s04 的落点从"历史上 0.068537248（横向，超 0.06 判据）"变成 0.007227051（7.2 mm）**
+—— 声明 dt 口径下臂的每拍位移是真的，落点本身也准了；`place_correction_lateral_m` 由 0.065435588 降到
+0.041154724。**并出现一条闸门有效的直接证据**：报告 `carry_cadence_steps: 1.0`（旧行为 ~17）。
+
+**⚠ 一条必须记住的读法（本轮实测）**：s02b 的定点随上游一起变了 ——
+`v5/v7（s04 被拒）`: b pos 0.02772943867337479 / yaw −2.008732329045354
+`v8（s04 真的落下）`: b pos 0.02622768490863953 / yaw −2.385824681897342
+⇒ **"可复现"= 同一配置逐轮一致，不等于"改配置后下游数值不变"**。改上游就是改世界状态，
+后续每轮都要**重新登记定点**（本轮 s02b 的新缺口是 **0.3858°**，不是 0.0087°）。
+
 **§11.86 量测①：冻结延迟不是变量（假设否掉）；真正决定 B 站成败的是"联合世界的挂钟相关步进"**
 
 按"先量不修"补了 `DOCK_HALT` 留证（`IRAF_DEBUG_DOCK=1`）。字段路径已确认：locomote 报告的
