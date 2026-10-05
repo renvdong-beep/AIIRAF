@@ -13,6 +13,7 @@
 本模块**不含任何数字默认值**：超时一律由调用方给出（缺声明即失败）。
 """
 
+import os
 import threading
 import time
 
@@ -52,6 +53,25 @@ class MujocoPlant:
         self.label = str(label) if label else self.owner_name
         self._lock = threading.RLock()
         self._step_index = 0
+        # ---- 需求闸门（2026-10-05 §11.87）----
+        # 为什么需要：owner 的**自由推进线程**（植物驻留）在 guest 等待期间并发 `mj_step` ⇒
+        # guest 请求 `count` 步、实际推进 `count + 挂钟决定的超出量`（§11.56 实测 17×）；
+        # 更糟的是 guest **两拍之间** owner 也在推进 ⇒ 臂的控制 dt 逐轮变化 ⇒ 各步骤开始时的
+        # 世界状态逐轮不同 ⇒ 步骤结果**不可复现**（实测 A 站逐位可复现、B 站在 1.8785~5.2865° 之间跳）。
+        # 闸门语义（**只约束"自由推进线程"**，不碰 owner 自己执行技能时的步进）：
+        #   · 有 guest 在等（`_targets` 非空）⇒ 只推进到 `min(_targets)` 就停；
+        #   · 没有 guest 在等 ⇒ 一步也不推（仿真冻结，而不是按挂钟空转）。
+        # ⇒ 植物推进步数 = Σ(guest 请求) + owner 自己技能的步数，**与挂钟无关**。
+        # ⚠ 闸门**只能在 guest 步执行期间开**（由场景在派发步骤时开/关）：owner 自己执行技能时若也开，
+        # 驻留线程的 hold 周期会因"无人需求"停在 `await_step_quota` 里 ⇒ **不让位自锁**
+        # （实测：`植物驻留未在 60 s 内让位（owner 上一轮 hold 未结束）`）。
+        # `_gate_opt_in`（缺省关，实验开关 `IRAF_PLANT_DEMAND_GATE=1`）决定"允许被开"；
+        # `_gate_enabled` 是**当前是否生效**，初始为 False ⇒ 未被场景打开时逐位不变。
+        self._gate_opt_in = os.environ.get("IRAF_PLANT_DEMAND_GATE") == "1"
+        self._gate_enabled = False
+        self._free_run_thread = None
+        self._targets = []
+        self._gate_cond = threading.Condition()
 
     # ---- 只读视图
     @property
@@ -82,6 +102,63 @@ class MujocoPlant:
             return True
         return isinstance(who, str) and who == self.owner_name
 
+    # ---- 需求闸门（2026-10-05 §11.87；缺省关，`IRAF_PLANT_DEMAND_GATE=1` 才允许被开）
+    @property
+    def gate_opt_in(self):
+        """本植株是否**允许**被装上需求闸门（装配期决定，运行期不变）。"""
+        return bool(self._gate_opt_in)
+
+    @property
+    def demand_gate(self):
+        """闸门**当前是否生效**（由场景在派发 guest 步时开/关）。"""
+        return bool(self._gate_enabled)
+
+    def set_demand_gate(self, enabled):
+        """开/关需求闸门（**只在装配/实验期由场景按步调用**，不改公开契约）。
+
+        未 opt-in ⇒ 拒绝开启（返回 False，保持逐位不变）。
+        """
+        with self._gate_cond:
+            self._gate_enabled = bool(enabled) and self._gate_opt_in
+            if not self._gate_enabled:
+                self._targets.clear()
+            self._gate_cond.notify_all()
+            return self._gate_enabled
+
+    def set_free_run_thread(self, thread=None):
+        """登记"自由推进线程"（植物驻留线程）：**只有它**受需求闸门约束。
+
+        为什么不按"是不是 owner"判：owner（动物）**自己执行技能**时也在推进，那时没有 guest 在等，
+        若也受闸门约束就会一步都推不动（自锁）。而**自由推进线程**才是"没人需要时间也在按挂钟空转"
+        的那一个 ⇒ 闸门只约束它。缺省取当前线程。
+        """
+        self._free_run_thread = thread if thread is not None else threading.current_thread()
+        return self._free_run_thread
+
+    def await_step_quota(self, caller=None):
+        """自由推进线程在**每一步之前**调用：只有 guest 有需求时才允许推进。
+
+        闸门关闭 / 调用者不是自由推进线程 ⇒ **立即返回**（逐位不变）。
+        返回当前步索引（便于调用方记录"是否真的推了"）。
+        """
+        if caller is not None and not self.is_owner(caller):
+            raise PlantOwnershipError(
+                "只有 owner(%s) 能推进时间，调用者=%s" % (self.owner, caller))
+        if not self._gate_enabled or threading.current_thread() is not self._free_run_thread:
+            return self.step_index
+        with self._gate_cond:
+            while True:
+                if not self._gate_enabled:
+                    # 场景关闸门（guest 步结束）后必须**立刻返回**，否则驻留线程会停在这里不让位
+                    return self.step_index
+                if not self._targets:
+                    self._gate_cond.wait()
+                    continue
+                target = min(self._targets)
+                if self.step_index < target:
+                    return self.step_index
+                self._gate_cond.wait()
+
     # ---- 时间推进
     def step_once(self, caller):
         """推进一个物理步；**仅 owner** 可调。"""
@@ -92,7 +169,14 @@ class MujocoPlant:
         with self._lock:
             mujoco.mj_step(self.model, self.data)
             self._step_index += 1
-            return self._step_index
+            index = self._step_index
+        if self._gate_enabled:
+            # ⚠ 只在**到达某个 guest 的目标**时唤醒：每步都 notify_all 会让每步都发生一次
+            # 线程切换（实测整轮慢到跑不完）⇒ 这里按目标判断，等待方绝大多数步都不被唤醒。
+            with self._gate_cond:
+                if self._targets and index >= min(self._targets):
+                    self._gate_cond.notify_all()
+        return index
 
     def advance(self, count, caller):
         count = int(count)
@@ -105,12 +189,18 @@ class MujocoPlant:
 
     # ---- guest 侧等待
     def wait_until(self, index, timeout, poll_seconds):
-        """等 owner 把 `step_index` 推到 ≥ index；超时显式失败（不静默返回）。"""
+        """等 owner 把 `step_index` 推到 ≥ index；超时显式失败（不静默返回）。
+
+        闸门开启时走**条件变量**路径：先把目标步索引登记成"需求"（自由推进线程据此才能推进），
+        等到达后注销 ⇒ owner 的推进量**恰好等于 guest 的请求量**（无挂钟相关的超出量）。
+        """
         index = int(index)
         timeout = float(timeout)
         poll_seconds = float(poll_seconds)
         if timeout <= 0 or poll_seconds <= 0:
             raise PlantError("等待超时与轮询间隔必须显式给出正数：%r / %r" % (timeout, poll_seconds))
+        if self._gate_enabled:
+            return self._wait_until_gated(index, timeout, poll_seconds)
         deadline = time.monotonic() + timeout
         while True:
             with self._lock:
@@ -121,6 +211,31 @@ class MujocoPlant:
                     "等待 owner(%s) 推进到第 %d 步超时（%.3f s，当前 %d 步）"
                     % (self.owner, index, timeout, self.step_index))
             time.sleep(poll_seconds)
+
+    def _wait_until_gated(self, index, timeout, poll_seconds):
+        """闸门路径：登记需求 → 等条件变量 → 注销（`try/finally` 保证异常也注销，避免死锁）。"""
+        with self._gate_cond:
+            self._targets.append(index)
+            self._gate_cond.notify_all()
+            try:
+                deadline = time.monotonic() + timeout
+                while True:
+                    with self._lock:
+                        current = self._step_index
+                    if current >= index:
+                        return current
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise PlantWaitTimeout(
+                            "等待 owner(%s) 推进到第 %d 步超时（%.3f s，当前 %d 步；需求闸门开启）"
+                            % (self.owner, index, timeout, current))
+                    # 等待粒度上限 50 ms：到达目标时有 notify 立刻唤醒，这里只是超时检查的兜底
+                    # （按调用方给的 poll_seconds=步长 会变成每 2 ms 醒一次、白烧 CPU）
+                    self._gate_cond.wait(min(remaining, max(poll_seconds, 0.001), 0.05))
+            finally:
+                if index in self._targets:
+                    self._targets.remove(index)
+                self._gate_cond.notify_all()
 
     def diagnostics(self):
         return {"label": self.label, "owner": self.owner, "step_index": self.step_index,

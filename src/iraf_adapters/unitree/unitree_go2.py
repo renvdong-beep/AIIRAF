@@ -2884,6 +2884,8 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             self.data.ctrl[self.actuator_ids] = ctrl
             for _ in range(self.substeps):
                 # 时间只能由植物 owner 推进（共享植物下越权即 PlantOwnershipError）
+                # 需求闸门（§11.87）：自由推进线程（植物驻留）只有 guest 有需求时才推进。
+                self.plant.await_step_quota(self)
                 with self._lock:
                     self.plant.step_once(self)
             if sample_callback is not None:

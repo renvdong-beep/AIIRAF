@@ -1422,6 +1422,13 @@ def _start_plant_residency(runtimes, bindings, world):
     records = []
 
     def loop():
+        # 需求闸门（2026-10-05 §11.87）：把"自由推进线程"登记为**本线程**。
+        # 为什么必须在这里登记：闸门只约束"没人需要时间也在按挂钟空转"的那一个线程 = 驻留线程；
+        # owner（动物）自己执行技能时（场景主线程）**不受约束**，否则会一步都推不动（自锁）。
+        # 闸门关闭时本调用是空操作（逐位不变）。
+        _plant = getattr(state.get("backend"), "plant", None)
+        if _plant is not None and getattr(_plant, "gate_opt_in", False):
+            _plant.set_free_run_thread()
         cycle = 0
         while not stop_event.is_set():
             if pause_event.is_set():
@@ -1485,6 +1492,29 @@ def _resume_residency_after_step(residency, yield_record, step_id):
     if residency and yield_record and yield_record.get("paused"):
         residency["paused_steps"].append(str(step_id))
         residency["pause_event"].clear()
+
+
+def _plant_of_residency(residency):
+    """取驻留所属的**共享植物**（非联合世界 / 未装配 ⇒ None）。"""
+    if not residency:
+        return None
+    state = residency.get("state") or {}
+    return getattr(state.get("backend"), "plant", None)
+
+
+def _set_step_demand_gate(residency, robot_id, enable):
+    """按步骤开关**需求闸门**（2026-10-05 §11.87）：**只在 guest 步执行期间开**。
+
+    为什么必须限定在 guest 步：闸门开启且**没有 guest 在等**时（例如 owner 即将执行自己的步骤），
+    驻留线程会停在自己的 hold 周期里不让位 ⇒ 实测直接失败
+    `植物驻留未在 60 s 内让位（owner 上一轮 hold 未结束）`。
+    未 opt-in（`IRAF_PLANT_DEMAND_GATE=1` 未设）⇒ 空操作，逐位不变。
+    """
+    plant = _plant_of_residency(residency)
+    if plant is None or not getattr(plant, "gate_opt_in", False):
+        return False
+    is_guest_step = str(robot_id) != str(residency.get("owner"))
+    return bool(plant.set_demand_gate(bool(enable) and is_guest_step))
 
 
 def _stop_plant_residency(residency):
@@ -1616,9 +1646,12 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
             records.append(record)
             continue
         yield_record = _yield_residency_to_step(residency, step["robot"])
+        # 需求闸门（§11.87）：只在 guest 步期间开 ⇒ guest 的请求量 = 植物推进量（无挂钟相关超出量）
+        _set_step_demand_gate(residency, step["robot"], True)
         try:
             executed = _dispatch_step(runtime_state, step, correlation, key)
         finally:
+            _set_step_demand_gate(residency, step["robot"], False)
             _resume_residency_after_step(residency, yield_record, step["id"])
         executed["plant_residency_yielded"] = bool(yield_record.get("paused"))
         records.append(executed)

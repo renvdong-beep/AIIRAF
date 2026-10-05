@@ -3426,6 +3426,8 @@ class MujocoBackend:
                 raise RuntimeError("注入的 MuJoCo 步进故障")
             if fault_kind == "step_delay":
                 time.sleep(fault_delay)
+            # 需求闸门（§11.87）：自由推进线程只有 guest 有需求时才推进；闸门关时立即返回。
+            self.plant.await_step_quota(self)
             with self._data_lock:
                 self.plant.step_once(self)
             self._record_step(time.monotonic() - started)
@@ -4269,6 +4271,7 @@ class MujocoBackend:
                 self._safe_stop_controls()
                 break
             # 与 Viewer 的 Home 阶段使用同一条受锁保护的 MuJoCo 步进路径。
+            self.plant.await_step_quota(self)
             with self._data_lock:
                 self.plant.step_once(self)
             self._record_step(float(self.model.opt.timestep))
