@@ -1878,6 +1878,18 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             if progress["reached_s"] is not None:
                 # 已到位 ⇒ 精确零指令（保持）；停稳的验收交给下面的**静态保持**阶段
                 # （零速指令的 trot 仍以 5~20 cm/s 原地抖动，瞬时速度判据在 trot 下不可达）
+                if _dock_trace is not None:
+                    # 保持窗也留证（2026-10-05 §11.86）：到位后 provider 立刻返回零，
+                    # **不在分支内追加就看不到保持窗** —— 而 B 站的失败恰好发生在到位之后。
+                    # 这里用的是与**判据完全相同**的测量路径（`frame_pose`/`body_pose` +
+                    # `pose_error`），不是 `samples` 的自由关节量（两者实测差 ~0.2°/~10 mm）。
+                    _t_hold, _b_hold = frame_pose(), body_pose()
+                    _dx_hold, _dy_hold, _yaw_hold = dock_module.pose_error(
+                        (_t_hold[0], _t_hold[1]), _t_hold[2], (_b_hold[0], _b_hold[1]), _b_hold[2])
+                    _dock_trace.append((round(float(elapsed), 4), round(float(_dx_hold), 6),
+                                        round(float(_dy_hold), 6), round(float(_yaw_hold), 6),
+                                        0.0, 0.0, round(float(_b_hold[2]), 6),
+                                        round(float(self.data.time), 4)))
                 return (0.0, 0.0, 0.0)
             if float(elapsed) > timeout_s:
                 target = frame_pose()
@@ -1913,10 +1925,13 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             if command == (0.0, 0.0, 0.0):
                 progress["reached_s"] = float(elapsed)
             if _dock_trace is not None:
-                # (elapsed, dx, dy, yaw_err, 指令 vx, 指令 wz, 实测机身偏航)
+                # (elapsed, dx, dy, yaw_err, 指令 vx, 指令 wz, 实测机身偏航, **仿真时钟**)
+                # ⚠ `elapsed` 是**相位**时钟：指令归零后它会冻结（`phase_elapsed`）⇒ 保持窗
+                # 只能用 `self.data.time` 定位（2026-10-05 §11.86）。
                 _dock_trace.append((round(float(elapsed), 4), round(float(dx), 6), round(float(dy), 6),
                                     round(float(yaw_err), 6), round(float(command[0]), 5),
-                                    round(float(command[2]), 5), round(float(body[2]), 6)))
+                                    round(float(command[2]), 5), round(float(body[2]), 6),
+                                    round(float(self.data.time), 4)))
             return command
 
         # 时长必须覆盖"接近超时 + 保持窗"（到达后 provider 返回精确零 ⇒ 原地保持）
