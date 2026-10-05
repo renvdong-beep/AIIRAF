@@ -1738,6 +1738,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         # 站位解析**提前到这里**（2026-09-30 §11.79）：按站的控制容差覆盖必须在本段读
         # `approach_position_tolerance_m` 之前拿到。调用方只能给站名，数字一律来自声明。
         _station_overrides = {}
+        _station = None
         if section.get("stations"):
             _frame, _station = dock_module.resolve_dock_station(section, station)
             _station_overrides = dock_module.station_control_overrides(section, _station)
@@ -1775,6 +1776,14 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         approach_yaw_tolerance_rad = float(
             _station_overrides.get("approach_yaw_tolerance_rad",
                                    section["approach_yaw_tolerance_rad"]))
+        # 预对准秒数（2026-10-05 §11.88 步2，**按站**声明）：>0 时该站接近前先"只转不平移"，
+        # 且接近段超时**从预对准结束后起算**（不再挤占同一个 timeout_s 窗口——§11.85 否掉的正是
+        # "共用窗口的挤占式先对准"，不是机制本身）。缺该键 = 0 = 不启用 ⇒ A 站逐位不变。
+        prealign_s = float(_station_overrides.get("prealign_s", 0.0))
+        if not math.isfinite(prealign_s) or prealign_s < 0.0:
+            raise DeclarationError(
+                "dock_for_handoff.stations[%s].prealign_s 必须是 ≥0 的有限数，实际 %r"
+                % (_station, prealign_s))
         for label, value in (("approach_position_tolerance_m", approach_position_tolerance_m),
                              ("approach_yaw_tolerance_rad", approach_yaw_tolerance_rad)):
             if not math.isfinite(value) or value <= 0.0:
@@ -1891,7 +1900,8 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                                         0.0, 0.0, round(float(_b_hold[2]), 6),
                                         round(float(self.data.time), 4)))
                 return (0.0, 0.0, 0.0)
-            if float(elapsed) > timeout_s:
+            if float(elapsed) > prealign_s + timeout_s:
+                # 超时阈值 = **预对准 + 接近**（预对准不挤占接近预算，§11.88 步2）
                 target = frame_pose()
                 body = body_pose()
                 dx, dy, yaw_err = dock_module.pose_error((target[0], target[1]), target[2],
@@ -1919,6 +1929,10 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 yaw_tolerance_rad=approach_yaw_tolerance_rad,
                 body_yaw_rad=body[2],
             )
+            # 预对准段（§11.88 步2，按站声明）：该窗口内**只转不平移**。判据（平移∧偏航都在
+            # 容差内才算到位）不改，这里只砍平移分量；偏航指令原样保留 ⇒ 相位不冻结（继续 trot）。
+            if prealign_s > 0.0 and float(elapsed) < prealign_s and command != (0.0, 0.0, 0.0):
+                command = (0.0, 0.0, command[2])
             if command == (0.0, 0.0, 0.0):
                 progress["stop_distance_m"] = stop_distance
                 progress["speed_at_stop_mps"] = speed_now
@@ -1934,8 +1948,8 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                                     round(float(self.data.time), 4)))
             return command
 
-        # 时长必须覆盖"接近超时 + 保持窗"（到达后 provider 返回精确零 ⇒ 原地保持）
-        total_s = timeout_s + settle_s + 0.5
+        # 时长必须覆盖"预对准 + 接近超时 + 保持窗"（到达后 provider 返回精确零 ⇒ 原地保持）
+        total_s = prealign_s + timeout_s + settle_s + 0.5
         # 走同一段 locomote（含 MPC 契约 §4 的失败路径），逐拍指令由上面的 provider 给。
         # 到位后要**保持的世界位置** = 目标帧的 xy（与判据测的同一对量）
         target_pose_for_hold = frame_pose()

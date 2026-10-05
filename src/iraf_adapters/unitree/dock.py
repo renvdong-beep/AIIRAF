@@ -196,13 +196,21 @@ def _station_frame(entry):
 
 
 def station_control_overrides(section, station_name):
-    """取该站位的**控制容差覆盖**（可空）。缺省 {} ⇒ 用段级声明（逐位不变）。"""
+    """取该站位的**控制容差 / 预对准**覆盖（可空）。缺省 {} ⇒ 用段级声明（逐位不变）。
+
+    白名单（2026-10-05 §11.88 步2 增 `prealign_s`）：
+      · `approach_position_tolerance_m` / `approach_yaw_tolerance_rad` —— 按站控制容差（§11.79）；
+      · `prealign_s` —— 该站位接近前的**预对准秒数**（只转不平移，且**有自己独立的预算**：
+        接近段的 `timeout_s` 从预对准结束后起算）。为什么必须按站：A 站本来就对准（初始偏航
+        ~0.0°）⇒ 给它预对准只会拖慢并改变既已通过的定点；只有 B 站带着行走残余旋转进入
+        （§11.84 实测 t=0 就 −1.6° 且仍在转）才需要。缺该键 = 不启用（A 站逐位不变）。
+    """
     stations = (section or {}).get("stations") or {}
     entry = stations.get(str(station_name))
     if not isinstance(entry, dict):
         return {}
     overrides = {}
-    for key in ("approach_position_tolerance_m", "approach_yaw_tolerance_rad"):
+    for key in ("approach_position_tolerance_m", "approach_yaw_tolerance_rad", "prealign_s"):
         value = entry.get(key)
         if value is None:
             continue
