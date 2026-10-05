@@ -26,6 +26,7 @@
 from pathlib import Path
 
 import math
+import os
 import yaml
 import threading
 import sys
@@ -1860,6 +1861,10 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                                                           MpcUnavailableError)
 
         progress = {"reached_s": None}
+        # 停靠逐拍留证（2026-09-30 §11.83；`IRAF_DEBUG_DOCK=1` 时开，缺省关）。
+        # **内存缓冲 + 末尾一次性落盘**（§11.59/§11.73 的教训：逐拍 print 会扰动时序）。
+        # 用来判 B 站"偏航收敛卡住"是**权威不足**（实到角速度 < 指令）还是**指令被压小**。
+        _dock_trace = [] if os.environ.get("IRAF_DEBUG_DOCK") == "1" else None
 
         def provider(elapsed):
             """接近阶段的逐拍指令 + **超时的唯一判定处**。
@@ -1907,6 +1912,11 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 progress["speed_at_stop_mps"] = speed_now
             if command == (0.0, 0.0, 0.0):
                 progress["reached_s"] = float(elapsed)
+            if _dock_trace is not None:
+                # (elapsed, dx, dy, yaw_err, 指令 vx, 指令 wz, 实测机身偏航)
+                _dock_trace.append((round(float(elapsed), 4), round(float(dx), 6), round(float(dy), 6),
+                                    round(float(yaw_err), 6), round(float(command[0]), 5),
+                                    round(float(command[2]), 5), round(float(body[2]), 6)))
             return command
 
         # 时长必须覆盖"接近超时 + 保持窗"（到达后 provider 返回精确零 ⇒ 原地保持）
@@ -1920,6 +1930,10 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             hold_pose_world=(target_pose_for_hold[0], target_pose_for_hold[1]),
         )
         samples = report.get("samples") or []
+        if _dock_trace is not None:
+            import json as _json
+            print("DOCK_TRACE " + _json.dumps({"station": station_name, "samples": _dock_trace},
+                                              ensure_ascii=False), flush=True)
 
         # ---- 阶段②：静态保持（把"到位姿态"交给静态控制器，而不是继续 trot）----
         # 依据（2026-09-23 实测）：`max_speed_m_s` 按**瞬时速度**量；零速指令的 trot 仍让机身以
