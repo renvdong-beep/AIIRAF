@@ -218,6 +218,11 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         # 共享植物下一律用**植物自己的锁**（它与两侧的读写共用同一把，否则快照会与对侧的
         # 步进交错）；自带植物时该锁只属于本后端，语义不变。
         self._lock = self.plant.lock()
+        # 控制节拍对齐留证（2026-10-05 §11.88 量测⑨；`IRAF_DEBUG_CTRL_ALIGN=1`，缺省关）：
+        # 闸门只保证 guest 的**总步数**精确，**不保证** owner（狗）的控制更新落在哪些植物步号上。
+        # 若这些步号逐轮不同（而总步数相同），狗收到的控制量**序列**就不同 ⇒ 下游停靠初值不同。
+        self._ctrl_align_probe = os.environ.get("IRAF_DEBUG_CTRL_ALIGN") == "1"
+        self._ctrl_writes = []
         self._display_renderer_cache = None
         # 步态资源惰性解析（步骤 02）：声明与几何都只在首次调用步态时解析/实测，
         # 未使用步态的路径（stand/stop）不因步态声明问题而失败。
@@ -1957,6 +1962,7 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         # owner 步记账（2026-10-05 §11.88 步2 诊断）：闸门只约束 **guest**；这里量 **owner 自己这一步**
         # 实际推进步数与"声明时长应推进步数"是否一致。同配置两轮若不等 ⇒ owner 步仍被挂钟污染。
         _owner_steps_before = int(self.plant.step_index)
+        _ctrl_writes_before = len(self._ctrl_writes) if self._ctrl_align_probe else None
         _owner_wall_started = time.monotonic()
         report = self.locomote(
             {"vx_mps": approach_speed, "vy_mps": 0.0, "wz_rad_s": 0.0},
@@ -2051,6 +2057,16 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                                           "overran_cycles", "inaccurate_cycles")},
                 "mpc_runtime": {_key: ((report.get("provider") or {}).get("runtime") or {}).get(_key)
                                 for _key in ("steps", "updates", "skips", "holds", "releases")},
+                # 控制节拍对齐摘要（量测⑨）：本步内每次 ctrl 写入所在的植物步号。
+                # `owner_steps` 相同但本摘要不同 ⇒ "总步数对、对齐错" —— 这正是当前最强假设。
+                "ctrl_align": (None if _ctrl_writes_before is None else {
+                    "count": len(self._ctrl_writes) - _ctrl_writes_before,
+                    "first": (self._ctrl_writes[_ctrl_writes_before]
+                              if len(self._ctrl_writes) > _ctrl_writes_before else None),
+                    "last": (self._ctrl_writes[-1] if self._ctrl_writes else None),
+                    "sum": sum(self._ctrl_writes[_ctrl_writes_before:]),
+                    "head": self._ctrl_writes[_ctrl_writes_before:_ctrl_writes_before + 6],
+                }),
                 "final_pos_m": translation_error_m,
                 "final_yaw_deg": math.degrees(yaw_error),
                 "pass_pos": translation_error_m <= position_tolerance_m,
@@ -2925,6 +2941,9 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                     ctrl = np.clip(ctrl, self.torque_lower, self.torque_upper)
             saturated_total += int(np.count_nonzero(saturated))
             self.data.ctrl[self.actuator_ids] = ctrl
+            if self._ctrl_align_probe:
+                # 这次控制量落在哪个植物步号上（内存累计，段末一次性落盘；零逐拍 print）
+                self._ctrl_writes.append(int(self.plant.step_index))
             for _ in range(self.substeps):
                 # 时间只能由植物 owner 推进（共享植物下越权即 PlantOwnershipError）
                 # 需求闸门（§11.87）：自由推进线程（植物驻留）只有 guest 有需求时才推进。
