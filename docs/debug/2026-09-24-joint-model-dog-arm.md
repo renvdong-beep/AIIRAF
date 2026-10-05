@@ -5110,6 +5110,25 @@ step  shoulder_lift ach/cmd      elbow ach/cmd        wrist_1 ach/cmd
 `place_above_positions`），逐拍对齐 `wrist_1` 的 `qpos/目标` 与 `PLACE_TRACE.arm_contacts`
 （stride 20 足够：事件宽 ~50 步），判"先接触还是先冲出"。
 
+**§11.74 因果定向：冲出在前（step 801 已 −0.455）、接触在后（820）—— 跟踪失败是内生的（2026-09-30）**
+`scripts/campaign_until_s06_pass.sh` 连跑到 **s06 通过**（轮 1 命中），用**低开销逐拍通路**取 `above` 段
+（1000 拍全分辨率；段识别：`place_above_positions` 的结束目标逐位吻合）：
+
+```
+qpos − 目标 (wrist_1)，每 50 拍：
+step 301 +0.0009 | 401 −0.0000 | 501 −0.0034 | 551 −0.0181 | 601 −0.0397
+     651 −0.0537 | 701 −0.0977 | 751 −0.2274 | 801 −0.4551 | 851 −0.4156 | 951 −0.3563
+PLACE_TRACE：首条 wrist↔tray_01 接触出现在 **step 820**
+```
+
+⇒ **冲出在前、接触在后** ⇒ **接触是结果**（**纠正 §11.72 的"与接触同步"**——那是 50 拍采样下的误判）。
+且 `above` 段内**没有任何其它外部接触**（载荷伙伴恒为 pad/spring_link）。
+⇒ 定性结论：**`above` 段 `wrist_1` 的跟踪失败是内生的**（无接触即 −0.455），
+而同位形静态伺服只有 **0.000086 rad**、载荷与焊缝实测都不影响它（§11.71）。
+⇒ 剩下唯一未否掉的候选：**该段的运动本身**（`above` 是唯一"大幅下降"的段——`transit` 水平、
+`descend` 只走完 above 的残差）⇒ 下一步：**把 `above` 段拆成"水平段 + 竖直段"**
+（§11.58 对 transit→above 用过同样手段），或先量该段各关节的**指令速度/加速度峰值**与执行器能力。
+
 ## 12. 下一步
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
 0a. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。
