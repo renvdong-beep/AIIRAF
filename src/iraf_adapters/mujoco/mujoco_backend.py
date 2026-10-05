@@ -4091,6 +4091,31 @@ class MujocoBackend:
             previous_step_index = None
         anchor_mocap = None
         _trace_cmd = ([] if os.environ.get("IRAF_DEBUG_TRACE_CMD") == "1" else None)
+
+        def _drive_anchor():
+            """把 anchor（mocap）摆到「指腹 body 中点 + 激活偏移」，姿态按需跟随腕部。
+
+            ⚠ 必须在**轨迹循环与稳定窗里都调用**（2026-09-30 §11.76 实测）：旧实现只在轨迹循环里
+            驱动 anchor，循环一结束就进 `_advance_for(settle_ms)` **不再跟随** ⇒ 载荷被焊在**冻结的
+            锚点**上、经指腹接触把臂摁住 ⇒ 稳定窗内永远收敛不了（实测 `wrist_1` 在 settle 期恒定停在
+            离指令 **−0.3534 rad** 的平衡点，而同位形静态伺服只差 0.014 rad）⇒ 放置落点偏 0.12 m。
+            """
+            if anchor_mocap is None or not anchor_follow:
+                return
+            with self._data_lock:
+                left = np.asarray(self.data.xpos[self._body_id(str(anchor_follow[0]))], dtype=float)
+                right = np.asarray(self.data.xpos[self._body_id(str(anchor_follow[1]))], dtype=float)
+                target_point = (left + right) / 2.0
+                if anchor_offset is not None:
+                    target_point = target_point + np.asarray(anchor_offset, dtype=float)
+                self.data.mocap_pos[anchor_mocap] = target_point
+                if anchor_rel_quat is not None and anchor_wrist is not None:
+                    wrist_id = self._body_id(str(anchor_wrist))
+                    wrist_quat = np.asarray(self.data.xquat[wrist_id], dtype=float)
+                    self.data.mocap_quat[anchor_mocap] = _quat_mul(wrist_quat,
+                                                                 np.asarray(anchor_rel_quat))
+                else:
+                    self.data.mocap_quat[anchor_mocap] = (1.0, 0.0, 0.0, 0.0)
         if anchor_body is not None:
             anchor_id = self._body_id(str(anchor_body))
             anchor_mocap = int(self.model.body_mocapid[anchor_id])
@@ -4116,27 +4141,8 @@ class MujocoBackend:
                                             round(float(offsets.get(channel, 0.0)), 6), qpos)
                 _trace_cmd.append({"step": int(step), "sim_time_s": round(float(self.data.time), 4),
                                    "sample": sample})
-            if anchor_mocap is not None and anchor_follow:
-                # 约束焊接的 anchor 跟随**指腹中点**（与 _advance_with_grasp_anchor 同口径）；
-                # `anchor_offset`（可选）是激活瞬间的「载荷重心 − 指腹中点」⇒ anchor 取
-                # 「指腹中点 + 该偏移」时，载荷相对指腹**刚性平移**（激活瞬间无纠正力，见
-                # §11.23(41) 的 A/B/D 对照；缺省 None ⇒ 行为与改动前一致）。
-                # `anchor_rel_quat`（可选，仅 `weld` 用）：anchor 的姿态按「腕部姿态 ⊗ 该相对姿态」
-                # 跟随 ⇒ 载荷的**姿态**也随腕部刚性走（`connect` 是球铰、不约束旋转 ⇒ 会翻滚）。
-                with self._data_lock:
-                    left = np.asarray(self.data.xpos[self._body_id(str(anchor_follow[0]))], dtype=float)
-                    right = np.asarray(self.data.xpos[self._body_id(str(anchor_follow[1]))], dtype=float)
-                    target_point = (left + right) / 2.0
-                    if anchor_offset is not None:
-                        target_point = target_point + np.asarray(anchor_offset, dtype=float)
-                    self.data.mocap_pos[anchor_mocap] = target_point
-                    if anchor_rel_quat is not None and anchor_wrist is not None:
-                        wrist_id = self._body_id(str(anchor_wrist))
-                        wrist_quat = np.asarray(self.data.xquat[wrist_id], dtype=float)
-                        self.data.mocap_quat[anchor_mocap] = _quat_mul(wrist_quat,
-                                                                     np.asarray(anchor_rel_quat))
-                    else:
-                        self.data.mocap_quat[anchor_mocap] = (1.0, 0.0, 0.0, 0.0)
+            # anchor 驱动提成闭包（§11.76：稳定窗也必须跟随）——语义见 `_drive_anchor` 的说明。
+            _drive_anchor()
             if pin is not None:
                 with self._data_lock:
                     self.data.qpos[pin[0]:pin[0] + 3] = pin[2]
@@ -4171,7 +4177,20 @@ class MujocoBackend:
         else:
             settle_ms = max(1, int(settle_ms))
         self._set_controls(commands)
-        self._advance_for(settle_ms)
+        # ---- 稳定窗：**分块推进 + 每块后重新驱动 anchor**（2026-09-30 §11.76）----
+        # 旧实现进 `_advance_for(settle_ms)` 后**anchor 不再跟随** ⇒ 载荷被焊在**冻结锚点**上、
+        # 经指腹接触把臂摁住 ⇒ 稳定窗内永远收敛不了（实测 `wrist_1` 恒定停在离指令 −0.3534 rad，
+        # 而同位形静态伺服只差 0.014 rad）。分块粒度 = 10 个物理步（20 ms 仿真），足够接近"逐步跟随"。
+        if anchor_mocap is not None and anchor_follow:
+            _chunk_ms = max(1, int(round(float(self.model.opt.timestep) * 1000.0)) * 10)
+            _remaining = int(settle_ms)
+            while _remaining > 0:
+                _this = min(_chunk_ms, _remaining)
+                _drive_anchor()
+                self._advance_for(_this)
+                _remaining -= _this
+        else:
+            self._advance_for(settle_ms)
         # 段末一次性落盘（§11.73：逐拍 print 会扰动时序 ⇒ 改为内存缓冲 + 段末输出）
         if _trace_cmd:
             print("TRACE_CMD " + json.dumps({
