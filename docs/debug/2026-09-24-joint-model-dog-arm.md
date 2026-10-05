@@ -5588,6 +5588,20 @@ A 站（三轮）              : 0.02856927196733233 / −0.424694730557289  **�
    ⇒ 结果与常规轮不同。判法：把"墙钟耗时 + `owner_steps`/`guest` 记账 + MPC 子进程的时限计数"
    三样一起记，专挑"快轮"复现。
 
+**量测②（同日续，`mpcstats-round{1,2}.log`）：基线配置两轮逐位一致，且 MPC 计数干净**
+```
+a  yaw=-0.424694730557289  owner_wall_s=15.767 / 15.769  mpc_calls=676 timeouts=0 crashes=0 restarts=0
+b  yaw=-2.385824681897342  owner_wall_s=16.810 / 16.832  mpc_calls=676 timeouts=0 crashes=0 restarts=0
+```
+新留证（`DOCK_HALT` 增 `owner_wall_s` / `mpc_calls|timeouts|crashes|restarts`）已落地，取值来自
+locomote 报告的 `client`（`process_client.stats`）+ 本步墙钟。**结论：常规轮的 MPC 通路干净**
+（零超时/崩溃/重启）、墙钟稳定到 ±0.02 s ⇒ **"MPC 调用超时"这个假设被削弱**（但异常轮的计数无法事后补——
+那批日志没有这些字段）⇒ 要判死它必须**带着新计数连跑到抓到一次异常**。
+下一步（已备好）：`IRAF_PLANT_DEMAND_GATE` 保持 on + `IRAF_DEBUG_DOCK=1` **连跑 N=6~8 轮**，
+每轮记 `owner_wall_s`/`mpc_*`/四个定点，看是否存在"某一轮特别快"以及它与哪个计数相关
+（这就是本仓 `acceptance-flakiness-attribution.md` 里的"把假设做成连续量并配对统计"）。
+
+
 **§11.86 量测①：冻结延迟不是变量（假设否掉）；真正决定 B 站成败的是"联合世界的挂钟相关步进"**
 
 按"先量不修"补了 `DOCK_HALT` 留证（`IRAF_DEBUG_DOCK=1`）。字段路径已确认：locomote 报告的
