@@ -2569,7 +2569,12 @@ class MujocoBackend:
                     % (_max_iterations, _final_lateral["lateral_m"],
                        _payload_xy(after_descend), _tray_xy(after_descend),
                        float(pose_correction_declaration["lateral_tolerance_m"])))
-            if _final["applied"]:
+            # ⚠ 单向判定（2026-09-30 §11.78 实测）：本门禁要挡的是**"放得太高 ⇒ 自由落体"**
+            # （§11.25(f-4)/(f-5)：高于承载面松手会落点双峰、失败率约 1/4）。
+            # **低于承载面**是**压力接触里的轻微沉入**（实测载荷底面 0.001624997 vs 承载面 0.005000000，
+            # 即沉入 3.375 mm，但仍**高于台面**）⇒ 不是风险，旧的双向对称判定会把它当成"未到位"拒绝。
+            # 因此：只有**在承载面之上且超出容差**才拒绝；沉入量原样留证。
+            if _final["applied"] and float(_final["gap_m"]) > float(_final["touch_clearance_m"]):
                 raise ValueError(
                     "触地纠偏迭代 %d 次后仍未到位：剩余竖向 %.9f m（载荷底面 %.9f − 承载面 %.9f − "
                     "触地间隙 %.9f）超过容差 %.9f m ⇒ 拒绝照放（不静默截断、不按名义高度照放）"
@@ -2729,12 +2734,18 @@ class MujocoBackend:
             data = mujoco.MjData(self.model)
             data.qpos[:] = self.data.qpos          # 以**实测**状态为初值（含载荷/载体的真实姿态）
             mujoco.mj_forward(self.model, data)
+            skipped_channels = []
             for name, value in goal.items():
                 joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, str(name))
-                if joint_id < 0:
-                    raise ValueError("放置段目标引用了模型里不存在的关节: %s" % name)
-                if int(joint_id) in arm_joint_set:
-                    data.qpos[int(self.model.jnt_qposadr[joint_id])] = float(value)
+                if joint_id < 0 or int(joint_id) not in arm_joint_set:
+                    # ⚠ 非臂关节**必须跳过、不能抛错**（2026-09-30 §11.77 实测）：放置段的关节目标里
+                    # 含 2F-85 的**腱执行器通道名**（`ur5e_rq2f85_fingers_actuator`）——它是执行器、
+                    # 模型里没有同名关节。旧实现直接 raise ⇒ 这条**横向纠偏**路径**从未被执行过**
+                    # （一直被 `max_lateral_m: 0.05` 挡在前面），预算一放开就报
+                    # `放置段目标引用了模型里不存在的关节`。这里改为**跳过并留证**。
+                    skipped_channels.append(str(name))
+                    continue
+                data.qpos[int(self.model.jnt_qposadr[joint_id])] = float(value)
             mujoco.mj_forward(self.model, data)
             nominal_mid = _pad_mid(data)
             nominal_dir = nominal_mid - np.asarray(data.xpos[wrist_body], dtype=float)
