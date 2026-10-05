@@ -28,6 +28,7 @@ POSES = (("place_above", "place_above_positions"), ("place_descend", "place_desc
 def main(argv):
     wanted = argv[1] if len(argv) > 1 else "place_above"
     steps = int(argv[2]) if len(argv) > 2 else 3000
+    weld = len(argv) > 3 and argv[3] == "weld"
     gripper = ((json.loads(JOINT_JSON.read_text())["manipulation"]["per_robot"]["ur5e"]) or {}).get("gripper") or {}
     model = mujoco.MjModel.from_xml_path(str(JOINT_XML))
     data = mujoco.MjData(model)
@@ -52,6 +53,20 @@ def main(argv):
             data.qpos[int(model.jnt_qposadr[jid])] = float(value)
             data.ctrl[aid] = float(value)
         mujoco.mj_forward(model, data)
+        if weld:
+            # 把搬运焊缝**激活**：把载荷吊在 anchor 上（anchor = 载荷当前位置），
+            # 再测同一个 ctrl 阶跃 —— 判"焊缝+载荷"是否就是伺服变慢的原因（§11.71）。
+            eq = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_EQUALITY,
+                                       str((gripper.get("carry_constraint") or {}).get("equality_name") or "")))
+            payload = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "box_01"))
+            anchor = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "grasp_anchor"))
+            print("   [weld] equality=%d payload=%d anchor=%d" % (eq, payload, anchor))
+            if eq >= 0 and payload >= 0 and anchor >= 0:
+                moc = int(model.body_mocapid[anchor])
+                data.mocap_pos[moc] = data.xpos[payload]
+                data.mocap_quat[moc] = data.xquat[payload]
+                data.eq_active[eq] = 1
+                mujoco.mj_forward(model, data)
         for _ in range(steps):
             mujoco.mj_step(model, data)
         print("== %s（ctrl = 目标关节角，步进 %d 步后）" % (label, steps))

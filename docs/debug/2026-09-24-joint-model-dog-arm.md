@@ -5039,6 +5039,32 @@ ur5e_wrist_2            0.4043      [-28,28]       500       0.0008 rad
 以及"夹爪穿透"要按**几何**修（夹爪比载荷更往下 ⇒ 要么调夹口在载荷上的位置，要么把落点垫做成
 **窄台柱**让指腹跨过），不要用 touch_clearance 换自由落体。
 
+**§11.71 按正确口径把失败**精确**定位到 `above` 段；焊缝与接触都不是原因（2026-09-30）**
+（口径修正见 §11.69：`qpos − (ctrl − offset)`。）逐段重算（`yloss-round1.log`，按日志原始顺序切段）：
+
+```
+段8  place_transit   max|qpos−目标| = 0.010695 (wrist_2)   ✓ 跟踪正常
+段9  place_above     max|qpos−目标| = 0.494377 (wrist_1)   ✗ ← 失败精确在这里
+段10 place_descend   max|qpos−目标| = 0.172168 (wrist_1)     （above 滞后的残留）
+```
+
+两条否定：
+- **焊缝+载荷不是原因**：给 `probe_ctrl_semantics.py` 加"激活搬运焊缝、把载荷吊在 anchor 上"档，
+  同一 ctrl 阶跃的稳态残余**逐位不变**（0.006129 / 0.014209 / 0.000086）⇒ 40 g 载荷对伺服无影响；
+- **接触不是原因**：`above` 段里 `wrist↔tray_01` 只在**最后 12/50 个样本（76% 之后）**出现，
+  而滞后从段首就开始（§11.64 的单调增长）⇒ 接触是**结果**。
+
+⇒ 现象收窄为一句话：**`above` 段（同长 2 s、下降 ~0.37 m）的关节滞后达 0.49 rad，
+而 `transit`（同长 2 s、水平移动）只差 0.0107**；静态伺服很快（30 步收敛）且与载荷无关。
+**线性伺服估计给不出 0.49 rad**（`v·τ` 量级 ~0.001）⇒ 存在**非线性**因素，候选：
+① 下降段的**加速度/速度与执行器能力**（需量 commanded vs achieved 的逐拍增量——注意做过一次，
+   当时得到"achieved ≈ commanded"，但那次口径是错的，**要按 §11.69 的口径重做**）；
+② 端点附近**几何/约束**的非线性（载荷被夹在指腹与狗背之间——`payload_contacts` 里出现过 1 次
+   `ur5e_rq2f85_base`，说明载荷一度被顶到夹爪掌面）；
+③ `above` 段本身可拆成"水平段 + 竖直段"（§11.58 已对 transit→above 用过同样手段）。
+
+**新工具**：`probe_ctrl_semantics.py [位形] [步数] [weld]`（第 3 参 `weld` = 激活焊缝吊载）。
+
 ## 12. 下一步
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
 0a. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。
