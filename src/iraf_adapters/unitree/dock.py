@@ -159,7 +159,7 @@ def resolve_dock_station(section, station=None):
             "dock_for_handoff.default_station=%r 不在 stations 里：%s"
             % (default_station, sorted(str(key) for key in stations)))
     # 自洽门禁：默认站位的帧必须与 target_frame 逐字相同（同一事实不出现两处）
-    if str(stations[str(default_station)]) != target_frame:
+    if str(_station_frame(stations[str(default_station)])) != target_frame:
         raise DockDeclarationError(
             "dock_for_handoff.target_frame=%r 与 stations[%r]=%r 不一致："
             "target_frame 记的就是默认站位的帧，两处必须一致"
@@ -169,7 +169,48 @@ def resolve_dock_station(section, station=None):
         raise DockDeclarationError(
             "未知站位 %r：声明登记的站位是 %s（站名只能来自声明，不接受坐标）"
             % (station_name, sorted(str(key) for key in stations)))
-    return str(stations[station_name]), station_name
+    return str(_station_frame(stations[station_name])), station_name
+
+
+def _station_frame(entry):
+    """站位条目 → 帧名。**两种形状**（2026-09-30 §11.79）：
+
+      · 字符串                     —— 帧名（旧行为，逐位不变）；
+      · 对象 `{frame: <帧名>[, approach_position_tolerance_m: <正数 m>]}` —— 允许**按站**覆盖
+        "接近停止"的控制容差。
+
+    为什么必须能按站覆盖：内部"发零"控制容差（`approach_position_tolerance_m`）必须**严于**调用方的
+    验收容差；而**地板由站位的可停精度决定**。实测：B 站末态平移 0.017725~0.018303 m / 偏航
+    1.58~1.71°（验收 0.030 / 2.0 都过），却因进不了全局的 0.015 控制容差而 12 s 超时；
+    A 站同容差能过 ⇒ **不是窗口问题，是地板 > 控制容差**。按站取值即可，不动 A 站、不动验收。
+    """
+    if isinstance(entry, str) and entry:
+        return entry
+    if isinstance(entry, dict):
+        frame = entry.get("frame")
+        if isinstance(frame, str) and frame:
+            return frame
+    raise DockDeclarationError(
+        "dock_for_handoff.stations 的值必须是帧名字符串，或对象 {frame: <帧名>"
+        "[, approach_position_tolerance_m: <正数>]}：实际 %r" % (entry,))
+
+
+def station_control_overrides(section, station_name):
+    """取该站位的**控制容差覆盖**（可空）。缺省 {} ⇒ 用段级声明（逐位不变）。"""
+    stations = (section or {}).get("stations") or {}
+    entry = stations.get(str(station_name))
+    if not isinstance(entry, dict):
+        return {}
+    overrides = {}
+    for key in ("approach_position_tolerance_m", "approach_yaw_tolerance_rad"):
+        value = entry.get(key)
+        if value is None:
+            continue
+        if (not isinstance(value, (int, float)) or isinstance(value, bool) or not float(value) > 0):
+            raise DockDeclarationError(
+                "dock_for_handoff.stations[%s].%s 必须是正有限数：%r" % (station_name, key, value))
+        overrides[key] = float(value)
+    return overrides
 
 
 def assert_target_is_world_fixed(*, frame_label, frame_kind, frame_body_id, frame_body_label,

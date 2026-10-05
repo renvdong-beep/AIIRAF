@@ -1734,6 +1734,12 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                                   "braking_lead_s", "settle_mode") if key not in section]
         if missing:
             raise DeclarationError("声明缺少 dock_for_handoff 的键: %s" % missing)
+        # 站位解析**提前到这里**（2026-09-30 §11.79）：按站的控制容差覆盖必须在本段读
+        # `approach_position_tolerance_m` 之前拿到。调用方只能给站名，数字一律来自声明。
+        _station_overrides = {}
+        if section.get("stations"):
+            _frame, _station = dock_module.resolve_dock_station(section, station)
+            _station_overrides = dock_module.station_control_overrides(section, _station)
         approach_speed = float(section["approach_speed_mps"])
         gain_s_inv = float(section["gain_s_inv"])
         settle_s = float(section["settle_s"])
@@ -1761,8 +1767,13 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         # 全部记在验收余量上（实测：控制=验收=0.03 m 时，到位误差 0.029935 m 只剩 65 µm 余量，
         # 18.4 s 保持期漂移 12.7 mm ⇒ 直接超差）。因此控制容差必须**严于**验收容差，
         # 且本方法显式拒绝"控制容差 ≥ 验收容差"的声明（否则通过与否靠运气）。
-        approach_position_tolerance_m = float(section["approach_position_tolerance_m"])
-        approach_yaw_tolerance_rad = float(section["approach_yaw_tolerance_rad"])
+        # 按站覆盖（§11.79）：站位可声明自己的"接近停止"控制容差；缺省 = 段级声明（逐位不变）
+        approach_position_tolerance_m = float(
+            _station_overrides.get("approach_position_tolerance_m",
+                                   section["approach_position_tolerance_m"]))
+        approach_yaw_tolerance_rad = float(
+            _station_overrides.get("approach_yaw_tolerance_rad",
+                                   section["approach_yaw_tolerance_rad"]))
         for label, value in (("approach_position_tolerance_m", approach_position_tolerance_m),
                              ("approach_yaw_tolerance_rad", approach_yaw_tolerance_rad)):
             if not math.isfinite(value) or value <= 0.0:

@@ -657,7 +657,13 @@ dock_for_handoff:
     # A 站：Piper 侧交接站位（既有的、已验收的那个）。
     handoff_a: handoff_station_frame
     # B 站：UR5e 侧交接站位（新增）。位置依据见 scene.yaml 的 frames 段（可达环带 + 四足工作空间）。
-    handoff_b: handoff_station_frame_b
+    # 【2026-09-30 §11.79：**按站**控制容差】实测 B 站末态平移 0.017725~0.018303 m、偏航 1.58~1.71°
+    # （**验收 0.030 / 2.0 都过**），但进不了全局的"发零"控制容差（0.015 m / 1.0°）⇒ 12 s 超时假失败；
+    # A 站同容差能过 ⇒ **不是窗口问题，是 B 站地板 > 控制容差**。按站取值（仍严于验收），不动 A 站。
+    handoff_b:
+      frame: handoff_station_frame_b
+      approach_position_tolerance_m: 0.020     # > 实测地板 0.0183，< 验收 0.030
+      approach_yaw_tolerance_rad: 0.034        # 1.948° > 实测地板 1.92°，< 验收 2.0°（余量很薄，见 §11.79）
   default_station: handoff_a
   # 接近速度上限（m/s）：必须 ≤ 安全策略 max_speed_mps=0.5；只允许收紧。
   # 初始档 0.15 是"慢速接近"的工程选择，**待按停靠判据标定**（标定后在声明里写明扫描范围与依据）。
