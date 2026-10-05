@@ -1986,6 +1986,34 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         translation_error, _dy, yaw_error = dock_module.pose_error(
             (final[0][0], final[0][1]), final[0][2], (final[1][0], final[1][1]), final[1][2])
         translation_error_m = math.hypot(translation_error, _dy)
+        # ---- 站定冻结留证（2026-10-05 §11.86 量测①）----
+        # 目的：把"**到位拍 → 站定冻结**"的延迟与"到位后回摆量 / 末态是否通过"接上相关性。
+        # 为什么盯它：§11.86 实测到位拍偏航在所有变体里**恒为 −1.92°**（贴着控制容差），
+        # 胜负全在到位之后那 0.9~1.3° / 9~14 mm 的回摆；而回摆 ≈ 步态速度地板 × **冻结延迟**，
+        # 冻结条件在 `phase_elapsed`（零指令满一个步态周期 **且** 四足同时受载），实测延迟 ~1.1 s。
+        # 本段**只量不改**（改 `phase_elapsed` 会动到 `stop` 共用的站定机制，必须先用相关性坐实）。
+        if _dock_trace is not None:
+            import json as _json
+            _halt = report.get("halt") or {}
+            _zero_since = _halt.get("zero_command_since_s")
+            _frozen = _halt.get("frozen_elapsed_s")
+            print("DOCK_HALT " + _json.dumps({
+                "station": station_name,
+                "halt_declared": _halt.get("declared_enabled"),
+                "trot_period_s": _halt.get("period_s"),
+                "reached_s": progress["reached_s"],
+                "zero_command_since_s": _zero_since,
+                "frozen_elapsed_s": _frozen,
+                # 延迟必须用**同一时钟**的两个量相减（两者都相对 onset 的相位钟；冻结前相位钟=原始钟）
+                "freeze_delay_s": (None if (_zero_since is None or _frozen is None)
+                                   else round(float(_frozen) - float(_zero_since), 4)),
+                "frozen": _frozen is not None,
+                "final_pos_m": translation_error_m,
+                "final_yaw_deg": math.degrees(yaw_error),
+                "pass_pos": translation_error_m <= position_tolerance_m,
+                "pass_yaw": abs(math.degrees(yaw_error)) <= math.degrees(yaw_tolerance_rad),
+                "final_speed_mps": None if final_speed == float("inf") else final_speed,
+            }, ensure_ascii=False), flush=True)
         # 终态由 `locomote` / `stand` 各自拥有（它们调用 `ledger.finish`）；
         # 本方法的判定**只进报告**（框架禁止终态回写）—— 由技能/场景层按 criteria 消费。
         failure = report.get("failure") or (None if settle_error is None else

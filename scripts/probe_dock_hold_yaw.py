@@ -1,16 +1,21 @@
-"""停靠**全时段**误差轨迹判读（2026-10-05 §11.86）。
+"""停靠**全时段**误差轨迹 + 冻结延迟判读（2026-10-05 §11.86）。
 
-输入：含 `DOCK_TRACE` 的日志（`scripts/probe_dock_hold_trace.sh` 产出，IRAF_DEBUG_DOCK=1）。
-判读量（**与判据完全同一条测量路径**：frame_pose/body_pose + pose_error）：
-  · 接近段（1 s 抽样）：平移 / 偏航误差的时间轨迹 —— 看有无大过冲；
-  · 到位拍（首条 vx==0 的记录）：此刻的平移 / 偏航误差 = "发零"触发点；
-  · 保持窗（0.5 s 抽样，按**仿真时钟**）：从发零到返回的误差增长；
-  · 漂移 = 末态 − 到位拍，以及换算出来的平均漂移率；
-  · 预算核算：`控制容差 + 漂移 ≤ 验收`？超出多少？
+输入：含 `DOCK_TRACE` / `DOCK_HALT` 的日志（`scripts/probe_dock_hold_trace.sh` 产出）。
+判读量（`DOCK_TRACE` 与判据**完全同一条测量路径**：frame_pose/body_pose + pose_error）：
+  · 接近段（1 s 抽样）：平移 / 偏航误差轨迹 —— 看有无大过冲；
+  · 到位拍（首条 vx==0 的记录）：此刻的误差 = "发零"触发点（实测偏航恒为 −1.92°，贴着控制容差）；
+  · 保持窗（0.5 s 抽样，按**仿真钟**）：到位后的回摆与回收；
+  · 漂移 = 末态 − 到位拍，及换算出的平均漂移率；预算核算：`控制容差 + 漂移 ≤ 验收`？
+`DOCK_HALT` 汇总：**冻结延迟**（zero_command_since_s → frozen_elapsed_s）与末态的相关系数
+  —— 用来判"到位后回摆 ≈ 步态速度地板 × 冻结延迟"是否成立（成立才谈得上改站定机制）。
 
-列定义：DOCK_TRACE samples = [elapsed(相位钟), dx, dy, yaw_err, cmd_vx, cmd_wz, body_yaw, sim_time]
+列定义：
+  DOCK_TRACE samples = [elapsed(相位钟), dx, dy, yaw_err, cmd_vx, cmd_wz, body_yaw, sim_time]
+  DOCK_HALT = {station, halt_declared, trot_period_s, reached_s, zero_command_since_s,
+               frozen_elapsed_s, freeze_delay_s, frozen, final_pos_m, final_yaw_deg,
+               pass_pos, pass_yaw, final_speed_mps}
 只读日志，不跑仿真。
-用法：python3 scripts/probe_dock_hold_yaw.py build/diagnostics/dockhold-round*.log
+用法：python3 scripts/probe_dock_hold_yaw.py build/diagnostics/dockhold-<标签>-round*.log
 """
 
 from __future__ import annotations
@@ -24,12 +29,12 @@ ACCEPT_POS_M = 0.030
 ACCEPT_YAW_DEG = 2.0
 
 
-def _parse(path):
+def _parse(path, prefix):
     rows = []
     for line in pathlib.Path(path).read_text(errors="replace").splitlines():
-        if line.startswith("DOCK_TRACE "):
+        if line.startswith(prefix):
             try:
-                rows.append(json.loads(line[len("DOCK_TRACE "):]))
+                rows.append(json.loads(line[len(prefix):]))
             except json.JSONDecodeError:
                 pass
     return rows
@@ -38,7 +43,7 @@ def _parse(path):
 def _traj(trace):
     out = []
     for row in trace:
-        elapsed, dx, dy, yaw, vx, _wz, _byaw = row[0], row[1], row[2], row[3], row[4], row[5], row[6]
+        elapsed, dx, dy, yaw, vx = row[0], row[1], row[2], row[3], row[4]
         sim = row[7] if len(row) > 7 else None
         out.append({"elapsed": elapsed, "pos": math.hypot(dx, dy), "yaw": math.degrees(yaw),
                     "vx": vx, "sim": sim})
@@ -107,11 +112,54 @@ def _report(path, trace, station):
           % (abs(peak_yaw["yaw"]), peak_yaw["sim"], peak_pos["pos"], peak_pos["sim"]))
 
 
+def _pearson(xs, ys):
+    n = len(xs)
+    if n < 3:
+        return None
+    mx, my = sum(xs) / n, sum(ys) / n
+    num = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    dx = math.sqrt(sum((x - mx) ** 2 for x in xs))
+    dy = math.sqrt(sum((y - my) ** 2 for y in ys))
+    if dx == 0.0 or dy == 0.0:
+        return None
+    return num / (dx * dy)
+
+
+def _halt_summary(records):
+    if not records:
+        print("（无 DOCK_HALT 记录）")
+        return
+    print("=" * 74)
+    print("[冻结延迟 ↔ 末态] %d 个样本" % len(records))
+    print("  %-14s %-11s %-12s %-12s %-6s %-6s" % ("station", "延迟/s", "末态pos/m",
+                                                     "末态yaw/°", "pos过", "yaw过"))
+    for item in records:
+        delay = item.get("freeze_delay_s")
+        print("  %-14s %-11s %-12.6f %-12.4f %-6s %-6s"
+              % (item.get("station"), "None" if delay is None else "%.4f" % delay,
+                 item.get("final_pos_m") if item.get("final_pos_m") is not None else float("nan"),
+                 item.get("final_yaw_deg") if item.get("final_yaw_deg") is not None else float("nan"),
+                 item.get("pass_pos"), item.get("pass_yaw")))
+    triples = [(item["freeze_delay_s"], item["final_pos_m"], abs(item["final_yaw_deg"]))
+               for item in records
+               if item.get("freeze_delay_s") is not None
+               and item.get("final_pos_m") is not None
+               and item.get("final_yaw_deg") is not None]
+    if len(triples) >= 3:
+        ds, poss, yaws = zip(*triples)
+        print("  延迟 min/max = %.4f / %.4f s" % (min(ds), max(ds)))
+        print("  r(延迟, 末态pos)   = %s" % _pearson(list(ds), list(poss)))
+        print("  r(延迟, |末态yaw|) = %s" % _pearson(list(ds), list(yaws)))
+
+
 def main(argv):
+    records = []
     for path in argv:
-        for row in _parse(path):
+        for row in _parse(path, "DOCK_TRACE "):
             _report(path, row.get("samples") or [], row.get("station"))
+        records.extend(_parse(path, "DOCK_HALT "))
+    _halt_summary(records)
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:] or ["build/diagnostics/dockhold-round1.log"])
+    main(sys.argv[1:] or ["build/diagnostics/dockhold-run-round1.log"])
