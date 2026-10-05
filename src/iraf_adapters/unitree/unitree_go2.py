@@ -2040,6 +2040,17 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 "mpc_timeouts": (_client_stats or {}).get("timeouts"),
                 "mpc_crashes": (_client_stats or {}).get("crashes"),
                 "mpc_restarts": (_client_stats or {}).get("restarts"),
+                # MPC **控制器侧**的降级/陈旧计数（§11.88：异常轮与"该步墙钟最快"同现的第一嫌疑）。
+                # 依据：子进程侧 `timeouts/crashes/restarts` 6/6 全 0，但声明里有
+                # `update_hz` / `staleness_periods` / `call_timeout_ms` 三个"按墙钟判断"的策略键 ⇒
+                # 调用成功却被**降级/跳过**这类事件只会出现在这两个 stats 里：
+                #   hook：overran_cycles（本拍计划**超过墙钟预算**）/ inaccurate_cycles / unavailable
+                #   runtime：skips（更新被跳过 = 陈旧度策略）/ updates / steps / holds
+                "mpc_hook": {_key: ((report.get("provider") or {}).get("stats") or {}).get(_key)
+                             for _key in ("calls", "plans", "unavailable",
+                                          "overran_cycles", "inaccurate_cycles")},
+                "mpc_runtime": {_key: ((report.get("provider") or {}).get("runtime") or {}).get(_key)
+                                for _key in ("steps", "updates", "skips", "holds", "releases")},
                 "final_pos_m": translation_error_m,
                 "final_yaw_deg": math.degrees(yaw_error),
                 "pass_pos": translation_error_m <= position_tolerance_m,
