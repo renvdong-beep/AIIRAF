@@ -35,6 +35,12 @@ class PlantWaitTimeout(PlantError):
 class MujocoPlant:
     """持有 model/data、步数计数与**唯一**时间推进者。"""
 
+    #: 需求闸门下"自由推进线程"允许的**最长停驻**（s）。取值与场景侧"驻留让位"的超时同量级
+    #: （`scripts/scenario.py` 的 `_yield_residency_to_step` 用 60 s）——本键只用于把
+    #: "停住且无人要时间"这种装配/接线错误**显式暴露**出来，不作为性能参数。
+    #: 可用 `IRAF_PLANT_GATE_PARK_TIMEOUT_S` 覆盖（实验用）。
+    GATE_PARK_TIMEOUT_S = 60.0
+
     def __init__(self, model, data, owner, owner_name=None, label=None):
         if model is None or data is None:
             raise PlantError("植物必须显式给出 model 与 data（本模块不构造默认模型）")
@@ -146,18 +152,40 @@ class MujocoPlant:
                 "只有 owner(%s) 能推进时间，调用者=%s" % (self.owner, caller))
         if not self._gate_enabled or threading.current_thread() is not self._free_run_thread:
             return self.step_index
+        # ⚠ 锁序纪律（2026-10-05 §11.87 实测死锁）：**持 `_gate_cond` 时不得再取 `_lock`**。
+        # 实测 ABBA：驻留线程在 `step_once` 里（已释放 `_lock`）要 `_gate_cond`，
+        # 而 guest 在 `_wait_until_gated` 里持 `_gate_cond` 后要 `_lock`（且动物后端的 `_lock`
+        # 与植物 `_lock` 是**同一把**（`self.plant.lock()`）⇒ 同一线程可重入持有）⇒ 双方互等，
+        # 两个线程全部睡死、CPU 3%、日志不再增长。故闸门内部只读裸 `_step_index`（int 读原子，
+        # 顺序由条件变量保证），一律不碰 `_lock`。
         with self._gate_cond:
+            deadline = time.monotonic() + self.GATE_PARK_TIMEOUT_S
             while True:
                 if not self._gate_enabled:
                     # 场景关闸门（guest 步结束）后必须**立刻返回**，否则驻留线程会停在这里不让位
-                    return self.step_index
+                    return self._step_index
                 if not self._targets:
-                    self._gate_cond.wait()
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0.0:
+                        # 有界等待（铁律 2.3：禁止无超时等待）：没人来要时间却停了这么久 = 装配/接线错了，
+                        # 必须**显式失败**并说清现场，而不是永远静默停住（实测踩过：整轮只有 3% CPU、
+                        # 日志不再增长、且因为 guest 侧超时太长而看不到任何报错）。
+                        raise PlantError(
+                            "需求闸门：自由推进线程已停驻 %.1f s 仍无任何 guest 需求（step_index=%d，"
+                            "闸门开启中）。可能原因：① owner 自己的步骤期间被误开闸门；"
+                            "② guest 已结束但闸门未关；③ 驻留线程已死。"
+                            % (self.GATE_PARK_TIMEOUT_S, self._step_index))
+                    self._gate_cond.wait(remaining)
                     continue
                 target = min(self._targets)
-                if self.step_index < target:
-                    return self.step_index
-                self._gate_cond.wait()
+                if self._step_index < target:
+                    return self._step_index
+                remaining = deadline - time.monotonic()
+                if remaining <= 0.0:
+                    raise PlantError(
+                        "需求闸门：推进到 guest 目标后仍停驻 %.1f s 未被注销（step_index=%d，目标=%d）"
+                        % (self.GATE_PARK_TIMEOUT_S, self._step_index, target))
+                self._gate_cond.wait(remaining)
 
     # ---- 时间推进
     def step_once(self, caller):
@@ -220,15 +248,15 @@ class MujocoPlant:
             try:
                 deadline = time.monotonic() + timeout
                 while True:
-                    with self._lock:
-                        current = self._step_index
-                    if current >= index:
-                        return current
+                    # ⚠ 锁序纪律（§11.87）：**持 `_gate_cond` 时不得取 `_lock`**（否则与驻留线程
+                    # 在 `step_once` 里"先 `_lock` 后 `_gate_cond`"构成 ABBA 死锁）。裸读 int 即可。
+                    if self._step_index >= index:
+                        return self._step_index
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         raise PlantWaitTimeout(
                             "等待 owner(%s) 推进到第 %d 步超时（%.3f s，当前 %d 步；需求闸门开启）"
-                            % (self.owner, index, timeout, current))
+                            % (self.owner, index, timeout, self._step_index))
                     # 等待粒度上限 50 ms：到达目标时有 notify 立刻唤醒，这里只是超时检查的兜底
                     # （按调用方给的 poll_seconds=步长 会变成每 2 ms 醒一次、白烧 CPU）
                     self._gate_cond.wait(min(remaining, max(poll_seconds, 0.001), 0.05))

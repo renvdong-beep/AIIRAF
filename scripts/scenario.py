@@ -60,6 +60,7 @@ Provider → 适配器 → MuJoCo）。执行器**不直接驱动后端**：后�
 import argparse
 import json
 import math
+import os
 import sys
 import threading
 import time
@@ -1811,6 +1812,15 @@ def run_scenario(scene_dir, scenario_name, *, report_path=None, require_injected
     scene_id = str(scene.get("id"))
     # 植物驻留：联合世界下 owner 全程在线（见 _start_plant_residency 的说明）
     residency = _start_plant_residency(runtimes, bindings, world)
+    # 线程栈周期转储（2026-10-05 §11.87 诊断通路）：joint 世界是**多线程 + 共享植物**，
+    # 一旦接线错误就会出现"所有线程都睡着、CPU 接近 0、日志不再增长"的静默停住 —— 而 guest 侧的
+    # 等待超时（步数×步长×系数）可能长达数分钟，看不到任何报错。`IRAF_THREAD_DUMP_S=<秒>` 时
+    # 每 <秒> 把**全部线程**的栈打到 stderr（日志里），一眼看出谁持锁、谁在等谁。
+    # ⚠ 只在排查时开：转储本身有 IO，会扰动节拍。
+    _dump_s = os.environ.get("IRAF_THREAD_DUMP_S")
+    if _dump_s:
+        import faulthandler
+        faulthandler.dump_traceback_later(float(_dump_s), repeat=True, exit=False)
     # 显示会话：只渲染、不推进（推进仍是 owner 驻留线程的事）。`--seconds` 作为**末态留观**
     # 传进镜像循环本身（在那里窗口还活着）⇒ 运行结束后窗口仍可见 N 秒，而不是关窗后再空等
     # （2026-09-28 §11.23(41)：旧语义正是"闪一下就不见了"）。
