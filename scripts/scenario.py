@@ -1495,6 +1495,47 @@ def _resume_residency_after_step(residency, yield_record, step_id):
         residency["pause_event"].clear()
 
 
+def _apply_plant_demand_gate(scene, runtimes, world):
+    """把场景声明的**共享植物推进口径**施加到植物上（2026-10-05 §11.87）。
+
+    · `world=joint` **必须**声明 `scene.plant_demand_gate`（布尔）——联合世界的验收可复现性
+      依赖它；静默按旧行为跑会产出"每次初始状态都不同的验收"（与 `world_physics` 同一纪律：
+      缺声明即显式失败，不猜）。
+    · 非联合世界不读该键（单本体路径逐位不变）。
+    · 实验覆盖 `IRAF_PLANT_DEMAND_GATE_OVERRIDE=0/1`（仅排查用；生效值与来源打进日志）。
+    """
+    if world != "joint":
+        return {"declared": None, "override": None, "effective": None, "source": "非联合世界（不适用）"}
+    declared = scene.get("plant_demand_gate")
+    if not isinstance(declared, bool):
+        raise ScenarioError(
+            "联合世界必须显式声明 scene.plant_demand_gate（布尔）：true = 需求闸门（结果可复现），"
+            "false = 旧行为（推进量含挂钟决定的超出量，验收不可复现）。实际 %r" % (declared,),
+            EXIT_DECLARATION)
+    override = os.environ.get("IRAF_PLANT_DEMAND_GATE_OVERRIDE")
+    if override not in (None, "", "0", "1"):
+        raise ScenarioError("IRAF_PLANT_DEMAND_GATE_OVERRIDE 只接受 0/1，实际 %r" % (override,),
+                            EXIT_DECLARATION)
+    effective = declared if override in (None, "") else (override == "1")
+    plants = []
+    for state in (runtimes or {}).values():
+        plant = getattr(state.get("backend"), "plant", None)
+        if plant is not None and all(plant is not seen for seen in plants):
+            plants.append(plant)
+    if not plants:
+        raise ScenarioError("声明了 plant_demand_gate 却在装配里找不到任何共享植物", EXIT_REFERENCE)
+    for plant in plants:
+        setter = getattr(plant, "set_gate_opt_in", None)
+        if setter is None:
+            raise ScenarioError("植物 %r 不支持需求闸门（缺 set_gate_opt_in）" % (plant,), EXIT_BACKEND)
+        setter(effective)
+    record = {"declared": declared, "override": override, "effective": effective,
+              "source": "声明" if override in (None, "") else "环境覆盖",
+              "plants": [str(getattr(item, "label", item)) for item in plants]}
+    print("PLANT_DEMAND_GATE " + json.dumps(record, ensure_ascii=False), flush=True)
+    return record
+
+
 def _plant_of_residency(residency):
     """取驻留所属的**共享植物**（非联合世界 / 未装配 ⇒ None）。"""
     if not residency:
@@ -1810,6 +1851,10 @@ def run_scenario(scene_dir, scenario_name, *, report_path=None, require_injected
         )
 
     scene_id = str(scene.get("id"))
+    # 共享植物推进口径（§11.87）：**必须在驻留线程启动之前**施加 —— 否则从"启动驻留"到"施加闸门"
+    # 之间存在一段自由推进窗口（挂钟相关）⇒ 起点步号逐轮不同，可复现性就丢在这一小段上（实测踩过）。
+    # 联合世界必须声明；缺声明即失败（可复现性是验收口径，不能靠隐式开关）。
+    plant_demand_gate = _apply_plant_demand_gate(scene, runtimes, world)
     # 植物驻留：联合世界下 owner 全程在线（见 _start_plant_residency 的说明）
     residency = _start_plant_residency(runtimes, bindings, world)
     # 线程栈周期转储（2026-10-05 §11.87 诊断通路）：joint 世界是**多线程 + 共享植物**，

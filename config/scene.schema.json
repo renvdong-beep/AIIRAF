@@ -35,6 +35,10 @@
       "const": true,
       "description": "仿真场景必须显式声明 true；缺失即不合法（不得默认 true，也不得用仿真结果冒充真机能力，AGENTS.md 1.7）。"
     },
+    "plant_demand_gate": {
+      "type": "boolean",
+      "description": "**共享植物的推进口径**（联合世界必须声明，见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.87）。true = 装\"需求闸门\"：guest（臂）执行步骤期间，owner 的**自由推进线程**（植物驻留）只在 guest 登记了\"要推进到第几步\"时才推进，且最多推进到该目标；没有 guest 在等就一步都不推。false = 旧行为（驻留线程在 guest 等待期间并发 mj_step ⇒ 实际推进 = 请求量 + **挂钟决定的超出量**，实测 17×）。**联合世界必须显式为 true**：false 会让\"每次运行的初始状态都不同\"，即验收本身不可复现（实测同一配置 B 站末态在 1.8785~5.2865° 之间跳；置 true 后两站逐位复现）。"
+    },
     "world_physics": {
       "type": "object",
       "additionalProperties": false,

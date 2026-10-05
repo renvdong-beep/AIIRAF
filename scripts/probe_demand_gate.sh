@@ -26,7 +26,7 @@ OUTDIR="build/diagnostics"
 for i in $(seq 1 "$ROUNDS"); do
   log="${OUTDIR}/dockhold-gate${MODE}-${TAG}-round${i}.log"
   echo "[闸门 ${MODE} 轮 ${i}/${ROUNDS}] -> ${log}"
-  IRAF_DEBUG_DOCK=1 IRAF_DEBUG_GUEST_STEPS=1 IRAF_PLANT_DEMAND_GATE="$GATE" \
+  IRAF_DEBUG_DOCK=1 IRAF_DEBUG_GUEST_STEPS=1 IRAF_PLANT_DEMAND_GATE_OVERRIDE="$GATE" \
     PYTHONPATH=src python3 scripts/scenario.py run \
     --scene scenes/handoff_lab --scenario nominal --world joint --display none \
     > "$log" 2>&1 || true

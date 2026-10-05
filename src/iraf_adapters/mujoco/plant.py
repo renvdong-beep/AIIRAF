@@ -13,7 +13,6 @@
 本模块**不含任何数字默认值**：超时一律由调用方给出（缺声明即失败）。
 """
 
-import os
 import threading
 import time
 
@@ -73,7 +72,10 @@ class MujocoPlant:
         # （实测：`植物驻留未在 60 s 内让位（owner 上一轮 hold 未结束）`）。
         # `_gate_opt_in`（缺省关，实验开关 `IRAF_PLANT_DEMAND_GATE=1`）决定"允许被开"；
         # `_gate_enabled` 是**当前是否生效**，初始为 False ⇒ 未被场景打开时逐位不变。
-        self._gate_opt_in = os.environ.get("IRAF_PLANT_DEMAND_GATE") == "1"
+        # 由**装配层**按场景声明施加（`scenario.py::_apply_plant_demand_gate`），默认关 ⇒ 逐位不变。
+        # 为什么不在这里读环境变量：可复现性是验收口径，必须来自**声明**（`scene.plant_demand_gate`），
+        # 不能依赖隐式环境变量（AGENTS.md 5.3）。实验覆盖只在装配层做，并把生效值打进日志/报告。
+        self._gate_opt_in = False
         self._gate_enabled = False
         self._free_run_thread = None
         self._targets = []
@@ -108,11 +110,16 @@ class MujocoPlant:
             return True
         return isinstance(who, str) and who == self.owner_name
 
-    # ---- 需求闸门（2026-10-05 §11.87；缺省关，`IRAF_PLANT_DEMAND_GATE=1` 才允许被开）
+    # ---- 需求闸门（2026-10-05 §11.87；是否装上由场景声明 `scene.plant_demand_gate` 决定）
     @property
     def gate_opt_in(self):
-        """本植株是否**允许**被装上需求闸门（装配期决定，运行期不变）。"""
+        """本植株是否**允许**被装上需求闸门（装配期由场景声明决定，运行期不变）。"""
         return bool(self._gate_opt_in)
+
+    def set_gate_opt_in(self, enabled):
+        """装配期施加场景声明的推进口径（§11.87）。缺省 False ⇒ 逐位不变。"""
+        self._gate_opt_in = bool(enabled)
+        return self._gate_opt_in
 
     @property
     def demand_gate(self):
