@@ -87,7 +87,7 @@ def main() -> int:
 
     ref = {str(s.get("id")): s for s in normal["spans"]}
     ids = [str(s.get("id")) for s in normal["spans"]]
-    fields = ("state_before", "state_after", "ctrl_digest", "ctrl_n")
+    fields = ("state_before", "state_after", "ctrl_digest", "ctrl_n", "dq_before", "dq_after")
     print("\n逐步对照（只列与常态不同的项）")
     print("%-4s %-22s %s" % ("#", "step", "与常态不同的字段"))
     for r in anoms[:3]:
@@ -106,6 +106,19 @@ def main() -> int:
                 print("  %-2d %-22s %s  before=%s" % (i + 1, sid, ",".join(diffs), b.get("before")))
         print("  ⇒ 第一个 state_before 不同的步骤 = %s" % (str(first_state) if first_state else "无"))
         print("  ⇒ 第一个 ctrl_digest 不同的步骤 = %s" % (str(first_ctrl) if first_ctrl else "无"))
+        # 速度级逐元素定位（量测㉓）：位置相同、速度不同时会命中这里 ⇒ 给出**第一个不同的自由度序号**。
+        # 序号→关节名的映射离线做（模型在 build/models/ 下），脚本保持零依赖。
+        for sid in ids:
+            a, b = ref.get(sid, {}), cur.get(sid, {})
+            for key in ("dq_before", "dq_after"):
+                va, vb = a.get(key), b.get(key)
+                if not isinstance(va, list) or not isinstance(vb, list) or va == vb:
+                    continue
+                nmin = min(len(va), len(vb))
+                k = next((j for j in range(nmin) if va[j] != vb[j]), None)
+                ndiff = sum(1 for j in range(nmin) if va[j] != vb[j])
+                print("  [%s] %s：首个不同的 qvel 元素 = %s（共 %d 个不同；长度 常态 %d / 备选 %d）"
+                      % (sid, key, k, ndiff, len(va), len(vb)))
 
         sid = args.detail
         a, b = ref.get(sid, {}), cur.get(sid, {})

@@ -1553,6 +1553,17 @@ def _qpos_digest(plant):
     return hash(values) & 0xFFFFFFFF
 
 
+def _qvel_element_digests(plant):
+    """整机**速度**的逐元素指纹（`qvel` 四舍五入 12 位，每元素一个 32 位摘要）。
+
+    为什么必须补（2026-10-06 §11.88 量测㉓）：实测 s03 首差拍是"`q` **完全相同**、`dq` 不同、
+    `desired` 与植物步号**全程相同**" ⇒ 分叉进在**速度级**。而既有的 `_qpos_digest` 只看位置
+    ⇒ "state_before 逐位相同"**并不能**排除分叉已经存在。逐元素比整向量多一条可定位信息
+    （**第一个不同的自由度序号**），代价相同（一次数组扫描、无 I/O、不持锁）。
+    """
+    return [hash(round(float(v), 12)) & 0xFFFFFFFF for v in plant.data.qvel]
+
+
 def _plant_of_residency(residency):
     """取驻留所属的**共享植物**（非联合世界 / 未装配 ⇒ None）。"""
     if not residency:
@@ -1717,6 +1728,8 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
                      "mpc_before": int(getattr(_span_backend, "_mpc_iter_total", 0) or 0),
                      # 状态指纹（量测⑭修正）：对上游步骤同样有效
                      "state_before": _qpos_digest(_span_plant),
+                     # 速度级逐元素指纹（量测㉓）：位置相同**不能**排除速度已分叉（实测如此）。
+                     "dq_before": _qvel_element_digests(_span_plant),
                      # 狗的控制写入计数（§11.88 量测⑯）：配合 IRAF_DEBUG_CTRL_ALIGN=1，
                      # 逐步给出"狗的控制序列指纹" —— 二分"分叉在 s03 内"到底来自**狗的控制**还是别处
                      # （停靠段已验证 ctrl 序列逐位相同，但**上游步骤从未验过**）。
@@ -1744,6 +1757,7 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
                 _span["mpc_iters"] = (int(getattr(_span_backend, "_mpc_iter_total", 0) or 0)
                                       - _span["mpc_before"])
                 _span["state_after"] = _qpos_digest(_span_plant)
+                _span["dq_after"] = _qvel_element_digests(_span_plant)
                 # 本步内"新鲜度决策"计数增量（§11.88 量测⑲）：`freshness.decide(age_ms=…)` 按**墙钟**
                 # 判新鲜度 ⇒ 逐步增量若在异常轮不同，即坐实"控制量取值随挂钟变"。
                 for _name in ("_mpc_unavailable", "_mpc_holds", "_mpc_releases", "_mpc_skips"):
