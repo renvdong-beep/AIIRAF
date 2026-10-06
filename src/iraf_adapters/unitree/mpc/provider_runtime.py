@@ -97,10 +97,16 @@ class ProviderRuntime:
                 self._solution = None
                 self._last_ok_ms = None
             solve_ms = resp.get("solve_ms")
+            # 求解**迭代数**必须一并带过去（2026-10-06 §11.88 量测⑫）：
+            # ⚠ 这里曾被漏掉 ⇒ `provider_core` 顶层有 `iter`，但本层重建 `diagnostics` 时没带
+            # ⇒ hook 侧永远量到 `iter_total=0`（"链路缺中间层 ⇒ 静默失效"的又一例，且表现为
+            # "值恒为 0"而不是报错）。判"求解器是否按迭代/时间预算终止"必须依赖它。
+            iter_ = resp.get("iter")
             source = "subprocess"
         else:
             self.stats["skips"] += 1
             solve_ms = None
+            iter_ = None
             source = "held"
 
         age_ms = None if self._last_ok_ms is None else (self._now() - self._last_ok_ms)
@@ -122,7 +128,8 @@ class ProviderRuntime:
                 self._solution = None
                 self._last_ok_ms = None
         diagnostics = {"age_ms": age_ms, "status_class": self._last_status,
-                       "solve_ms": solve_ms, "source": source, "tick": self._tick - 1,
+                       "solve_ms": solve_ms, "iter": iter_, "source": source,
+                       "tick": self._tick - 1,
                        "ticks_per_update": self._ticks_per_update,
                        # **最近一次失败更新**的原因（held 拍沿用上一次的失败原因；成功后清空）
                        "client_error": self._last_error,
