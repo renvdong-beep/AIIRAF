@@ -69,7 +69,11 @@ def main(argv):
     first_diff = next((i for i in range(n) if ns[i] != as_[i]), None)
     step_first = (anomaly[1].get("ctrl_align") or {}).get("first")
     print("  可比拍数 = %d（常态 %d / 异常 %d）" % (n, len(ns), len(as_)))
-    if first_diff is None:
+    if n == 0:
+        # ⚠ 必须与"逐拍相同"区分开：0 拍时**没有数据**，不能输出"相同"（本仓纪律：不把"没抓到"当"没有"）。
+        print("  ⇒ 无可比数据（日志里没有 `ctrl_align.seq`，例如旧格式/未开 IRAF_DEBUG_CTRL_ALIGN）"
+              " ⇒ 本次**不做结论**")
+    elif first_diff is None:
         print("  ⇒ 两轮的全部控制量摘要逐拍相同：差异不在本停靠段的控制量取值（需再查上游/别处）")
     else:
         print("  ⇒ 第一次分叉在第 %d 拍（本段首拍 %s，植物步号 ≈ %s）"
