@@ -13,6 +13,7 @@
 本模块**不含任何数字默认值**：超时一律由调用方给出（缺声明即失败）。
 """
 
+import hashlib
 import threading
 import time
 
@@ -58,6 +59,15 @@ class MujocoPlant:
         self.label = str(label) if label else self.owner_name
         self._lock = threading.RLock()
         self._step_index = 0
+        # ---- 操作序列滚动摘要（2026-10-06 §11.88 量测㉗）----
+        # 为什么需要：零舍入下"14750 的完整输入逐位相同、却仍分叉" ⇒ 完备性已证输入清单无遗漏
+        # ⇒ 唯一剩下的类别是**操作序列**（谁在什么顺序上做了什么、各做了多少次）。
+        # 本摘要把每次改变仿真的操作滚进 blake2b ⇒ "操作序列"也成为可逐拍比对的可观测量。
+        # 线程安全：`_op_lock` 是**独立小锁**；调用方通常已持植物锁 ⇒ 锁序为"植物锁 → op 锁"单向，
+        # 绝不反向取锁，不引入新的死锁环。
+        self._op_lock = threading.Lock()
+        self._op_hash = hashlib.blake2b(digest_size=8)
+        self._op_seq = 0
         # ---- 需求闸门（2026-10-05 §11.87）----
         # 为什么需要：owner 的**自由推进线程**（植物驻留）在 guest 等待期间并发 `mj_step` ⇒
         # guest 请求 `count` 步、实际推进 `count + 挂钟决定的超出量`（§11.56 实测 17×）；
@@ -205,6 +215,7 @@ class MujocoPlant:
             mujoco.mj_step(self.model, self.data)
             self._step_index += 1
             index = self._step_index
+            self.op_event("step")
         if self._gate_enabled:
             # ⚠ 只在**到达某个 guest 的目标**时唤醒：每步都 notify_all 会让每步都发生一次
             # 线程切换（实测整轮慢到跑不完）⇒ 这里按目标判断，等待方绝大多数步都不被唤醒。
@@ -212,6 +223,21 @@ class MujocoPlant:
                 if self._targets and index >= min(self._targets):
                     self._gate_cond.notify_all()
         return index
+
+    def op_event(self, kind, tag=0):
+        """把一次**改变仿真的操作**滚进操作序列摘要（量测㉗）。
+
+        调用点（改变仿真的操作）：`step_once`（"step"）、狗的 PD 重力前馈（"ff"）、两侧的 ctrl 写入（"ctrl"）。
+        参数 `tag` 用于区分同一类操作的发起方（例如狗=1 / 臂=2）。
+        """
+        with self._op_lock:
+            self._op_seq += 1
+            self._op_hash.update(b"%d|%s|%d;" % (self._op_seq, str(kind).encode("ascii"), int(tag)))
+
+    def op_digest(self):
+        """当前操作序列的 `(次数, 摘要)`：可逐拍采样、跨进程可比（blake2b，不受 PYTHONHASHSEED 影响）。"""
+        with self._op_lock:
+            return (self._op_seq, self._op_hash.copy().hexdigest())
 
     def advance(self, count, caller):
         count = int(count)

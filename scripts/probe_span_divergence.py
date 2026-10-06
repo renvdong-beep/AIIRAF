@@ -144,6 +144,17 @@ def main() -> int:
             for sub, n, sid, va, vb in hits:
                 print("  [%s] %s 首个不同 = 第 %d 步（%s）：常态=%s 备选=%s"
                       % (key, sub, n, sid, va, vb))
+        # 操作序列摘要（量测㉗）：边界层 + 逐写层各给"首次不同"。
+        for key in ("op_before", "op_after"):
+            for i, sid in enumerate(ids):
+                va = ref.get(sid, {}).get(key)
+                vb = cur.get(sid, {}).get(key)
+                if va is None or vb is None or list(va) == list(vb):
+                    continue
+                print("  [%s] 首个不同 = 第 %d 步（%s）：常态=%s 备选=%s" % (key, i + 1, sid, va, vb))
+                break
+            else:
+                print("  [%s] 在全部步骤边界上相同" % key)
 
         sid = args.detail
         a, b = ref.get(sid, {}), cur.get(sid, {})
@@ -200,6 +211,13 @@ def main() -> int:
                     if all(xfd[nm] is None for nm in xnames):
                         print("      ⇒ 零舍入下 ctrl/desired/q/dq **完全相同** ⇒ 差异不在狗的输入里"
                               " ⇒ 转向求解器调用次数/顺序这类**非状态输入**（例如额外 `mj_forward` 的时机）")
+                if len(pa[first]) >= 10:
+                    # 操作序列摘要（量测㉗）：位序 9 = `(操作次数, 操作序列摘要)`。
+                    # 这是"非状态输入"的直接观测：若此处首次不同，就说明**操作序列**在那一刻起了分歧。
+                    ofd = next((i for i in range(n) if list(pa[i][9]) != list(pb[i][9])), None)
+                    print("      操作序列摘要首次不同拍 = %s（常态=%s 备选=%s）" % (
+                        ofd, (pa[ofd][9] if ofd is not None else None),
+                        (pb[ofd][9] if ofd is not None else None)))
     return 0
 
 

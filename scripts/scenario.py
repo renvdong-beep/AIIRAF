@@ -1618,6 +1618,16 @@ def _exact_state_digests(plant):
         except (TypeError, ValueError, AttributeError):
             continue
         out[str(name)] = hashlib.blake2b(buf, digest_size=8).hexdigest()
+    # 两个**从未采样**的标量/离散量（量测㉗）：`time`（步号决定，但位级从未验过）
+    # 与接触/约束规模（`ncon`/`nefc` —— 求解的**离散输入**，若在某拍不同即为直接证据）。
+    try:
+        out["time"] = float(data.time).hex()
+    except (TypeError, ValueError):
+        pass
+    try:
+        out["ncon_nefc"] = "ncon=%d/nefc=%d" % (int(data.ncon), int(data.nefc))
+    except (TypeError, ValueError):
+        pass
     return out
 
 
@@ -1791,6 +1801,8 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
                      "hid_before": _hidden_state_digests(_span_plant),
                      # 零舍入完整输入集（量测㉕）：回答"14750 那一刻差异是否已经存在、在哪一层"。
                      "x_before": _exact_state_digests(_span_plant),
+                     # 操作序列摘要（量测㉗）：把"到此为止谁在什么顺序上做了什么"也变成可观测量。
+                     "op_before": _span_plant.op_digest(),
                      # 狗的控制写入计数（§11.88 量测⑯）：配合 IRAF_DEBUG_CTRL_ALIGN=1，
                      # 逐步给出"狗的控制序列指纹" —— 二分"分叉在 s03 内"到底来自**狗的控制**还是别处
                      # （停靠段已验证 ctrl 序列逐位相同，但**上游步骤从未验过**）。
@@ -1821,6 +1833,7 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
                 _span["dq_after"] = _qvel_element_digests(_span_plant)
                 _span["hid_after"] = _hidden_state_digests(_span_plant)
                 _span["x_after"] = _exact_state_digests(_span_plant)
+                _span["op_after"] = _span_plant.op_digest()
                 # 本步内"新鲜度决策"计数增量（§11.88 量测⑲）：`freshness.decide(age_ms=…)` 按**墙钟**
                 # 判新鲜度 ⇒ 逐步增量若在异常轮不同，即坐实"控制量取值随挂钟变"。
                 for _name in ("_mpc_unavailable", "_mpc_holds", "_mpc_releases", "_mpc_skips"):

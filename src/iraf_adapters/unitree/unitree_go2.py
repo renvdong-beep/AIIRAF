@@ -2931,11 +2931,12 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 # `gravity_bias_torque` 内部会 `mj_forward`（写派生量）⇒ 必须持植物锁；
                 # 这就是崩溃栈顶那一帧（与对侧的 mj_forward/mj_step 并发）。
                 with self._lock:
-                    tau_ff = (
-                        gravity_bias_torque(self.model, self.data, self.mujoco, self.dof_adr)
-                        if self.gravity_feedforward
-                        else np.zeros_like(q)
-                    )
+                    if self.gravity_feedforward:
+                        tau_ff = gravity_bias_torque(self.model, self.data, self.mujoco, self.dof_adr)
+                        # 前馈内部会 `mj_forward`（一次求解器调用）⇒ 属于"操作序列"，必须进账（量测㉗）。
+                        self.plant.op_event("ff")
+                    else:
+                        tau_ff = np.zeros_like(q)
                 ctrl, saturated = pd_torque(
                     q, dq, desired, self.kp, self.kd, tau_ff, self.torque_lower, self.torque_upper
                 )
@@ -2990,6 +2991,8 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                     ctrl = np.clip(ctrl, self.torque_lower, self.torque_upper)
             saturated_total += int(np.count_nonzero(saturated))
             self.data.ctrl[self.actuator_ids] = ctrl
+            # 控制写入也是"改变仿真的操作"（量测㉗）
+            self.plant.op_event("ctrl", 1)
             if self._ctrl_align_probe:
                 # 这次控制量落在哪个植物步号上 + **控制量取值的摘要**（内存累计，段末一次性落盘）。
                 # 为什么两步都要：闸门之后"步数"与"写入对齐"都已证明逐轮相同（§11.88 量测⑨），
@@ -3013,6 +3016,9 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                             np.asarray(_vec, dtype=float).astype("<f8", copy=False).tobytes(),
                             digest_size=8).hexdigest()
                         for _vec in (ctrl, desired, q, dq))
+                    # 操作序列摘要（量测㉗）：把"此刻为止的操作序列（次数+顺序）"也挂在每次写上
+                    # ⇒ 判读时能看到"第一次操作序列不同"发生在哪一拍（5 步粒度）。
+                    _item = _item + (self.plant.op_digest(),)
                 self._ctrl_writes.append(_item)
             for _ in range(self.substeps):
                 # 时间只能由植物 owner 推进（共享植物下越权即 PlantOwnershipError）

@@ -3916,6 +3916,8 @@ class MujocoBackend:
     def _write_ctrl(self, channel, value):
         self._assert_owned(channel)
         self.data.ctrl[self._actuators[channel]] = float(value)
+        # 臂侧控制写入也是"改变仿真的操作"（量测㉗；tag=2 区分发起方）
+        self.plant.op_event("ctrl", 2)
         if _ARM_CTRL_PROBE:
             # 臂侧控制写入留证（量测㉒）：**逐拍**记账，同一拍的多通道写入合并成该拍的取值摘要。
             # 两个必须这么做的理由：
