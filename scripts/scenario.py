@@ -1716,7 +1716,11 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
                      # MPC 求解迭代数（§11.88 量测⑭）：逐步增量 ⇒ 用离散指纹向上游二分
                      "mpc_before": int(getattr(_span_backend, "_mpc_iter_total", 0) or 0),
                      # 状态指纹（量测⑭修正）：对上游步骤同样有效
-                     "state_before": _qpos_digest(_span_plant)}
+                     "state_before": _qpos_digest(_span_plant),
+                     # 狗的控制写入计数（§11.88 量测⑯）：配合 IRAF_DEBUG_CTRL_ALIGN=1，
+                     # 逐步给出"狗的控制序列指纹" —— 二分"分叉在 s03 内"到底来自**狗的控制**还是别处
+                     # （停靠段已验证 ctrl 序列逐位相同，但**上游步骤从未验过**）。
+                     "ctrl_n_before": len(getattr(_span_backend, "_ctrl_writes", None) or [])}
         yield_record = _yield_residency_to_step(residency, step["robot"])
         if _span is not None and _span_plant is not None:
             _span["dispatch"] = int(_span_plant.step_index)
@@ -1735,6 +1739,13 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
                 _span["mpc_iters"] = (int(getattr(_span_backend, "_mpc_iter_total", 0) or 0)
                                       - _span["mpc_before"])
                 _span["state_after"] = _qpos_digest(_span_plant)
+                # 本步内狗的控制写入序列指纹（量测⑯；需 IRAF_DEBUG_CTRL_ALIGN=1 才有内容）
+                _writes = getattr(_span_backend, "_ctrl_writes", None) or []
+                _start = _span.get("ctrl_n_before")
+                if isinstance(_start, int):
+                    _slice = _writes[_start:]
+                    _span["ctrl_n"] = len(_slice)
+                    _span["ctrl_digest"] = hash(tuple(_slice)) & 0xFFFFFFFF
                 # ⚠ 一律**只进内存**：逐步 print 会稳定地把狗推入另一条分支
                 # （2026-10-06 实测：每步 9 行 print ⇒ reached_s=7.40 / iter_total=30350，
                 # 与"只有 IRAF_DEBUG_DOCK"的 10.38 / 37780 完全不同）⇒ 探测本身会改变被探测对象。
