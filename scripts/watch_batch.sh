@@ -19,11 +19,16 @@ OUT="build/diagnostics"
 LOG="${OUT}/${PREFIX}${LAST}.log"
 
 while [ ! -f "$LOG" ]; do sleep 30; done          # 1) 等末轮日志出现
-while :; do                                        # 2) 等它停止增长（连续 30 s 体积不变）
-  a=$(stat -c%s "$LOG" 2>/dev/null || echo -1)
+# 2) 完成判据（2026-10-06 修正）：**不能只看"体积不变"** —— s06/s07 段存在 >60 s 不打印的长相位，
+#    会让"连续 30 s 体积不变"在第 N 轮中途成立（已踩：23 轮就被判成整批结束，少算 1 轮）。
+#    正确判据 = 末轮日志出现**结束标记** `PLANT_STEP_SPANS`（场景在 run 末打印）
+#              **且**没有在跑的 `scenario.py run` 进程。
+while :; do
+  if [ -f "$LOG" ] && grep -q '^PLANT_STEP_SPANS' "$LOG" \
+     && [ "$(ps -o args -C python3 | grep -c 'scenario.py run' || true)" -eq 0 ]; then
+    break
+  fi
   sleep 30
-  b=$(stat -c%s "$LOG" 2>/dev/null || echo -1)
-  [ "$a" = "$b" ] && [ "$a" != "-1" ] && break
 done
 sleep 5
 
@@ -37,3 +42,6 @@ python3 scripts/probe_fresh_decisions.py --glob "${GLOB}" || true
 echo
 echo "=== 判读③：hold 调用起点表是否逐轮一致（判定 A/B）==="
 python3 scripts/probe_ctrl_calls.py "${GLOB}" || true
+echo
+echo "=== 判读④：臂侧首个取值不同的拍 ==="
+python3 scripts/probe_arm_divergence.py "${GLOB}" || true

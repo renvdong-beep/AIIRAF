@@ -29,6 +29,7 @@ for i in $(seq 1 "$ROUNDS"); do
   timeout "$PER_ROUND_TIMEOUT_S" env \
     IRAF_DEBUG_DOCK=1 IRAF_DEBUG_PLANT_SPAN=1 IRAF_DEBUG_CTRL_ALIGN=1 \
     IRAF_DEBUG_CTRL_DETAIL=s03_pick IRAF_DEBUG_CTRL_CALLS=1 IRAF_DEBUG_CTRL_COMPONENTS=1 \
+    IRAF_DEBUG_ARM_CTRL=1 \
     PYTHONPATH=src python3 scripts/scenario.py run \
     --scene scenes/handoff_lab --scenario nominal --world joint --display none \
     > "$log" 2>&1 || true
@@ -40,3 +41,6 @@ python3 scripts/probe_span_divergence.py "${OUTDIR}"/calls-"${TAG}"-round*.log |
 echo
 echo "=== 判读②：hold 调用起点表是否逐轮一致 ==="
 python3 scripts/probe_ctrl_calls.py "${OUTDIR}"/calls-"${TAG}"-round*.log || true
+echo
+echo "=== 判读③：臂侧首个取值不同的拍（判定 B 的源头）==="
+python3 scripts/probe_arm_divergence.py "${OUTDIR}"/calls-"${TAG}"-round*.log || true
