@@ -120,28 +120,30 @@ def main() -> int:
                 ndiff = sum(1 for j in range(nmin) if va[j] != vb[j])
                 print("  [%s] %s：首个不同的 qvel 元素 = %s（共 %d 个不同；长度 常态 %d / 备选 %d）"
                       % (sid, key, k, ndiff, len(va), len(vb)))
-        # 旁路 ctrl 的动力学状态（量测㉔）：逐子键给出"首次在哪个步骤边界不同"。
-        # 这是分层判据：谁先不同 ⇒ 分叉先进入哪一层（约束开关 / 暖启动 / mocap / 外加力）。
-        sub_keys = set()
-        for key in ("hid_before", "hid_after"):
+        # 旁路 ctrl 的动力学状态（量测㉔）与**零舍入完整输入集**（量测㉕）：逐子键给出"首次在哪个步骤边界不同"。
+        # 这是分层判据：谁先不同 ⇒ 分叉先进入哪一层（约束开关 / 暖启动 / mocap / 外力 / 位置 / 速度 / ctrl）。
+        dict_keys = ("x_before", "x_after", "hid_before", "hid_after")
+        for key in dict_keys:
+            sub_keys = set()
             for s in list(ref.values()) + list(cur.values()):
                 got = s.get(key)
                 if isinstance(got, dict):
                     sub_keys.update(got.keys())
-        hits = []
-        for key in ("hid_before", "hid_after"):
+            hits = []
             for sub in sorted(sub_keys):
                 for i, sid in enumerate(ids):
                     va = (ref.get(sid, {}).get(key) or {}).get(sub)
                     vb = (cur.get(sid, {}).get(key) or {}).get(sub)
                     if va is None or vb is None or va == vb:
                         continue
-                    hits.append((key, sub, i + 1, sid, va, vb))
+                    hits.append((sub, i + 1, sid, va, vb))
                     break
-        for key, sub, n, sid, va, vb in hits:
-            print("  [hid] %s.%s 首个不同 = 第 %d 步（%s）：常态=%s 备选=%s" % (key, sub, n, sid, va, vb))
-        if not hits:
-            print("  [hid] 共 %d 个旁路状态子键，在全部步骤边界上**逐位相同**" % len(sub_keys))
+            if not hits:
+                print("  [%s] 共 %d 个子键，在全部步骤边界上**逐位相同**" % (key, len(sub_keys)))
+                continue
+            for sub, n, sid, va, vb in hits:
+                print("  [%s] %s 首个不同 = 第 %d 步（%s）：常态=%s 备选=%s"
+                      % (key, sub, n, sid, va, vb))
 
         sid = args.detail
         a, b = ref.get(sid, {}), cur.get(sid, {})

@@ -58,6 +58,7 @@ Provider → 适配器 → MuJoCo）。执行器**不直接驱动后端**：后�
 """
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -1591,6 +1592,35 @@ def _hidden_state_digests(plant):
     return out
 
 
+#: **零舍入**逐层状态字段表（量测㉕）：比 `_HIDDEN_STATE_FIELDS` 多了 `qpos`/`qvel`/`ctrl`，
+#: 也就是"完整输入集"。为什么必须零舍入：实测"14750 那一刻 7 个旁路字段全同（9 位）、
+#: `q`/`dq` 也全同（12 位），却在 14755 出现 `dq` 分叉" ⇒ 唯一自洽解释是**差异低于取整分辨率**
+#: （且完备性已证：`step_once` 的输入只有这些）⇒ 必须按 **float64 原始字节**比对。
+_EXACT_STATE_FIELDS = ("qpos", "qvel", "ctrl", "qacc", "qacc_warmstart", "eq_active",
+                       "mocap_pos", "mocap_quat", "qfrc_applied", "xfrc_applied")
+
+
+def _exact_state_digests(plant):
+    """**零舍入**（float64 原始字节）的逐层状态摘要。
+
+    用 `blake2b` 而不是 `hash()`：byte 级 hash 会随 `PYTHONHASHSEED` 变化、跨进程不可比。
+    字段缺失/不可转换则跳过（不猜、不报错）。
+    """
+    out = {}
+    data = plant.data
+    for name in _EXACT_STATE_FIELDS:
+        arr = getattr(data, name, None)
+        if arr is None:
+            continue
+        try:
+            flat = arr.reshape(-1) if hasattr(arr, "reshape") else arr
+            buf = flat.astype("<f8", copy=False).tobytes()
+        except (TypeError, ValueError, AttributeError):
+            continue
+        out[str(name)] = hashlib.blake2b(buf, digest_size=8).hexdigest()
+    return out
+
+
 def _plant_of_residency(residency):
     """取驻留所属的**共享植物**（非联合世界 / 未装配 ⇒ None）。"""
     if not residency:
@@ -1759,6 +1789,8 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
                      "dq_before": _qvel_element_digests(_span_plant),
                      # 旁路 ctrl 的动力学状态（量测㉔）：约束开关/暖启动/mocap/外加力 逐个摘要。
                      "hid_before": _hidden_state_digests(_span_plant),
+                     # 零舍入完整输入集（量测㉕）：回答"14750 那一刻差异是否已经存在、在哪一层"。
+                     "x_before": _exact_state_digests(_span_plant),
                      # 狗的控制写入计数（§11.88 量测⑯）：配合 IRAF_DEBUG_CTRL_ALIGN=1，
                      # 逐步给出"狗的控制序列指纹" —— 二分"分叉在 s03 内"到底来自**狗的控制**还是别处
                      # （停靠段已验证 ctrl 序列逐位相同，但**上游步骤从未验过**）。
@@ -1788,6 +1820,7 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
                 _span["state_after"] = _qpos_digest(_span_plant)
                 _span["dq_after"] = _qvel_element_digests(_span_plant)
                 _span["hid_after"] = _hidden_state_digests(_span_plant)
+                _span["x_after"] = _exact_state_digests(_span_plant)
                 # 本步内"新鲜度决策"计数增量（§11.88 量测⑲）：`freshness.decide(age_ms=…)` 按**墙钟**
                 # 判新鲜度 ⇒ 逐步增量若在异常轮不同，即坐实"控制量取值随挂钟变"。
                 for _name in ("_mpc_unavailable", "_mpc_holds", "_mpc_releases", "_mpc_skips"):
