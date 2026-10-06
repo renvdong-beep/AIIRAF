@@ -1543,10 +1543,13 @@ def _qpos_digest(plant):
     `locomote` 步（两次停靠）非零** —— 臂的步骤与狗的 `stand` 不走那个 MPC 钩子 ⇒ 它**无法把分叉
     定位到上游**。状态指纹与 MPC 无关，任何步骤都能用 ⇒ 适合做"第一个不同的步骤"的二分判据。
 
-    读数必须持植物锁（否则可能与驻留线程的 `mj_step` 交错，读到撕裂状态，那本身就是不确定的）。
+    ⚠ **不持植物锁**（与上一版的关键区别）：实测"持锁读 18 次 + 9 行 print"会把狗**钉在常态支**
+    （14/14 全常态，而该支的异常率约 17%）⇒ 与"逐步 print 定支"同型的观测者效应。
+    因此这里直接读数组（无需拷贝、无 I/O），把调度扰动压到最低。
+    **完整性自检**：逐步账满足"本步 `state_after` == 下一步 `state_before`"；一旦出现撕裂读，
+    该不变式会立刻破掉 ⇒ 能被发现，而不会被误当结论。
     """
-    with plant.lock():
-        values = tuple(round(float(v), 12) for v in plant.data.qpos)
+    values = tuple(round(float(v), 12) for v in plant.data.qpos)
     return hash(values) & 0xFFFFFFFF
 
 
