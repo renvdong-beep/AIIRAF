@@ -1715,9 +1715,17 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
                 # 步骤就是分叉起源（用它把"1e-5 从哪来"从整链收窄到某一步）。
                 _span["mpc_iters"] = (int(getattr(_span_backend, "_mpc_iter_total", 0) or 0)
                                       - _span["mpc_before"])
-                print("PLANT_STEP_SPAN " + json.dumps(_span, ensure_ascii=False), flush=True)
+                # ⚠ 一律**只进内存**：逐步 print 会稳定地把狗推入另一条分支
+                # （2026-10-06 实测：每步 9 行 print ⇒ reached_s=7.40 / iter_total=30350，
+                # 与"只有 IRAF_DEBUG_DOCK"的 10.38 / 37780 完全不同）⇒ 探测本身会改变被探测对象。
+                # 因此逐步账先攒起来，**全 run 结束一次性打一行**（与 PICK_STEP_ACCT 同款）。
+                if residency is not None:
+                    residency.setdefault("_span_rows", []).append(_span)
         executed["plant_residency_yielded"] = bool(yield_record.get("paused"))
         records.append(executed)
+    # 逐步账**全 run 一次性落盘**（1 行/run，不是 9 行；见上面 finally 里的口径说明）
+    if residency is not None and residency.get("_span_rows"):
+        print("PLANT_STEP_SPANS " + json.dumps(residency["_span_rows"], ensure_ascii=False), flush=True)
     return records
 
 
