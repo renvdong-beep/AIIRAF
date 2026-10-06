@@ -1692,9 +1692,12 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
         # ⇒ owner 步开始前那段步数（before→dispatch）可能逐轮不同（= 挂钟相关）。这是"可复现性"
         # 目前唯一未闭合的通道。`IRAF_DEBUG_PLANT_SPAN=1` 时每步打一行（9 行/轮，零逐拍开销）。
         _span_plant = _plant_of_residency(residency)
+        _span_backend = ((residency or {}).get("state") or {}).get("backend")
         _span = None
         if _span_plant is not None and os.environ.get("IRAF_DEBUG_PLANT_SPAN") == "1":
-            _span = {"id": str(step["id"]), "before": int(_span_plant.step_index)}
+            _span = {"id": str(step["id"]), "before": int(_span_plant.step_index),
+                     # MPC 求解迭代数（§11.88 量测⑭）：逐步增量 ⇒ 用离散指纹向上游二分
+                     "mpc_before": int(getattr(_span_backend, "_mpc_iter_total", 0) or 0)}
         yield_record = _yield_residency_to_step(residency, step["robot"])
         if _span is not None and _span_plant is not None:
             _span["dispatch"] = int(_span_plant.step_index)
@@ -1708,6 +1711,10 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
                 _span["after"] = int(_span_plant.step_index)
                 _span["pre_dispatch_steps"] = _span["dispatch"] - _span["before"]
                 _span["step_steps"] = _span["after"] - _span["dispatch"]
+                # 本步的 MPC 求解迭代增量（§11.88 量测⑭）：离散指纹 ⇒ 第一个"增量与常态轮不同"的
+                # 步骤就是分叉起源（用它把"1e-5 从哪来"从整链收窄到某一步）。
+                _span["mpc_iters"] = (int(getattr(_span_backend, "_mpc_iter_total", 0) or 0)
+                                      - _span["mpc_before"])
                 print("PLANT_STEP_SPAN " + json.dumps(_span, ensure_ascii=False), flush=True)
         executed["plant_residency_yielded"] = bool(yield_record.get("paused"))
         records.append(executed)

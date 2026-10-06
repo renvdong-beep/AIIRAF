@@ -2708,6 +2708,13 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             "failure": failure,
             "samples": samples,
         }
+        # 累计本机型的 MPC 求解迭代数（2026-10-06 §11.88 量测⑭）：钩子是**每次 locomote 现场创建**
+        # ⇒ 其 `iter_total` 只是本次调用的量；这里跨调用累计到适配器上，供场景层按步骤取增量。
+        # 用途：`iter_total` 与停靠分支双射（37780 / 33110，量测⑬）⇒ 用它**向上游二分**，
+        # 找"第一个迭代总数不同的步骤"，把那一步定为分叉起源。
+        _hook_stats = (report.get("provider") or {}).get("stats") or {}
+        self._mpc_iter_total = int(getattr(self, "_mpc_iter_total", 0)) + int(
+            _hook_stats.get("iter_total") or 0)
         return report
 
     # ---- 显示面（S1 交互 / 场景观看）：参数一律来自声明的 render 段 ----
