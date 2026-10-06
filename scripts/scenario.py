@@ -1782,6 +1782,18 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
         if _calls_backend is not None:
             print("PLANT_CTRL_CALLS " + json.dumps(
                 getattr(_calls_backend, "_ctrl_calls", []), ensure_ascii=False), flush=True)
+    # 臂侧控制写入留证（`IRAF_DEBUG_ARM_CTRL=1`）：每个后端一行，只含**取值变化点**。
+    # 用途：狗侧已证明"窗口 [14750,14755) 内没写"，因此该窗口内能让植物状态变化的只剩臂侧。
+    if os.environ.get("IRAF_DEBUG_ARM_CTRL") == "1":
+        for _rid, _state in (runtimes or {}).items():
+            _backend = (_state or {}).get("backend")
+            _flush = getattr(_backend, "_flush_arm_ctrl_pending", None)
+            if callable(_flush):
+                _flush()          # 收尾最后一拍（否则尾部会假报"相同"）
+            _arm_log = getattr(_backend, "_arm_ctrl_log", None)
+            if _arm_log:
+                print("PLANT_ARM_CTRL " + json.dumps(
+                    {"robot": str(_rid), "writes": _arm_log}, ensure_ascii=False), flush=True)
     return records
 
 

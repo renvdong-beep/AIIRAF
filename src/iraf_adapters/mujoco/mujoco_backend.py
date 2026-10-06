@@ -24,6 +24,23 @@ from iraf_adapters.mujoco.payload_facts import (
 )
 from iraf_skills.common.trajectory import quintic_position
 
+#: 臂侧控制写入留证开关（2026-10-06 §11.88 量测㉒；`IRAF_DEBUG_ARM_CTRL=1`，缺省关）。
+#: 为什么需要（推理链）：联合世界里狗的取值分叉被锁进植物步 [14750,14755) 这 5 步内，
+#: 而**该窗口内狗一次都没写 ctrl** ⇒ 能让植物状态在该窗口变化的只剩另一台本体（Piper）。
+#: 本开关把臂侧**逐拍**的通道取值摘要（连同"落在哪个植物步号上"）记下来，用于比对两支：
+#: 同一取值落在不同步号 = 相位/对齐差；取值本身不同 = 目标差。两者修法完全不同。
+_ARM_CTRL_PROBE = os.environ.get("IRAF_DEBUG_ARM_CTRL") == "1"
+
+
+def _arm_ctrl_digest(pending):
+    """臂侧「一拍内全部通道取值」的摘要。
+
+    **只用数值**（键取执行器序号、排序后取值）——含 `str` 的 tuple hash 会随 `PYTHONHASHSEED`
+    变化，跨进程不可比；狗侧既有的 `ctrl`/`qpos` 摘要都只用数值，这里是同一口径。
+    """
+    return hash(tuple(_v for _k, _v in sorted(pending.items()))) & 0xFFFFFFFF
+
+
 #: 伺服前馈（重力静差补偿）的单关节上限，单位 rad。
 #: 用途是拦截"单位/符号写错"这类配置错误（例如误把力矩 N·m 填进来、
 #: 或把方向写反），而不是限制正常取值：实测纯 PD 的 UR5e 需要最大 0.017 rad。
@@ -3895,6 +3912,37 @@ class MujocoBackend:
     def _write_ctrl(self, channel, value):
         self._assert_owned(channel)
         self.data.ctrl[self._actuators[channel]] = float(value)
+        if _ARM_CTRL_PROBE:
+            # 臂侧控制写入留证（量测㉒）：**逐拍**记账，同一拍的多通道写入合并成该拍的取值摘要。
+            # 两个必须这么做的理由：
+            #   ① 逐通道会得到"关节数 × 写入拍数"条（臂 6 关节 + 夹爪，可达百万条 ⇒ 日志爆炸），
+            #      而判读只需要"**第一个取值不同的拍**"；
+            #   ② 摘要只用**数值**、按 `_actuators` 的确定性顺序排序，**不含字符串**
+            #      —— 含 str 的 tuple hash 会随 `PYTHONHASHSEED` 变，跨进程不可比
+            #      （狗侧既有的 ctrl/qpos 摘要都只用数值，同一口径）。
+            _step = int(self.plant.step_index)
+            _log = getattr(self, "_arm_ctrl_log", None)
+            if _log is None:
+                _log = self._arm_ctrl_log = []
+                self._arm_ctrl_pending = {}
+                self._arm_ctrl_step = _step
+            if _step != self._arm_ctrl_step:
+                # 步号变了 ⇒ 先把上一拍的摘要落进内存（仍是全 run 一行落盘）
+                _log.append((self._arm_ctrl_step, _arm_ctrl_digest(self._arm_ctrl_pending)))
+                self._arm_ctrl_pending = {}
+                self._arm_ctrl_step = _step
+            self._arm_ctrl_pending[int(self._actuators[channel])] = round(float(value), 9)
+
+    def _flush_arm_ctrl_pending(self):
+        """把**当前拍**尚未落账的臂侧摘要收尾（run 末由场景层调用一次）。
+
+        为什么需要：摘要在"步号变化"时才落账 ⇒ 最后那一拍永远等不到下一次变化
+        （缺了它，两支比较会在尾部假报"相同"）。
+        """
+        _pending = getattr(self, "_arm_ctrl_pending", None)
+        if _pending:
+            self._arm_ctrl_log.append((self._arm_ctrl_step, _arm_ctrl_digest(_pending)))
+            self._arm_ctrl_pending = {}
 
     def _model_name(self, name):
         """把**声明名**解析为模型里的实际名字；未声明映射即原样返回（单本体路径行为不变）。
