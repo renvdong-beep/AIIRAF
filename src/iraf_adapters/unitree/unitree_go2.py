@@ -2057,15 +2057,18 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                                           "overran_cycles", "inaccurate_cycles")},
                 "mpc_runtime": {_key: ((report.get("provider") or {}).get("runtime") or {}).get(_key)
                                 for _key in ("steps", "updates", "skips", "holds", "releases")},
-                # 控制节拍对齐摘要（量测⑨）：本步内每次 ctrl 写入所在的植物步号。
-                # `owner_steps` 相同但本摘要不同 ⇒ "总步数对、对齐错" —— 这正是当前最强假设。
+                # 控制节拍对齐 + **控制量取值**摘要（量测⑨⑩）：本步内每次 ctrl 写入的
+                # (植物步号, ctrl 值摘要)。`owner_steps` 相同但 `seq` 不同 ⇒ 差异在**取值**；
+                # `seq` 首次分叉的下标即"分叉拍"，可直接定位。
                 "ctrl_align": (None if _ctrl_writes_before is None else {
                     "count": len(self._ctrl_writes) - _ctrl_writes_before,
-                    "first": (self._ctrl_writes[_ctrl_writes_before]
+                    "first": (self._ctrl_writes[_ctrl_writes_before][0]
                               if len(self._ctrl_writes) > _ctrl_writes_before else None),
-                    "last": (self._ctrl_writes[-1] if self._ctrl_writes else None),
-                    "sum": sum(self._ctrl_writes[_ctrl_writes_before:]),
-                    "head": self._ctrl_writes[_ctrl_writes_before:_ctrl_writes_before + 6],
+                    "last": (self._ctrl_writes[-1][0] if self._ctrl_writes else None),
+                    "sum": sum(item[0] for item in self._ctrl_writes[_ctrl_writes_before:]),
+                    "head": [item[0] for item in
+                             self._ctrl_writes[_ctrl_writes_before:_ctrl_writes_before + 6]],
+                    "seq": [item[1] for item in self._ctrl_writes[_ctrl_writes_before:]],
                 }),
                 "final_pos_m": translation_error_m,
                 "final_yaw_deg": math.degrees(yaw_error),
@@ -2942,8 +2945,14 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
             saturated_total += int(np.count_nonzero(saturated))
             self.data.ctrl[self.actuator_ids] = ctrl
             if self._ctrl_align_probe:
-                # 这次控制量落在哪个植物步号上（内存累计，段末一次性落盘；零逐拍 print）
-                self._ctrl_writes.append(int(self.plant.step_index))
+                # 这次控制量落在哪个植物步号上 + **控制量取值的摘要**（内存累计，段末一次性落盘）。
+                # 为什么两步都要：闸门之后"步数"与"写入对齐"都已证明逐轮相同（§11.88 量测⑨），
+                # 因此若结果仍分两支，差异只可能在**控制量的取值**（例如 MPC 子进程求解非位可复现）。
+                # 摘要用"四舍五入到 9 位的 ctrl 元组的 hash"：值级敏感、跨进程稳定（PYTHONHASHSEED
+                # 只影响 str/bytes），且能逐拍比对找到**第一次分叉**。
+                self._ctrl_writes.append(
+                    (int(self.plant.step_index),
+                     hash(tuple(np.round(np.asarray(ctrl, dtype=float), 9).tolist())) & 0xFFFFFFFF))
             for _ in range(self.substeps):
                 # 时间只能由植物 owner 推进（共享植物下越权即 PlantOwnershipError）
                 # 需求闸门（§11.87）：自由推进线程（植物驻留）只有 guest 有需求时才推进。
