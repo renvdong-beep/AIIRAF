@@ -26,14 +26,17 @@ PER_ROUND_TIMEOUT_S="${PER_ROUND_TIMEOUT_S:-900}"
 
 for i in $(seq 1 "$ROUNDS"); do
   log="${OUTDIR}/calls-${TAG}-round${i}.log"
+  # ⚠ `rc` 必须显式取：原先写 `printf ... "$?"` 取到的是 `|| true` 的状态 ⇒ **每轮都假报 exit=0**，
+  # 真实失败会被掩盖（2026-10-06 实测发现）。
+  rc=0
   timeout "$PER_ROUND_TIMEOUT_S" env \
     IRAF_DEBUG_DOCK=1 IRAF_DEBUG_PLANT_SPAN=1 IRAF_DEBUG_CTRL_ALIGN=1 \
     IRAF_DEBUG_CTRL_DETAIL=s03_pick IRAF_DEBUG_CTRL_CALLS=1 IRAF_DEBUG_CTRL_COMPONENTS=1 \
-    IRAF_DEBUG_ARM_CTRL=1 \
+    IRAF_DEBUG_CTRL_EXACT=1 IRAF_DEBUG_ARM_CTRL=1 \
     PYTHONPATH=src python3 scripts/scenario.py run \
     --scene scenes/handoff_lab --scenario nominal --world joint --display none \
-    > "$log" 2>&1 || true
-  printf "[%2d/%d] exit=%s  %s  -> %s\n" "$i" "$ROUNDS" "$?" "$(date +%H:%M:%S)" "$log"
+    > "$log" 2>&1 || rc=$?
+  printf "[%2d/%d] exit=%s  %s  -> %s\n" "$i" "$ROUNDS" "$rc" "$(date +%H:%M:%S)" "$log"
 done
 
 echo "=== 判读①：分叉进在「状态」还是「目标相位」（分量指纹）==="

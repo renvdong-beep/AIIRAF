@@ -189,6 +189,17 @@ def main() -> int:
                               " ⇒ 植物状态未变，差在 hold 调用的目标相位（q0/alpha）")
                     else:
                         print("      ⇒ 分量口径未能二选一（见上面各分量的首次不同拍）")
+                if len(pa[first]) >= 9:
+                    # 零舍入层（量测㉖）：位序 5..8 = `ctrl/desired/q/dq` 的 float64 原始字节摘要。
+                    # 意义：9 位取整会吞掉"亚分辨率"差异；这一层能回答"差异是否真在狗的输入里"。
+                    xnames = ("ctrl_x", "desired_x", "q_x", "dq_x")
+                    xfd = {nm: next((i for i in range(n) if pa[i][j] != pb[i][j]), None)
+                           for j, nm in enumerate(xnames, start=5)}
+                    print("      零舍入首次不同拍: " + "  ".join(
+                        "%s=%s" % (nm, xfd[nm]) for nm in xnames))
+                    if all(xfd[nm] is None for nm in xnames):
+                        print("      ⇒ 零舍入下 ctrl/desired/q/dq **完全相同** ⇒ 差异不在狗的输入里"
+                              " ⇒ 转向求解器调用次数/顺序这类**非状态输入**（例如额外 `mj_forward` 的时机）")
     return 0
 
 

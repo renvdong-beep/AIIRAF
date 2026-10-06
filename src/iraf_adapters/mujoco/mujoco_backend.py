@@ -1,11 +1,13 @@
 """带连续步进、指标和受控故障注入的 MuJoCo 3 后端。"""
 
 from pathlib import Path
+import hashlib
 import json
 import math
 import os
 import re
 import subprocess
+import struct
 import sys
 import threading
 import time
@@ -35,10 +37,12 @@ _ARM_CTRL_PROBE = os.environ.get("IRAF_DEBUG_ARM_CTRL") == "1"
 def _arm_ctrl_digest(pending):
     """臂侧「一拍内全部通道取值」的摘要。
 
-    **只用数值**（键取执行器序号、排序后取值）——含 `str` 的 tuple hash 会随 `PYTHONHASHSEED`
-    变化，跨进程不可比；狗侧既有的 `ctrl`/`qpos` 摘要都只用数值，这里是同一口径。
+    **零舍入**（float64 原始字节）：取 9 位会把"亚分辨率"的取值差吞掉（量测㉕ 已证差异正是
+    低于取整分辨率）。按键（执行器序号）排序后拼原始字节再取 `blake2b`；
+    不用 `hash()` —— byte 级 hash 会随 `PYTHONHASHSEED` 变化、跨进程不可比。
     """
-    return hash(tuple(_v for _k, _v in sorted(pending.items()))) & 0xFFFFFFFF
+    buf = b"".join(struct.pack("<d", float(pending[_k])) for _k in sorted(pending))
+    return hashlib.blake2b(buf, digest_size=8).hexdigest()
 
 
 #: 伺服前馈（重力静差补偿）的单关节上限，单位 rad。
@@ -3931,7 +3935,7 @@ class MujocoBackend:
                 _log.append((self._arm_ctrl_step, _arm_ctrl_digest(self._arm_ctrl_pending)))
                 self._arm_ctrl_pending = {}
                 self._arm_ctrl_step = _step
-            self._arm_ctrl_pending[int(self._actuators[channel])] = round(float(value), 9)
+            self._arm_ctrl_pending[int(self._actuators[channel])] = float(value)
 
     def _flush_arm_ctrl_pending(self):
         """把**当前拍**尚未落账的臂侧摘要收尾（run 末由场景层调用一次）。

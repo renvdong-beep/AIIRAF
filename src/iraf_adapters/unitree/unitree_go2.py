@@ -25,6 +25,7 @@
 
 from pathlib import Path
 
+import hashlib
 import math
 import os
 import yaml
@@ -227,6 +228,11 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         # 只记 `ctrl` 的取值摘要无法回答"取值不同是因为 (q,dq) 先变了、还是目标相位变了"。
         # 打开后每拍多记 desired/q/dq 三个摘要（仍是内存累计、run 末一行）。
         self._ctrl_comp_probe = os.environ.get("IRAF_DEBUG_CTRL_COMPONENTS") == "1"
+        # **零舍入**逐写留证（2026-10-06 §11.88 量测㉖；`IRAF_DEBUG_CTRL_EXACT=1`，缺省关）：
+        # 分量摘要此前取 9 位 ⇒ "低于 1e-9 的取值差"被吞掉；而实测差异正是**低于取整分辨率**
+        # 的种子被放大。打开后每拍额外带 `ctrl/desired/q/dq` 四个 **float64 原始字节**摘要
+        # （`blake2b`，不用 `hash()`——byte 级 hash 随 `PYTHONHASHSEED` 变）。
+        self._ctrl_exact_probe = os.environ.get("IRAF_DEBUG_CTRL_EXACT") == "1"
         # hold 调用**起点**留证（同日；`IRAF_DEBUG_CTRL_CALLS=1`，缺省关）：记录每次
         # `_run_control` 调用开始时的植物步号与仿真钟。非步态路径的 `q0`/`start` 正是取自
         # 这一刻 ⇒ 若"同一植物步、同一状态却算出不同控制量"，调用起点不同是唯一自洽出口。
@@ -3000,6 +3006,13 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                     _item = _item + tuple(
                         hash(tuple(np.round(np.asarray(_vec, dtype=float), 9).tolist())) & 0xFFFFFFFF
                         for _vec in (desired, q, dq))
+                if self._ctrl_exact_probe:
+                    # 零舍入逐写摘要（量测㉖）：9 位取整会吞掉亚分辨率差异 ⇒ 改为 float64 原始字节。
+                    _item = _item + tuple(
+                        hashlib.blake2b(
+                            np.asarray(_vec, dtype=float).astype("<f8", copy=False).tobytes(),
+                            digest_size=8).hexdigest()
+                        for _vec in (ctrl, desired, q, dq))
                 self._ctrl_writes.append(_item)
             for _ in range(self.substeps):
                 # 时间只能由植物 owner 推进（共享植物下越权即 PlantOwnershipError）
