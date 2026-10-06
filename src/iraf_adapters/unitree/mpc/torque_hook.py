@@ -179,7 +179,11 @@ class MpcTorqueHook:
         self._mask = None          # 与**当前被消费的解**同一拍的接触表列
         self.stats = {"calls": 0, "plans": 0, "payloads": 0, "unavailable": 0,
                       "overran_cycles": 0, "inaccurate_cycles": 0,
-                      "last_decision": None, "last_reason": None, "last_cycle": None}
+                      "last_decision": None, "last_reason": None, "last_cycle": None,
+                      # 求解**迭代数**与耗时（2026-10-06 §11.88 量测⑫）：用于判"求解器是否按
+                      # 迭代/时间预算终止"——同一工况下不同轮次若累计迭代数不同，则解不是位可复现的，
+                      # 这正是"离散备选分支"的源头（异常轮总出现在最快的一步）。
+                      "last_iter": None, "iter_total": 0, "solve_ms_total": 0.0}
 
     # ---- 只读 ----
     @property
@@ -284,8 +288,20 @@ class MpcTorqueHook:
         # 最近一次求解的耗时与迭代数（诊断：用于看清"哪一拍开始变慢"——
         # 实测运行末段稳定在 ~0.88 s 处超时，需要区分"求解变慢"与"状态发散"）
         diagnostics = out.get("diagnostics", {})
-        self.stats["last_solve_ms"] = diagnostics.get("solve_ms")
-        self.stats["last_status_class"] = diagnostics.get("status_class")
+        # ⚠ 取值口径：`provider_core` 把 `iter`/`solve_ms` 放在**顶层** `out`，而 `diagnostics` 是另一个
+        # 子字典 ⇒ 必须**两处都试**，否则量到 None（"查不到"≠"没有"，本仓纪律）。
+        self.stats["last_solve_ms"] = diagnostics.get("solve_ms", out.get("solve_ms"))
+        self.stats["last_status_class"] = diagnostics.get("status_class", out.get("status_class"))
+        # 累计**求解迭代数**与求解耗时（§11.88 量测⑫）：判"求解器是否按迭代/时间预算终止"。
+        # 判读：同一工况不同轮次的 `iter_total` 若不同 ⇒ 解非位可复现 ⇒ 就是"离散分支"的源头。
+        _iter = diagnostics.get("iter", out.get("iter"))
+        self.stats["last_iter"] = _iter
+        if _iter is not None:
+            self.stats["iter_total"] = int(self.stats.get("iter_total", 0)) + int(_iter)
+        _solve_ms_now = diagnostics.get("solve_ms", out.get("solve_ms"))
+        if _solve_ms_now is not None:
+            self.stats["solve_ms_total"] = (float(self.stats.get("solve_ms_total", 0.0))
+                                            + float(_solve_ms_now))
         self._mask = mask
         self.stats["payloads"] += 1
         self.stats["last_decision"] = DECISION_OK

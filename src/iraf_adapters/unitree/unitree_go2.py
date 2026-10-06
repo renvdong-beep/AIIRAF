@@ -2054,7 +2054,9 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 #   runtime：skips（更新被跳过 = 陈旧度策略）/ updates / steps / holds
                 "mpc_hook": {_key: ((report.get("provider") or {}).get("stats") or {}).get(_key)
                              for _key in ("calls", "plans", "unavailable",
-                                          "overran_cycles", "inaccurate_cycles")},
+                                          "overran_cycles", "inaccurate_cycles",
+                                          # 求解迭代/耗时（§11.88 量测⑫）：判"求解器按预算终止"⇒非位可复现
+                                          "iter_total", "solve_ms_total", "last_iter")},
                 "mpc_runtime": {_key: ((report.get("provider") or {}).get("runtime") or {}).get(_key)
                                 for _key in ("steps", "updates", "skips", "holds", "releases")},
                 # 控制节拍对齐 + **控制量取值**摘要（量测⑨⑩）：本步内每次 ctrl 写入的
