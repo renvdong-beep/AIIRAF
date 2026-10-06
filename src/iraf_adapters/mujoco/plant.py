@@ -83,6 +83,17 @@ class MujocoPlant:
         # 那属正常 ⇒ 判据只看 0 与 2。
         self.ctrl_batch_first_gap0 = None
         self.ctrl_batch_first_gap2 = None
+        # ---- 「晚批」探测（量测㉙，只读）----
+        # 动机：arm7 实测——异常轮**没有** gap=2（每步都拿到新批次），但同一植物步上的**操作次数差 10
+        # = 臂一整批（8 通道 + begin + end）；且臂的写入步号逐位相同 ⇒ 差异在**同一步区间内的先后**：
+        # 狗的前馈 `mj_forward`（**消费 ctrl**）与臂的控制批次谁先谁后。
+        # 若臂的批次落在"本步已经发生过一次求解（`mj_forward` 或 `mj_step`）之后"，则这次求解用的是
+        # **臂的旧控制** ⇒ 求解器暖启动路径不同 ⇒ 后续位级分叉。本计数器只在"某步已有求解后又收到批次"时 +1。
+        self._solved_at_step = None
+        self._ff_solved_at_step = None
+        self._ff_solved_by_tag = None
+        self.ctrl_late_batch_count = 0
+        self.ctrl_late_batch_first = None
         # ---- 需求闸门（2026-10-05 §11.87）----
         # 为什么需要：owner 的**自由推进线程**（植物驻留）在 guest 等待期间并发 `mj_step` ⇒
         # guest 请求 `count` 步、实际推进 `count + 挂钟决定的超出量`（§11.56 实测 17×）；
@@ -230,6 +241,8 @@ class MujocoPlant:
             mujoco.mj_step(self.model, self.data)
             self._step_index += 1
             index = self._step_index
+            # 这次求解发生在**步号 index-1** 的区间里（量测㉙）：此后同一步再有控制写入即为"晚批"。
+            self._solved_at_step = index - 1
             self.op_event("step")
         if self._gate_enabled:
             # ⚠ 只在**到达某个 guest 的目标**时唤醒：每步都 notify_all 会让每步都发生一次
@@ -249,8 +262,26 @@ class MujocoPlant:
         with self._op_lock:
             self._op_seq += 1
             self._op_hash.update(b"%d|%s|%d;" % (self._op_seq, str(kind).encode("ascii"), int(tag)))
+            if kind == "ff":
+                # 前馈内部会 `mj_forward`（一次求解，**消费 ctrl**）⇒ 记"本步已求解"（量测㉙）。
+                self._ff_solved_at_step = int(self._step_index)
+                self._ff_solved_by_tag = int(tag)
+                self._solved_at_step = int(self._step_index)
             if kind == "batch_end":
                 _step = int(self._step_index)
+                # 「晚批」判定（量测㉙，修正版）：只看**前馈**情形 —— 本步 owner 已算过前馈（`mj_forward`，
+                # **消费 ctrl**），而此刻写入者**不是**做那次前馈的人 ⇒ 那次求解消费的是写入者的**旧控制**
+                # ⇒ 求解器暖启动路径不同。
+                # 为什么去掉 `mj_step` 情形：`mj_step` 在自身内部把步号 +1 ⇒ 其后的写入必然落在**下一步号**，
+                # 「同一步号内 `mj_step` 之后写入」这种事件在逻辑上不存在（空判据）。
+                # 为什么不误报 owner：owner"先算前馈再写自家 ctrl"是设计内顺序，tag 相同 ⇒ 不计。
+                _late = (self._ff_solved_at_step == _step
+                         and self._ff_solved_by_tag is not None
+                         and self._ff_solved_by_tag != int(tag))
+                if _late:
+                    self.ctrl_late_batch_count += 1
+                    if self.ctrl_late_batch_first is None:
+                        self.ctrl_late_batch_first = (int(tag), _step)
                 _prev = self._last_ctrl_batch_step.get(int(tag))
                 if _prev is not None:
                     _gap = _step - _prev

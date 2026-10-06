@@ -2933,8 +2933,9 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 with self._lock:
                     if self.gravity_feedforward:
                         tau_ff = gravity_bias_torque(self.model, self.data, self.mujoco, self.dof_adr)
-                        # 前馈内部会 `mj_forward`（一次求解器调用）⇒ 属于"操作序列"，必须进账（量测㉗）。
-                        self.plant.op_event("ff")
+                        # 前馈内部会 `mj_forward`（一次求解器调用，**消费 ctrl**）⇒ 属于"操作序列"，
+                        # 必须进账（量测㉗），并带发起方 tag=1（量测㉙ 的"晚批"判定靠它区分是谁做的求解）。
+                        self.plant.op_event("ff", 1)
                     else:
                         tau_ff = np.zeros_like(q)
                 ctrl, saturated = pd_torque(

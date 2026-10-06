@@ -168,10 +168,12 @@ def main() -> int:
                 if not rows:
                     continue
                 sid, hist, g0, g2 = rows[-1]
+                _late = (spans_map.get(sid, {}).get(key) or {}).get("late")
+                _late_first = (spans_map.get(sid, {}).get(key) or {}).get("late_first")
                 # 只报"整条 run 的累计"，并把 0/2 两个信号单列（大数值步距=分段空闲，属正常）
                 tight = {k: v for k, v in hist.items() if k in ("0", "1", "2", 0, 1, 2)}
-                print("  [%s·%s] 步距{0,1,2}计数=%s；首次 gap0=%s；首次 gap2=%s" % (
-                    key, label, tight, g0, g2))
+                print("  [%s·%s] 步距{0,1,2}计数=%s；首次 gap0=%s；首次 gap2=%s；晚批计数=%s 首次=%s" % (
+                    key, label, tight, g0, g2, _late, _late_first))
 
         sid = args.detail
         a, b = ref.get(sid, {}), cur.get(sid, {})

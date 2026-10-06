@@ -1808,7 +1808,9 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
                      "batch_before": {
                          "hist": dict(_span_plant.ctrl_batch_gap_hist),
                          "gap0": _span_plant.ctrl_batch_first_gap0,
-                         "gap2": _span_plant.ctrl_batch_first_gap2},
+                         "gap2": _span_plant.ctrl_batch_first_gap2,
+                         "late": _span_plant.ctrl_late_batch_count,
+                         "late_first": _span_plant.ctrl_late_batch_first},
                      # 狗的控制写入计数（§11.88 量测⑯）：配合 IRAF_DEBUG_CTRL_ALIGN=1，
                      # 逐步给出"狗的控制序列指纹" —— 二分"分叉在 s03 内"到底来自**狗的控制**还是别处
                      # （停靠段已验证 ctrl 序列逐位相同，但**上游步骤从未验过**）。
@@ -1843,7 +1845,9 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
                 _span["batch_after"] = {
                     "hist": dict(_span_plant.ctrl_batch_gap_hist),
                     "gap0": _span_plant.ctrl_batch_first_gap0,
-                    "gap2": _span_plant.ctrl_batch_first_gap2}
+                    "gap2": _span_plant.ctrl_batch_first_gap2,
+                    "late": _span_plant.ctrl_late_batch_count,
+                    "late_first": _span_plant.ctrl_late_batch_first}
                 # 本步内"新鲜度决策"计数增量（§11.88 量测⑲）：`freshness.decide(age_ms=…)` 按**墙钟**
                 # 判新鲜度 ⇒ 逐步增量若在异常轮不同，即坐实"控制量取值随挂钟变"。
                 for _name in ("_mpc_unavailable", "_mpc_holds", "_mpc_releases", "_mpc_skips"):
