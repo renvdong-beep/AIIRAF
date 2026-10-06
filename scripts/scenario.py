@@ -1746,6 +1746,13 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
                     _slice = _writes[_start:]
                     _span["ctrl_n"] = len(_slice)
                     _span["ctrl_digest"] = hash(tuple(_slice)) & 0xFFFFFFFF
+                    # 目标步骤的**逐拍明细**（§11.88 量测⑰）：`IRAF_DEBUG_CTRL_DETAIL=<步骤 id>` 时，
+                    # 把该步每次 ctrl 写入的 (植物步号, 取值摘要) 全带出来 ⇒ 与常态轮逐项比对即可判定
+                    # 分叉是"落在哪些步号（对齐）"不同，还是"同一拍取值"不同 —— 两者修法完全不同。
+                    # 仍是**全 run 一行落盘**（明细只挂在目标步上），不给逐拍路径加 I/O。
+                    _detail = os.environ.get("IRAF_DEBUG_CTRL_DETAIL", "")
+                    if _detail and str(step.get("id")) == _detail:
+                        _span["ctrl_pairs"] = list(_slice)
                 # ⚠ 一律**只进内存**：逐步 print 会稳定地把狗推入另一条分支
                 # （2026-10-06 实测：每步 9 行 print ⇒ reached_s=7.40 / iter_total=30350，
                 # 与"只有 IRAF_DEBUG_DOCK"的 10.38 / 37780 完全不同）⇒ 探测本身会改变被探测对象。
