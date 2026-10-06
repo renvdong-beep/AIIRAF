@@ -1720,7 +1720,12 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
                      # 狗的控制写入计数（§11.88 量测⑯）：配合 IRAF_DEBUG_CTRL_ALIGN=1，
                      # 逐步给出"狗的控制序列指纹" —— 二分"分叉在 s03 内"到底来自**狗的控制**还是别处
                      # （停靠段已验证 ctrl 序列逐位相同，但**上游步骤从未验过**）。
-                     "ctrl_n_before": len(getattr(_span_backend, "_ctrl_writes", None) or [])}
+                     "ctrl_n_before": len(getattr(_span_backend, "_ctrl_writes", None) or []),
+                     # "新鲜度决策"计数的步前基线（量测⑲；与上面的增量配对）
+                     "_before_mpc_unavailable": int(getattr(_span_backend, "_mpc_unavailable", 0) or 0),
+                     "_before_mpc_holds": int(getattr(_span_backend, "_mpc_holds", 0) or 0),
+                     "_before_mpc_releases": int(getattr(_span_backend, "_mpc_releases", 0) or 0),
+                     "_before_mpc_skips": int(getattr(_span_backend, "_mpc_skips", 0) or 0)}
         yield_record = _yield_residency_to_step(residency, step["robot"])
         if _span is not None and _span_plant is not None:
             _span["dispatch"] = int(_span_plant.step_index)
@@ -1739,6 +1744,11 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
                 _span["mpc_iters"] = (int(getattr(_span_backend, "_mpc_iter_total", 0) or 0)
                                       - _span["mpc_before"])
                 _span["state_after"] = _qpos_digest(_span_plant)
+                # 本步内"新鲜度决策"计数增量（§11.88 量测⑲）：`freshness.decide(age_ms=…)` 按**墙钟**
+                # 判新鲜度 ⇒ 逐步增量若在异常轮不同，即坐实"控制量取值随挂钟变"。
+                for _name in ("_mpc_unavailable", "_mpc_holds", "_mpc_releases", "_mpc_skips"):
+                    _span[_name] = (int(getattr(_span_backend, _name, 0) or 0)
+                                    - int(_span.get("_before" + _name, 0) or 0))
                 # 本步内狗的控制写入序列指纹（量测⑯；需 IRAF_DEBUG_CTRL_ALIGN=1 才有内容）
                 _writes = getattr(_span_backend, "_ctrl_writes", None) or []
                 _start = _span.get("ctrl_n_before")

@@ -2713,8 +2713,20 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         # 用途：`iter_total` 与停靠分支双射（37780 / 33110，量测⑬）⇒ 用它**向上游二分**，
         # 找"第一个迭代总数不同的步骤"，把那一步定为分叉起源。
         _hook_stats = (report.get("provider") or {}).get("stats") or {}
+        _hook_runtime = (report.get("provider") or {}).get("runtime") or {}
         self._mpc_iter_total = int(getattr(self, "_mpc_iter_total", 0)) + int(
             _hook_stats.get("iter_total") or 0)
+        # 求解**新鲜度决策**的计数也必须逐步可查（2026-10-06 §11.88 量测⑲）：
+        # `freshness.decide(age_ms=…)` 里 `age_ms` 是**墙钟**年龄 ⇒ "用解 / 降级 / 释放"的决定
+        # 依赖挂钟。逐步增量若在异常轮与常态轮不同，即坐实"控制量取值随挂钟变"的通道。
+        self._mpc_unavailable = int(getattr(self, "_mpc_unavailable", 0)) + int(
+            _hook_stats.get("unavailable") or 0)
+        self._mpc_holds = int(getattr(self, "_mpc_holds", 0)) + int(
+            _hook_runtime.get("holds") or 0)
+        self._mpc_releases = int(getattr(self, "_mpc_releases", 0)) + int(
+            _hook_runtime.get("releases") or 0)
+        self._mpc_skips = int(getattr(self, "_mpc_skips", 0)) + int(
+            _hook_runtime.get("skips") or 0)
         return report
 
     # ---- 显示面（S1 交互 / 场景观看）：参数一律来自声明的 render 段 ----
