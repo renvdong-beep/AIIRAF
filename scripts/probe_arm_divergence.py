@@ -51,6 +51,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("logs", nargs="+")
     ap.add_argument("--around", type=int, default=3)
+    ap.add_argument("--window-step", type=int, default=None,
+                    help="只看某个植物步号附近的臂侧写入（例：14750）")
+    ap.add_argument("--window", type=int, default=20, help="--window-step 的半径（步）")
     args = ap.parse_args()
 
     paths = sorted({p for pattern in args.logs for p in globmod.glob(pattern)})
@@ -78,6 +81,21 @@ def main() -> int:
 
     normal = next((r for r in rounds if r["branch"] == "常态"), None)
     anoms = [r for r in rounds if r["branch"] == "备选"]
+    if args.window_step is not None:
+        # 只读窗口模式：看某个植物步号附近"臂侧到底在哪几拍写了什么"。用途：
+        # ① 确认臂侧格点形状（是否每 `substeps` 步一次）；② 事后对着分叉步做人工核对。
+        if normal is None:
+            print("无常态参照轮 ⇒ 不构成结论")
+            return 3
+        for r in ([normal] + anoms):
+            print("\n--- %s 臂侧写入（植物步 %d ± %d）" % (
+                r["file"], args.window_step, args.window))
+            for rb in sorted(r["arms"]):
+                _lo = args.window_step - args.window
+                _hi = args.window_step + args.window
+                _win = [(s, d) for s, d in r["arms"][rb] if _lo <= s <= _hi]
+                print("  [%s] 命中 %d 条：%s" % (rb, len(_win), _win[:16]))
+        return 0
     robots = sorted({rb for r in rounds for rb in r["arms"]})
     print("共 %d 轮：常态 %d / 备选 %d；臂侧机器人 = %s；各轮臂侧拍数 = %s" % (
         len(rounds), len(rounds) - len(anoms), len(anoms), robots,
