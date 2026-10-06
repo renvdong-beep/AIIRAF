@@ -199,13 +199,25 @@ def gravity_bias_torque(model, data, mujoco, dofs):
 
     注意这是**自由浮动基**下的偏置，不含地面约束反力，因此它只消除稳态下垂，
     站立载荷由 PD 承担；不得把它表述为支撑力矩。
+
+    ⚠ **对共享植物必须无持久副作用**（2026-10-06 §11.89 实测）：本函数只读 `qfrc_bias`
+    （与 `ctrl` 无关），但 `mj_forward` 会更新求解器的持久状态 `qacc_warmstart`。联合世界里
+    这次求解**落在哪个时机**（臂的控制批次之前还是之后）会改变随后 `mj_step` 的迭代路径
+    ⇒ 同配置出现两种结果（实测首个"晚批"步号 14755 = 首个 `q`/`dvel` 位级分叉步）。
+    因此这里在前后**保存/恢复 `qacc_warmstart`**：派生量仍被重新算好（行为口径不变），
+    但求解器状态不再被本函数推动 ⇒ 结果与调用时机无关。
     """
+    warmstart = None
+    if hasattr(data, "qacc_warmstart"):
+        warmstart = data.qacc_warmstart.copy()
     qvel = data.qvel.copy()
     data.qvel[:] = 0.0
     mujoco.mj_forward(model, data)
     tau = np.array([data.qfrc_bias[int(dof)] for dof in dofs], dtype=float)
     data.qvel[:] = qvel
     mujoco.mj_forward(model, data)
+    if warmstart is not None:
+        data.qacc_warmstart[:] = warmstart
     return tau
 
 

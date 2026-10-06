@@ -55,6 +55,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("logs", nargs="+")
     ap.add_argument("--detail", default="s03_pick")
+    ap.add_argument("--ref", choices=("const", "first"), default="const",
+                    help="参照轮选择：const=按固定常态终值分类；first=取第一条日志（修法平移基线时用）")
     args = ap.parse_args()
 
     paths = []
@@ -74,8 +76,13 @@ def main() -> int:
         branch = "常态" if (yaw is not None and abs(yaw - NORMAL_YAW) <= YAW_TOL) else "备选"
         rounds.append({"file": os.path.basename(p), "branch": branch, "yaw": yaw, "spans": spans})
 
-    normal = next((r for r in rounds if r["branch"] == "常态"), None)
-    anoms = [r for r in rounds if r["branch"] == "备选"]
+    if args.ref == "first":
+        # 修法会**平移数值基线**（固定终值不再适用）⇒ 以第一条日志为参照，其余与它逐位比对。
+        normal = rounds[0]
+        anoms = rounds[1:]
+    else:
+        normal = next((r for r in rounds if r["branch"] == "常态"), None)
+        anoms = [r for r in rounds if r["branch"] == "备选"]
     if normal is None:
         print("无数据：没有常态参照轮（无法比对）")
         return 3
