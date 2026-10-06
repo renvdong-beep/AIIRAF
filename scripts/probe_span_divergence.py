@@ -87,7 +87,8 @@ def main() -> int:
 
     ref = {str(s.get("id")): s for s in normal["spans"]}
     ids = [str(s.get("id")) for s in normal["spans"]]
-    fields = ("state_before", "state_after", "ctrl_digest", "ctrl_n", "dq_before", "dq_after")
+    fields = ("state_before", "state_after", "ctrl_digest", "ctrl_n", "dq_before", "dq_after",
+              "hid_before", "hid_after")
     print("\n逐步对照（只列与常态不同的项）")
     print("%-4s %-22s %s" % ("#", "step", "与常态不同的字段"))
     for r in anoms[:3]:
@@ -119,6 +120,28 @@ def main() -> int:
                 ndiff = sum(1 for j in range(nmin) if va[j] != vb[j])
                 print("  [%s] %s：首个不同的 qvel 元素 = %s（共 %d 个不同；长度 常态 %d / 备选 %d）"
                       % (sid, key, k, ndiff, len(va), len(vb)))
+        # 旁路 ctrl 的动力学状态（量测㉔）：逐子键给出"首次在哪个步骤边界不同"。
+        # 这是分层判据：谁先不同 ⇒ 分叉先进入哪一层（约束开关 / 暖启动 / mocap / 外加力）。
+        sub_keys = set()
+        for key in ("hid_before", "hid_after"):
+            for s in list(ref.values()) + list(cur.values()):
+                got = s.get(key)
+                if isinstance(got, dict):
+                    sub_keys.update(got.keys())
+        hits = []
+        for key in ("hid_before", "hid_after"):
+            for sub in sorted(sub_keys):
+                for i, sid in enumerate(ids):
+                    va = (ref.get(sid, {}).get(key) or {}).get(sub)
+                    vb = (cur.get(sid, {}).get(key) or {}).get(sub)
+                    if va is None or vb is None or va == vb:
+                        continue
+                    hits.append((key, sub, i + 1, sid, va, vb))
+                    break
+        for key, sub, n, sid, va, vb in hits:
+            print("  [hid] %s.%s 首个不同 = 第 %d 步（%s）：常态=%s 备选=%s" % (key, sub, n, sid, va, vb))
+        if not hits:
+            print("  [hid] 共 %d 个旁路状态子键，在全部步骤边界上**逐位相同**" % len(sub_keys))
 
         sid = args.detail
         a, b = ref.get(sid, {}), cur.get(sid, {})

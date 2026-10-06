@@ -1564,6 +1564,33 @@ def _qvel_element_digests(plant):
     return [hash(round(float(v), 12)) & 0xFFFFFFFF for v in plant.data.qvel]
 
 
+#: "旁路 ctrl 的动力学状态"字段表（量测㉔）。为什么是这几个：实测已证"两侧 ctrl 逐拍相同、
+#: 位置 `q` 相同，却仍在速度级分叉" ⇒ 差异**不经过 ctrl**。MuJoCo 里能改变动力学、却**不在
+#: `qpos`/`qvel`** 的状态只有这几类：约束开关（载荷 weld）、mocap（anchor 位姿）、外加力、
+#: 以及求解器**暖启动** `qacc_warmstart`。逐个打摘要 ⇒ 判断分叉**先**进在哪一层。
+_HIDDEN_STATE_FIELDS = ("qacc", "qacc_warmstart", "eq_active", "mocap_pos", "mocap_quat",
+                        "qfrc_applied", "xfrc_applied")
+
+
+def _hidden_state_digests(plant):
+    """把旁路 ctrl 的动力学状态逐层打成摘要（字段缺失则跳过，不报错）。
+
+    读数组、无 I/O、不持锁；`reshape(-1)` 兼容 1D/2D（`mocap_pos` 是 2D）而不引入 numpy 依赖。
+    """
+    out = {}
+    data = plant.data
+    for name in _HIDDEN_STATE_FIELDS:
+        arr = getattr(data, name, None)
+        if arr is None:
+            continue
+        try:
+            flat = arr.reshape(-1) if hasattr(arr, "reshape") else arr
+            out[str(name)] = hash(tuple(round(float(v), 9) for v in flat)) & 0xFFFFFFFF
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def _plant_of_residency(residency):
     """取驻留所属的**共享植物**（非联合世界 / 未装配 ⇒ None）。"""
     if not residency:
@@ -1730,6 +1757,8 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
                      "state_before": _qpos_digest(_span_plant),
                      # 速度级逐元素指纹（量测㉓）：位置相同**不能**排除速度已分叉（实测如此）。
                      "dq_before": _qvel_element_digests(_span_plant),
+                     # 旁路 ctrl 的动力学状态（量测㉔）：约束开关/暖启动/mocap/外加力 逐个摘要。
+                     "hid_before": _hidden_state_digests(_span_plant),
                      # 狗的控制写入计数（§11.88 量测⑯）：配合 IRAF_DEBUG_CTRL_ALIGN=1，
                      # 逐步给出"狗的控制序列指纹" —— 二分"分叉在 s03 内"到底来自**狗的控制**还是别处
                      # （停靠段已验证 ctrl 序列逐位相同，但**上游步骤从未验过**）。
@@ -1758,6 +1787,7 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
                                       - _span["mpc_before"])
                 _span["state_after"] = _qpos_digest(_span_plant)
                 _span["dq_after"] = _qvel_element_digests(_span_plant)
+                _span["hid_after"] = _hidden_state_digests(_span_plant)
                 # 本步内"新鲜度决策"计数增量（§11.88 量测⑲）：`freshness.decide(age_ms=…)` 按**墙钟**
                 # 判新鲜度 ⇒ 逐步增量若在异常轮不同，即坐实"控制量取值随挂钟变"。
                 for _name in ("_mpc_unavailable", "_mpc_holds", "_mpc_releases", "_mpc_skips"):
