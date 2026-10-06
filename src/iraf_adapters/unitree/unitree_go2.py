@@ -223,6 +223,15 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
         # 若这些步号逐轮不同（而总步数相同），狗收到的控制量**序列**就不同 ⇒ 下游停靠初值不同。
         self._ctrl_align_probe = os.environ.get("IRAF_DEBUG_CTRL_ALIGN") == "1"
         self._ctrl_writes = []
+        # 控制量**分量**留证（2026-10-06 §11.88 量测⑳；`IRAF_DEBUG_CTRL_COMPONENTS=1`，缺省关）：
+        # 只记 `ctrl` 的取值摘要无法回答"取值不同是因为 (q,dq) 先变了、还是目标相位变了"。
+        # 打开后每拍多记 desired/q/dq 三个摘要（仍是内存累计、run 末一行）。
+        self._ctrl_comp_probe = os.environ.get("IRAF_DEBUG_CTRL_COMPONENTS") == "1"
+        # hold 调用**起点**留证（同日；`IRAF_DEBUG_CTRL_CALLS=1`，缺省关）：记录每次
+        # `_run_control` 调用开始时的植物步号与仿真钟。非步态路径的 `q0`/`start` 正是取自
+        # 这一刻 ⇒ 若"同一植物步、同一状态却算出不同控制量"，调用起点不同是唯一自洽出口。
+        self._ctrl_calls = []
+        self._ctrl_calls_probe = os.environ.get("IRAF_DEBUG_CTRL_CALLS") == "1"
         self._display_renderer_cache = None
         # 步态资源惰性解析（步骤 02）：声明与几何都只在首次调用步态时解析/实测，
         # 未使用步态的路径（stand/stop）不因步态声明问题而失败。
@@ -2865,6 +2874,16 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 "控制周期数不足 1（时长 %g s × %g Hz）：不得静默跳过" % (seconds, self.control_hz)
             )
         q0 = np.asarray(self.data.qpos[self.qpos_adr], dtype=float).copy()
+        if self._ctrl_calls_probe:
+            # 调用起点（内存累计、run 末一行）：植物步号 + 仿真钟 + 周期数 + 通路。
+            # 非步态路径的 `desired = q0 + alpha*(q_des - q0)` 里，`q0` 取下行的位形、
+            # `alpha` 取 `start = data.time` ⇒ 调用起点不同 ⇒ 同一植物步上的取值就不同。
+            self._ctrl_calls.append((
+                int(self.plant.step_index),
+                round(float(self.data.time), 9),
+                int(cycles),
+                "gait" if target_provider is not None else ("zero" if zero_torque else "ramp"),
+            ))
         q_des = (
             np.zeros(len(self.joint_order), dtype=float)
             if target is None
@@ -2971,9 +2990,17 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                 # 因此若结果仍分两支，差异只可能在**控制量的取值**（例如 MPC 子进程求解非位可复现）。
                 # 摘要用"四舍五入到 9 位的 ctrl 元组的 hash"：值级敏感、跨进程稳定（PYTHONHASHSEED
                 # 只影响 str/bytes），且能逐拍比对找到**第一次分叉**。
-                self._ctrl_writes.append(
-                    (int(self.plant.step_index),
-                     hash(tuple(np.round(np.asarray(ctrl, dtype=float), 9).tolist())) & 0xFFFFFFFF))
+                _item = (int(self.plant.step_index),
+                         hash(tuple(np.round(np.asarray(ctrl, dtype=float), 9).tolist())) & 0xFFFFFFFF)
+                if self._ctrl_comp_probe:
+                    # 分量摘要（量测⑳）：`desired`/`q`/`dq` 各自取值敏感。三者中谁先不同，
+                    # 就决定了"取值分叉"进在哪一层：`q`/`dq` 先变 = 植物状态先变（外部所致，
+                    # 狗是受害方）；只有 `desired` 变 = 目标相位差（狗自己的 hold 调用起点不同）。
+                    # 追加在 2 元组之后 ⇒ `item[0]`/`item[1]` 语义不变（既有判读脚本不受影响）。
+                    _item = _item + tuple(
+                        hash(tuple(np.round(np.asarray(_vec, dtype=float), 9).tolist())) & 0xFFFFFFFF
+                        for _vec in (desired, q, dq))
+                self._ctrl_writes.append(_item)
             for _ in range(self.substeps):
                 # 时间只能由植物 owner 推进（共享植物下越权即 PlantOwnershipError）
                 # 需求闸门（§11.87）：自由推进线程（植物驻留）只有 guest 有需求时才推进。

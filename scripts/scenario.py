@@ -1774,6 +1774,14 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
     # 逐步账**全 run 一次性落盘**（1 行/run，不是 9 行；见上面 finally 里的口径说明）
     if residency is not None and residency.get("_span_rows"):
         print("PLANT_STEP_SPANS " + json.dumps(residency["_span_rows"], ensure_ascii=False), flush=True)
+    # hold 调用起点账（`IRAF_DEBUG_CTRL_CALLS=1`）：同样是**全 run 一行**。逐步账只能看到
+    # "哪一步开始不同"，这一行才能回答"同一植物步上取值为什么不同"——即 hold 调用边界
+    # （`q0`/`start` 的来源）在植物步号上的位置是否逐轮一致。
+    if os.environ.get("IRAF_DEBUG_CTRL_CALLS") == "1" and residency is not None:
+        _calls_backend = ((residency.get("state") or {}).get("backend"))
+        if _calls_backend is not None:
+            print("PLANT_CTRL_CALLS " + json.dumps(
+                getattr(_calls_backend, "_ctrl_calls", []), ensure_ascii=False), flush=True)
     return records
 
 
