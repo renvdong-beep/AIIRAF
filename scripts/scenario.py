@@ -1536,6 +1536,20 @@ def _apply_plant_demand_gate(scene, runtimes, world):
     return record
 
 
+def _qpos_digest(plant):
+    """整机状态指纹（狗＋两臂＋载荷）：`qpos` 四舍五入到 12 位后的 hash。
+
+    为什么需要它（2026-10-06 §11.88 量测⑭的修正）：`mpc_iters`（求解迭代增量）**只在狗自己的
+    `locomote` 步（两次停靠）非零** —— 臂的步骤与狗的 `stand` 不走那个 MPC 钩子 ⇒ 它**无法把分叉
+    定位到上游**。状态指纹与 MPC 无关，任何步骤都能用 ⇒ 适合做"第一个不同的步骤"的二分判据。
+
+    读数必须持植物锁（否则可能与驻留线程的 `mj_step` 交错，读到撕裂状态，那本身就是不确定的）。
+    """
+    with plant.lock():
+        values = tuple(round(float(v), 12) for v in plant.data.qpos)
+    return hash(values) & 0xFFFFFFFF
+
+
 def _plant_of_residency(residency):
     """取驻留所属的**共享植物**（非联合世界 / 未装配 ⇒ None）。"""
     if not residency:
@@ -1697,7 +1711,9 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
         if _span_plant is not None and os.environ.get("IRAF_DEBUG_PLANT_SPAN") == "1":
             _span = {"id": str(step["id"]), "before": int(_span_plant.step_index),
                      # MPC 求解迭代数（§11.88 量测⑭）：逐步增量 ⇒ 用离散指纹向上游二分
-                     "mpc_before": int(getattr(_span_backend, "_mpc_iter_total", 0) or 0)}
+                     "mpc_before": int(getattr(_span_backend, "_mpc_iter_total", 0) or 0),
+                     # 状态指纹（量测⑭修正）：对上游步骤同样有效
+                     "state_before": _qpos_digest(_span_plant)}
         yield_record = _yield_residency_to_step(residency, step["robot"])
         if _span is not None and _span_plant is not None:
             _span["dispatch"] = int(_span_plant.step_index)
@@ -1715,6 +1731,7 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
                 # 步骤就是分叉起源（用它把"1e-5 从哪来"从整链收窄到某一步）。
                 _span["mpc_iters"] = (int(getattr(_span_backend, "_mpc_iter_total", 0) or 0)
                                       - _span["mpc_before"])
+                _span["state_after"] = _qpos_digest(_span_plant)
                 # ⚠ 一律**只进内存**：逐步 print 会稳定地把狗推入另一条分支
                 # （2026-10-06 实测：每步 9 行 print ⇒ reached_s=7.40 / iter_total=30350，
                 # 与"只有 IRAF_DEBUG_DOCK"的 10.38 / 37780 完全不同）⇒ 探测本身会改变被探测对象。
