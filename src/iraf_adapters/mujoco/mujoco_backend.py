@@ -389,9 +389,9 @@ class MujocoBackend:
         key_count = int(getattr(self.model, "nkey", 0) or 0)
         if key_count > 0 and not self._plant_injected:
             mujoco.mj_resetDataKeyframe(self.model, self.data, 0)
-            mujoco.mj_forward(self.model, self.data)
+            self._forward_readonly()
         elif not self._plant_injected:
-            mujoco.mj_forward(self.model, self.data)
+            self._forward_readonly()
         self._actuators = {
             mujoco.mj_id2name(
                 self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, index
@@ -491,7 +491,7 @@ class MujocoBackend:
             return self.data.geom_xpos[ident].copy()
 
         with self._data_lock:
-            mujoco.mj_forward(self.model, self.data)
+            self._forward_readonly()
             w = self.data.xpos[wrist].copy()
             l = geom(names["left_finger_geom"], "左指")
             r = geom(names["right_finger_geom"], "右指")
@@ -962,7 +962,7 @@ class MujocoBackend:
                 % (source, list(PICK_POSE_SOURCES))
             )
         with self._data_lock:
-            mujoco.mj_forward(self.model, self.data)
+            self._forward_readonly()
             actual = tuple(float(value) for value in self.data.xpos[target_body])
             actual_quat = tuple(float(value) for value in self.data.xquat[target_body])
         if source == "live_target_body":
@@ -1893,7 +1893,7 @@ class MujocoBackend:
         from iraf_adapters.mujoco.payload_facts import resolve_place_pose_correction
 
         with self._data_lock:
-            mujoco.mj_forward(self.model, self.data)
+            self._forward_readonly()
             _live_tray_pose = np.asarray(self.data.xpos[tray_body], dtype=float).copy()
         # ⚠ 声明 vs 报告**必须分开**（2026-09-29 实测踩点）：`resolve_place_pose_correction` 的**返回值**
         # 只带它自己那几个键（mode/applied/delta_world_m/lateral_m/vertical_m/max_lateral_m[/ik_*]），
@@ -1906,7 +1906,7 @@ class MujocoBackend:
         # "偏差在构建期解侧"还是"纠偏逻辑侧"。口径：目标点 = 承载面中心 + 声明的法向间隙(pad_offset)。
         if place_pose_correction.get("mode") != "off":
             with self._data_lock:
-                mujoco.mj_forward(self.model, self.data)
+                self._forward_readonly()
                 _R_live = np.asarray(self.data.xmat[tray_body], dtype=float).reshape(3, 3)
                 _live_top = np.asarray(self.data.xpos[tray_body], dtype=float) + _R_live @ np.asarray(
                     [0.0, 0.0, float(record["size_m"][2])], dtype=float)
@@ -1928,7 +1928,7 @@ class MujocoBackend:
                 _pad_geoms_now = [int(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM,
                                                         str(gripper[key])))
                                   for key in ("left_finger_geom", "right_finger_geom")]
-                mujoco.mj_forward(self.model, self.data)
+                self._forward_readonly()
                 _pad_now = np.mean([np.asarray(self.data.geom_xpos[g], dtype=float)
                                     for g in _pad_geoms_now if g >= 0], axis=0)
                 _payload_now = np.asarray(self.data.xpos[payload_body], dtype=float).copy()
@@ -2043,7 +2043,7 @@ class MujocoBackend:
                         "dist_m": round(float(contact.dist), 6),
                         "normal": [round(float(v), 6) for v in np.asarray(contact.frame[0:3]).ravel()],
                         "force_n": round(float(np.linalg.norm(np.asarray(force[0:3], dtype=float))), 6)})
-                mujoco.mj_forward(self.model, self.data)
+                self._forward_readonly()
                 tray_rot = np.asarray(self.data.xmat[tray_body], dtype=float).reshape(3, 3)
                 tray_center = np.asarray(self.data.xpos[tray_body], dtype=float)
                 top = tray_center + tray_rot @ np.asarray([0.0, 0.0, half_z], dtype=float)
@@ -2865,7 +2865,7 @@ class MujocoBackend:
     def _any_contact_between(self, body_a, body_b):
         """两个 body 的任意 geom 之间是否**存在接触**（事实判据，不设力阈值）。"""
         with self._data_lock:
-            mujoco.mj_forward(self.model, self.data)
+            self._forward_readonly()
             for index in range(int(self.data.ncon)):
                 contact = self.data.contact[index]
                 bodies = {int(self.model.geom_bodyid[contact.geom1]),
@@ -2878,7 +2878,7 @@ class MujocoBackend:
         if os.environ.get("IRAF_DEBUG_PICK") != "1":
             return
         with self._data_lock:
-            mujoco.mj_forward(self.model, self.data)
+            self._forward_readonly()
             # 腕部 body 名必须由配置声明：不再回退到机型专有名（原先缺省是
             # Piper 的 link6），避免换构型后诊断日志抛"缺少 body: link6"。
             wrist = self._body_id(
@@ -2957,7 +2957,7 @@ class MujocoBackend:
         self, target_body, left_body, right_body, approach_axis=None
     ):
         with self._data_lock:
-            mujoco.mj_forward(self.model, self.data)
+            self._forward_readonly()
             target = self.data.xpos[target_body].copy()
             # 接触面 geom 名必须由配置声明，**不提供机型默认值**：
             # 2F-85 的 pad body 原点在铰链处，与 pad box 中心相差约 2cm，
@@ -3091,7 +3091,7 @@ class MujocoBackend:
         arm_scope.update(pad_names)
 
         with self._data_lock:
-            mujoco.mj_forward(self.model, self.data)
+            self._forward_readonly()
             live = np.asarray(self.data.xpos[target_body], dtype=float).copy()
             backup = {joint_id: float(self.data.qpos[int(self.model.jnt_qposadr[joint_id])])
                       for _, joint_id in arm_joints}
@@ -3103,7 +3103,7 @@ class MujocoBackend:
                     if value is None:
                         raise ValueError("相位位置字典缺少臂关节 %s（纠偏要求两段同键）" % key)
                     self.data.qpos[int(self.model.jnt_qposadr[joint_id])] = float(value)
-                mujoco.mj_forward(self.model, self.data)
+                self._forward_readonly()
                 midpoint = np.mean([self.data.geom_xpos[point["id"]] for point in pad_points], axis=0)
                 axis_now = None
                 if wrist_body >= 0:
@@ -3133,7 +3133,7 @@ class MujocoBackend:
             def restore():
                 for joint_id, value in backup.items():
                     self.data.qpos[int(self.model.jnt_qposadr[joint_id])] = value
-                mujoco.mj_forward(self.model, self.data)
+                self._forward_readonly()
 
             if decision["refused"]:
                 restore()
@@ -3798,7 +3798,7 @@ class MujocoBackend:
         夹爪通道的 ctrl 与 qpos、抬升约束名与激活状态、载荷当前与哪些体接触。
         """
         with self._data_lock:
-            mujoco.mj_forward(self.model, self.data)
+            self._forward_readonly()
 
             def _geoms_of(body_id):
                 return [g for g in range(int(self.model.ngeom))
@@ -3912,6 +3912,22 @@ class MujocoBackend:
                 "控制权越界：执行器 %s 不属于本后端（拥有的通道：%s）—— "
                 "同一执行器任一时刻只允许一个控制源（AGENTS.md 1.13）"
                 % (channel, sorted(self._owned_actuators)))
+
+    def _forward_readonly(self):
+        """**只读求解**：读取派生量（FK/位姿/接触）但不改变仿真走向（§11.89 结构化修法）。
+
+        为什么必须：`mj_forward` 会更新求解器的**持久状态** `qacc_warmstart`。联合世界里这类调用
+        穿插在其它写入者之间，**落在哪个时机**（guest 的控制批次之前 / 之后）会改变随后 `mj_step`
+        的迭代路径 ⇒ 同配置出现多条分支（实测：狗侧前馈 + 臂侧读位姿两处，去掉前者后仍有 4/30）。
+        这里前后保存/恢复暖启动：派生量照样算好（读取口径不变），但求解器状态不被推动
+        ⇒ 结果与调用时机无关。**本后端所有"只为读派生量"的 `mj_forward` 都必须走这里。**
+        """
+        warmstart = getattr(self.data, "qacc_warmstart", None)
+        keep = None if warmstart is None else warmstart.copy()
+        _mj_forward = mujoco.mj_forward
+        _mj_forward(self.model, self.data)
+        if keep is not None:
+            self.data.qacc_warmstart[:] = keep
 
     def _write_ctrl(self, channel, value):
         self._assert_owned(channel)
