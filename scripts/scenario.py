@@ -1803,6 +1803,12 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
                      "x_before": _exact_state_digests(_span_plant),
                      # 操作序列摘要（量测㉗）：把"到此为止谁在什么顺序上做了什么"也变成可观测量。
                      "op_before": _span_plant.op_digest(),
+                     # 控制批次落点直方图（量测㉘，只读）：正常每拍恰好一批（步距=1）；
+                     # 分段空闲会给出大步距（正常）；只有 gap=0（双批）与 gap=2（漏批=消费到上一拍）是信号。
+                     "batch_before": {
+                         "hist": dict(_span_plant.ctrl_batch_gap_hist),
+                         "gap0": _span_plant.ctrl_batch_first_gap0,
+                         "gap2": _span_plant.ctrl_batch_first_gap2},
                      # 狗的控制写入计数（§11.88 量测⑯）：配合 IRAF_DEBUG_CTRL_ALIGN=1，
                      # 逐步给出"狗的控制序列指纹" —— 二分"分叉在 s03 内"到底来自**狗的控制**还是别处
                      # （停靠段已验证 ctrl 序列逐位相同，但**上游步骤从未验过**）。
@@ -1834,6 +1840,10 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
                 _span["hid_after"] = _hidden_state_digests(_span_plant)
                 _span["x_after"] = _exact_state_digests(_span_plant)
                 _span["op_after"] = _span_plant.op_digest()
+                _span["batch_after"] = {
+                    "hist": dict(_span_plant.ctrl_batch_gap_hist),
+                    "gap0": _span_plant.ctrl_batch_first_gap0,
+                    "gap2": _span_plant.ctrl_batch_first_gap2}
                 # 本步内"新鲜度决策"计数增量（§11.88 量测⑲）：`freshness.decide(age_ms=…)` 按**墙钟**
                 # 判新鲜度 ⇒ 逐步增量若在异常轮不同，即坐实"控制量取值随挂钟变"。
                 for _name in ("_mpc_unavailable", "_mpc_holds", "_mpc_releases", "_mpc_skips"):

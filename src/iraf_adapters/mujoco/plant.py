@@ -68,6 +68,21 @@ class MujocoPlant:
         self._op_lock = threading.Lock()
         self._op_hash = hashlib.blake2b(digest_size=8)
         self._op_seq = 0
+        # ---- 「控制批次落点」直方图（2026-10-06 §11.88 量测㉘，只读探测）----
+        # 目的：臂侧一次控制更新是**一批**通道写入（同一锁内原子），而它落在**哪一拍**由锁序决定。
+        # 正常应"每拍恰好一批"⇒ 相邻批次的步距恒为 1；若出现 0 或 2，即"某步消费到上一拍的控制"
+        # （或同一步被写两批）⇒ 直接坐实"写入↔推步"交错，且给出首次发生的步号。
+        # 纯计数（不改变任何行为），直方图键数有限 ⇒ 不随步数增长。
+        self._last_ctrl_batch_step = {}
+        self.ctrl_batch_gap_hist = {}
+        self.ctrl_batch_first_bad = None
+        # 更锐利的两个信号（量测㉘ 修正）：
+        #   gap=0 ⇒ 同一步内写了**两批**（双批）；
+        #   gap=2 ⇒ 有一步**没拿到新批次**（消费到上一拍控制 = 竞态的直接签名）。
+        # 各记"首次发生"的 `(发起方, 步号)`，供逐支比对。分段之间的**空闲**（臂不动）会给出很大步距，
+        # 那属正常 ⇒ 判据只看 0 与 2。
+        self.ctrl_batch_first_gap0 = None
+        self.ctrl_batch_first_gap2 = None
         # ---- 需求闸门（2026-10-05 §11.87）----
         # 为什么需要：owner 的**自由推进线程**（植物驻留）在 guest 等待期间并发 `mj_step` ⇒
         # guest 请求 `count` 步、实际推进 `count + 挂钟决定的超出量`（§11.56 实测 17×）；
@@ -229,10 +244,25 @@ class MujocoPlant:
 
         调用点（改变仿真的操作）：`step_once`（"step"）、狗的 PD 重力前馈（"ff"）、两侧的 ctrl 写入（"ctrl"）。
         参数 `tag` 用于区分同一类操作的发起方（例如狗=1 / 臂=2）。
+        额外：`kind == "batch_end"` 时记一次"控制批次落点"（量测㉘）。
         """
         with self._op_lock:
             self._op_seq += 1
             self._op_hash.update(b"%d|%s|%d;" % (self._op_seq, str(kind).encode("ascii"), int(tag)))
+            if kind == "batch_end":
+                _step = int(self._step_index)
+                _prev = self._last_ctrl_batch_step.get(int(tag))
+                if _prev is not None:
+                    _gap = _step - _prev
+                    _hist = self.ctrl_batch_gap_hist.setdefault(int(tag), {})
+                    _hist[_gap] = _hist.get(_gap, 0) + 1
+                    if _gap != 1 and self.ctrl_batch_first_bad is None:
+                        self.ctrl_batch_first_bad = (int(tag), _step, int(_gap))
+                    if _gap == 0 and self.ctrl_batch_first_gap0 is None:
+                        self.ctrl_batch_first_gap0 = (int(tag), _step)
+                    if _gap == 2 and self.ctrl_batch_first_gap2 is None:
+                        self.ctrl_batch_first_gap2 = (int(tag), _step)
+                self._last_ctrl_batch_step[int(tag)] = _step
 
     def op_digest(self):
         """当前操作序列的 `(次数, 摘要)`：可逐拍采样、跨进程可比（blake2b，不受 PYTHONHASHSEED 影响）。"""

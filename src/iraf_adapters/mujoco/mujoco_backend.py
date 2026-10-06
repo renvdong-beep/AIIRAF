@@ -4032,11 +4032,14 @@ class MujocoBackend:
         return declared
 
     def _set_controls(self, positions):
+        # 一批通道写入 = 一次"控制更新批次"（量测㉘）：标出批次边界，便于检测"落在哪一拍"。
+        self.plant.op_event("batch_begin", 2)
         with self._data_lock:
             for actuator, value in positions.items():
                 channel = self._actuator_channel(actuator)
                 # 受控写入：guest 只能写自己拥有的执行器（共享植物下越界即显式失败）
                 self._write_ctrl(channel, value)
+        self.plant.op_event("batch_end", 2)
 
     def _set_gripper_controls(self, positions):
         """只更新夹爪通道，避免开合动作覆盖机械臂关节。

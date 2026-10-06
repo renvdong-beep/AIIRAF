@@ -156,6 +156,23 @@ def main() -> int:
             else:
                 print("  [%s] 在全部步骤边界上相同" % key)
 
+        # 控制批次落点（量测㉘）：正常"每拍恰好一批"⇒ 步距直方图只有 {1:…}；出现 0/2 即
+        # "某步消费到上一拍的控制（或同一步被写两批）" ⇒ 直接坐实"写入↔推步"交错，并给出首现步号。
+        for key in ("batch_before", "batch_after"):
+            for label, spans_map in (("常态", ref), ("备选", cur)):
+                rows = []
+                for sid in ids:
+                    v = spans_map.get(sid, {}).get(key)
+                    if isinstance(v, dict) and "hist" in v:
+                        rows.append((sid, v.get("hist") or {}, v.get("gap0"), v.get("gap2")))
+                if not rows:
+                    continue
+                sid, hist, g0, g2 = rows[-1]
+                # 只报"整条 run 的累计"，并把 0/2 两个信号单列（大数值步距=分段空闲，属正常）
+                tight = {k: v for k, v in hist.items() if k in ("0", "1", "2", 0, 1, 2)}
+                print("  [%s·%s] 步距{0,1,2}计数=%s；首次 gap0=%s；首次 gap2=%s" % (
+                    key, label, tight, g0, g2))
+
         sid = args.detail
         a, b = ref.get(sid, {}), cur.get(sid, {})
         print("  [%s] 常态: before=%s dispatch=%s ctrl_n=%s state_before=%s" % (

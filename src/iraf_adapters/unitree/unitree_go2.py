@@ -2991,8 +2991,9 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
                     ctrl = np.clip(ctrl, self.torque_lower, self.torque_upper)
             saturated_total += int(np.count_nonzero(saturated))
             self.data.ctrl[self.actuator_ids] = ctrl
-            # 控制写入也是"改变仿真的操作"（量测㉗）
+            # 控制写入也是"改变仿真的操作"（量测㉗）；狗一次写整条向量 ⇒ 一批到此结束（量测㉘）
             self.plant.op_event("ctrl", 1)
+            self.plant.op_event("batch_end", 1)
             if self._ctrl_align_probe:
                 # 这次控制量落在哪个植物步号上 + **控制量取值的摘要**（内存累计，段末一次性落盘）。
                 # 为什么两步都要：闸门之后"步数"与"写入对齐"都已证明逐轮相同（§11.88 量测⑨），
