@@ -135,6 +135,22 @@ def main() -> int:
                 else:
                     print("      ⇒ 证据不足以二选一（首拍步号 %s != before %s）" % (
                         pa[first][0], boundary))
+                if len(pa[first]) >= 5:
+                    # 分量指纹（量测⑳-B，需 `IRAF_DEBUG_CTRL_COMPONENTS=1`）：
+                    # 每拍为 (步号, ctrl, desired, q, dq) 五个取值摘要 ⇒ 谁先不同即定性。
+                    names = ("步号", "ctrl", "desired", "q", "dq")
+                    fd = {nm: next((i for i in range(n) if pa[i][j] != pb[i][j]), None)
+                          for j, nm in enumerate(names)}
+                    print("      分量首次不同拍: " + "  ".join(
+                        "%s=%s" % (nm, fd[nm]) for nm in names))
+                    if fd["q"] == first or fd["dq"] == first:
+                        print("      ⇒ **判定 B**：首拍 (q, dq) 已不同，而此前狗的取值逐拍相同"
+                              " ⇒ 状态是被外部改掉的（另一台本体的写入/接触）⇒ 转查臂侧")
+                    elif fd["desired"] == first and (fd["q"] is None or fd["q"] > first):
+                        print("      ⇒ **判定 A**：首拍只有 desired 不同、(q, dq) 仍相同"
+                              " ⇒ 植物状态未变，差在 hold 调用的目标相位（q0/alpha）")
+                    else:
+                        print("      ⇒ 分量口径未能二选一（见上面各分量的首次不同拍）")
     return 0
 
 
