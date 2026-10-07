@@ -6111,6 +6111,28 @@ A 站逐位复现（无交接竞态）。
    清理只按 PID / `ps -C python3`，禁用 `pgrep -f`。
 4. **观测者效应是真的**：任何额外 `mj_forward`（含调试读取）都会改变走向 ⇒ 留证一律"内存累计 + 段末一行"。
 
+**§11.91 s07「未确认载荷已放下」的确定性机理：撤退段把左指蹭回并压在载荷上（2026-10-06，已定位）**
+
+判词来源：`iraf_skills/common/manipulation.py:193` —— 后端 `place_object` 返回 `released != True` 即拒。
+
+实测相位梯（`IRAF_DEBUG_PLACE=1`，`build/diagnostics/s07diag1.log`）：
+
+| 相位 | `pad_span_m` | `finger_contacts` | 判定 |
+|---|---|---|---|
+| `place_descend_touchdown@600…1000` | 0.0723 → 0.0820（张开中） | left **True** / right False | 下降段左指压着载荷（正常，尚未释放） |
+| `after_touchdown_6` | **0.091302** | **False / False** | **释放成功** |
+| `after_retreat` | **0.03926** | **left True** / right False | **撤退把间距压回 39 mm，左指重新接触载荷** |
+| `after_settle` | 0.039277 | left True / right False | 落稳窗保持 ⇒ `released=False` ⇒ s07 FAILED |
+
+几何（同轮实测）：载荷 `pos_m [0.751319, 0.684433, 0.045045]`、最低点 `0.00395 m`、
+与 `place_pad_b` 接触力 `0.754688 N` ⇒ **载荷确实落在托盘垫上**；
+指腹中点 `[0.777014, 0.684505, 0.075935]`（与载荷在 **x 方向偏 ~25.7 mm**）。
+
+**结论**：失败**不是"没放下"**，而是**撤退段把（腱驱动、欠驱动的）左指推回并压在载荷上** ⇒ 释放确认随之失败。
+这是**既有的边缘几何问题**（修法前只因净空恰好够而"过"），被 §11.90 的可复现性修法**确定性地暴露**出来。
+**修法候选**：① 撤退先**垂直抬离**再横向（先查声明的撤退计划/航点，避免横向扫过载荷）；
+② 增大释放后的**净空**声明；③ 把载荷在垫上放得更居中（消掉那 ~25.7 mm 的横向偏置）。
+
 ## 12. 下一步
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
 0a. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。
