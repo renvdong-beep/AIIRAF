@@ -6446,6 +6446,71 @@ via 绕行相位      → 已实现（端到端打通）但对本布局无改善
 批次：bash scripts/campaign_pass_rate.sh 30（s06/s07 通过率 + min/max 逐位一致）
 ```
 
+## 11.65 s06/s04/s07 的"仿真时间放大 N 倍"定性：**不是记账 bug**，是 `_move_trajectory` 的 `settle_ms = 4 × duration_ms`（2026-10-08，判死两条假设 + 定位真因）
+
+**问题（上一轮遗留）**：s06 声明 `duration_ms: 8000`（四相位各 2000 ms ⇒ 期望 8 s 仿真），但实测相邻相位之间推进了 27~35 s（约 17 倍）。曾怀疑 `_wait_for_guest_steps` 的**步数记账 bug**，或"owner 领先导致 `wait` 立刻返回"。
+
+**为什么以前查不动（先补度量，再下结论）**：`MujocoBackend`（机械臂）**没有 `read_state`**
+⇒ 臂步的 `sim_time_advance_s` 恒为 `None`（`scripts/scenario.py::_read_backend_state` 的既有语义），
+于是"臂到底推进了多少仿真时间"从报告里根本读不出来 ⇒ 该问题**既不能证实也不能证伪**。
+
+**新增度量（本提交，纯取证、缺省惰性）**
+```
+· plant.wait_until 累加三个整数（不打印）：calls / requested / advanced
+  requested = Σ max(0, 目标步号 − 进入时步号)；advanced = Σ(退出时 step_index − 进入时步号)
+· scripts/scenario.py::_dispatch_step 逐步差分，写进报告 measured：
+  plant_steps_advanced / plant_sim_advance_s / guest_wait_{calls,requested,advanced}
+```
+
+**实测（`IRAF_PLANT_DEMAND_GATE` 生效值 = true，来源"声明"；timestep = 0.002 s；整链 9/9 `passed=True`）**
+
+| 步骤 | 声明 duration_ms | plant 实推步数 | 实推仿真时间 | wait 调用数 | requested | advanced | requested−advanced | 放大 |
+|---|---|---|---|---|---|---|---|---|
+| s01_verify_ready（狗 stand） | 8000 | 4000 | 8.00000000000267 s | 0 | 0 | 0 | 0 | 1.00× |
+| s03_pick（臂） | 8000 | 30933 | 61.866 s | 6515 | 30933 | 30933 | **0** | 7.73× |
+| s04_place_in_tray（臂） | 12000 | 100500 | 201.0 s | 26703 | 100500 | 100500 | **0** | 16.75× |
+| s06_unload_at_b（臂） | 8000 | 21733 | 43.466 s | 4279 | 21733 | 21733 | **0** | 5.43× |
+| s07_place_at_b_table（臂） | 8000 | 57500 | 115.0 s | 15003 | 57500 | 57500 | **0** | 14.38× |
+
+**判决**
+1. **"记账 bug"判死**：每个臂步的 `advanced == requested` **逐位相等**（差值全 0），且 `calls > 0`
+   ⇒ 需求闸门与步数记账**完全正确**；`advanced > requested` 的多推**一次都没发生**。
+2. **"owner 领先导致 wait 立刻返回"判死**：等待确实阻塞过（s06 有 4279 次等待），
+   且每次等待的推进量恰好等于请求量。
+3. **真因（放大全部出在请求侧）**：`mujoco_backend.py::_move_trajectory` 的
+   ```python
+   if settle_ms is None:
+       settle_ms = max(250, min(16000, int(duration_ms) * 4))   # 4318-4319
+   ```
+   每个 `_move_trajectory(duration_ms)` 除了走完 `duration_ms` 的运动，还**额外推进
+   `4 × duration_ms` 的稳定窗口**（相位 < 4000 ms 时不触上限）⇒ **单个相位推进 5× 声明时长**。
+   `pick_object` 有 HOME/APPROACH/DESCEND… 多个 `_move_trajectory`（各 `phase_ms = duration_ms // 5`）
+   再加上开合爪的 `_advance_pinned(open_ms)` + `_advance_for(open_ms)`（同一时长推两遍）
+   ⇒ 声明 8000 ms 的步骤实推 43.5 s。
+
+**对 s06 残差的影响（把 11.56 的"33 s 曝光窗口"接到具体来源）**
+残差 = 载荷漂移率 × 曝光窗口，而**曝光窗口由这些 4× 稳定窗口与开合爪推进段堆出来**，
+不是按 `duration_ms` 推得出来的 ⇒ 用 `duration_ms` 估算窗口会低 5~17 倍，这正是"残差看着莫名其妙"的原因。
+
+**两个候选杠杆（本轮只定位，未改）**
+```
+A. `grasp_pose_correction.descend_splits: K`（机制**已存在**，1148-1183）：
+   注意它的语义是"每子段用新鲜实测目标重解剩余下压"，把**最后一次纠偏到门禁的陈旧度**
+   从 (phase_ms + 4×phase_ms) 降到 (phase_ms/K + 4×phase_ms/K)；
+   而**总窗口不变**（chunk_settle 按 1/K 缩放，正是为了不让 K 段各稳定 4×phase_ms ⇒ 总稳定放大 K 倍）。
+   ⇒ 对"漂移×窗口"的收益来自"最后一段更短"，不是"总窗口更短"。
+B. 开合爪段的"同一时长推两遍"（`_advance_pinned(open_ms)` 后紧跟 `_advance_for(open_ms)`，
+   close 段同构）= 2×(3200+2134) ≈ 10.67 s，占 s06 曝光窗口约 1/3。
+   **疑似冗余但未定论** —— 钳制段（pin）与普通推进的语义可能不同，删任何一个都改变物理；
+   需先隔离测量，不得直接动。
+判据 0.005 **未动**。
+```
+
+**回归**：本提交只加计数与报告字段（`plant.py` 的 `wait_until` 包一层 `try/finally`，只加 3 个 int）。
+整链 9/9 仍 `passed=True`，且关键数字与改动前**逐位一致**：
+`s03 0.001636051094256991` · `s04 0.005529421` · `s06 0.0021561648939820905` · `s07 0.022849592` ·
+`s02 yaw 0.7349525451464043` · `s02b 1.1869138862660753` ⇒ 无观测者效应。
+
 ## 12. 下一步
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
 0a. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。
