@@ -1963,8 +1963,13 @@ def _joint_place_resolution(root, solver, resolution, place_targets, arm_report,
                 transit_xy = [float(local[0]), float(local[1])]
             else:
                 transit_xy = [float(lift_local[0]), float(lift_local[1])]
+            # 绕行航点**抬高量**（2026-10-08 新增，可选：`grasp.place_transit_extra_z_m`，缺省 0 ⇒ 逐位不变）。
+            # 为什么：换侧/架高等布局下，穿透发生在 **lift/transit → above 的关节空间插值航段**上
+            #   （实测 `path:transit>above` frac 0.667~0.75 前臂/上臂穿台面 −0.070131 m），
+            #   而航点解本身与选解规则（肘部偏好）都改不动它 ⇒ 把**绕行航点抬高**，让插值起手就高。
+            transit_extra_z = float((baseline_doc.get("grasp") or {}).get("place_transit_extra_z_m") or 0.0)
             transit_local = [transit_xy[0], transit_xy[1],
-                             max(float(lift_local[2]), bearing_pad_z)]
+                             max(float(lift_local[2]), bearing_pad_z) + transit_extra_z]
             transit_evidence = {"lift_pad_z_m": round(float(lift_local[2]), 9),
                                 "bearing_pad_z_m": round(bearing_pad_z, 9),
                                 "used_z_m": round(transit_local[2], 9),

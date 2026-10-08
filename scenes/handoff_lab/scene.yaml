@@ -225,6 +225,9 @@ robots:
       baseline_overrides:
         grasp:
           home_rise_m: 0.10
+          # ⚠ 2026-10-08 本轮实验（轨迹层）：把**绕行航点抬高 0.15**，让 lift/transit → above 的
+          #   关节空间插值起手就高（真因见下方 place_elbow 条：穿透在插值航段上）。
+          place_transit_extra_z_m: 0.15
           # ⚠ 2026-10-08 已测并回滚：新增的"肘部偏好"键（`place_elbow_body`+`place_elbow_pref`，
           #   见 scripts/build_piper_baseline.py）在换侧场景里**对穿台面无改善**——声明
           #   `place_elbow_body: forearm_link` + `high` 后构建通过（resolved=True）但
@@ -271,6 +274,10 @@ robots:
           # 附带修好的一处真缺陷（保留）：`scene_builder.py:1827` 原本重读磁盘基线 ⇒ 放置侧**静默丢弃**
           #   场景 `baseline_overrides`（本键声明后航点逐位不变即其证据）；已改为用合并版并 fail-closed。
     placement:
+      # ⚠ 2026-10-08 本轮实验：基座抬到 z=0.30（立柱/台架）。**早前我漏读了这一项的真正指标**——
+      #   当时只看"臂↔狗"净空（只涨 15 mm）就判死；但使用者从演示中指出"**中间臂放到地面**、
+      #   末端够不下去"（s07：载荷底面 0.202827919 vs 承载面 0.005 ⇒ 差 198 mm，超 max_vertical_m 0.05）
+      #   ⇒ 该测的指标是**臂↔台面/落点垫**的穿透，不是臂↔狗。本行即为补测。
       pos_m: [0.45, 0.90, 0.0]
       quat_wxyz: [0.707106781186548, 0.0, 0.0, 0.707106781186548]
     note: >-
@@ -479,7 +486,7 @@ props:
       #      **消失** ✓，但残留 `wrist_1 ↔ base_link` −0.000835 m（狗躯干，place_above 相位），
       #      且 B 站 yaw −2.393° → −2.648°（更差）⇒ 不采用；⇒ 平移落点垫**不足以**清掉腕部
       #      ⇒ 下一手段＝④ **改放置接近朝向**（让腕部背向狗），必要时⑤挪 B 站（级联 s06）。
-      pos_m: [0.78, 0.70, -0.005]
+      pos_m: [0.55, 1.30, -0.005]
       quat_wxyz: [1.0, 0.0, 0.0, 0.0]
     receiving: true
     note: >-
