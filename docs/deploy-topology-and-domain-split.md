@@ -152,8 +152,14 @@ docker run -d --name iraf-intel-domain   $IMG sleep infinity
 服务端    ⚠ **更正（同日）**：gRPC 服务端**已存在** —— `src/iraf_adapters/grpc/runtime_grpc.py` 的
               `SkillRuntimeServicer`：`Execute`→`stream SkillFeedback`、`Cancel`、`GetExecution`、token 鉴权、
               `add_execute_get_servicer_to_server` 注册入口；`server.py`（43 行）只是**入口桩**。原判"服务端缺失"作废。
-注册表    ❌ 有界范围（grpc/ sdk/ core/）内 grep 未见 CapabilityProvider / register_provider / PROVIDERS
-          ⇒ 真正缺口 = **服务端后面要接的 Provider（能力实现）与注册表**
+注册表    ⚠ **再更正**：注册表**存在** —— `src/iraf_core/registry.py: SkillRegistry()`，由 `IRAF_SKILL_ROOT` 加载技能目录；
+          先前"未命中"是因为我按 `CapabilityProvider/register_provider/PROVIDERS` 之名 grep（**措辞错了**）。
+          Provider(backend) **不需要改代码**：`bootstrap.py:load_backend(IRAF_BACKEND_ENTRYPOINT, json.loads(IRAF_BACKEND_CONFIG), profile, authority)`
+          ⇒ 控制域只需提供**一个外部桩模块**并把 entrypoint/config 用环境变量指过去。
+⇒ 待做（**不必改 IRAF 框架代码**）：① 读 `load_backend` 的调用约定（桩可调用的入参与返回的 backend 接口）
+        ② 写控制域 Provider 桩模块（可复现事实 + 可注入"超时/不可达"）
+        ③ 两容器各设 6 个 IRAF_* 环境变量起 server / 跑 sdk 客户端，执行四例验证
+        ⚠ 上一版此处写的"缺口=注册表/待改 bootstrap"**作废**
 ⇒ 待实现（2026-10-08 再更正：缺口已定位到**一根线**）：
    `src/iraf_adapters/grpc/server.py`（43 行）**已经把线接好**：`runtime = build_runtime_from_env()`
    → `add_execute_get_servicer_to_server(SkillRuntimeServicer(runtime, token, subject), server)`
