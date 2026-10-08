@@ -2923,6 +2923,13 @@ class MujocoBackend:
             print(
                 "PICK_PHASE " + json.dumps({
                     "phase": phase,
+                    # 仿真时刻与墙钟（2026-10-08 补）：相位级窗口对账用。
+                    # 为什么必须记：s06 的到位残差 = 载荷漂移率 × 曝光窗口，而窗口只能**实测**——
+                    # `duration_ms` 推不出来（每个 `_move_trajectory` 还额外推 4×duration 的稳定窗口，
+                    # 实测声明 8000 ms 的步骤实推 43.466 s）。没有这个字段就只能靠推算，
+                    # 上一轮就是这么错的（把"最后一次重解 → 门禁"估成 13.5 s，实际残差反推 ≈ 25.4 s）。
+                    "sim_time_s": float(self.data.time),
+                    "wall_s": round(time.perf_counter(), 6),
                     "target_z_m": float(self.data.xpos[target_body][2]),
                     "wrist_z_m": float(self.data.xpos[wrist][2]),
                 }, ensure_ascii=False),
