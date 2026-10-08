@@ -2629,11 +2629,22 @@ class MujocoBackend:
         self._advance_for(phase_ms)
         # ---- ④ 抬离（回放构建期解）
         retreat_goal = {str(k): float(v) for k, v in retreat.items()}
-        if carry_release_gripper:
-            # 已按声明释放夹爪 ⇒ 抬离段**不能**把夹爪再合上（否则会把刚放好的载荷推走，
-            # 也会让 `released`（张爪后不再接触）判据失败）。
-            for name in (gripper.get("open_positions") or {}):
-                retreat_goal[str(name)] = float(gripper["open_positions"][name])
+        # ⚠ 抬离段**无条件**不得把夹爪再合上（2026-10-08 修，§11.93）。
+        # 为什么原来挂条件、为什么错：旧写法 `if carry_release_gripper:` 把
+        # 「`carry_constraint.release_gripper`（焊缝搬运期间是否张爪）」当成了
+        # 「刚做过释放、撤退要保护张开」。两者不是一回事：
+        #   · `release_gripper: true`（Piper）＝搬运期间焊缝承担载荷、指腹张开；
+        #   · `release_gripper: false`（UR5e，见 config/ur5_simulation_baseline.yaml:171）
+        #     ＝搬运期间指腹合着（指腹就是锚点参照物，张爪会让参照漂移）——它**只**说搬运期，
+        #     而 ③ 的释放张开（`_set_gripper_controls(open_positions)`，无任何条件）对两臂都一样执行。
+        # 于是 UR5e 走不到这段保护，而**撤退航点在构建期带的是「抓取抬升（闭爪）」的夹爪通道值**
+        # （scene_builder.py:1979-1983：夹爪通道取自 `out_gripper["lift_positions"]`，
+        #  目的只是让 transit/above/descend 三段在搬运中保持合爪）⇒ 原样回放会把刚张开的指腹
+        # 重新合上、夹住刚放下的载荷，`released`（张爪后指腹与载荷不再接触）判为 False。
+        # 实测（§11.91 相位梯）：after_touchdown_6 pad_span 0.091302 / finger{False,False}（已释放）
+        #   → after_retreat pad_span 0.039260 / left:True（被合爪夹住）⇒ s07「未确认载荷已放下」。
+        for name in (gripper.get("open_positions") or {}):
+            retreat_goal[str(name)] = float(gripper["open_positions"][name])
         self._move_trajectory(retreat_goal, phase_ms,
                               ctrl_offsets=self._pick_ctrl_offsets("lift") or None)
         _trace("after_retreat", _snapshot(), "抬离结束（载荷应留在承载面上）")
