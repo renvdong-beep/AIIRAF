@@ -6621,9 +6621,21 @@ residual_tolerance_m: 0.002 → 0.001
 并在 `config/ur5_simulation_baseline.yaml` 就地留档本结论；构建产物随后重建以收敛（该键不影响结果，
 故重建前后整链表现一致）。
 
-**顺带确证的构建链事实（值得记）**：`scenario.py run` **只运行、不构建**；
-改任何声明后必须显式重建——臂侧 `scripts/build_baseline.py`（或 `scripts/build_ur5_baseline.py` 兼容入口），
-联合侧 `scripts/build_scene.py --scene <场景包> --robot <本体>`。
+**顺带确证的构建链事实（值得记，本轮踩了两次）**：`scenario.py run` **只运行、不构建**；
+改任何声明后必须显式重建，而且**两层构建是分开的、互不触发**：
+```
+臂侧（生成 `build/models/<robot>-pick-scene.{xml,json}`）：
+  PYTHONPATH=src python3 scripts/build_baseline.py \
+      --baseline config/<robot>_simulation_baseline.yaml \
+      --scene build/models/<robot>-pick-scene.xml \
+      --pose-evidence build/calibration/<robot>-baseline-pose.json
+  （兼容入口 scripts/build_ur5_baseline.py 只是加默认参数的转发）
+联合侧（生成 `scenes/<包>/` 声明的联合 MJCF + 报告）：
+  PYTHONPATH=src python3 scripts/build_scene.py --scene scenes/handoff_lab --robot unitree_go2
+  ⚠ 实测：**联合构建不会重建臂报告** —— 我先把 `residual_tolerance_m` 改回 0.002 再跑
+    `build_scene.py`，臂报告里**仍是 0.001**；必须再用 `build_baseline.py` 单独重建才对上。
+  ⇒ 两层要**分别**重建；只做一层会留下"声明与产物不一致"的状态。
+```
 "改了声明就重跑"是本项目的一个**静默失效陷阱**（本轮我第一反应就是这么错的，靠"数字逐位相同"才发现）。
 
 ## 12. 下一步
