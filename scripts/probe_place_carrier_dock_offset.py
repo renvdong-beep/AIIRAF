@@ -158,6 +158,11 @@ def run_case(model, data, args, offset_m, offset_dir_deg, yaw_deg, waypoints, or
         worst[key] = min(worst.get(key, 1e9), r["dist_m"])
     print("── 用例 %s：平移 %.6f m（方向 %.1f°）偏航 %.6f°  margin %.4f" %
           (label, offset_m, offset_dir_deg, yaw_deg, args.margin))
+    carrier_names = {str(mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, b) or b)
+                     for b in carrier_bodies}
+    carrier_min = min((v for k, v in worst.items() if k[1] in carrier_names), default=None)
+    print("   【最坏载体净空】%s m（越正越好；判据 ≥ 停靠容差 0.030 + 余量）"
+          % ("%.6f" % carrier_min if carrier_min is not None else "n/a"))
     print("   臂↔场景对 %d 组；臂↔**载体**对 %d 组" % (len(worst), len([k for k in worst if any(
         k[1] == str(mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, b) or b)
         for b in carrier_bodies)])))
@@ -251,9 +256,12 @@ def main():
 
     outdir = REPO / "build/diagnostics"
     outdir.mkdir(parents=True, exist_ok=True)
-    sink = outdir / ("place-carrier-clearance-%s.json" %
+    # 文件名必须含**高度口径**：否则多次不同 --carrier-z 的运行会互相覆盖（2026-10-08 踩到）
+    _ztag = ("site" if args.carrier_z_mode == "site" else
+             "z%.6f" % args.carrier_z if args.carrier_z_mode == "explicit" else "zmodel")
+    sink = outdir / ("place-carrier-clearance-%s-%s.json" %
                      ("scan" if args.scan else "m%.6f-y%.4f-d%.1f" %
-                      (args.offset_m, args.yaw_deg, args.offset_dir_deg)))
+                      (args.offset_m, args.yaw_deg, args.offset_dir_deg), _ztag))
     sink.write_text(json.dumps({"args": vars(args), "cases": report}, ensure_ascii=False, indent=2))
     print("[留档] %s" % sink)
     return 0
