@@ -6399,6 +6399,53 @@ s02b_dock_station_b   通过  0/30   30 轮 reason **一字不差**：
 **当前状态**：站位**已回滚**为 `[0.45, 0.45, 0.0]`，受控重建后探针数值与实验前**逐位一致**
 （最坏 −0.056840、托盘 −0.027656）⇒ 产物与已验收基线同步（s07 30/30 仍成立）。
 
+**§11.95 UR5e 撞翻 Go2 的修复：把狗移出"腕部走廊"（2026-10-08，整链 9/9 通过）**
+
+**结论（三层证据）**
+```
+① 构建期：scene_check passed / exit=0，ur5e 段 `resolved=True`
+② 静态净空（`scripts/probe_place_carrier_dock_offset.py`，载体按**运行期实测躯干高度 0.276627 m** 摆放）：
+     臂↔狗最坏净空 **+0.111100 m**（111 mm = 停靠容差 0.030 的 **3.7 倍**）
+     修复前同一口径：**−0.056840 m**（wrist_2↔base_link 蹭穿；运行期实测 −0.000746 / tray −0.000453）
+     arm↔台面/落点垫：只剩**夹爪自身与垫**的贴合 −0.026152（与已验收基线 −0.028751 同族）⇒ 无中段侵入
+③ 运行期整链：s01~s07 **9/9 全绿**（含长期红的 s02b）：
+     s02 0.029413 m/0.734953° ｜ s03 0.001636 ｜ s04 0.005529 ｜ **s02b 0.025849 m/1.186914°**
+     ｜ s06 0.002156 ｜ **s07 落点 0.02285**（判据 0.065）
+```
+
+**六处声明改动（缺任一处都会在某个环节被拦）**
+| # | 声明 | 改动 | 不同改的后果（实测） |
+|---|---|---|---|
+| ① | `handoff_station_frame_b.pose.pos_m` | (0.45,0.45,0) → **(0.15,0.45,0)**（−x 0.30） | —（这是主杠杆） |
+| ② | `place_pad_b.pose.pos_m` | (0.78,0.70) → **(0.88,0.70)**（+x 0.10） | 净空只有 +0.03 级，不够预算 |
+| ③ | `reference_solver.target_override_world_m` | → **[0.15,0.45,0.375372]**（抓取名义目标） | 运行期「实测目标 vs 名义解差 0.272365942 m > 0.07」⇒ s06 拒 |
+| ④ | `baseline_overrides.grasp.home_rise_m` | 0.10 → **0.05** | 构建期「home 相位残差 **0.215169280 m** ⇒ 拒绝装配」 |
+| ⑤ | `dock_for_handoff.stations.handoff_b.approach_position_tolerance_m` | 0.020 → **0.025** | 狗收敛到 0.020615 ⇒ 差 0.6 mm 没进控制容差 ⇒ 超时 |
+| ⑥ | `dock_for_handoff.timeout_s` | 12 → **20** | 换布局后接近段收敛变慢 |
+
+**为什么"沿 x 挪狗"是唯一有效杠杆（其余方向都已判死，每个都留了数）**
+```
+挪站位沿 y        → 抓取侧 home 不可达（√(dy²+0.635²) ≤ 0.85 ⇒ dy ≤ 0.565 m）
+挪站位沿 **x**    → 不改变 dy ⇒ 不受该约束 ✓（扫描单调：0.00→−0.060119；0.15→−0.039556；0.25→−0.003004）
+                   可达上限：站位 x ≥ 0.15（|基座(0.45,0.90)−狗| = 0.541 ≤ 0.565；x=0.10 即 0.570 OUT）
+落点换侧（+y 侧） → 臂↔狗可清到 +0.284 m，但**臂中段必穿台面**（−0.047~−0.073 m）⇒ 判死
+架高落点垫        → 被"同半球"规则拒（27 候选 axis_dot 全负）；+换种子可通过但中段穿透**更差**
+抬臂基座          → 只值 ~15 mm（腕部世界位姿由落点+接近向决定）；z=0.30 时 descend 相位整批无解
+改接近方向/净间隙  → 各只值 ~8~15 mm（穿透点会移到插值中点，压不住）
+via 绕行相位      → 已实现（端到端打通）但对本布局无改善：穿透在 **`waypoint:above` 自身**（−0.039710）
+肘部偏好（新增键）→ 只改航点选解、改不了"够 5 cm 高目标时中段必越台面平面"这条硬几何
+```
+**本轮新增的两个惰性机制（缺省不声明 ⇒ 逐位不变）**
+- `grasp.place_via: midpoint`：把 transit→above 拆成两段（求解器 plan + 构建器相位序 + 后端白名单与回放 + 探针相位序）
+- `grasp.place_elbow_body` + `place_elbow_pref: high|low`：在同半球候选里按该 body 的世界 z 选解
+**可复现的判据与工具**
+```
+静态：PYTHONPATH=src python3 scripts/probe_place_carrier_dock_offset.py --margin 0.25 --carrier-z-mode explicit --carrier-z 0.276627
+      （判据：臂↔载体 ≥ 0.030 且 arm↔world/落点垫 无侵入；【最坏载体净空】单值）
+运行期：scenario.py run --scene scenes/handoff_lab --scenario nominal --world joint --display none（整链 9 步）
+批次：bash scripts/campaign_pass_rate.sh 30（s06/s07 通过率 + min/max 逐位一致）
+```
+
 ## 12. 下一步
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
 0a. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。
