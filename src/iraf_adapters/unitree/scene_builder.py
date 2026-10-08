@@ -1824,7 +1824,18 @@ def _joint_place_resolution(root, solver, resolution, place_targets, arm_report,
     baseline_path = Path(str(solver["baseline"]))
     if not baseline_path.is_absolute():
         baseline_path = root / baseline_path
-    baseline_doc = _read_yaml(baseline_path.resolve(), "reference_solver.baseline")
+    # ⚠ **必须用合并后的文档，不得重读磁盘**（2026-10-08 修，§11.95）：
+    # 本行原为 `baseline_doc = _read_yaml(baseline_path.resolve(), ...)` ⇒ 把 `_joint_reference_resolution`
+    # 里 1671-1681 已合并 `solver.baseline_overrides` 的文档**覆盖成臂的原始基线**
+    # ⇒ 场景里 `baseline_overrides.grasp.*` 在**放置侧被静默丢弃**（抓取侧走 1688 的合并文档，反而生效，
+    # 于是这条缺陷长期被"看起来生效"掩盖）。实测证据：声明 `place_approach_direction` 后重建，
+    # 放置四段航点**逐位不变**、净空仍 −0.056840（与声明前一字不差）。
+    # 处置同本仓一贯口径：**缺声明即显式失败**，不静默回退到磁盘版本。
+    baseline_doc = resolution.get("baseline_doc")
+    if not isinstance(baseline_doc, dict) or not baseline_doc:
+        _fail(EXIT_REFERENCE,
+              "放置侧缺少**已合并场景 baseline_overrides 的**基线文档（resolution.baseline_doc）："
+              "不得在此重读磁盘基线（会静默丢弃场景覆盖，见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.95）")
     # 搬运段的**夹爪语义**：必须由声明给出（缺声明即失败）。它决定后端是否会在搬运中合拢夹口
     # 从而把载荷挤出夹口（§11.23(12)：hold = 目标取当前实测 qpos；trajectory = 按位置插值，
     # 实测会把方块沿夹口轴向挤出去：力 12 N → 2.6 N → 脱离）。**不给实现层默认值。**

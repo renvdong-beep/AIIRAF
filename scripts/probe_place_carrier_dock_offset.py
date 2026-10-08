@@ -188,7 +188,7 @@ def run_case(model, data, args, offset_m, offset_dir_deg, yaw_deg, waypoints, or
                   (r["at"], r["fraction"], r["arm_body"], r["other_body"], r["dist_m"]))
     return {"label": label, "offset_m": offset_m, "offset_dir_deg": offset_dir_deg,
             "yaw_deg": yaw_deg, "margin": args.margin, "pairs": {("%s↔%s" % k): v for k, v in worst.items()},
-            "carrier_contacts": carrier_rows, "poses": poses}
+            "carrier_contacts": carrier_rows, "all_contacts": rows, "poses": poses}
 
 
 def main():
