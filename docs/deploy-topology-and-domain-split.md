@@ -154,9 +154,17 @@ docker run -d --name iraf-intel-domain   $IMG sleep infinity
               `add_execute_get_servicer_to_server` 注册入口；`server.py`（43 行）只是**入口桩**。原判"服务端缺失"作废。
 注册表    ❌ 有界范围（grpc/ sdk/ core/）内 grep 未见 CapabilityProvider / register_provider / PROVIDERS
           ⇒ 真正缺口 = **服务端后面要接的 Provider（能力实现）与注册表**
-⇒ 待实现两件 + 一条脚本：provider_stub.py（控制域替身：可复现事实 + 可注入"超时/不可达"两种故障）、
-              把 `runtime` + provider 接进 `server.py`（用它现成的 `add_execute_get_servicer_to_server`）、
-              scripts/verify_domain_split.sh（起链路 + 四例验证 + 报告）
+⇒ 待实现（2026-10-08 再更正：缺口已定位到**一根线**）：
+   `src/iraf_adapters/grpc/server.py`（43 行）**已经把线接好**：`runtime = build_runtime_from_env()`
+   → `add_execute_get_servicer_to_server(SkillRuntimeServicer(runtime, token, subject), server)`
+   → `add_event_servicer_to_server(EventServicer(runtime.store, token, subject), server)`，
+   且带一道 `runtime.profile.simulation` 守卫、`backend` 有 `start_continuous` 时挂 MuJoCo supervisor。
+   `SkillRuntime.__init__(profile, safety_policy, backend, registry, authority, store, policy=None, resource_id=None, safety=None)`
+   ⇒ **backend（Provider）是注入的**，运行时由 `iraf_adapters/bootstrap.py: build_runtime_from_env()` 构造。
+   ⇒ 真缺口 = **bootstrap 能否按声明/环境构造"控制域 Provider 桩"的 backend**（当前只走 MuJoCo）。
+   待做：① 读 `bootstrap.py` 定 backend 的选择方式（是否已有 registry/能力表——我先前 grep 未命中，很可能它就在这里）
+        ② 加 `provider_stub` backend（可复现事实 + 可注入"超时/不可达"）
+        ③ `scripts/verify_domain_split.sh` 起链路跑四例
 ⇒ 四例：①正常 ②策略拒绝 IRAF-POLICY-DENIED ③deadline 超时/取消 ⇒ 显式失败 ④Provider 不可达 ⇒ 显式失败 + 安全停机
 ```
 **回滚**：`docker rm -f iraf-control-domain iraf-intel-domain`；宿主与仓库无副作用（只读挂载/拷贝）。
