@@ -6583,6 +6583,49 @@ residual_tolerance_m: 0.002 → 0.001
 `plant_sim_advance_s` / `guest_wait_*` 那样**落进报告**（内存记账、段末落盘），而不是逐相位打印。
 这正是本项目"逐拍通路要轻"的第五次现形。
 
+## 11.67 `residual_tolerance_m` 隔离实验：**判死**（改到 1 mm 后整链逐位不变）—— 它不支配 s06 残差（2026-10-08）
+
+**假设（来自 §11.66）**：s06 残差 2.111~2.156 mm ≈ 纠偏环声明的停止容差 `residual_tolerance_m = 0.002`
+⇒ 收紧到 0.001 应把残差压到 ≈1.2 mm。
+
+**实验（严格按"改声明 → 重建 → 连跑两轮"三步，判据 0.005 未动）**
+```
+1) 改声明    config/ur5_simulation_baseline.yaml: residual_tolerance_m 0.002 → 0.001
+2) 只跑 scenario.py run（两轮）→ s06 仍 0.0021561648939820905   ← 发现**没生效**
+   ⇒ 定位：`scenario.py run` **不重建**任何东西，它复用构建产物（数字逐位相同即证据）
+3) 重建臂报告  PYTHONPATH=src python3 scripts/build_baseline.py \
+                --baseline config/ur5_simulation_baseline.yaml \
+                --scene build/models/ur5-pick-scene.xml \
+                --pose-evidence build/calibration/ur5-baseline-pose.json
+   → 产物确认 {"residual_tolerance_m": 0.001, "descend_splits": 5, "align_max_attempts": 3, ...}
+4) 重建联合场景 scripts/build_scene.py --scene scenes/handoff_lab --robot unitree_go2（rc=0）
+5) 连跑两轮 → **逐位不变**：s01 8.0 / s02 0.7349525451464043 / s03 0.001636051094256991 /
+   s04 0.005529421 / s05 0.0 / s02b 1.1869138862660753 / s05b 0.0 /
+   **s06 0.0021561648939820905** / s07 0.022849592，两轮 `passed=True` 且完全相同
+```
+
+**结论**：`residual_tolerance_m` **不支配**实测残差。声明改了、产物确认改了、联合场景重建了，
+结果**一个 bit 都没动** ⇒ 该键在 s06 的纠偏链上**没有产生任何行为差异**。
+
+**两种未闭合的解释（下一条判别实验很便宜）**
+```
+① 该键在**联合路径上根本没被消费**（声明链缺一层 ⇒ 又是本项目反复出现的那类静默失效）。
+   证伪/证实方式：把它设成明显不具约束力的值（如 0.010，> 验收 0.005 也行，实验后回滚），
+   若结果**仍逐位不变** ⇒ 键没被消费；若结果变差 ⇒ 键被消费。
+② 键被消费，但被 `align_max_attempts: 3` 的**迭代预算**先盖过：环最多做 3 轮"量→纠"，
+   每轮都受 PD 静差限制 ⇒ 收紧停止容差不会让它多做工作（残差的地板是静差，不是容差）。
+   证实方式：改 `align_max_attempts` 3 → 6，看残差是否下降。
+```
+
+**处理**：按"未验证的控制改动一律回滚"，`residual_tolerance_m` 已改回 **0.002**，
+并在 `config/ur5_simulation_baseline.yaml` 就地留档本结论；构建产物随后重建以收敛（该键不影响结果，
+故重建前后整链表现一致）。
+
+**顺带确证的构建链事实（值得记）**：`scenario.py run` **只运行、不构建**；
+改任何声明后必须显式重建——臂侧 `scripts/build_baseline.py`（或 `scripts/build_ur5_baseline.py` 兼容入口），
+联合侧 `scripts/build_scene.py --scene <场景包> --robot <本体>`。
+"改了声明就重跑"是本项目的一个**静默失效陷阱**（本轮我第一反应就是这么错的，靠"数字逐位相同"才发现）。
+
 ## 12. 下一步
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
 0a. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。
