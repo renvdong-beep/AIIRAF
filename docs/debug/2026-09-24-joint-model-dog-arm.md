@@ -6309,19 +6309,51 @@ s02b_dock_station_b   通过  0/30   30 轮 reason **一字不差**：
      判"哪具本体、被谁瞬移"；在那之前 `place_settled_*` **不得被当作"已落稳"的完整证明**。
    ⚠ 该项**不进** s07 判据（判据是 contacts + gap ≤ margin），但**必须**在文档里标注不可信范围。
    ```
-2. **构建期载体自检用**标称站位** ⇒ 运行期的腕部碰撞结构上看不见（§11.92 的缺口）**
+2. **构建期载体自检的高度口径错 0.2766 m ⇒ 运行期的腕部碰撞结构上看不见（§11.92 的缺口，已量化）**
    ```
-   src/iraf_adapters/unitree/scene_builder.py:2067-2091：`data.qpos[:] = 0.0` 后
-     直接把站位帧 site 的 pos/quat 写进载体 free joint ⇒ **零停靠残差**
-   联合报告实测：`waypoint_contacts = []`（航点端点无载体接触）、
-     `path_contact_count = 192` 但取样 20 条全是 arm↔world / arm↔place_pad_b（carrier=False）
-   运行期实测：B 站停靠偏离标称 **0.028036 m / 2.4499°**，同时出现
-     ur5e_wrist_1↔tray_01(−0.807 mm) / ↔FL_hip(−0.067 mm) / wrist_2↔base_link(−0.746 mm)
-   ⇒ 标称位姿下"腕部离托盘还有几毫米"，实测位姿下变成亚毫米穿透
-   ⇒ 待办：探针 `scripts/probe_place_carrier_dock_offset.py`（已落盘，**待批次结束后跑**）
-     把载体按实测/最坏停靠偏差摆放后做 FK，与 collide1.log 的接触对对账；
-     对账成立 ⇒ 构建期自检应支持**声明驱动的最坏停靠偏差**（取值由 `dock_for_handoff.stations.*`
-     的容差推出，不写死数字），**先落 IDL/schema 再改构建器**。
+   构建期（src/iraf_adapters/unitree/scene_builder.py:2067-2091）：
+     data.qpos[:] = 0.0 后直接把**站位帧 site 的 pos/quat** 写进载体 free joint
+     ⇒ 躯干 z = 0（站位帧 site 定义在 worldbody 的 z=0）、腿关节全 0
+     ⇒ 探针实测 base_link=[0.45,0.45,0.0]、tray_01 z=0.057（tray 是 base_link 的子体，XML pos=(0,0,0.057)）
+   运行期实测（同一次运行内的真值，`PLACE_TRACE` 的 Piper 行）：
+     tray_top_m = [0.40885, 0.001373, **0.343627**]
+     联合 XML：tray_01 在 base_link 下 pos=(0,0,0.057)、geom half_z=0.01
+     ⇒ **运行时躯干 z = 0.343627 − 0.067 = 0.276627 m**（构建期是 0.0 ⇒ 差了 0.276627 m）
+     三方独立佐证：声明 `config/go2_locomote.yaml:stand_height_m = 0.27`；
+                  实测 `config/go2_joint.yaml:264 height_mean_m = 0.279953602548388`
+   ⇒ **托盘/躯干整体低了一整个"身高"** ⇒ 撞托盘/躯干在构建期**结构上不可能出现**
+     （实测：构建期 `waypoint_contacts=[]`，而运行期有 `wrist_1↔tray_01 n=136`）
+   ```
+   **净空量级（运行期自己的日志，与任何探针无关）**
+   ```
+   同一批 PLACE_TRACE 行里同时出现：
+     ur5e_wrist_1_link ↔ FL_hip     **+0.000892 m（0.89 mm 净空）**
+     ur5e_wrist_1_link ↔ tray_01    **−0.000453 m（0.45 mm 穿透）**
+   整批最深（运行期全部接触对）：
+     rq2f85_base ↔ box_01 −0.008337（正常夹持）｜ left_spring_link ↔ box_01 −0.005319
+     rq2f85_left_coupler ↔ place_pad_b −0.000863 ｜ **wrist_1 ↔ tray_01 −0.000807**
+     **wrist_2 ↔ base_link −0.000746** ｜ **wrist_1 ↔ FL_hip −0.000067**
+   ⇒ 腕部/前臂与**狗**之间是**亚毫米级擦碰** ⇒ 四足动态平衡下足以被掀翻（使用者观察到的"碰翻"）。
+   ```
+   **静态探针（`scripts/probe_place_carrier_dock_offset.py`，新工具）**
+   把载体按**站立高度**摆放后，标称航点下立刻出现运行期**同一批**接触对，且量级是**几十毫米**：
+   ```
+   carrier z=0.445（模型默认 qpos0）：wrist_2↔base_link −0.056675 ｜ wrist_1↔tray_01 −0.031671 ｜ wrist_1↔FL_hip −0.013965
+   carrier z=0.276627（运行期真值）  ：wrist_2↔base_link −0.048142 ｜ wrist_1↔tray_01 −0.036537 ｜ wrist_1↔FL_hip −0.005291
+   水平平移 0.028 m（四个方向）**不改变** tray_01 的穿透（恒 −0.031671）⇒ 该穿透是**竖直**方向的
+   高度扫描：tray_01↔wrist_1 穿透随载体 z 单调；z=0.53 → −0.001906、z=0.56 → **+0.022778**（净空转正）
+   ```
+   ⇒ **两件事必须分开修**：
+   ① **仪器**（构建期自检）：载体位姿要用**运行期实况**（站立高度 = `stand_height_m`/实测机身高度；
+      再叠加**声明的最坏停靠偏差**），否则门禁永远看不见这类碰撞 ⇒ 先落 IDL/schema 再改构建器；
+   ② **几何**：标称位姿下净空为**负几十毫米** ⇒ 必须改放置航点**姿态/落点**（不能靠毫米级微调），
+      目标净空要覆盖声明的停靠容差（`approach_position_tolerance_m` 0.020 / `hold` 0.030、
+      `approach_yaw_tolerance_rad` 0.034）⇒ 需求量级 ≈ **30~40 mm 标称净空**。
+   **待对账（未结）**：`scripts/probe_arm_fk_from_log.py` 用运行期实测臂关节做 FK，
+   `pad_mid` 与运行期自报值差 **9.4 mm**（用声明 geom `rq2f85_left_pad1/right_pad1` 后；
+   写死 `..._pad` 时差 47 mm）⇒ 残差主要疑为**指腹开度未复现**（运行期搬运段
+   `gripper_state.ctrl ≈ 0.4378`＝接近张开，因为焊缝承担载荷；探针按航点写的是 163＝闭合）
+   ⇒ 复现该行需同时给出指腹关节位形；在那之前**探针的绝对值只能当量级/方向用，不能当验收数字**。
    ```
 
 ## 12. 下一步
