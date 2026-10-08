@@ -180,10 +180,10 @@ docker run -d --name iraf-intel-domain   $IMG sleep infinity
         ③ `scripts/verify_domain_split.sh` 起链路跑四例 ⇒ **已实现并通过**，见 §6.3（含证据路径与实测值）
 ⇒ 四例：①正常 ②策略拒绝 IRAF-POLICY-DENIED ③deadline 超时/取消 ⇒ 显式失败 ④Provider 不可达 ⇒ 显式失败 + 安全停机
 ```
-### 6.3 四例跨域验收结果（2026-10-08 实测，`scripts/verify_domain_split.sh` 一轮产出）
+### 6.3 五例跨域验收结果（2026-10-08 实测，`scripts/verify_domain_split.sh` 一轮产出）
 
 复现命令：`IRAF_GRPC_TOKEN=<凭据> bash scripts/verify_domain_split.sh`（exit 0）
-证据目录：`build/acceptance/domain-split/`（`run.log` / `case-*.log` / `control-trace-*.jsonl`）
+证据目录：`build/acceptance/domain-split/`（`run.log` / `case-*.log` / `control-trace-*.jsonl` / `run-id.txt`）
 容器：控制域 `iraf-control-domain`（bridge）· 智能域 `iraf-intel-domain`（`--network container:控制域`）
 两端：`openEuler 24.03 (LTS-SP1)` · `aarch64`（x86 宿主 qemu）· `Python 3.11.6` · `pyyaml 6.0.3` / `jsonschema 4.26.0` / `grpcio 1.84.0` / `protobuf 7.36.2` / `grpcio-tools`（同一批 aarch64 轮子）
 
@@ -193,6 +193,7 @@ docker run -d --name iraf-intel-domain   $IMG sleep infinity
 | ② denied | 50051 | 3/3 ✓ | `status=FAILED`、`error_code=IRAF-POLICY-DENIED`、`reason=RobotProfile 名称、版本或摘要不匹配`、无成功证据 |
 | ③ cancel | 50052 | 6/6 ✓ | 进入 RUNNING 0.255 s → `Cancel accepted=True` → `CANCELLED`；**服务端 `GetExecution` 复核仍为 `CANCELLED`** |
 | ④ unreachable | 50053 | 3/3 ✓ | `status=FAILED`、`error_code=IRAF-EXECUTION-FAILED`、`reason=控制域不可达（注入故障 fault=unreachable）` |
+| ⑤ deadline | 50054 | 2/2 ✓ | deadline 2 s、后端耗时 6 s ⇒ `status=FAILED`、`error_code=IRAF-DEADLINE-EXCEEDED`、`reason=任务超过截止时间：deadline_unix_ms=1791447099191，执行完成时墙钟=1791447104096`（超期 4.905 s） |
 
 **控制域侧审计账（跨域取证的关键：证"动作真的发生在控制域"）**
 ```
@@ -200,11 +201,12 @@ control-trace-basic.jsonl        {"event":"capability","capability":"stand","exe
 control-trace-cancel.jsonl       {"event":"safe_stop","capability":"stop","execution_id":"d268ce48-…"}
                                  {"event":"capability","capability":"stop","execution_id":"d268ce48-…"}
 control-trace-unreachable.jsonl  {"event":"fault","kind":"unreachable"}
+control-trace-deadline.jsonl     {"event":"capability","capability":"stand","execution_id":"…"}
 ```
 安全停机两条记录相隔 **3.0 ms**、**同一 execution_id**（`d268ce48-…`）⇒ 取消路径确实在**控制域**执行了停机，
-且停机不被"慢链路"拖住。四个用例的 `stand`/`stop`/故障注入全部只在控制域账本里出现。
+且停机不被"慢链路"拖住。五个用例的 `stand`/`stop`/故障注入全部只在控制域账本里出现。
 
-**本轮由这次验证抓出并修掉的三处真缺陷（都在框架侧，均已修）**
+**本轮由这次验证抓出并修掉的四处真缺陷（都在框架侧，均已修）**
 ```
 ① server.py import 期硬依赖仿真：`from ..mujoco.supervisor import …` → `iraf_adapters.mujoco`
    又 import mujoco ⇒ 控制域（按设计不装仿真依赖）连规范入口都起不来（ModuleNotFoundError）。
@@ -213,6 +215,17 @@ control-trace-unreachable.jsonl  {"event":"fault","kind":"unreachable"}
    缺键即拒（"适配器报告缺少输出必需键"）。修法：按 4 个 skill 的 output.json 逐键返回。
 ③ 桩的 `stop` 继承了注入的 `latency_ms`（4000 ms）⇒ 安全停机被拖 4 s，等于伪造一个
    "安全停机会被慢链路拖住"的结论。修法：`_maybe_fault(apply_latency=False)`（铁律 1.6）。
+④ **截止时间只在准入时校验、执行完成后无人复核**（`iraf_core/runtime.py`）：
+   实测「deadline 2 s + 后端耗时 6 s」返回 `SUCCEEDED` 且无错误码 —— 伪造成功（铁律 1.5），
+   也违反"所有异步操作须有截止时间"（铁律 2.4）。
+   修法：`skill.invoke` 返回后、转 SUCCEEDED 之前复核 `deadline_unix_ms`，超期 ⇒
+   `FAILED` + `IRAF-DEADLINE-EXCEEDED`（该错误码早已登记于 `iraf_sdk/errors.py`）。
+   ⚠ **语义边界（不粉饰）**：这是**事后**复核，不是执行中途中止 —— `skill.invoke` 是一次阻塞调用，
+   中途中止要求 Provider/适配器自己兑现 `cancellation: cooperative_stop`（取消路径的意义即此）；
+   本改动只保证"超期绝不报成功"。
+   回归：整链 9/9 仍 `passed=True`，且数字与改动前**逐位一致**
+   （s02 0.7349525451464043 · s03 0.001636051094256991 · s04 0.005529421 ·
+     s02b 1.1869138862660753 · s06 0.0021561648939820905 · s07 0.022849592）。
 ```
 
 **已关闭的旧缺口**：`deploy/sdk/build_sdk.sh` 自述"本机没有 grpc_python_plugin，grpc 层无法复现"

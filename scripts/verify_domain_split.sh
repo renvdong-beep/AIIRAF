@@ -5,11 +5,12 @@
 # 它把整条链路做成一条可复跑命令：起容器 → 同步代码 → 装依赖 → 生成 proto stub → 起服务端
 # → 智能域发起四例 → 收证据。**不改 IRAF 框架的公共契约**（跨域只用 api/proto 的 gRPC 接口）。
 #
-# 四例（判据写在智能域客户端里，本脚本只负责编排与收证）：
+# 五例（判据写在智能域客户端里，本脚本只负责编排与收证）：
 #   ① normal      stand 全链成功（证据满足 skill 输出 schema）
 #   ② denied      Profile 摘要不匹配 ⇒ IRAF-POLICY-DENIED
 #   ③ cancel      执行中取消 ⇒ CANCELLED（服务端 GetExecution 复核，并证控制域执行了安全停机）
 #   ④ unreachable 控制域不可达 ⇒ IRAF-EXECUTION-FAILED
+#   ⑤ deadline    执行完成时已超过任务截止时间 ⇒ IRAF-DEADLINE-EXCEEDED（不得报成功）
 #
 # 用法（仓库根）：
 #   IRAF_GRPC_TOKEN=<部署下发的凭据> bash scripts/verify_domain_split.sh [--no-sync] [--out <dir>]
@@ -241,7 +242,7 @@ docker exec "${CTL}" sh -c "ls -l ${RUN_LOGS}" > "${OUT_DIR}/control-logs.txt" 2
 
 log "== 汇总"
 if [ -z "${CASE_FAILED}" ]; then
-  log "四例全部符合预期（证据：${OUT_DIR}）"
+  log "五例全部符合预期（证据：${OUT_DIR}）"
   exit 0
 else
   err "存在不符合项：${CASE_FAILED}"
