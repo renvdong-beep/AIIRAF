@@ -225,6 +225,15 @@ robots:
       baseline_overrides:
         grasp:
           home_rise_m: 0.10
+          # ⚠ 2026-10-08 已测并回滚：新增的"肘部偏好"键（`place_elbow_body`+`place_elbow_pref`，
+          #   见 scripts/build_piper_baseline.py）在换侧场景里**对穿台面无改善**——声明
+          #   `place_elbow_body: forearm_link` + `high` 后构建通过（resolved=True）但
+          #   台面/落点垫穿透**逐位不变**（−0.070131 / −0.060897 / −0.049699）。
+          #   真因（本轮判明）：那些穿透在 **`path:transit>above` frac 0.667~0.75** 这类
+          #   **插值航段**上，而肘部偏好只影响**航点解的选择** ⇒ 碰不到它。
+          #   ⇒ 换侧路线的最后一层是**绕行航点/轨迹**（不是航点选解，也不是肘部）。
+          #   （该键缺省不声明 ⇒ 旧行为逐位不变；命名坑：探针场景里 body 名是 `forearm_link`
+          #     这类**无前缀**名，写 `elbow_link`/`ur5e_elbow_link` 都会被 fail-closed 拒。）
           # ⚠ 2026-10-08（已回滚到缺省）：`place_seed` 换 `home` + 基座移到 (0.60,0.85) 的组合**被求解器拒绝**：
           #   `放置段 above 无可用解（多起点 27 个：残差达标且与参照轴同半球的都没有）`。
           #   **重要**：`place_seed` 不只决定起始点，还决定"**参照轴半球**"（同半球约束的基准）

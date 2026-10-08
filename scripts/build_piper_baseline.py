@@ -235,6 +235,20 @@ def build_place_reference_poses(root, baseline, target_local_m, payload_half_m, 
     # 多起点：种子本身 + joint2/3/5 的小网格扰动。**为什么必须多起点**（2026-09-28, §11.18 补）：
     # 位置型 IK 是局部求解器，从单一（哪怕已验证的）种子出发仍可能收敛到**翻转分支**（实测：单起点给出
     # 手指朝上的解、腕部余量看似够），而多起点扫描找到同半球解：残差 5.98e-06、轴 z=-0.156、余量 +0.031492 m。
+    # 肘部偏好（2026-10-08 新增，**可选**：不声明 ⇒ 与旧行为逐位一致）。
+    # 为什么加：本函数的选解规则只按"轴最接近参照轴"挑 ⇒ 对**肘**没有任何约束，实测在
+    #   换侧/架高等布局下会落到"肘沉进台面"的分支（前臂/上臂穿台面 −0.047~−0.073 m ↔ world，
+    #   且换 IK 种子、换臂基座都无法纠正）。
+    # 声明 `place_elbow_body`（该臂的肘部 body 名）+ `place_elbow_pref: high|low` 后，
+    #   在同半球且残差达标的候选里改按该 body 的**世界 z** 排序（两个键必须同时给）。
+    elbow_body_name = str(grasp_cfg.get("place_elbow_body") or "").strip()
+    elbow_pref = str(grasp_cfg.get("place_elbow_pref") or "").strip()
+    if bool(elbow_body_name) != (elbow_pref in ("high", "low")):
+        raise ValueError("grasp.place_elbow_body 与 grasp.place_elbow_pref（high/low）必须同时声明"
+                         "（实际 %r / %r）" % (elbow_body_name, elbow_pref))
+    _elbow_id = _body_id(model, elbow_body_name) if elbow_body_name else -1
+    if elbow_body_name and _elbow_id < 0:
+        raise ValueError("grasp.place_elbow_body=%s 不在模型里" % elbow_body_name)
     candidate_seeds = [("seed", seed)] if seed else [("identity", {})]
     if seed:
         for dj2 in (-0.4, 0.0, 0.4):
@@ -263,13 +277,21 @@ def build_place_reference_poses(root, baseline, target_local_m, payload_half_m, 
             within = float(result.position_error_m) <= float(solver_cfg.get("tolerance_m", 1e-5)) * 100.0
             if not within or dot <= 0.0:
                 continue
-            if chosen is None or dot > chosen[0]:
-                chosen = (dot, label, result, axis)
+            elbow_z = float(data.xpos[_elbow_id][2]) if _elbow_id >= 0 else None
+            if chosen is None:
+                chosen = (dot, label, result, axis, elbow_z)
+                continue
+            if _elbow_id >= 0 and elbow_z is not None and chosen[4] is not None:
+                _better = (elbow_z > chosen[4]) if elbow_pref == "high" else (elbow_z < chosen[4])
+            else:
+                _better = dot > chosen[0]
+            if _better:
+                chosen = (dot, label, result, axis, elbow_z)
         if chosen is None:
             raise ValueError(
                 "放置段 %s 无可用解（多起点 %d 个：残差达标且与参照轴同半球的都没有）：%s"
                 % (phase, len(candidate_seeds), attempts[:4]))
-        _dot, chosen_label, result, axis = chosen
+        _dot, chosen_label, result, axis, _elbow_z = chosen
         packed = _pack_pose(result, arm_names)
         packed["gripper_axis_world"] = [round(float(v), 9) for v in axis]
         packed["chosen_seed"] = chosen_label
