@@ -199,6 +199,8 @@ docker exec "${CTL}" sh -c "mkdir -p ${RUN_LOGS}"
 start_server 50051 basic "{\"fault\":\"none\",\"trace_file\":\"${RUN_LOGS}/stub-trace-basic.jsonl\"}"
 start_server 50052 cancel "{\"fault\":\"none\",\"latency_ms\":4000,\"trace_file\":\"${RUN_LOGS}/stub-trace-cancel.jsonl\"}"
 start_server 50053 unreachable "{\"fault\":\"unreachable\",\"trace_file\":\"${RUN_LOGS}/stub-trace-unreachable.jsonl\"}"
+# ⑤ deadline：后端耗时 6 s 远大于任务 deadline 2 s ⇒ 必须显式失败，不得报 SUCCEEDED
+start_server 50054 deadline "{\"fault\":\"none\",\"latency_ms\":6000,\"trace_file\":\"${RUN_LOGS}/stub-trace-deadline.jsonl\"}"
 
 # ---------- 步骤 6：智能域发起四例 ----------
 run_case() {  # run_case <用例名> <端口>
@@ -226,11 +228,12 @@ run_case normal 50051
 run_case denied 50051
 run_case cancel 50052
 run_case unreachable 50053
+run_case deadline 50054
 
 # ---------- 步骤 7：收控制域侧审计账（证"安全停机/故障注入真的发生在控制域"） ----------
 log "== 步骤 7 收集控制域审计账与日志"
 echo "run_id=${RUN_ID}（本轮账本目录 ${RUN_LOGS}）" > "${OUT_DIR}/run-id.txt"
-for tag in basic cancel unreachable; do
+for tag in basic cancel unreachable deadline; do
   docker exec "${CTL}" sh -c "cat ${RUN_LOGS}/stub-trace-${tag}.jsonl" > "${OUT_DIR}/control-trace-${tag}.jsonl" 2>/dev/null || true
   docker exec "${CTL}" sh -c "cat ${RUN_LOGS}/server-${tag}.log" > "${OUT_DIR}/control-server-${tag}.log" 2>/dev/null || true
 done

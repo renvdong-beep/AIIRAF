@@ -156,6 +156,22 @@ def case_unreachable(profile, safety, trace_path) -> None:
           "result=%s" % (result.get("result"),))
 
 
+def case_deadline(profile, safety, trace_path) -> None:
+    print("  ⑤ deadline：任务截止时间在执行中途过期 ⇒ 不得报成功（回归测试）")
+    # 后端耗时 3 s，任务 deadline 1 s ⇒ 执行完成时已超期。
+    # 缺陷背景（2026-10-08 双域跨域实测）：`PolicyGateway.validate` 只在**准入**时检查截止时间，
+    # 之后无人复核 ⇒ 超期任务照样返回 SUCCEEDED 且无错误码（伪造成功，铁律 1.5）。
+    runtime, _, _, _ = build_runtime("none", trace_path, latency_ms=3000)
+    request = make_request("stand", profile, safety, {"duration_ms": 2000}, deadline_s=1)
+    result = runtime.execute(request, ctx())
+    check("超期任务不得报 SUCCEEDED", result.get("status") != "SUCCEEDED",
+          "status=%s" % result.get("status"))
+    check("错误码为 IRAF-DEADLINE-EXCEEDED", result.get("error_code") == "IRAF-DEADLINE-EXCEEDED",
+          "error_code=%s reason=%s" % (result.get("error_code"), result.get("reason")))
+    check("未伪造成功证据", not (result.get("result") or {}).get("evidence"),
+          "result=%s" % (result.get("result"),))
+
+
 def ctx() -> AuthenticatedContext:
     return AuthenticatedContext("agentos", frozenset({"task.submit", "task.read", "task.cancel"}), "bearer")
 
@@ -170,6 +186,7 @@ def main() -> int:
     case_denied(runtime, profile, safety)
     case_cancel(profile, safety, trace_path)
     case_unreachable(profile, safety, trace_path)
+    case_deadline(profile, safety, trace_path)
     print("\n审计账：%s（%d 行）" % (trace_path, len(trace_path.read_text(encoding="utf-8").splitlines()) if trace_path.exists() else 0))
     print("结论：%s（%d 项不符）" % ("四例全部符合预期" if not FAIL else "存在不符合项", len(FAIL)))
     return 0 if not FAIL else 1

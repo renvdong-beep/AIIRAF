@@ -192,11 +192,27 @@ def case_cancel(profile, safety) -> None:
     channel.close()
 
 
+def case_deadline(profile, safety) -> None:
+    print("  ⑤ deadline：任务截止时间在执行**中途**过期 ⇒ 不得报成功")
+    # 设计：控制域后端耗时 ~6 s（latency_ms=6000），而任务 deadline 只有 2 s。
+    # 客户端 gRPC 预算放长（30 s）⇒ 不是"传输被切断"，而是"任务自己超期"。
+    with client(timeout_s=30) as handle:
+        result = submit(handle, profile, safety, deadline_s=2)
+        status = result.get("status")
+        print("      实测终态 status=%s error_code=%s reason=%s"
+              % (status, result.get("error_code"), result.get("reason")))
+        check("超期任务不得报 SUCCEEDED", status != "SUCCEEDED",
+              "status=%s（若为 SUCCEEDED ⇒ 截止时间只在准入时校验、执行期间无人执行，属真缺陷）" % status)
+        check("超期须给出显式错误码", bool(result.get("error_code")) and status == "FAILED",
+              "status=%s error_code=%s" % (status, result.get("error_code")))
+
+
 def main() -> int:
     case = env("IRAF_CASE")
     profile, safety = identities()
     print("[智能域] case=%s target=%s skill=stand duration_ms=%d" % (case, env("IRAF_SDK_TARGET"), duration_ms()))
-    handlers = {"normal": case_normal, "denied": case_denied, "cancel": case_cancel, "unreachable": case_unreachable}
+    handlers = {"normal": case_normal, "denied": case_denied, "cancel": case_cancel,
+                "unreachable": case_unreachable, "deadline": case_deadline}
     if case not in handlers:
         print("[智能域][错误] 未知用例 %r（允许：%s）" % (case, sorted(handlers)))
         return 2

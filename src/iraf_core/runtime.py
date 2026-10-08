@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import threading
+import time
 import uuid
 
 from .authority import LeaseConflict
@@ -113,6 +114,19 @@ class SkillRuntime:
             invoked = skill.invoke(self.profile, self.backend, decision.parameters, lease)
             if control.cancel_event.is_set():
                 return self._finish_cancel(flow, control, correlation)
+            # 截止时间必须在**执行完成后**再复核一次（2026-10-08 双域跨域实测抓到的缺陷）：
+            # `PolicyGateway.validate` 只在**准入**时检查 `deadline_unix_ms > now`，
+            # 之后无人再管 —— 实测「deadline 2 s + 后端耗时 6 s」会返回 SUCCEEDED 且无错误码，
+            # 那是**伪造成功**（铁律 1.5），也违反"所有异步操作须有截止时间"（铁律 2.4）。
+            # 语义边界（不粉饰）：本检查是**事后**复核，不是执行中途中止 —— skill.invoke 是一次
+            # 阻塞调用，中途中止要求 Provider/适配器自己兑现 `cancellation: cooperative_stop`
+            # （取消路径的存在意义即此）；这里只保证"超期绝不报成功"。
+            deadline_unix_ms = int(request.get("deadline_unix_ms", 0) or 0)
+            if deadline_unix_ms and int(time.time() * 1000) > deadline_unix_ms:
+                reason = "任务超过截止时间：deadline_unix_ms=%d，执行完成时墙钟=%d" % (
+                    deadline_unix_ms, int(time.time() * 1000))
+                self._transition(flow, control, TaskStatus.FAILED, reason)
+                return self._result(flow, correlation, "IRAF-DEADLINE-EXCEEDED", reason)
             self._transition(flow, control, TaskStatus.SUCCEEDED)
             result = self._result(flow, correlation)
             result.update({"result": invoked.output, "skill": {"name": skill.manifest.name, "version": skill.manifest.version, "digest": skill.manifest.digest}, "provider": {"name": invoked.provider_name, "type": invoked.provider_type}, "profile": {"name": self.profile.name, "version": self.profile.version, "digest": self.profile.digest}, "safety_policy": {"name": self.safety_policy.name, "version": self.safety_policy.version, "digest": self.safety_policy.digest}, "policy_decision_id": decision.decision_id, "policy_version": decision.gateway_version, "resource_id": resource, "controller": controller})
