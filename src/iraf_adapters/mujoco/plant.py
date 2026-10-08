@@ -116,6 +116,10 @@ class MujocoPlant:
         self._free_run_thread = None
         self._targets = []
         self._gate_cond = threading.Condition()
+        #: guest 等待记账（只加整数、不打印；判"请求 vs 实推"用，见 `wait_stats`）
+        self._wait_calls = 0
+        self._wait_requested = 0
+        self._wait_advanced = 0
 
     # ---- 只读视图
     @property
@@ -310,6 +314,19 @@ class MujocoPlant:
             return self._step_index
 
     # ---- guest 侧等待
+    def wait_stats(self):
+        """guest 等待的累计计数（**只加整数、不打印**，供步骤级差分取证）。
+
+        为什么需要它（2026-10-08）：s06 的"仿真时间放大"从报告里读不出来 —— 臂后端
+        `MujocoBackend` 没有 `read_state` ⇒ `sim_time_advance_s` 恒为 None，而植物步数只给出
+        "实推了多少"，给不出"guest 请求了多少"。判"是记账 bug 还是 owner 领先"必须**同时**有：
+        · `requested`：guest 每次等待时声明的目标增量（Σ max(0, 目标步号 − 进入时步号)）
+        · `advanced` ：同一次等待里 `step_index` 的真实增量
+        两者相等 ⇒ 记账正确，放大出在**请求侧**；`advanced > requested` ⇒ owner 多推了（闸门失效）。
+        """
+        return {"calls": int(self._wait_calls), "requested": int(self._wait_requested),
+                "advanced": int(self._wait_advanced)}
+
     def wait_until(self, index, timeout, poll_seconds):
         """等 owner 把 `step_index` 推到 ≥ index；超时显式失败（不静默返回）。
 
@@ -321,18 +338,25 @@ class MujocoPlant:
         poll_seconds = float(poll_seconds)
         if timeout <= 0 or poll_seconds <= 0:
             raise PlantError("等待超时与轮询间隔必须显式给出正数：%r / %r" % (timeout, poll_seconds))
-        if self._gate_enabled:
-            return self._wait_until_gated(index, timeout, poll_seconds)
-        deadline = time.monotonic() + timeout
-        while True:
-            with self._lock:
-                if self._step_index >= index:
-                    return self._step_index
-            if time.monotonic() >= deadline:
-                raise PlantWaitTimeout(
-                    "等待 owner(%s) 推进到第 %d 步超时（%.3f s，当前 %d 步）"
-                    % (self.owner, index, timeout, self.step_index))
-            time.sleep(poll_seconds)
+        entry = self._step_index
+        try:
+            if self._gate_enabled:
+                return self._wait_until_gated(index, timeout, poll_seconds)
+            deadline = time.monotonic() + timeout
+            while True:
+                with self._lock:
+                    if self._step_index >= index:
+                        return self._step_index
+                if time.monotonic() >= deadline:
+                    raise PlantWaitTimeout(
+                        "等待 owner(%s) 推进到第 %d 步超时（%.3f s，当前 %d 步）"
+                        % (self.owner, index, timeout, self.step_index))
+                time.sleep(poll_seconds)
+        finally:
+            # 记账在 finally：超时/异常的那次等待同样要计入（否则失败的等待会被漏掉）
+            self._wait_calls += 1
+            self._wait_requested += max(0, index - entry)
+            self._wait_advanced += self._step_index - entry
 
     def _wait_until_gated(self, index, timeout, poll_seconds):
         """闸门路径：登记需求 → 等条件变量 → 注销（`try/finally` 保证异常也注销，避免死锁）。"""

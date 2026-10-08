@@ -241,6 +241,8 @@ def _skill_provides_evidence(action, paths, registry):
 
 #: 可在报告中出现的测量量键（顺序固定，便于逐项比对）。
 MEASUREMENT_KEYS = ("sim_time_advance_s", "final_speed_mps", "wall_seconds", "evidence_duration_s",
+                    "plant_steps_advanced", "plant_sim_advance_s",
+                    "guest_wait_calls", "guest_wait_requested", "guest_wait_advanced",
                     "dock_translation_error_m", "dock_yaw_error_deg",
                     "grasp_center_distance_m", "grasp_lift_delta_m", "grasp_bilateral_contact",
                     "place_offset_from_tray_center_m", "place_released", "place_payload_in_tray",
@@ -1223,6 +1225,28 @@ def _read_backend_state(backend):
     return reader() if callable(reader) else None
 
 
+def _plant_counters(backend):
+    """取共享植物的步计数（权威推进口径）与步长；没有植物 ⇒ None（不假装有测量）。
+
+    为什么用植物步计数而不是后端 `read_state`（2026-10-08）：机械臂后端 `MujocoBackend`
+    **没有 `read_state`** ⇒ 臂步的 `sim_time_advance_s` 恒为 `None`，于是"臂到底推进了多少仿真时间"
+    在报告里根本读不出来（s06 的"约 17 倍时间放大"因此既不能证实也不能证伪）。
+    植物的 `step_index` × `timestep` 是**所有**步骤（owner 与 guest）共用的同一口径，
+    且是仿真推进的唯一事实来源（`step_once` 是唯一 ++ 点）。
+
+    一并取 `wait_stats`（guest 等待记账）：只有"请求量"与"实推量"**同时**在手，才能判
+    "是 owner 多推了（闸门失效/记账 bug）"还是"是 guest 自己请求得多（声明口径问题）"。
+    """
+    plant = getattr(backend, "plant", None)
+    if plant is None:
+        return None
+    try:
+        stats = plant.wait_stats() if hasattr(plant, "wait_stats") else {}
+        return int(plant.step_index), float(plant.timestep), stats
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
 def _dispatch_step(runtime_state, step, correlation, key):
     """一次真实的技能执行：走 SkillRuntime（TaskFlow → Policy → 租约 → Provider → 适配器）。
 
@@ -1232,6 +1256,7 @@ def _dispatch_step(runtime_state, step, correlation, key):
     profile = runtime_state["profile"]
     resource_id = profile.name
     before = _read_backend_state(runtime_state["backend"])
+    plant_before = _plant_counters(runtime_state["backend"])
     started = time.perf_counter()
     result = runtime.execute(
         _request(
@@ -1247,8 +1272,18 @@ def _dispatch_step(runtime_state, step, correlation, key):
     )
     wall_seconds = time.perf_counter() - started
     after = _read_backend_state(runtime_state["backend"])
+    plant_after = _plant_counters(runtime_state["backend"])
     evidence = (result.get("result") or {}).get("evidence") or {}
     measured = measure_step(before, after, evidence, wall_seconds)
+    if plant_before is not None and plant_after is not None:
+        advanced = plant_after[0] - plant_before[0]
+        measured["plant_steps_advanced"] = advanced
+        measured["plant_sim_advance_s"] = advanced * plant_after[1]
+        # guest 等待的"请求 vs 实推"（本步差分）：请求 == 实推 ⇒ 记账正确，放大出在请求侧
+        before_stats, after_stats = plant_before[2] or {}, plant_after[2] or {}
+        for key in ("calls", "requested", "advanced"):
+            if key in before_stats and key in after_stats:
+                measured["guest_wait_%s" % key] = int(after_stats[key]) - int(before_stats[key])
     checks = evaluate_criteria(step["criteria"], measured)
     record = _step_record(step)
     record.update(
