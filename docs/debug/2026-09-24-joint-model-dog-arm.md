@@ -6181,6 +6181,34 @@ manipulation.per_robot.ur5e.gripper:
 再按"**连跑 2 轮逐位比对 + 30 轮通过率**"验收。
 ⚠ 该缺陷**在可复现性修法之前一直被"载荷碰巧从闭着的夹口滑出"掩盖**（§11.90 的教训之一）。
 
+**§11.92 UR5e 放置时把 Go2 撞翻：碰撞定位 + 三轮落点垫实验 + 取向杠杆（2026-10-06，进行中）**
+
+**现象**（使用者演示中观察）：UR5e 每次放下物体时都把 Go2 撞翻。
+
+**定位（`IRAF_DEBUG_PLACE=1` 的 `arm_contacts` 接触扫描，判据＝不出现任何 Go2 部位）**
+```
+ur5e_wrist_1_link ↔ tray_01（狗背托盘）  −0.000807 m  n=136  首见 after_above
+ur5e_wrist_1_link ↔ FL_hip（前左髋）     −0.000067 m  n=133  首见 place_descend@step300
+ur5e_wrist_2_link ↔ base_link（躯干）    −0.000746 m          首见 place_above@step640
+```
+⇒ 撞的是 **UR5e 腕部本体**（`wrist_1/2_link`，位于指腹**后方**）而非载荷/指腹；穿透 0.07~0.81 mm，
+但四足动态平衡 ⇒ 会被掀翻。同族历史见 §11.63（曾腕部撞髋 ×80 / 托盘 ×69 / 底座 ×121）。
+
+**三轮落点垫实验（`scenes/handoff_lab/scene.yaml` 的 `place_pad_b.pose.pos_m`，一次一个变量）**
+| 实验 | 结果 | 判定 |
+|---|---|---|
+| ① y 0.70→**0.78**（+y 朝基座） | `wrist_1↔tray_01` −0.807→**−1.146**、`↔FL_hip` −0.067→**−1.113** mm、B 站 yaw −2.393°→**−2.644°** | **否**（更深） |
+| ② y 0.70→**0.62**（−y） | **构建期自检拒绝装配**：`放置航点与载体接触 [descend: ur5e_rq2f85_base ↔ base_link −0.000383 m]` ⇒ `SCENARIO_DECLARATION_ERROR`(exit=2) | **否**（门禁按设计拦住） |
+| ③ x 0.78→**0.88**（+x） | `wrist_1↔tray_01`、`↔FL_hip` **消失** ✓，但残留 `wrist_1↔base_link` **−0.000835** m；B 站 yaw →**−2.648°** | **部分有效、不采用** |
+
+⇒ **落点垫平移不足以清掉腕部**（y 无窗口、x 清不净）⇒ "调整放下物体的位置"**不是充分手段**（对使用者需求的如实收紧）。
+
+**下一手段（④）**：改**放置航点的姿态/接近朝向**，让腕部背向狗。落点＝**构建期**解出 `place_{transit,above,descend,retreat}_positions`
+的地方（`place_entry: build_place_reference_poses`；消费点 `mujoco_backend.py:2217-2223`）。⑤ 挪 B 站（`handoff_station_frame_b`）会级联 s06 托盘交接，最后才动。
+
+**验收判据（这条线）**：①构建期自检通过；②`arm_contacts` 里不出现任何 Go2 部位；③随后 2 轮逐位比对 + 30 轮通过率；项目判据（0.030 m / 2.0° / 0.065 m）**一个不动**。
+**当前状态**：三次实验均**已回退**（提交 `8470def`/`8a203b6`/`374de7f` 只留下注释里的迭代记录），声明与构建同步、工作树干净。
+
 ## 12. 下一步
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
 0a. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。
