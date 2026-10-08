@@ -6187,6 +6187,19 @@ manipulation.per_robot.ur5e.gripper:
 再按"**连跑 2 轮逐位比对 + 30 轮通过率**"验收。
 ⚠ 该缺陷**在可复现性修法之前一直被"载荷碰巧从闭着的夹口滑出"掩盖**（§11.90 的教训之一）。
 
+>>> **§11.93 更正（2026-10-08）**：上面这段的"下一跳"与修法方向**都不对**，实测驳回了两条：
+> ① 构建器**不是**"自己写 open 值"——`scripts/build_robot_baseline.py:670-696` 那段是
+>    `validate_grasp_pose()`（抓取姿态的几何校验），**不写放置航点**；
+> ② 联合装配阶段（`scene_builder.py:2235-2260` / `_declared_gripper_keys`）只是**允许**声明的
+>    夹爪通道出现在航点里，**不改它的值**。
+> 真正决定取值的是 `src/iraf_adapters/unitree/scene_builder.py:1979-1983`：航点的夹爪通道
+> **故意取自 `out_gripper["lift_positions"]`（抓取抬升 = 闭爪）**——对 transit/above/descend
+> 这是**对的**（搬运中必须夹住），只有 **retreat（释放之后）** 不能是闭爪。
+> 而运行期 `mujoco_backend.py:2632` 本来就有"撤退段不得再合上"的保护，只是**条件挂错**
+> （挂在 `carry_constraint.release_gripper` 上，而 UR5e 声明 false）⇒ 详见 §11.93。
+> 实测两臂**都**是闭合值（UR5e 163.0；Piper joint7/8 = 0.023/-0.023，其 open 是 ±0.035）
+> ⇒ 这条"只有 UR5e 特殊"的迹象**不存在**，是运行期条件把两臂分开的。
+
 **§11.92 UR5e 放置时把 Go2 撞翻：碰撞定位 + 三轮落点垫实验 + 取向杠杆（2026-10-06，进行中）**
 
 **现象**（使用者演示中观察）：UR5e 每次放下物体时都把 Go2 撞翻。
@@ -6214,6 +6227,102 @@ ur5e_wrist_2_link ↔ base_link（躯干）    −0.000746 m          首见 pla
 
 **验收判据（这条线）**：①构建期自检通过；②`arm_contacts` 里不出现任何 Go2 部位；③随后 2 轮逐位比对 + 30 轮通过率；项目判据（0.030 m / 2.0° / 0.065 m）**一个不动**。
 **当前状态**：三次实验均**已回退**（提交 `8470def`/`8a203b6`/`374de7f` 只留下注释里的迭代记录），声明与构建同步、工作树干净。
+
+**§11.93 s07 真根因与修法：撤退段的「不得再合爪」保护被挂了错条件（2026-10-08，已修 + 单轮绿）**
+
+**根因（三层链，缺一层就静默失效）**
+```
+构建期 src/iraf_adapters/unitree/scene_builder.py:1975-1986
+    for phase, pose in (poses["poses"]).items():
+        positions = {rename(name): float(value) for name, value in pose["joint_positions"].items()}
+        key = "place_%s_positions" % phase
+        merged  = {k: v for k, v in out_gripper["lift_positions"].items() if k in _declared_gripper_keys(out_gripper)}
+        merged.update(positions)                 # 臂关节用本相位的解覆盖
+        out_gripper[key] = merged
+  ⇒ 夹爪通道取自 **lift_positions = 抓取抬升（闭爪）**：UR5e rq2f85_fingers_actuator=163.0（闭）；
+    Piper joint7/joint8 = 0.023/-0.023（其 open 是 ±0.035 ⇒ 也是闭）
+  ⇒ 对 transit/above/descend 这是**设计正确**的（搬运中必须夹住载荷）；对 **retreat（释放之后）** 不对
+运行期 src/iraf_adapters/mujoco/mujoco_backend.py:2628
+    self._set_gripper_controls(dict(gripper["open_positions"]))     # ③ 释放：**无条件**张开
+原 2632-2636（修前）
+    if carry_release_gripper:                                       # ← 条件挂错
+        for name in gripper["open_positions"]: retreat_goal[name] = open 值
+  ⇒ `carry_constraint.release_gripper` 的语义是「**搬运期间**焊缝是否张爪」
+    （UR5e 声明 false：config/ur5_simulation_baseline.yaml:171，2F-85 的指腹就是锚点参照物，
+      张爪会让参照漂移），**与「释放后撤退不得再合爪」是两件事**；
+    而 ③ 的张开对两臂**无条件**执行 ⇒ UR5e 走不到这段保护
+判据 src/iraf_skills/common/manipulation.py:193
+    released = 指腹与载荷**不再接触**  ⇒ False ⇒「Backend 未确认载荷已放下」⇒ s07 FAILED
+```
+**实测（相位梯，§11.91 同源）**：`after_touchdown_6` pad_span **0.091302** / finger{False,False}（已释放）
+→ `after_retreat` pad_span **0.039260** / left:True（**被合爪重新夹住**）⇒ 释放被撤退段撤销。
+
+**修法（1 行条件的删除 + 中文留档；声明与判据一个不动）**：抬离段**无条件**把声明的张开值写进 `retreat_goal`。
+- 对 Piper（`release_gripper: true`）：旧代码本就走这段 ⇒ `retreat_goal` **逐位不变** ⇒ 零影响（实测 s04 证据与历史同值）。
+- 对 UR5e（`release_gripper: false`）：修复。
+- **不需要重建**（改的是运行期，不动声明/产物）。
+
+**单轮实测（`build/diagnostics/s07fix1.log`，clean、无任何调试开关）**
+```
+passed_true = 8/9（修前 7/9）      exit=5（只剩 s02b）
+s07 evidence: place_released=1.0   place_payload_in_tray=1.0
+              place_offset_from_tray_center_m=0.03452368（验收 0.065）
+              place_settled_gap_m=-0.000512995   place_settled_on_target=1.0
+停靠数值与基线**逐位相同** ⇒ 本改动未扰动停靠物理：
+  A 0.02856927179873537 / -0.4246947295906039°    B 0.028036 / 2.449925°（yaw 仍超 2.0°）
+s06 grasp_center_distance_m = 0.0020460720192433134（与基线同值）
+```
+**30 轮通过率（`build/diagnostics/campaign-fixB-30.log` + `passrate-20261008-095459.json`，clean、无调试开关）**
+```
+s07_place_at_b_table  通过 30/30   落点 min = max = 0.034523680  （验收 0.065）
+s06_unload_at_b       通过 30/30   残差 min = max = 0.002046072
+s02b_dock_station_b   通过  0/30   30 轮 reason **一字不差**：
+   「保持后超出容差：平移 0.028036 m（判据 0.030000）/ 偏航 2.449925°（判据 2.000000）」
+整链 passed=true 0/30（唯一原因就是 s02b，见下方待办 C）
+⇒ 单轮绿 + **30 轮逐位一致**（30 轮同一个落点/残差/reason）⇒ 修法在验收口径上成立
+```
+**改动面**：`src/iraf_adapters/mujoco/mujoco_backend.py` 一处（删 1 个条件 + 换中文注释）。
+提交：`bdc09e0`（fix）、`2e23190`（探针）。声明、产物、判据**均未改**，无需重建。
+
+**工具（新增，三层产物并排取"夹爪通道来自哪一层"）**：
+`scripts/probe_place_waypoint_gripper.py` —— 对臂报告与联合产物同时列出 `place_*_positions` 的夹爪通道。
+**教训（第 5 次自我更正的长尾）**：
+1. "读码定位"必须**追到写值的那一行**：§11.91附2 的两次推断（构建器写 open / 装配阶段覆盖）
+   都被这个 20 行探针**当场否掉**；先产出一个"三层并排"的读数比继续读代码便宜。
+2. **条件的语义必须逐字核对**：`release_gripper` 说的是搬运期，被当成释放期用；
+   这类"名字像、语义不同"的条件是静默失效的高产区（同类见 §11.25(f-2) 的 `pad_offset_m`）。
+3. 两臂表现不同**不等于**两臂代码路径不同：先怀疑**条件/声明**，再怀疑分支。
+
+**§11.93 附：同期发现的两个待办（都有实测数字，未修）**
+1. **`place_settled_speed_mps` 出现 66~495 m/s（证据可信性缺口）**
+   ```
+   iraf_adapters/mujoco/payload_facts.py:117-123 = 模型里**所有自由关节**线速度上界
+   联合模型只有两个自由关节：狗躯干（`type="free"` 无名字）与 `box_01_free`（`grep -c` = 2）
+   实测分布（s07，UR5e）：
+     66.427628625  ← acct-round1/3/4/5/6、align-round10~12 **逐位相同**（确定性）
+     0.000210779   ← acct-round2
+     494.799241551 ← 本轮 s07fix1
+   同一时刻 place_settled_gap_m=-0.000512995 / payload_in_tray=1.0 ⇒ **速度与位置自相矛盾**
+   ⇒ 不是物理解（15 kg 躯干/托盘里的载荷都不可能）⇒ 首要假设：某处**直接写 qpos 造成瞬移**，
+     随后 qvel 由差分得到（0.13 m/0.002 s ≈ 66 m/s；0.99 m/0.002 s ≈ 495 m/s，量级吻合）
+   ⇒ 待办：加**默认关闭**的逐自由关节 dump（本体名 + ‖v‖ + qpos/qvel）在 s07 settle 那一刻取一次，
+     判"哪具本体、被谁瞬移"；在那之前 `place_settled_*` **不得被当作"已落稳"的完整证明**。
+   ⚠ 该项**不进** s07 判据（判据是 contacts + gap ≤ margin），但**必须**在文档里标注不可信范围。
+   ```
+2. **构建期载体自检用**标称站位** ⇒ 运行期的腕部碰撞结构上看不见（§11.92 的缺口）**
+   ```
+   src/iraf_adapters/unitree/scene_builder.py:2067-2091：`data.qpos[:] = 0.0` 后
+     直接把站位帧 site 的 pos/quat 写进载体 free joint ⇒ **零停靠残差**
+   联合报告实测：`waypoint_contacts = []`（航点端点无载体接触）、
+     `path_contact_count = 192` 但取样 20 条全是 arm↔world / arm↔place_pad_b（carrier=False）
+   运行期实测：B 站停靠偏离标称 **0.028036 m / 2.4499°**，同时出现
+     ur5e_wrist_1↔tray_01(−0.807 mm) / ↔FL_hip(−0.067 mm) / wrist_2↔base_link(−0.746 mm)
+   ⇒ 标称位姿下"腕部离托盘还有几毫米"，实测位姿下变成亚毫米穿透
+   ⇒ 待办：探针 `scripts/probe_place_carrier_dock_offset.py`（已落盘，**待批次结束后跑**）
+     把载体按实测/最坏停靠偏差摆放后做 FK，与 collide1.log 的接触对对账；
+     对账成立 ⇒ 构建期自检应支持**声明驱动的最坏停靠偏差**（取值由 `dock_for_handoff.stations.*`
+     的容差推出，不写死数字），**先落 IDL/schema 再改构建器**。
+   ```
 
 ## 12. 下一步
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
