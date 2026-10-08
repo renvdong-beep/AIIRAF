@@ -129,7 +129,31 @@ docker cp <repo>/skills     iraf-intel-domain:/opt/iraf/skills
 docker cp <repo>/scenes     iraf-intel-domain:/opt/iraf/scenes
 docker cp <repo>/config     iraf-control-domain:/opt/iraf/config     # 控制域只要机型/板卡/安全声明
 # 3) 验证（智能域发起 → 控制域返回实测事实 → 判据判定；含拒绝路径）
-#    见 scripts/verify_domain_split.sh（下一步落地）
+#    见 scripts/verify_domain_split.sh（**待实现**，见下 §6.1）
+```
+
+### 6.1 已验证的容器事实（2026-10-08 实测，照抄即可复现）
+```bash
+# 镜像：本机现成的 openEuler 24.03 LTS-SP1 rootfs（与真实板卡**同架构 aarch64**）
+IMG=rootfs_openeuler_24.03-lts-sp1_aarch64:latest
+docker run --privileged --rm multiarch/qemu-user-static --reset -p yes   # 注册 binfmt（x86 宿主机跑 aarch64 必需，一次即可）
+docker run -d --name iraf-control-domain $IMG sleep infinity
+docker run -d --name iraf-intel-domain   $IMG sleep infinity
+```
+容器内实测（两个都一致）：`uname -m = aarch64`｜`NAME="openEuler" VERSION="24.03 (LTS-SP1)"`｜`Python 3.11.6`｜`pip3`/`dnf` 可用
+　　已装依赖（**均为 aarch64 轮子，未走编译**）：`pyyaml 6.0.3`、`grpcio 1.84.0`、`protobuf 7.36.2`
+　　（`pip3 download --only-binary :all: grpcio` 成功 ⇒ 跨域接口可按铁律用**真 gRPC**，无需退化成桩传输）
+
+### 6.2 跨域链路的当前缺口（S2 结论，实读代码）
+```
+契约      ✅ 已存在：api/proto/iraf/v1/{runtime,skill,events,common}.proto（iraf.v1 = 带版本；**复用，不新造**）
+客户端    ✅ 已存在且较实：src/iraf_sdk/client.py（579 行；含 identity_of / deadline_after / canonical_execute_body
+                        / execute_request_from_body / status_from_state / _grpc_module，HTTP + gRPC 双通道）
+服务端    ❌ **仅桩**：src/iraf_adapters/grpc/server.py 只有 43 行、仅一个 def main()
+注册表    ❌ 在有界范围（grpc/ sdk/ core/）内 grep 未发现 CapabilityProvider / register_provider / PROVIDERS
+⇒ 待实现三件：servicer.py（实现 iraf.v1 服务端 + deadline/取消/健康检查）、provider_stub.py（控制域替身 + 可注入超时/不可达）、
+              scripts/verify_domain_split.sh（起链路 + 四例验证 + 报告）
+⇒ 四例：①正常 ②策略拒绝 IRAF-POLICY-DENIED ③deadline 超时/取消 ⇒ 显式失败 ④Provider 不可达 ⇒ 显式失败 + 安全停机
 ```
 **回滚**：`docker rm -f iraf-control-domain iraf-intel-domain`；宿主与仓库无副作用（只读挂载/拷贝）。
 
