@@ -6176,6 +6176,12 @@ manipulation.per_robot.ur5e.gripper:
 
 **修法（声明层，判据不动）**：让**放置四段航点不含夹爪通道**（夹爪状态由"张开/闭合"专有指令管理，
 不该被航点位置改写）；或把 `place_retreat_positions` 的夹爪值改成 `open_positions`。
+**精确定位（2026-10-06 续查）**：构建器**自己写的是 `open` 值** ——
+`scripts/build_robot_baseline.py:670-696`（`open_positions = dict(gripper_cfg.get("open"))`，随后逐键写入航点），
+而构建产物里四段航点却是 **163（closed）** ⇒ **是更后面的"联合场景装配/转发"阶段把它换掉的**。
+下一跳＝审 `src/iraf_adapters/unitree/scene_builder.py:2235-2260`（"声明的夹爪通道允许出现在航点里"的处置）
+与联合报告 `manipulation.per_robot.ur5e.gripper` 的装配处，找出把四段航点的夹爪通道写成 `closed_positions` 的那一行
+⇒ 那一行就是 s07 的根因修法（一行级）。
 落点＝构建期生成这些航点的地方（`scene_builder` 的放置段求解）＋基线配置；改完必须
 **受控重建**（`build_ur5_baseline.py` → `build_scene.py --attach …` → `scene_check`），
 再按"**连跑 2 轮逐位比对 + 30 轮通过率**"验收。
