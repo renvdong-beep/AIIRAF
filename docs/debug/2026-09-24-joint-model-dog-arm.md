@@ -6157,6 +6157,30 @@ A 站逐位复现（无交接竞态）。
 最可能的解释是"释放只在**位置指令层**体现、而**夹爪信道被后续保持逻辑重新写回闭合值**"。
 定位后按声明级/实现级修，随后仍按"连跑 2 轮逐位比对 + 30 轮通过率"验收，判据不动。
 
+**§11.91 附2：根因＝四段放置航点把「夹爪闭合值」夹带进声明（2026-10-06，已定位到声明层）**
+
+构建产物 `build/scenes/handoff_lab/handoff_lab_joint.json` 实测：
+```
+manipulation.per_robot.ur5e.gripper:
+  open_positions   = {ur5e_rq2f85_fingers_actuator: 0.0}      ← 正确
+  closed_positions = {ur5e_rq2f85_fingers_actuator: 163.0}    ← 正确
+  place_transit_positions = {ur5e_rq2f85_fingers_actuator: 163.0, ur5e_shoulder_pan_joint: …}
+  place_above_positions   = {…: 163.0, …}
+  place_descend_positions = {…: 163.0, …}
+  place_retreat_positions = {…: 163.0, …}       ← 四段航点**都夹带了闭合值**
+```
+- 放置路径按段施加这些位置（`_set_controls` 会写**全部声明通道**）⇒ **每个相位都把夹爪重写回 163**：
+  释放点 `mujoco_backend.py:2628`（写 `open_positions`=0.0）刚发出，**紧随的撤退段位置指令又把 163 写回去**
+  ⇒ 指腹合拢、夹住载荷（`pad_span` 39 mm ≈ 载荷宽度）⇒ `finger_contacts.left=True` ⇒ `released=False` ⇒ s07 FAILED。
+- 与实测完全吻合：`after_retreat`/`after_settle` 的**施加 ctrl 都是 163.0**（见上一张表）。
+
+**修法（声明层，判据不动）**：让**放置四段航点不含夹爪通道**（夹爪状态由"张开/闭合"专有指令管理，
+不该被航点位置改写）；或把 `place_retreat_positions` 的夹爪值改成 `open_positions`。
+落点＝构建期生成这些航点的地方（`scene_builder` 的放置段求解）＋基线配置；改完必须
+**受控重建**（`build_ur5_baseline.py` → `build_scene.py --attach …` → `scene_check`），
+再按"**连跑 2 轮逐位比对 + 30 轮通过率**"验收。
+⚠ 该缺陷**在可复现性修法之前一直被"载荷碰巧从闭着的夹口滑出"掩盖**（§11.90 的教训之一）。
+
 ## 12. 下一步
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
 0a. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。
