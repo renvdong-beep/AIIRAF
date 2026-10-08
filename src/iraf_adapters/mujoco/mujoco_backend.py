@@ -2227,6 +2227,10 @@ class MujocoBackend:
         #      后端只做 `_move_trajectory` 回放 —— 与已验证的 pick 完全同一条路。
         transit = gripper.get("place_transit_positions")
         above = gripper.get("place_above_positions")
+        # **via 绕行相位**（2026-10-08 新增，可选：报告里有 `place_via_positions` 才回放 ⇒ 缺省行为不变）。
+        # 为什么：transit→above 是一条关节空间插值，实测其中点会下探穿过台面（前臂 −0.061694 m ↔ world）；
+        # 提高两端航点只值 ~8 mm ⇒ 必须把这条腿**拆成两段**（transit→via→above）。
+        via = gripper.get("place_via_positions")
         descend = gripper.get("place_descend_positions")
         retreat = gripper.get("place_retreat_positions")
         missing = [name for name, value in (("place_above_positions", above),
@@ -2448,6 +2452,14 @@ class MujocoBackend:
         # ⇒ 是**死代码、永不执行**：`after_above` 与 `after_descend` 之间植物只前进 5 步
         # （190665 → 190670）、载荷位姿逐位相同（low 0.165531），后续 release/retreat 在
         # 4.5 cm 高处放空 ⇒ 失败报"未确认载荷已放下"。这条 bug 在**成功路径**与失败路径都被掩盖。
+        # ①a2 via 绕行（可选；把 transit→above 拆成两段，每段保持高位）
+        if isinstance(via, dict) and via:
+            self._move_trajectory(_carry_goal(via, "via"), phase_ms,
+                                  ctrl_offsets=self._pick_ctrl_offsets("approach") or None,
+                                  sampler=_segment_sampler("place_via_positions", segment_samples),
+                                  **carry_anchor_kwargs)
+            seg_row = _trace("after_via", _snapshot(), "绕行航点结束（高位通过）")
+            _carry_grip_row(seg_row, "绕行段")
         # ①b 抬升到承载面上方（回放）
         self._move_trajectory(_carry_goal(above, "above"), phase_ms,
                               ctrl_offsets=self._pick_ctrl_offsets("approach") or None,
@@ -4600,6 +4612,7 @@ class MujocoBackend:
             }
             # 放置四段的关节解（构建期由声明求解器解出，后端只回放；缺省即"该场景不支持放置"）
             for key in ("place_transit_positions", "place_above_positions",
+                        "place_via_positions",
                         "place_descend_positions", "place_retreat_positions",
                         # regrasp（先抬离台、再合爪到腰部）的两段位置指令：与放置段同样必须透传，
                         # 否则被本解析层白名单丢掉 ⇒ 运行时只会走原相位表（本会话实测踩过一次）。

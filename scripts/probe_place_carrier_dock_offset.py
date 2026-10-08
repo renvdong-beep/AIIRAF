@@ -210,7 +210,7 @@ def main():
 
     doc = json.loads(JOINT_JSON.read_text())
     grip = doc["manipulation"]["per_robot"]["ur5e"]["gripper"]
-    order = [n for n in ("transit", "above", "descend", "retreat")
+    order = [n for n in ("transit", "via", "above", "descend", "retreat")
              if grip.get("place_%s_positions" % n)]
     if not order:
         print("产物里没有 place_*_positions ⇒ 先跑受控重建")

@@ -199,6 +199,21 @@ def build_place_reference_poses(root, baseline, target_local_m, payload_half_m, 
     # 到"托盘上方"的单条关节空间插值 —— 实测它在笛卡尔空间穿过载体（§11.17）。
     if transit_local_m is not None:
         plan["transit"] = np.asarray(transit_local_m, dtype=float)
+    # **via 绕行相位**（2026-10-08 新增，可选：`grasp.place_via: midpoint`，缺省不插入 ⇒ 逐位不变）。
+    # 为什么必须能拆腿：transit→above 是一条**关节空间插值**，实测它的**中点**会下探穿过台面
+    #   （`path:transit>above` frac 0.5 前臂 −0.061694 m ↔ world；提高两端航点只值 ~8 mm ⇒ 压不住）。
+    # 口径：取 transit 与 above 的笛卡尔中点，并把 z 抬到两者的**较高者**（保持高位绕行）。
+    via_mode = str(grasp_cfg.get("place_via") or "").strip()
+    if via_mode:
+        if via_mode != "midpoint":
+            raise ValueError("grasp.place_via 只允许 midpoint（实际 %r）" % via_mode)
+        if "transit" not in plan:
+            raise ValueError("grasp.place_via=midpoint 需要调用方给出 transit_local_m")
+        _t = np.asarray(plan["transit"], dtype=float)
+        _a = np.asarray(plan["above"], dtype=float)
+        _via = (_t + _a) / 2.0
+        _via[2] = max(float(_t[2]), float(_a[2]))
+        plan["via"] = _via
     out = {"schema_version": "iraf.piper-reference-pose/v1",
            "place_mode": "measured_grip_height",
            "target_local_m": [round(float(v), 9) for v in base],

@@ -228,6 +228,9 @@ robots:
           # ⚠ 2026-10-08 本轮实验（轨迹层）：把**绕行航点抬高 0.15**，让 lift/transit → above 的
           #   关节空间插值起手就高（真因见下方 place_elbow 条：穿透在插值航段上）。
           place_transit_extra_z_m: 0.15
+          # ⚠ 2026-10-08 本轮落地：**via 绕行相位**（把 transit→above 拆成两段）。
+          #   四处改动都做成缺省惰性：求解器 plan 插 via、构建器相位顺序表、后端白名单 + 回放。
+          place_via: midpoint
           # ⚠ 2026-10-08 本轮实验：加大**放置接近净间隙**（0.05 → 0.15）⇒ `above`/`retreat` 航点整体抬高，
           #   使穿透最深的那段（transit→above 的关节空间插值）更"贴顶走"。该键**已存在**（臂基线
           #   `grasp.pregrasp_offset_m`，无需新契约）；副作用是抓取侧的预接近高度也一起变（s06 会被扰动，需同看）。

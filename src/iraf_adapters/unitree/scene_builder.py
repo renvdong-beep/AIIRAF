@@ -2154,7 +2154,7 @@ def _joint_place_resolution(root, solver, resolution, place_targets, arm_report,
         # 会形成死锁（修几何要的正是它给出的净空数字）；几何修好后应升级为**声明驱动**的硬门禁。
         path_contacts = []
         _poses_all = poses.get("poses") or {}
-        _ordered = [key for key in ("transit", "above", "descend", "retreat")
+        _ordered = [key for key in ("transit", "via", "above", "descend", "retreat")
                     if isinstance(_poses_all.get(key), dict) and _poses_all.get(key)]
 
         def _declared_joints(section):
