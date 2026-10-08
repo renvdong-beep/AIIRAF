@@ -576,6 +576,10 @@ render:
     elevation_deg: -35.0
   width_px: 640
   height_px: 480
+  # ⚠ 2026-10-08 实测（已回滚）：改成 1600×900 **既没有放大 GLFW 窗口**（xwininfo 实测仍 1280×720，
+  #   那两个键只影响离屏渲染缓冲），又正好是"录屏那次运行在**收尾阶段 SIGSEGV(139)**"与上次
+  #   （640×480、exit=0）唯一的环境差异 ⇒ 视为可疑，回滚为原值。
+  #   交互窗口模式的退出路径段错误另有留档：报告写全(passed=True, 13:46)之后才崩 ⇒ 非仿真逻辑失败。
   render_hz: 30.0
   # 交互窗口是否强制 Mesa 软件渲染（LIBGL_ALWAYS_SOFTWARE=1 + GALLIUM_DRIVER=llvmpipe）。
   # 依据：2026-09-23 实测（docs/debug/2026-09-23-go2-viewer-3d-black-screen.md）——本机默认 GL 路径下
