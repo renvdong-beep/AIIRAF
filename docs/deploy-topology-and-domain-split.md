@@ -114,23 +114,30 @@ flowchart LR
 · 两个容器间用版本化接口（gRPC/ROS2）连通 ⇒ 能证明"跨域接口契约 + 策略拒绝 + 超时/取消"这几件事
 · 容器不是板卡 ⇒ 不得作为 e300/firefly 的 `unverified → verified` 证据
 · 若在 x86 上跑 aarch64 rootfs（qemu-user-static）⇒ 仅证明"文件系统/依赖装得上"，**不得**当性能证据
+· 智能域容器**共享控制域的网络命名空间**（`--network container:<控制域>`）：开发 gRPC 适配器
+  （`server.py`）按安全设计**只允许绑定回环**，跨容器回环要通只能共享 netns。
+  这是实验室捷径，**不构成网络隔离证据**；生产用 mTLS + 真实接口 + 独立 netns。
+  ⚠ **禁止**为图方便去放开 `server.py` 那条绑定限制（那是安全边界，不是阻碍）。
+· 控制域容器**不装仿真依赖**（mujoco 只在智能域/x86 侧）：这既是设计，也是本轮抓到的缺陷来源
 ```
 
-**复现入口（受控、可回滚）**
+**复现入口（受控、可回滚；已实现，不再是待办）**
 ```bash
 # 0) 前置：镜像已在本机（rootfs_openeuler_24.03-lts-sp1_{aarch64,loongarch64}）；跨架构需 qemu
 docker run --privileged --rm multiarch/qemu-user-static --reset -p yes      # 注册 binfmt（一次即可）
-# 1) 起两个域容器（命名体现角色，端口体现跨域接口）
-docker run -d --name iraf-control-domain  <openEuler24.03镜像> sleep infinity
-docker run -d --name iraf-intel-domain    <openEuler24.03镜像> sleep infinity
-# 2) 两容器内各自装依赖并放 IRAF（只装运行所需，不装仿真依赖）
-docker cp <repo>/src        iraf-intel-domain:/opt/iraf/src
-docker cp <repo>/skills     iraf-intel-domain:/opt/iraf/skills
-docker cp <repo>/scenes     iraf-intel-domain:/opt/iraf/scenes
-docker cp <repo>/config     iraf-control-domain:/opt/iraf/config     # 控制域只要机型/板卡/安全声明
-# 3) 验证（智能域发起 → 控制域返回实测事实 → 判据判定；含拒绝路径）
-#    见 scripts/verify_domain_split.sh（**待实现**，见下 §6.1）
+# 1) 一条命令跑完整条链路（起/复用两容器 → 同步 → 装依赖 → 生成 stub → 起服务端 → 四例 → 收证）
+cd <repo>
+IRAF_GRPC_TOKEN=<部署下发凭据> bash scripts/verify_domain_split.sh
+#    证据落 build/acceptance/domain-split/{run.log,case-*.log,control-trace-*.jsonl,control-server-*.log}
+#    可选：--no-sync（跳过代码同步）、--out <dir>、IRAF_RUN_ID=<id>（指定本轮账本目录名）
+# 2) 只跑本机进程内预检（不起容器，秒级；用于改桩后快速回归）
+PYTHONPATH=src python3 scripts/probe_domain_split_local.py     # 四例 15 项判据
+PYTHONPATH=src python3 scripts/probe_domain_stub_contract.py   # 装配契约 + 拒绝路径 13 项
 ```
+
+编排脚本自己做这几件事（细节见脚本头注释）：容器幂等起停、**服务端起停只按 PID 文件**
+（不用 pgrep/pkill 匹配命令行）、每轮独立账本目录、控制域审计账回收（证"安全停机/故障注入
+真的发生在控制域"）。
 
 ### 6.1 已验证的容器事实（2026-10-08 实测，照抄即可复现）
 ```bash
@@ -170,9 +177,52 @@ docker run -d --name iraf-intel-domain   $IMG sleep infinity
    ⇒ 真缺口 = **bootstrap 能否按声明/环境构造"控制域 Provider 桩"的 backend**（当前只走 MuJoCo）。
    待做：① 读 `bootstrap.py` 定 backend 的选择方式（是否已有 registry/能力表——我先前 grep 未命中，很可能它就在这里）
         ② 加 `provider_stub` backend（可复现事实 + 可注入"超时/不可达"）
-        ③ `scripts/verify_domain_split.sh` 起链路跑四例
+        ③ `scripts/verify_domain_split.sh` 起链路跑四例 ⇒ **已实现并通过**，见 §6.3（含证据路径与实测值）
 ⇒ 四例：①正常 ②策略拒绝 IRAF-POLICY-DENIED ③deadline 超时/取消 ⇒ 显式失败 ④Provider 不可达 ⇒ 显式失败 + 安全停机
 ```
+### 6.3 四例跨域验收结果（2026-10-08 实测，`scripts/verify_domain_split.sh` 一轮产出）
+
+复现命令：`IRAF_GRPC_TOKEN=<凭据> bash scripts/verify_domain_split.sh`（exit 0）
+证据目录：`build/acceptance/domain-split/`（`run.log` / `case-*.log` / `control-trace-*.jsonl`）
+容器：控制域 `iraf-control-domain`（bridge）· 智能域 `iraf-intel-domain`（`--network container:控制域`）
+两端：`openEuler 24.03 (LTS-SP1)` · `aarch64`（x86 宿主 qemu）· `Python 3.11.6` · `pyyaml 6.0.3` / `jsonschema 4.26.0` / `grpcio 1.84.0` / `protobuf 7.36.2` / `grpcio-tools`（同一批 aarch64 轮子）
+
+| 用例 | 端口 | 结果 | 关键实测值 |
+|---|---|---|---|
+| ① normal | 50051 | 5/5 ✓ | `status=SUCCEEDED`、`evidence.simulation=True`、`control_cycles=200.0`（duration_ms=2000 @100 Hz）、`final_state.joint_positions_rad` 12 个关节 |
+| ② denied | 50051 | 3/3 ✓ | `status=FAILED`、`error_code=IRAF-POLICY-DENIED`、`reason=RobotProfile 名称、版本或摘要不匹配`、无成功证据 |
+| ③ cancel | 50052 | 6/6 ✓ | 进入 RUNNING 0.255 s → `Cancel accepted=True` → `CANCELLED`；**服务端 `GetExecution` 复核仍为 `CANCELLED`** |
+| ④ unreachable | 50053 | 3/3 ✓ | `status=FAILED`、`error_code=IRAF-EXECUTION-FAILED`、`reason=控制域不可达（注入故障 fault=unreachable）` |
+
+**控制域侧审计账（跨域取证的关键：证"动作真的发生在控制域"）**
+```
+control-trace-basic.jsonl        {"event":"capability","capability":"stand","execution_id":"b87dcf92-…"}
+control-trace-cancel.jsonl       {"event":"safe_stop","capability":"stop","execution_id":"d268ce48-…"}
+                                 {"event":"capability","capability":"stop","execution_id":"d268ce48-…"}
+control-trace-unreachable.jsonl  {"event":"fault","kind":"unreachable"}
+```
+安全停机两条记录相隔 **3.0 ms**、**同一 execution_id**（`d268ce48-…`）⇒ 取消路径确实在**控制域**执行了停机，
+且停机不被"慢链路"拖住。四个用例的 `stand`/`stop`/故障注入全部只在控制域账本里出现。
+
+**本轮由这次验证抓出并修掉的三处真缺陷（都在框架侧，均已修）**
+```
+① server.py import 期硬依赖仿真：`from ..mujoco.supervisor import …` → `iraf_adapters.mujoco`
+   又 import mujoco ⇒ 控制域（按设计不装仿真依赖）连规范入口都起不来（ModuleNotFoundError）。
+   修法：惰性导入 `_supervisor_for(backend)`，只在 backend 有 `start_continuous` 时才加载。
+② 桩返回的报告不满足 skill 输出 schema：Provider 用 `_evidence(report, EVIDENCE_KEYS)` 抽键，
+   缺键即拒（"适配器报告缺少输出必需键"）。修法：按 4 个 skill 的 output.json 逐键返回。
+③ 桩的 `stop` 继承了注入的 `latency_ms`（4000 ms）⇒ 安全停机被拖 4 s，等于伪造一个
+   "安全停机会被慢链路拖住"的结论。修法：`_maybe_fault(apply_latency=False)`（铁律 1.6）。
+```
+
+**已关闭的旧缺口**：`deploy/sdk/build_sdk.sh` 自述"本机没有 grpc_python_plugin，grpc 层无法复现"
+⇒ 现由 `scripts/gen_proto_stubs.sh`（走 `python3 -m grpc_tools.protoc`，自带 protoc 与 grpc 插件，
+不依赖系统 protoc、无版本偏斜）生成**消息层 + grpc 层**，两端 import 自检通过。
+
+**未构成证据的部分（勿误读）**：本验收只证"跨域接口契约 + 策略拒绝 + 取消/超时 + 不可达显式失败"。
+**不证**实时性、确定性、性能，也不构成 `e300` / `firefly_rk3588` 从 `unverified → verified` 的依据
+（两者保持 `unverified`；目标端验收仍为 DEFERRED —— 板卡不在场，不得用容器顶替）。
+
 **回滚**：`docker rm -f iraf-control-domain iraf-intel-domain`；宿主与仓库无副作用（只读挂载/拷贝）。
 
 ---
