@@ -81,6 +81,15 @@ def run_case(model, data, args, offset_m, offset_dir_deg, yaw_deg, waypoints, or
              carrier_bodies, arm_bodies, free_adr, site_id, label):
     base_pos = np.asarray(model.site_pos[site_id], dtype=float).copy()
     base_quat = np.asarray(model.site_quat[site_id], dtype=float).copy()
+    # 载体**高度口径**（2026-10-08，隔离验证用）：
+    #   `site`（构建期现状）＝ 站位帧 site 的 z 原样写入载体 free joint（实测 z=0 ⇒ 狗"沉到地面以下"）
+    #   `model-default`      ＝ 用模型默认位形 `model.qpos0` 的载体 z（Go2 模型默认＝站立姿态，
+    #                            实测 0.445），站位帧只提供 xy 与偏航 —— 这才接近运行期"站着"的狗
+    #   `explicit`           ＝ `--carrier-z` 直接给值
+    if args.carrier_z_mode == "model-default":
+        base_pos[2] = float(model.qpos0[free_adr + 2]) if free_adr is not None else base_pos[2]
+    elif args.carrier_z_mode == "explicit":
+        base_pos[2] = float(args.carrier_z)
     ang = math.radians(offset_dir_deg)
     offset_local = np.array([offset_m * math.cos(ang), offset_m * math.sin(ang), 0.0])
     yaw = math.radians(yaw_deg)
@@ -154,6 +163,14 @@ def run_case(model, data, args, offset_m, offset_dir_deg, yaw_deg, waypoints, or
         for b in carrier_bodies)])))
     for key, value in sorted(worst.items(), key=lambda kv: kv[1])[:12]:
         print("     %-24s ↔ %-22s net=%.6f m" % (key[0], key[1], value))
+    # 载体相关对**全列**（判"标称看不见"缺口的主指标；不受 top-12 截断影响）
+    carrier_names = {str(mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, b) or b)
+                     for b in carrier_bodies}
+    carrier_pairs = sorted(((k, v) for k, v in worst.items() if k[1] in carrier_names),
+                           key=lambda kv: kv[1])
+    print("     【载体对】%d 组：" % len(carrier_pairs))
+    for key, value in carrier_pairs[:14]:
+        print("        %-24s ↔ %-22s net=%.6f m" % (key[0], key[1], value))
     for name in order:
         pose = poses.get(name) or {}
         if "tray_01" in pose:
@@ -176,8 +193,14 @@ def main():
     ap.add_argument("--yaw-deg", type=float, default=0.0)
     ap.add_argument("--margin", type=float, default=0.05, help="臂与载体 geom 的接触 margin（读有符号净空）")
     ap.add_argument("--carrier-frame", default="handoff_station_frame_b")
+    ap.add_argument("--carrier-z-mode", default="site", choices=("site", "model-default", "explicit"),
+                    help="载体高度口径：site=站位帧原样（构建期现状）；model-default=模型默认位形高度")
+    ap.add_argument("--carrier-z", type=float, default=0.0, help="配合 --carrier-z-mode explicit")
     ap.add_argument("--samples", type=int, default=12)
     ap.add_argument("--scan", action="store_true", help="扫平移 0..0.04 m × 偏航 0..2.5°")
+    ap.add_argument("--scan-offsets", default="0,0.01,0.02,0.03,0.04", help="--scan 的平移量列表（逗号分隔）")
+    ap.add_argument("--scan-dirs", default="80", help="--scan 的平移方向列表（度，逗号分隔）")
+    ap.add_argument("--scan-yaws", default="0,2.45", help="--scan 的偏航列表（度，逗号分隔）")
     args = ap.parse_args()
 
     doc = json.loads(JOINT_JSON.read_text())
@@ -209,8 +232,13 @@ def main():
             if body in arm_bodies or body in carrier_bodies:
                 model.geom_margin[geom] = float(args.margin)
 
-    cases = ([{"offset_m": o, "offset_dir_deg": 80.0, "yaw_deg": y}
-              for o in (0.0, 0.01, 0.02, 0.03, 0.04) for y in (0.0, 2.45)]
+    def _floats(text):
+        return [float(v) for v in str(text).split(",") if str(v).strip() != ""]
+
+    cases = ([{"offset_m": o, "offset_dir_deg": d, "yaw_deg": y}
+              for o in _floats(args.scan_offsets)
+              for d in _floats(args.scan_dirs)
+              for y in _floats(args.scan_yaws)]
              if args.scan else
              [{"offset_m": args.offset_m, "offset_dir_deg": args.offset_dir_deg,
                "yaw_deg": args.yaw_deg}])
@@ -219,7 +247,7 @@ def main():
         report.append(run_case(model, data, args, case["offset_m"], case["offset_dir_deg"],
                                case["yaw_deg"], waypoints, order, carrier_bodies, arm_bodies,
                                free_adr, site_id,
-                               "scan" if args.scan else "case"))
+                               "d%.0f" % case["offset_dir_deg"] if args.scan else "case"))
 
     outdir = REPO / "build/diagnostics"
     outdir.mkdir(parents=True, exist_ok=True)
