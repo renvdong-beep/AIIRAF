@@ -2109,6 +2109,17 @@ class MujocoBackend:
                     joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT,
                                                  model_name)
                     if joint_id < 0:
+                        # 2F-85 的驱动是**腱执行器**（`rq2f85_fingers_actuator`），不是关节 ⇒
+                        # 旧实现直接 `continue` ⇒ 该机型的 `gripper_state` **恒为空**
+                        # （2026-10-06 §11.91 追查"释放后间距塌到载荷宽度"时才发现）。
+                        # 补：按执行器名解析，给出**实际施加的 ctrl** 与腱长（判"是否真在夹"用）。
+                        act_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR,
+                                                   model_name)
+                        if act_id < 0:
+                            continue
+                        state[str(name)] = {
+                            "ctrl": round(float(self.data.ctrl[act_id]), 6),
+                            "actuator_length_m": round(float(self.data.actuator_length[act_id]), 6)}
                         continue
                     entry = {"qpos": round(float(self.data.qpos[int(self.model.jnt_qposadr[joint_id])]), 6)}
                     actuator = next((index for index in range(int(self.model.nu))

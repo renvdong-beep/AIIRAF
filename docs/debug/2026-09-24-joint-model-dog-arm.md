@@ -6133,6 +6133,30 @@ A 站逐位复现（无交接竞态）。
 **修法候选**：① 撤退先**垂直抬离**再横向（先查声明的撤退计划/航点，避免横向扫过载荷）；
 ② 增大释放后的**净空**声明；③ 把载荷在垫上放得更居中（消掉那 ~25.7 mm 的横向偏置）。
 
+**§11.91 附：真正的原因是"释放指令在执行器层面从未生效"（2026-10-06，决定性数据）**
+
+补上留证缺口后（`gripper_state` 对 2F-85 恒空——旧实现按**关节名**解析，而该机型驱动是**腱执行器
+`rq2f85_fingers_actuator`** ⇒ 已修为兼容执行器名），实测**实际施加的 ctrl**：
+
+| 相位 | 施加 ctrl | `pad_span_m` | `finger_contacts` |
+|---|---|---|---|
+| `place_descend_touchdown_positions@step1000` | **163.0** | 0.066132 | left True |
+| `after_touchdown_4` | **163.0** | 0.070449 | left True |
+| `after_touchdown_5` | **163.0** | 0.092183 | False / False |
+| `after_touchdown_6` | **163.0** | 0.091302 | False / False |
+| `after_retreat` | **163.0** | 0.039260 | **left True** |
+| `after_settle` | **163.0** | 0.039277 | **left True** |
+
+- 声明：`open = 0.0` / `closed = 163.0`（`config/ur5_simulation_baseline.yaml`）。
+- ⇒ **整个放置步里施加的夹爪 ctrl 恒为 163（闭合值）**——"释放"相位的张开（0）**从未生效**；
+  于是载荷被闭着的夹口夹住（`pad_span` 39 mm ≈ 载荷宽度），`released=False` ⇒ s07 FAILED。
+- 修法前的"通过"只是**载荷碰巧从闭着的夹口里滑出去**（边缘行为），被可复现性修法确定性暴露。
+
+**下一步（取证方向已明确）**：查放置路径里"释放/张开"指令的**发出点与覆盖点**
+（谁在哪一相位写 `open_positions`；是否有后续写入（保持/收拢）把 163 又写回去）——
+最可能的解释是"释放只在**位置指令层**体现、而**夹爪信道被后续保持逻辑重新写回闭合值**"。
+定位后按声明级/实现级修，随后仍按"连跑 2 轮逐位比对 + 30 轮通过率"验收，判据不动。
+
 ## 12. 下一步
 0. **（2026-09-28，§11.9）** 给 `scripts/scenario.py run` 加显示通路（`--display/--render-hz/--seconds`）：驻留线程推进 + `continue_stepping=False` 的只渲染会话，让**验收运行本身**（stand → dock → pick，exit 0/passed=true）可被看到。
 0a. **（2026-09-24 判死，§11.7）** 求解器层：参考姿态必须**不得让臂 link 侵入目标**（当前 `piper_link6` 与方块重叠 −0.014516 m ⇒ 保持残余 0.039962049 rad）；可复用 UR5e `GraspPoseSolver` 的 `pointing_direction`：把夹爪轴约束到**声明的** `grasp.approach_direction`（§11.7 附：抬高抓取点已被数字否掉 —— 门禁口径不允许，且抬 28 mm 侵入仍为负）。修完再声明 `feedforward_entry` 并判 s03。
