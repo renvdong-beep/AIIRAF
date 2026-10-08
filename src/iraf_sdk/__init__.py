@@ -39,7 +39,13 @@ from .client import (
     SdkUnsupportedError,
     canonical_execute_body,
     deadline_after,
+    event_to_dict,
+    execute_request_from_body,
     identity_of,
+    replay_manifest_to_dict,
+    result_from_feedback,
+    result_from_snapshot,
+    status_from_state,
 )
 
 __version__ = "0.2.0"
@@ -67,5 +73,11 @@ __all__ = [
     "HttpSkillClient",
     "canonical_execute_body",
     "deadline_after",
+    "event_to_dict",
+    "execute_request_from_body",
     "identity_of",
+    "replay_manifest_to_dict",
+    "result_from_feedback",
+    "result_from_snapshot",
+    "status_from_state",
 ]

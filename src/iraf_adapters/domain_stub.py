@@ -120,14 +120,18 @@ class ControlDomainStubBackend:
         if lease is None:
             raise PermissionError("缺少资源租约（lease）：控制域拒绝无租约的动作请求")
 
-    def _maybe_fault(self) -> None:
+    def _maybe_fault(self, *, apply_latency: bool = True) -> None:
+        """注入故障。`apply_latency=False` 用于**安全停机**路径：
+        停止动作的优先级高于任何"慢链路"建模（铁律 1.6：急停/安全事件高于任务成功），
+        给它加人工延迟等于伪造一个"安全停机会被慢链路拖住"的结论。
+        """
         if self.fault == "unreachable":
             self._trace({"event": "fault", "kind": "unreachable"})
             raise BackendUnavailable("控制域不可达（注入故障 fault=unreachable）")
         if self.fault == "timeout":
             self._trace({"event": "fault", "kind": "timeout"})
             raise BackendTimeout("控制域超时（注入故障 fault=timeout）")
-        if self.latency_ms:
+        if apply_latency and self.latency_ms:
             time.sleep(self.latency_ms / 1000.0)
 
     def _trace(self, record: Dict[str, Any]) -> None:
@@ -215,12 +219,14 @@ class ControlDomainStubBackend:
         """
         self.require_motion_allowed("stop", lease)
         now = time.time()
-        record = {"capability": "stop", "execution_id": str(execution_id or ""),
+        # 同一次停机在审计账里必须用**同一个 execution_id**（否则跨域取证时要靠墙钟猜配对）
+        resolved_id = str(execution_id or "") or str(uuid.uuid4())
+        record = {"capability": "stop", "execution_id": resolved_id,
                   "mode": mode, "tilt_limit_deg": tilt_limit_deg, "wall_s": round(now, 6)}
         self.stops.append(record)
         self._trace({"event": "safe_stop", **record})
-        self._maybe_fault()
-        return self._seal("stop", execution_id, lease,
+        self._maybe_fault(apply_latency=False)
+        return self._seal("stop", resolved_id, lease,
                           {"mode": mode, "tilt_limit_deg": tilt_limit_deg, "final_speed_mps": 0.0})
 
     def resolve_velocity(self, velocity: Any) -> Dict[str, float]:
