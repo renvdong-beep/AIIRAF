@@ -392,11 +392,39 @@
               },
               "description": "该臂在**本联合场景**里的抓取目标（世界系 xyz）。缺省 = 用场景道具的默认位置。用于臂的基座/朝向与默认目标不匹配的情形（实测 UR5e：默认目标距基座 1.18 m 超出可达 1.05 m ⇒ 姿态翻到反向分支）。"
             },
-            "baseline_overrides": {
+        "baseline_overrides": {
+          "type": "object",
+          "minProperties": 1,
+          "properties": {
+            "grasp": {
               "type": "object",
-              "minProperties": 1,
-              "description": "**本场景对求解器基线配置的覆盖**（嵌套对象，按层深合并到 `baseline` 读出的文档上再传给求解器）。用途：同一台臂在不同场景里可达的工作空间不同（实测 UR5e：基线的 `grasp.home_rise_m: 0.30` 在它自己的场景里得到 home 残差 1.5e-07，换到本联合场景（目标距基座 0.45 m、载荷在托盘中）后 home 目标不可达 ⇒ 残差 4.15e-01 m、home 位形压在载荷里 31.6 mm）。**覆盖必须由场景声明**，且构建期会把生效值与来源写进报告；缺省不覆盖（逐位不变）。"
+              "description": "对臂侧 `grasp` 段的覆盖（**已登记键**给出类型与枚举，未列出的键仍允许按层深合并）。",
+              "properties": {
+                "place_via": {
+                  "type": "string",
+                  "enum": ["midpoint"],
+                  "description": "放置段的**绕行相位**开关（2026-10-08 新增）。`midpoint` = 在 transit 与 above 之间插一个笛卡尔中点、并把 z 抬到二者较高者，用来把 transit→above 这条关节空间插值**拆成两段**（实测该单段腿的中点会下探穿过台面 −0.061694 m）。缺省不声明 ⇒ 不插入该相位（逐位不变）。实现：`scripts/build_piper_baseline.py` 的 via 段 + `scene_builder.py` 相位序 + `mujoco_backend.py` 白名单与回放。"
+                },
+                "place_elbow_body": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "放置段选解的**肘部参照 body 名**（2026-10-08 新增，必须与 `place_elbow_pref` 成对声明）。声明后，在同半球且残差达标的候选里改按该 body 的**世界 z** 排序。注意：探针场景里的 body 名是**无前缀**名（如 `forearm_link`；写 `elbow_link` 会因该 body 不存在而 fail-closed）。"
+                },
+                "place_elbow_pref": {
+                  "type": "string",
+                  "enum": ["high", "low"],
+                  "description": "肘部偏好方向（与 `place_elbow_body` 成对）：取该 body 世界 z 最大/最小的候选。缺省不声明 ⇒ 仍按“轴最接近参照轴”选解（逐位不变）。"
+                },
+                "place_transit_extra_z_m": {
+                  "type": "number",
+                  "minimum": 0.0,
+                  "description": "绕行航点**抬高量**（m，2026-10-08 新增）：构建期算绕行航点 z 时叠加到 `max(lift_pad_z, bearing_pad_z)` 上。实测只值 ~8 mm（穿透会移到插值中点）——属诊断/微调用，不是充分手段。缺省 0 ⇒ 逐位不变。"
+                }
+              }
             }
+          },
+          "description": "**本场景对求解器基线配置的覆盖**（嵌套对象，按层深合并到 `baseline` 读出的文档上再传给求解器）。用途：同一台臂在不同场景里可达的工作空间不同（实测 UR5e：基线的 `grasp.home_rise_m: 0.30` 在它自己的场景里得到 home 残差 1.5e-07，换到本联合场景（目标距基座 0.45 m、载荷在托盘中）后 home 目标不可达 ⇒ 残差 4.15e-01 m、home 位形压在载荷里 31.6 mm）。**覆盖必须由场景声明**，且构建期会把生效值与来源写进报告；缺省不覆盖（逐位不变）。"
+        }
           }
         },
         "profile_name": {
