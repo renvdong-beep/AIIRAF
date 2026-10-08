@@ -149,9 +149,13 @@ docker run -d --name iraf-intel-domain   $IMG sleep infinity
 契约      ✅ 已存在：api/proto/iraf/v1/{runtime,skill,events,common}.proto（iraf.v1 = 带版本；**复用，不新造**）
 客户端    ✅ 已存在且较实：src/iraf_sdk/client.py（579 行；含 identity_of / deadline_after / canonical_execute_body
                         / execute_request_from_body / status_from_state / _grpc_module，HTTP + gRPC 双通道）
-服务端    ❌ **仅桩**：src/iraf_adapters/grpc/server.py 只有 43 行、仅一个 def main()
-注册表    ❌ 在有界范围（grpc/ sdk/ core/）内 grep 未发现 CapabilityProvider / register_provider / PROVIDERS
-⇒ 待实现三件：servicer.py（实现 iraf.v1 服务端 + deadline/取消/健康检查）、provider_stub.py（控制域替身 + 可注入超时/不可达）、
+服务端    ⚠ **更正（同日）**：gRPC 服务端**已存在** —— `src/iraf_adapters/grpc/runtime_grpc.py` 的
+              `SkillRuntimeServicer`：`Execute`→`stream SkillFeedback`、`Cancel`、`GetExecution`、token 鉴权、
+              `add_execute_get_servicer_to_server` 注册入口；`server.py`（43 行）只是**入口桩**。原判"服务端缺失"作废。
+注册表    ❌ 有界范围（grpc/ sdk/ core/）内 grep 未见 CapabilityProvider / register_provider / PROVIDERS
+          ⇒ 真正缺口 = **服务端后面要接的 Provider（能力实现）与注册表**
+⇒ 待实现两件 + 一条脚本：provider_stub.py（控制域替身：可复现事实 + 可注入"超时/不可达"两种故障）、
+              把 `runtime` + provider 接进 `server.py`（用它现成的 `add_execute_get_servicer_to_server`）、
               scripts/verify_domain_split.sh（起链路 + 四例验证 + 报告）
 ⇒ 四例：①正常 ②策略拒绝 IRAF-POLICY-DENIED ③deadline 超时/取消 ⇒ 显式失败 ④Provider 不可达 ⇒ 显式失败 + 安全停机
 ```
