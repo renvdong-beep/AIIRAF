@@ -6494,16 +6494,29 @@ via 绕行相位      → 已实现（端到端打通）但对本布局无改善
 
 **两个候选杠杆（本轮只定位，未改）**
 ```
-A. `grasp_pose_correction.descend_splits: K`（机制**已存在**，1148-1183）：
-   注意它的语义是"每子段用新鲜实测目标重解剩余下压"，把**最后一次纠偏到门禁的陈旧度**
-   从 (phase_ms + 4×phase_ms) 降到 (phase_ms/K + 4×phase_ms/K)；
-   而**总窗口不变**（chunk_settle 按 1/K 缩放，正是为了不让 K 段各稳定 4×phase_ms ⇒ 总稳定放大 K 倍）。
-   ⇒ 对"漂移×窗口"的收益来自"最后一段更短"，不是"总窗口更短"。
-B. 开合爪段的"同一时长推两遍"（`_advance_pinned(open_ms)` 后紧跟 `_advance_for(open_ms)`，
-   close 段同构）= 2×(3200+2134) ≈ 10.67 s，占 s06 曝光窗口约 1/3。
-   **疑似冗余但未定论** —— 钳制段（pin）与普通推进的语义可能不同，删任何一个都改变物理；
+A. `grasp_pose_correction.descend_splits`：**更正（2026-10-08 当日复核）—— 它不是"待做的杠杆"，
+   而是**早已声明并生效**：`config/ur5_simulation_baseline.yaml:243` 写着 `descend_splits: 5`，
+   构建产物 `build/models/ur5-pick-scene.json` 的 `/gripper/grasp_pose_correction` 里确实带
+   `"descend_splits": 5`（另含 mode=resolved / residual_tolerance_m=0.002 / max_correction_m=0.07 /
+   ik_iterations=400 / align_max_attempts=3 / max_axis_deg=8.0）。
+   ⇒ **上表里的 s06 残差 0.002156 已经含 K=5 的收益**，不存在"再做 A 就能再砍 1/5"的空间。
+   语义复核（与 1148-1183 的实现一致）：K 段各 `chunk_ms = phase_ms//K` + `chunk_settle = settle//K`
+   ⇒ **下压总窗口不变**（仍 ≈ phase_ms + 4×phase_ms），缩短的只是"**最后一次重解 → 门禁**"的陈旧度
+   （1600 → 320 ms 的运动 + 1280 ms 的稳定 = 末段 1600 ms）。
+B. 开合爪段的"同一时长推两遍"（`_advance_pinned(open_ms)` 后紧跟 `_advance_for(open_ms)`，1216-1219；
+   close 段同构，1234-1238）= 2×(3200+2134) ≈ 10.67 s。
+   **这是"最后一次纠偏之后"份额最大的、可点名的单块**（占 s06 曝光窗口约 1/3）。
+   **疑似冗余但未定论** —— 钳制段（pin）与普通推进语义可能不同，删任何一个都改变物理；
    需先隔离测量，不得直接动。
+C. `_measure_settled_alignment`（3270-）只推 `align_max_attempts(3) × phase_ms//4(400 ms)` = 1.2 s，量级小。
 判据 0.005 **未动**。
+
+**未闭合的差额（下一轮的下一步，任务有界）**
+`残差 2.156 mm ÷ 漂移率 0.085 mm/s ≈ 25.4 s`，而已能点名的"最后纠正之后"的段只有
+末段 DESCEND 1600 ms + 复量 1200 ms + 开爪 6400 ms + 合爪 4268 ms ≈ 13.5 s ⇒ **还有约 12 s 未被点名**。
+⇒ 下一步要的是**相位级**仿真推进轨迹（`dump_pick_phase` / `_log_pick_phase` 已有钩子，
+但未确认是否记录植物步号）；把 s06 每个相位的 `step_index` 增量打出来，才能把窗口逐段对账，
+而不是继续用 `duration_ms` 推算。
 ```
 
 **回归**：本提交只加计数与报告字段（`plant.py` 的 `wait_until` 包一层 `try/finally`，只加 3 个 int）。
