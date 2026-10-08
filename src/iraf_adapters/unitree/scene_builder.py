@@ -1971,11 +1971,24 @@ def _joint_place_resolution(root, solver, resolution, place_targets, arm_report,
                                 "xy_source": transit_xy_source,
                                 "source": ("current_lift_height" if float(lift_local[2]) > bearing_pad_z
                                            else "bearing_approach_height")}
-        # IK 种子 = 已验证的 pick **抬升位形**（把模型名还原成声明名：报告里是 piper_jointN）
+        # IK 种子：**可声明**（2026-10-08 新增，`grasp.place_seed`，缺省 `lift` ⇒ 逐位不变）。
+        # 为什么必须可声明：位置型 IK 是局部求解器，种子决定落到哪个分支（§11.18/§11.23(31)）。
+        # 实测（2026-10-08，落点换到臂**另一侧**）：沿用 pick 抬升位形（狗那一侧）作种子时，
+        # 对侧的放置解退化 —— 前臂/上臂扫进**台面与落点垫**（最深 −0.070131 m ↔ world，
+        # `path:transit>above` frac 0.75 / `above>descend` frac 0.25，`above` 航点自身 −0.039710 m）。
+        # 种子只允许取该臂**已解出**的位形集（不许写死数字）。
+        seed_source = str((baseline_doc.get("grasp") or {}).get("place_seed") or "lift")
+        _seed_allowed = ("lift", "home", "approach", "grasp")
+        if seed_source not in _seed_allowed:
+            _fail(EXIT_REFERENCE, "grasp.place_seed 只允许 %s（实际 %r）：放置段 IK 种子必须取该臂"
+                  "已解出的位形集，不得写死数字" % (list(_seed_allowed), seed_source))
         seed_positions = {}
-        for name, value in (out_gripper.get("lift_positions") or {}).items():
+        for name, value in (out_gripper.get("%s_positions" % seed_source) or {}).items():
             declared = str(name)[len(str(prefix)):] if prefix and str(name).startswith(str(prefix)) else str(name)
             seed_positions[declared] = float(value)
+        if not seed_positions:
+            _fail(EXIT_REFERENCE, "放置段 IK 种子为空：报告里没有 %s_positions（place_seed=%s）"
+                  % (seed_source, seed_source))
         try:
             poses = entry(root, baseline_doc, [float(v) for v in local], float(payload_half),
                           grip_height, clearance, float(touch_clearance),
