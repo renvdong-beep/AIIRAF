@@ -258,6 +258,34 @@
           "type": "boolean",
           "description": "落稳窗结束时按**共享测量**（与四足侧同一函数）判定的“载荷落在承载面上”（存在接触 且 最低点不高于承载面 + 模型 margin）。"
         },
+        "place_settled_speed_breakdown": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "body",
+              "joint",
+              "speed_mps"
+            ],
+            "properties": {
+              "body": {
+                "type": "string"
+              },
+              "joint": {
+                "type": "string"
+              },
+              "speed_mps": {
+                "type": "number",
+                "minimum": 0
+              }
+            }
+          },
+          "description": "`place_settled_speed_mps` 的**逐自由关节分解**（P8/C3，2026-10-12）。默认 null（`IRAF_DEBUG_SETTLE_DUMP=1` 时给出）：按速度降序，最大者即该字段来源；用于定性实测出现的 66~495 m/s 异常值（哪个 body 在贡献）。定性完成前，该字段不得作为\"已落稳\"的完整证据。"
+        },
         "place_settled_margin_m": {
           "type": "number",
           "minimum": 0,

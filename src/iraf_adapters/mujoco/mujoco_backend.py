@@ -2690,6 +2690,15 @@ class MujocoBackend:
                 mujoco, self.model, self.data, str(payload["body"]), str(record["body"]))
         final = _snapshot()
         _trace("after_settle", final, "落稳窗结束（载荷应静止在承载面上）")
+        # C3（2026-10-12）：`place_settled_speed_mps` 取全部自由关节末速上界，实测出现
+        # 66~495 m/s（与载荷静止矛盾）⇒ 需定性"是哪个 body、哪一步"。默认关闭，零开销；
+        # 开启时既打印又进证据（`place_settled_speed_breakdown`）。
+        _settle_breakdown = None
+        if os.environ.get("IRAF_DEBUG_SETTLE_DUMP") == "1":
+            _settle_breakdown = self._free_joint_speeds()
+            print("PLACE_SETTLE_SPEED_DUMP " + json.dumps(
+                {"note": "place_settled_speed_mps 的逐自由关节分解（最大者即该字段的来源）",
+                 "breakdown": _settle_breakdown}, ensure_ascii=False), flush=True)
 
         # ---- 判据（事实，不设阈值）
         # 臂↔载体接触对（C1 常规证据）：在**末帧**取一次（`_arm_carrier_contacts` 只读 contact，
@@ -2779,6 +2788,9 @@ class MujocoBackend:
             # 运行期触地纠偏的痕迹（mode=touchdown 时；否则 None）——含纠偏前后两次实测与自证结果
             "place_touchdown_correction": touch_record,
             "place_settled_margin_m": float(settled_facts["contact_margin_m"]),
+            # C3：逐自由关节末速分解（默认 None；`IRAF_DEBUG_SETTLE_DUMP=1` 时给出，
+            # 用于定性 place_settled_speed_mps 的异常值来源——哪个 body 在贡献那个值）。
+            "place_settled_speed_breakdown": _settle_breakdown,
             # **臂↔载体接触对**（2026-10-08 C1，常规证据化）：把"演示是否碰载体"从调试通路
             # （`IRAF_DEBUG_PLACE=1`）搬到默认报告 —— 默认运行为 0 条即"全程未碰载体"，
             # 与调试通路数值一致（口径同 `scene_builder._in_carrier_subtree`）。
@@ -4251,6 +4263,30 @@ class MujocoBackend:
                         "dist_m": round(float(contact.dist), 6),
                     })
         return hits
+
+    def _free_joint_speeds(self):
+        """逐**自由关节**的线速度（仅读 `qvel`，不 mj_forward ⇒ 观测不改被观测对象）。
+
+        用途（P8 / C3）：`place_settled_speed_mps` 取的是全部自由关节的末速上界，
+        实测出现 66~495 m/s（与载荷静止矛盾）。本函数给出**是哪个 body**在贡献那个
+        异常值，从而定性该字段（在此之前它不得作为"已落稳"的完整证据）。
+        返回 `[{"body": str, "joint": str, "speed_mps": float}]`（按速度降序）。
+        """
+        rows = []
+        with self._data_lock:
+            for jnt in range(int(self.model.njnt)):
+                if int(self.model.jnt_type[jnt]) != int(mujoco.mjtJoint.mjJNT_FREE):
+                    continue
+                dof = int(self.model.jnt_dofadr[jnt])
+                speed = float(np.linalg.norm(np.asarray(self.data.qvel[dof:dof + 3], dtype=float)))
+                body_id = int(self.model.jnt_bodyid[jnt])
+                rows.append({
+                    "body": str(mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_BODY, body_id) or ""),
+                    "joint": str(mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_JOINT, jnt) or ""),
+                    "speed_mps": round(speed, 6),
+                })
+        rows.sort(key=lambda item: item["speed_mps"], reverse=True)
+        return rows
 
     def _arm_outer_contacts(self):
         """**本本体 geom ↔ 本体外**的接触清单（运动途中判"臂擦了东西"；2026-09-30 §11.63）。

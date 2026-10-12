@@ -1071,6 +1071,32 @@ def _context():
     return AuthenticatedContext(SUBJECT, SUBMITTER_ROLES, "local")
 
 
+#: 已知的**调试通路开关**（只用于报告留痕；不改变任何行为）。新增开关时在此登记。
+KNOWN_DEBUG_CHANNELS = (
+    "IRAF_DEBUG_PLACE", "IRAF_DEBUG_PLACE_STRIDE", "IRAF_DEBUG_PLACE_ACCT",
+    "IRAF_DEBUG_PICK", "IRAF_DEBUG_PICK_STRIDE", "IRAF_DEBUG_ARM_CTRL",
+    "IRAF_DEBUG_CTRL_ALIGN", "IRAF_DEBUG_CTRL_DETAIL", "IRAF_DEBUG_CTRL_CALLS",
+    "IRAF_DEBUG_PLANT_SPAN", "IRAF_DEBUG_TRACE_CMD",
+)
+
+
+def _debug_channel_summary():
+    """报告里的**调试通路**留痕（C2）：哪些已知调试开关处于激活状态 + 是否 clean。
+
+    **只列开关名，不写任何取值**（避免把敏感值随报告落盘）；`clean=True` = 无任何
+    调试开关激活 ⇒ 该轮数字与调试通路可比。判定"激活" = 环境变量存在且非空且非 "0"。
+    """
+    active = []
+    for name in KNOWN_DEBUG_CHANNELS:
+        value = os.environ.get(name)
+        if value is not None and str(value).strip() not in ("", "0"):
+            active.append(name)
+    return {"clean": not active, "active_channels": sorted(active),
+            "note": ("本报告是否带调试通路（只列开关名，不写取值）：clean=True 表示无任何"
+                     " IRAF_DEBUG_* 开关激活 ⇒ 该轮数字与调试通路可比。"
+                     "注意：调试通路与 clean 运行**数值不同**（观测者效应），两者不可混比。")}
+
+
 def measure_step(before, after, evidence, wall_seconds):
     """从实测状态与技能输出里取可用测量量（缺依据的判据在评测时显式失败）。"""
     measured = {"wall_seconds": float(wall_seconds)}
@@ -2259,6 +2285,11 @@ def run_scenario(scene_dir, scenario_name, *, report_path=None, require_injected
             "目标端/真机验收 DEFERRED（板卡不在场）：本报告全部结论为 simulation=true 的仿真证据。",
         ],
         "failed_checks": failed_checks,
+        # C2（2026-10-12）：本报告是否带**调试通路**（env 白名单摘要，**只列开关名、不写值**）。
+        # 为什么需要：调试通路与 clean 运行**数值不同**（本轮多次遇到，如停靠残差），
+        # 但此前报告里没有一处提醒 ⇒ 拿两个不同通路的数字互比会得出错结论。
+        # 只列**已知调试开关名**（`IRAF_DEBUG_*`）中处于激活状态的，不泄露任何环境变量取值。
+        "debug_channels": _debug_channel_summary(),
     }
     if not fault_records:
         report["not_proved"].append("本场景未声明故障注入项：故障路径未被覆盖。")

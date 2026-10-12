@@ -108,6 +108,44 @@ PYTHONPATH=src python3 scripts/scenario.py run --scene scenes/handoff_lab --scen
 
 判据都写在 `scenarios.<name>.steps[].criteria` 与 `baseline.yaml#acceptance`，脚本不许写死阈值。
 
+## 惰性机制的最小示例（via 相位 / 肘部偏好）
+
+两项**惰性**能力（缺省不声明 ⇒ 行为逐位不变）自 2026-10-08 起可用。它们各有 schema 登记
+（`config/scene.schema.json` 的 `reference_solver.baseline_overrides.grasp.*`）与 D2 拒绝测试
+（`tests/unit/test_place_criteria_and_rejections.py`）；下面是"**怎么开 / 怎么验**"的 3 行最小示例。
+
+### 1) via 绕行相位（把 transit→above 单腿拆成两段）
+
+```yaml
+# scenes/<包>/scene.yaml → robots[].reference_solver.baseline_overrides.grasp
+place_via: midpoint      # 只允许 midpoint；缺省不声明 ⇒ 不插入该相位
+```
+
+```bash
+# 怎么验：重建联合场景后，报告的 place_via_positions 必须出现，且探针相位序与单点表一致
+PYTHONPATH=src python3 scripts/build_scene.py --scene scenes/handoff_lab --robot unitree_go2 --attach piper --attach ur5e
+PYTHONPATH=src python3 scripts/probe_place_feedforward.py   # 打印 [相位来源] 与 PLACE_PHASES 比对
+```
+误写枚举（如 `place_via: xx`）会在构建期 **fail-closed**（`ValueError: grasp.place_via 只允许 midpoint`）。
+
+### 2) 肘部偏好（在"同半球 + 残差达标"的候选里按肘部世界 z 选解）
+
+```yaml
+# scenes/<包>/scene.yaml → robots[].reference_solver.baseline_overrides.grasp
+place_elbow_body: forearm_link   # 该臂的肘部 body 名（**无前缀**名；写错即 fail-closed）
+place_elbow_pref: high           # high | low，两个键必须**同时**声明
+```
+
+```bash
+# 怎么验：重建必须 exit 0；若 body 名不存在或只声明其一 ⇒ 立即报错（不静默忽略）
+PYTHONPATH=src python3 scripts/build_scene.py --scene scenes/handoff_lab --robot unitree_go2 --attach piper --attach ur5e
+```
+拒绝路径（缺配对键 / pref 非法值 / body 不存在）各有独立单测：
+`PYTHONPATH=src python3 -m unittest tests.unit.test_place_criteria_and_rejections`。
+
+> 说明：这两项都是**惰性**的——不声明时链路逐位不变（本仓"缺省即旧行为"的纪律）；
+> 声明后由构建期相位残差门禁与拒绝用例共同钉住其正确性。
+
 ## 失败怎么定位
 
 1. 先跑 `scene_check.py`：它区分「声明缺字段」（2）、「引用的文件/本体不存在」（1）、
