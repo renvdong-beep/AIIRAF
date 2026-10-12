@@ -1,0 +1,262 @@
+# IRAF SDK 安装形态声明（iraf.install-profiles/v1）—— 安装包的唯一事实来源。
+#
+# 定位（2026-10-12 使用者口径）：IRAF 的安装交付物 = **SDK shell 脚本包**，分两种形态：
+#   形态 A  single-ubuntu2204  全部装在一台 Ubuntu 22.04：仿真 + 运行都在这台（开发/单机演示/回归）
+#   形态 B  split-x86-edge     仿真在 x86 Ubuntu 22.04（sim-x86）；其余在边缘侧 aarch64 Hyper 的
+#                              **智能域**（edge-intel，TaskFlow/Skill/Policy/Bridge）
+#                              与 **运控域**（edge-motion，控制域 Capability Provider 实时段）
+#   形态 B 的两域即使落在同一台 Hyper 上，也必须独立进程/权限/资源限额/设备所有权（AGENTS 6.11）。
+#
+# 契约：config/install/install_profiles.schema.json（负向可验）。
+# 校验入口：PYTHONPATH=src python3 scripts/install_profile_check.py [--profile <id>]
+# 依赖：本文件只声明“装什么、装到哪、起什么、怎么验残留”，**不声明命令实现状态**；
+#       命令在实现并通过验收前，不得在任何文档里写成“已可用”（AGENTS 6.4）。
+#
+# 术语对齐（避免同一事实两个名字，见 docs/iraf-agentos-hyper-compatibility.md §4 的相反用词）：
+#   智能域 = TaskFlow / Skill Runtime / Policy Gateway / AgentOSBridge（Hyper VM0）
+#   运控域 = Capability Provider 实时段（Hyper VM1 Motion、VM2 Master 各自独立角色）
+schema_version: iraf.install-profiles/v1
+sdk:
+  # 版本单一来源：不在本文件复制版本号（AGENTS 5.3）。
+  version_ref: pyproject.toml#project.version
+  dist_name_ref: pyproject.toml#project.name
+
+# 全角色共享默认值；单角色可覆盖。脚本只读本文件，禁止在脚本里再写一遍路径/端口（AGENTS 5.3）。
+defaults:
+  # 唯一的路径展开规则：仅允许把前导 `~` 展开为 $HOME；其余字符原样。解析后的生效值由
+  # scripts/install_profile_check.py --profile <id> 打印（本项目最常踩“改动没生效/改错段”）。
+  prefix: "~/.local/opt/iraf-sdk"
+  version_dir_layout: "{prefix}/{version}"
+  current_link: current
+  config_dir: "~/.config/iraf"
+  log_dir: "~/.local/state/iraf/log"
+  data_dir: "~/.local/state/iraf/data"
+  # 安装记录名：安装后写入 <version dir>/<file_record>；卸载**只**依据它决定删哪些文件，
+  # 清单外文件/记录缺失/SHA 不符一律拒绝（不做“尽力而为”删除）。
+  file_record: iraf-install-files.json
+  python_min: "3.9"
+  # venv = 单机/开发形态（快，需要网络或本地 wheel 缓存）；target = 交付形态（离线 wheelhouse，--target）
+  install_method: venv
+  # user = systemctl --user（无需 root，单机形态）；system = /etc/systemd/system（交付形态）
+  systemd_scope: user
+  # 依赖来源：index = 在线索引（快速）；wheelhouse = 离线目录（隔离网/板卡）
+  dependency_source:
+    kind: index
+    index_url: https://mirrors.aliyun.com/pypi/simple/
+  # 卸载保留项：数据与日志（AGENTS：日志/事件库属数据，卸载保留）；只有 --purge 才删。
+  uninstall:
+    keep: ["{data_dir}", "{log_dir}"]
+    purge_flag: "--purge"
+  # 明文声明：安装包不写系统 site-packages，不 dpkg/dnf 安装，不碰 AgentOS 自身文件。
+  install_boundaries:
+    write_system_site_packages: false
+    use_system_package_manager: false
+    touch_agentos_files: false
+
+profiles:
+  - id: single-ubuntu2204
+    label: 单机（Ubuntu 22.04，仿真 + 运行同一台）
+    purpose: development
+    target:
+      os: ubuntu
+      os_version: "22.04"
+      arch: x86_64
+    # 单机形态：仿真 Provider 与运行面同机 ⇒ 一切结论都是 simulation=true，不得表述为真机能力（AGENTS 1.7）。
+    verification: development
+    simulation_only: true
+    prefix: "~/.local/opt/iraf-sdk"
+    config_dir: "~/.config/iraf"
+    log_dir: "~/.local/state/iraf/log"
+    data_dir: "~/.local/state/iraf/data"
+    systemd_scope: user
+    components:
+      - sdk_core
+      - core
+      - skills
+      - profiles
+      - scenarios
+      - config
+      - adapters_sim
+      - adapters_http
+      - adapters_grpc
+      - adapters_agentos
+    backend_entrypoint: iraf_adapters.mujoco.mujoco_backend:MujocoBackend
+    services:
+      - name: iraf-runtime-http
+        template: deploy/iraf-runtime.service
+        scope: user
+        ports: [8765]
+        optional: true
+      - name: iraf-runtime-grpc
+        template: deploy/iraf-runtime-grpc.service
+        scope: user
+        ports: [50051]
+        optional: true
+    residue:
+      scan_roots: ["{prefix}", "{config_dir}", "{log_dir}", "{data_dir}"]
+      units: ["iraf-runtime-http.service", "iraf-runtime-grpc.service"]
+      ports: [8765, 50051]
+      processes: ["iraf-runtime-http", "iraf-runtime-grpc", "iraf-agentos"]
+
+  - id: sim-x86
+    label: x86 仿真侧（Ubuntu 22.04，只提供仿真 Provider 与场景）
+    purpose: simulation
+    target:
+      os: ubuntu
+      os_version: "22.04"
+      arch: x86_64
+    verification: development
+    simulation_only: true
+    components:
+      - sdk_core
+      - core
+      - skills
+      - profiles
+      - scenarios
+      - config
+      - adapters_sim
+    # 不起常驻服务：仿真侧由上层按需拉起（scenario.py / view_mujoco.py / iraf-agentos 的本地后端）。
+    backend_entrypoint: iraf_adapters.mujoco.mujoco_backend:MujocoBackend
+    services: []
+    cross_domain:
+      role: upstream
+      peers: ["edge-intel"]
+      transport: grpc
+      deadline_ms: 30000
+    residue:
+      scan_roots: ["{prefix}"]
+      units: []
+      ports: []
+      processes: ["scenario.py", "view_mujoco.py"]
+
+  - id: edge-intel
+    label: 边缘智能域（aarch64 Hyper，TaskFlow/Skill/Policy/AgentOSBridge）
+    purpose: edge_runtime
+    target:
+      # OS/内核/标签的取值只能来自板卡上**签名 HyperProfile / Release manifest**（AGENTS 6.10）；
+      # 未采集前保持 unverified，禁止猜测（AGENTS 3.2）。
+      os: unverified
+      os_version: unverified
+      arch: aarch64
+      kernel: unverified
+      python_tag: unverified
+      platform_tag: unverified
+      glibc_min: unverified
+    verification: unverified
+    simulation_only: false
+    prefix: /opt/iraf-sdk
+    config_dir: /etc/iraf
+    log_dir: /var/log/iraf
+    data_dir: /var/lib/iraf
+    systemd_scope: system
+    install_method: target
+    dependency_source:
+      kind: wheelhouse
+      index_url: https://mirrors.aliyun.com/pypi/simple/
+      wheelhouse_root: build/wheelhouse
+    components:
+      - sdk_core
+      - core
+      - skills
+      - profiles
+      - config
+      - adapters_grpc
+      - adapters_agentos
+    # 真机/边缘：Provider 在**运控域**，本域只做上游；仿真适配器禁止装入本域（AGENTS 1.7/6.9）。
+    forbidden_components: [adapters_sim]
+    backend_entrypoint: unverified
+    services:
+      - name: iraf-runtime-grpc
+        template: deploy/iraf-runtime-grpc.service
+        scope: system
+        ports: [50051]
+        optional: false
+    cross_domain:
+      role: upstream
+      peers: ["edge-motion"]
+      transport: grpc
+      deadline_ms: 30000
+      authenticated: true
+    safety_boundary:
+      # 铁律 6.11：2VM/多角色合并部署时不得合并安全边界。
+      merge_allowed: false
+      independent_process: true
+      independent_limits: true
+      independent_device_ownership: true
+    residue:
+      scan_roots: ["{prefix}", "{config_dir}"]
+      units: ["iraf-runtime-grpc.service"]
+      ports: [50051]
+      processes: ["iraf-runtime-grpc", "iraf-agentos"]
+
+  - id: edge-motion
+    label: 边缘运控域（aarch64 Hyper，控制域 Capability Provider 实时段）
+    purpose: edge_control
+    target:
+      os: unverified
+      os_version: unverified
+      arch: aarch64
+      kernel: unverified
+      python_tag: unverified
+      platform_tag: unverified
+      glibc_min: unverified
+    verification: unverified
+    simulation_only: false
+    prefix: /opt/iraf-sdk
+    config_dir: /etc/iraf
+    log_dir: /var/log/iraf
+    data_dir: /var/lib/iraf
+    systemd_scope: system
+    install_method: target
+    dependency_source:
+      kind: wheelhouse
+      index_url: https://mirrors.aliyun.com/pypi/simple/
+      wheelhouse_root: build/wheelhouse
+    # 本域只装能力实现与声明；TaskFlow/Skill/Policy 不落这里（不得跨域合并安全边界）。
+    components:
+      - sdk_core
+      - profiles
+      - config
+      - adapters_grpc
+      - control_provider_stub
+    forbidden_components: [adapters_sim, adapters_http, adapters_agentos]
+    backend_entrypoint: unverified
+    services:
+      - name: iraf-sdk-board
+        # ⚠ 现状：该模板是**就绪占位**（oneshot，只写一行 board-ready.log）；
+        # 控制域真实 Provider 入口未定义前，本域只允许桩（铁律 6.8），装完不得声称“运行时已启动”。
+        template: deploy/sdk/iraf-sdk-board.service
+        scope: system
+        ports: []
+        optional: false
+    cross_domain:
+      role: downstream
+      peers: ["edge-intel"]
+      transport: grpc
+      deadline_ms: 30000
+      authenticated: true
+    safety_boundary:
+      merge_allowed: false
+      independent_process: true
+      independent_limits: true
+      independent_device_ownership: true
+    residue:
+      scan_roots: ["{prefix}", "{config_dir}"]
+      units: ["iraf-sdk-board.service"]
+      ports: []
+      processes: ["iraf-control-provider-stub"]
+
+# 允许的组件 id（受控枚举；schema 亦校验）。新增组件必须同时改本表与 schema。
+# 说明：组件是“装什么”的最小粒度，不含版本（版本来自 sdk.version_ref）。
+components_enum:
+  sdk_core: 北向 SDK（iraf_sdk：客户端/错误码/身份）
+  core: 平台无关逻辑（iraf_core：TaskFlow/Policy/Authority/Registry）
+  skills: Skill 契约与实现（iraf_skills + skills/<name>/*.{input,output}.json）
+  profiles: RobotProfile 与 SafetyPolicy（profiles/**）
+  scenarios: 场景包与机型基线（scenes/**、config/**）
+  config: 安装/运行期配置（config/sdk/**、config/install/**）
+  adapters_sim: 仿真 Provider（iraf_adapters.mujoco，需 MuJoCo 依赖）
+  adapters_http: 开发态 HTTP/意图入口（iraf_adapters.http）
+  adapters_grpc: 跨域版本化接口（iraf_adapters.grpc，服务端 + SDK 客户端）
+  adapters_agentos: 北向 AgentOS 适配（Bridge/Dispatcher/CLI）
+  control_provider_stub: 控制域 Provider 替身（真机入口定义前只允许桩；铁律 6.8）
