@@ -1,0 +1,109 @@
+# BoardProfile: Intewell AROS 实验室板卡（真机，2026-10-12 只读采集）
+#
+# 契约：config/sdk/package_matrix.schema.json 的 definitions.board_profile（**必须整体提取后单独校验**）。
+# 证据：build/board/e300-lab/{collect.json, probe-status.tsv, raw/*.txt}（22 个探针全部 rc=0）
+#       采集脚本：scripts/board_collect.sh（只读；凭据从环境变量来；输出已脱敏）
+#       校验：PYTHONPATH=src python3 scripts/profile_check.py --board profiles/boards/intewell_aros_lab.yaml
+#             → 退出码 2 / BOARD_PROFILE_CHECK_REJECTED_UNVERIFIED（合规的 fail-closed：仍有 unverified 项）
+#
+# 铁律约束（本文件写法全部由它们决定）：
+#   · 3.2：未实测只能写 `unverified`，禁止 pending/tbd/unknown 之类占位；
+#   · 6.10：VM 数量/编号/IP/OS/角色映射**只能**来自签名 HyperProfile/Release manifest。
+#           本机**没有**该清单（manifests 探针只在 /etc/iaros-version 命中；/etc /opt /usr/share /var/lib
+#           深度 4 内无 packaging_configs / HyperProfile）⇒ 构型名与角色映射保持 unverified，
+#           **不得**用 dmesg 的 vm-0/vm-1 反推后写成正式构型名；
+#   · 未取得目标端验收证据前 status 只能是 unverified。
+#
+# ── 实测事实（逐条有 raw 证据） ────────────────────────────────────────────────
+# 身份/内核   raw/identity.txt     Linux 6.6.10 #1 SMP PREEMPT aarch64；systemd-detect-virt=none；
+#                                 cmdline: rw fw_devlink=off root=/dev/nvme0n1p2 rootwait smmu=off
+#                                          iommu.passthrough=1 maxcpus=4 ⇒ 宿主 Linux 域（非来宾）
+# 发行版      raw/os_release.txt   /etc/os-release: ID=Intewell VERSION=V1.2.1（品牌层）
+#                                 /etc/back.os-release: openEuler 24.03 (LTS-SP1)（内核发行版层）
+# Hyper 版本  raw/iaros_version.txt 套件 Intewell AROS-R1.2.1；Hyper AROS-Hypervisor-V3.1.2-R1.2.1；
+#                                 Linux AROS-Linux-V6.12.43-R1.2.1；RTOS AROS-RTOS-V3.1.1-R1.2.1
+#                                 ⚠ 清单写 Linux V6.12.43，实测 kernel 6.6.10 ⇒ 声明与实测不一致，
+#                                   已留证待研发确认；不得抹平（这正是 profile-check 要拦的那类差异）
+# 运行时      raw/runtime.txt     Python 3.11.6（/usr/bin/python3、python3.11）+ pip 23.3.1（清华源
+#                                 /etc/pip.conf）；glibc 2.38；systemd 255 (v255-39.oe2403)；
+#                                 docker + containerd 均在；AgentOS 自带 python3.10（agentbase/bin）
+# 资源        raw/resources.txt   4 核；MemTotal 15979 MB（可用 13443）；swap 0；
+#                                 / = /dev/root 468 GiB（已用 66G，可用 378G）；nvme0n1 476.9G
+# 域拓扑      raw/domains.txt     dmesg 实测两个来宾：vm-0（rootfs_vm1.img，2×virtio-net）、
+#              raw/net_topology.txt  vm-1（rootfs_vm2.img，1×virtio-net）；本机持有 vm-0-net0/1、vm-1-net0
+#                                 br0 = 10.203.247.74/23（外网，默认网关 10.203.246.1）
+#                                 br1 = 10.192.1.3/24（**域间内网**）；br1 邻居仅 10.192.1.2，
+#                                       lladdr fe:fe:00:00:00:01（Hyper 虚拟网卡 ⇒ 疑似运控域，待确认）
+#                                 ⚠ 内网段/邻居 IP 属"角色映射"范畴，只能来自签名清单 ⇒ 本文件不写死
+# AgentOS     raw/agentos_files.txt  /etc/agentos/{host-worker.env, host-bindings.json}
+#             raw/agentos_config.txt /opt/IntewellAgent/{agentbase, node-v22.23.2-linux-arm64,
+#             raw/agentos_runtime.txt wheel/intewell_agent-1.0.0-py310-none-linux_aarch64.whl}
+#             raw/docker_state.txt   宿主进程：`/opt/IntewellAgent/agentbase/bin/python3.10 -m agentos.host_worker`
+#                                    （pid 77868，已跑 2 天，健康口 127.0.0.1:8083）
+#                                   CLI 常驻：`intewell-agent-cli dashboard --host 0.0.0.0 --port 9119`
+#                                     + node TUI + `tui_gateway.slash_worker … --model deepseek-flash`
+#                                   容器栈（均 Up 5h，镜像 tag 1781d6d3-arm64）：
+#                                     agentos-db(postgres,127.0.0.1:5432) / agentos-relay(healthy) /
+#                                     agentos-worker-1,2 / agentos-task-api /
+#                                     agentos-searxng(127.0.0.1:8888→8080) / searxng-network-monitor
+#             raw/agentos_cli.txt     CLI 可用；`mcp list` 返回 "No MCP servers configured."
+#                                     （注册方式：`intewell mcp add <name> --command <cmd> --args …`）
+#                                     内置 MCP 目录 /opt/IntewellAgent/agentbase/optional-mcps/{linear,n8n}
+#                                     ⚠ 直接敲 bin/intewell-agent-cli 会报 libpython3.10.so.1.0 缺失 ——
+#                                       那是**未设 LD_LIBRARY_PATH** 所致，不是 CLI 损坏；
+#                                       该 so 就在 agentbase/lib 下，常驻实例的 env 里有：
+#                                       LD_LIBRARY_PATH=…:/opt/IntewellAgent/agentbase/lib:
+# IRAF 现状   raw/iraf_presence.txt 板卡上**尚无任何 IRAF**（无 console scripts、无 systemd 单元）⇒ 全新安装
+# 端口占用    raw/listen_ports.txt AgentOS 占 22/5432/8080/8081/8082/8083/8090/8888/9119；
+#                                 8765 与 50051（IRAF 声明端口）**未被占用** ⇒ 无冲突
+# 平台健康    raw/health.txt       load 6.32/6.18/6.19（4 核）而 CPU 97.6% 空闲；31 个僵尸（父进程
+#                                 `searxng` pid 84949）+ 6 个 D 状态 VPU 内核线程（vpu-read-msg0 /
+#                                 vpu-dispatch0 / vpu-codec0-1..4，已 2 天 6:40）⇒ 负载来自不可中断 I/O、
+#                                 **不是**我们的负载；安装/验收前必须记录该背景，避免把平台问题误判成 IRAF 缺陷
+apiVersion: iraf.intewell.io/v1
+kind: BoardProfile
+metadata:
+  name: intewell_aros_lab
+  version: 0.1.0
+  # ⚠ 待签名 HyperProfile/Release manifest 到位后回填正式构型名，并只从该清单读取 VM 数量/编号/角色映射。
+  hyper_models:
+    - unverified
+spec:
+  status: unverified
+  target:
+    os: "openEuler 24.03 (LTS-SP1)"
+    arch: aarch64
+    # 实测 uname=6.6.10；清单声明 AROS-Linux-V6.12.43 —— 差异已留证
+    kernel: "6.6.10"
+    # 系统解释器 3.11.6 ⇒ cp311（AgentOS 自带 py310 是它自己的运行时，不改变本字段口径）
+    python_tag: cp311
+    # 尚未在板卡上装过 aarch64 wheel ⇒ 不凭 glibc 2.38 反推 platform_tag
+    platform_tag: unverified
+    glibc_min: "2.38"
+  runtime:
+    # docker.service / containerd.service 运行中 + 7 个 agentos-* 容器 ⇒ 已实测可用
+    oci: available
+    # 本 VM（智能域）实测无 ROS 2（raw/ros2.txt：无 /opt/ros、无 ros2/colcon）；
+    # 运控域是否带 ROS 2 未实测 ⇒ 板卡级保持 unverified（不能拿一个域的证据代表整板）
+    ros2: unverified
+    systemd: available
+  adapters:
+    # 实测：host_worker 常驻（8083）、CLI 可执行（`mcp list`/`--help` 均返回），
+    # 调用方式：LD_LIBRARY_PATH=/opt/IntewellAgent/agentbase/lib <bin>/intewell-agent-cli …
+    agentos_bridge: available
+    # /opt/musa（musa-5.1.0、houmo-drv-xh2_v1.4.0、m1000、mt_vaapi）+ /dev/dri 存在，
+    # 但未跑过任何推理 ⇒ 工具链在场 ≠ 能力可用
+    npu: unverified
+    # 现场总线主站应在来宾域（RTOS/Motion），本机看不到 ⇒ 未实测
+    master: unverified
+  # 空数组 = 尚未声明任何 IRAF 能力；install 预检必须视为失败（schema 语义 + 铁律 3）
+  capabilities: []
+  limits:
+    ram_mb: 15979
+    disk_mb: 479232
+  image:
+    ref: unverified
+    digest: unverified
+  evidence:
+    owner: pending
+    acceptance_report: pending
