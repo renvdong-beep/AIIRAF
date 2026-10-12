@@ -21,10 +21,28 @@ import yaml
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
 
-PLACE_PHASES = (("place_transit", "place_transit_positions"),
-                ("place_above", "place_above_positions"),
-                ("place_descend", "place_descend_positions"),
-                ("place_retreat", "place_retreat_positions"))
+# 相位顺序**不再本地抄一份**（P4 / B2：探针曾因漏掉 `via` 误判一次）：
+# 从**报告里实际存在的 positions 键**推导，并与单点声明 `PLACE_PHASES` 自动比对。
+from iraf_skills.common.place_phases import (  # noqa: E402
+    PLACE_PHASES,
+    PLACE_POSITIONS_KEYS,
+    PLACE_PHASE_NAME_BY_KEY,
+)
+
+
+def resolve_place_phases(gripper):
+    """从报告的 `gripper` 段取**实际存在**的放置 positions 键，按单点声明的规范顺序返回。
+
+    返回 `(phases, warnings)`：`phases` 是 `(相位名, positions_key)` 列表；`warnings` 列出
+    报告里出现了但单点声明未登记的键（不静默丢弃 —— 暴露"新相位漏登记"）。
+    """
+    present = [key for key in PLACE_POSITIONS_KEYS
+               if isinstance(gripper.get(key), dict) and gripper.get(key)]
+    phases = [(PLACE_PHASE_NAME_BY_KEY[key], key) for key in present]
+    unknown = [key for key, value in gripper.items()
+               if key.startswith("place_") and key.endswith("_positions")
+               and isinstance(value, dict) and value and key not in PLACE_PHASE_NAME_BY_KEY]
+    return phases, unknown
 
 
 def main():
@@ -36,10 +54,15 @@ def main():
     joint = json.loads((REPO / "build/scenes/handoff_lab/handoff_lab_joint.json").read_text())
     gripper = ((joint["manipulation"]["per_robot"]["ur5e"]) or {}).get("gripper") or {}
     grip_keys = set(gripper.get("open_positions") or {}) | set(gripper.get("closed_positions") or {})
+    place_phases, unknown_place_keys = resolve_place_phases(gripper)
+    print("[相位来源] 报告实际相位 = %s（单点声明 PLACE_PHASES = %s）"
+          % ([name for name, _ in place_phases], [p.name for p in PLACE_PHASES]))
+    if unknown_place_keys:
+        print("[相位来源] ⚠ 报告里有未登记的放置 positions 键：%s" % unknown_place_keys)
     print("[夹爪通道键] %s" % sorted(grip_keys))
 
     extra_poses, gripper_positions = {}, {}
-    for phase, positions_key in PLACE_PHASES:
+    for phase, positions_key in place_phases:
         section = gripper.get(positions_key) or {}
         arm_only = {str(k)[len("ur5e_"):]: float(v) for k, v in section.items()
                     if str(k) not in grip_keys}

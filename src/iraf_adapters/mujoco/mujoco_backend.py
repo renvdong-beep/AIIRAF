@@ -24,6 +24,10 @@ from iraf_adapters.mujoco.payload_facts import (
     GRASP_POSE_CORRECTION_MODES,
     resolve_grasp_pose_correction,
 )
+from iraf_skills.common.place_phases import (
+    PLACE_POSITIONS_KEYS,
+    REQUIRED_PLACE_POSITIONS_KEYS,
+)
 from iraf_skills.common.trajectory import quintic_position
 
 #: 臂侧控制写入留证开关（2026-10-06 §11.88 量测㉒；`IRAF_DEBUG_ARM_CTRL=1`，缺省关）。
@@ -2233,10 +2237,10 @@ class MujocoBackend:
         via = gripper.get("place_via_positions")
         descend = gripper.get("place_descend_positions")
         retreat = gripper.get("place_retreat_positions")
-        missing = [name for name, value in (("place_above_positions", above),
-                                            ("place_descend_positions", descend),
-                                            ("place_retreat_positions", retreat))
-                   if not isinstance(value, dict) or not value]
+        # 「必需相位」从**单点声明**取（`PLACE_PHASES`，见 `iraf_skills/common/place_phases.py`）：
+        # 加相位只需改那张表，不再在四处各抄一份字面量列表（P4 / B1+B2）。
+        missing = [name for name in REQUIRED_PLACE_POSITIONS_KEYS
+                   if not isinstance(gripper.get(name), dict) or not gripper.get(name)]
         if missing:
             raise ValueError("场景报告缺少放置段关节解 %s：放置四段必须由**声明的求解器**在构建期解出"
                              "（运行时现解 IK 会落错分支并把载荷打掉，见 §11.16）" % missing)
@@ -4715,9 +4719,9 @@ class MujocoBackend:
                 },
             }
             # 放置四段的关节解（构建期由声明求解器解出，后端只回放；缺省即"该场景不支持放置"）
-            for key in ("place_transit_positions", "place_above_positions",
-                        "place_via_positions",
-                        "place_descend_positions", "place_retreat_positions",
+            # 放置段的位置键从**单点声明**取（`PLACE_PHASES`）：加相位只需改那张表，
+            # 不再有"解析层白名单漏改 ⇒ 运行时静默丢键"的坑（P4 / B1+B2）。
+            for key in PLACE_POSITIONS_KEYS + (
                         # regrasp（先抬离台、再合爪到腰部）的两段位置指令：与放置段同样必须透传，
                         # 否则被本解析层白名单丢掉 ⇒ 运行时只会走原相位表（本会话实测踩过一次）。
                         "pre_lift_positions", "regrasp_positions"):

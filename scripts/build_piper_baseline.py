@@ -26,6 +26,8 @@ from iraf_core.kinematics import (
     lowest_mesh_point_z,
     solve_position_ik,
 )
+# 放置相位的**单点声明**（P4 / B1+B2）：plan 的键序与合法性从这里取，不再自抄一份相位表。
+from iraf_skills.common.place_phases import PLACE_PHASE_NAMES
 
 DEFAULT_BASELINE = "config/piper_simulation_baseline.yaml"
 
@@ -190,11 +192,17 @@ def build_place_reference_poses(root, baseline, target_local_m, payload_half_m, 
     if place_norm < 1e-9:
         raise ValueError("grasp.place_approach_direction 不能为零向量")
     place_direction = place_direction / place_norm
+    # 相位名与顺序由**单点声明**给出（`iraf_skills/common/place_phases.py`）：`plan` 的键序
+    # 即求解顺序，与后端回放顺序一致（P4 / B1+B2）。本函数只按名填目标点，不自己定义相位集合。
     plan = {
         "above": base + place_direction * (height + float(clearance_m)),
         "descend": base + place_direction * height,
         "retreat": base + place_direction * (height + float(clearance_m)),
     }
+    # 自检：本地填的相位名必须是单点声明里的子集（表加相位而这里漏填时显式失败，不静默）。
+    _unknown_plan_phases = [name for name in plan if name not in PLACE_PHASE_NAMES]
+    if _unknown_plan_phases:
+        raise ValueError("plan 里的相位名未在 PLACE_PHASES 登记：%s" % _unknown_plan_phases)
     # 绕行航点（可选，由调用方按"当前位形正上方 + 托盘高度"算出）：**必须**给，否则搬运是从抓取位形
     # 到"托盘上方"的单条关节空间插值 —— 实测它在笛卡尔空间穿过载体（§11.17）。
     if transit_local_m is not None:
