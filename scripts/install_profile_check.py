@@ -53,6 +53,14 @@ X86_FORM_IDS = ("single-ubuntu2204", "sim-x86")
 EDGE_FORM_IDS = ("edge-intel", "edge-motion")
 REQUIRED_UBUNTU_VERSION = "22.04"
 
+#: 交付单元模板**必须**包含的占位符：机器相关的路径/解释器一律由安装器按声明渲染，
+#: 不得写死在模板里（AGENTS 5.3）。缺一即拒绝。
+REQUIRED_UNIT_TOKENS = ("@PREFIX@", "@CURRENT_LINK@", "@PYTHON_BIN@", "@CONFIG_DIR@", "@LOG_DIR@")
+
+#: 模板里**不允许**出现的开发机痕迹（实测踩到：deploy/iraf-runtime*.service 写死
+#: /home/coretek、User=coretek、miniconda 解释器 ⇒ 装到别的机器必然错，却被当作交付单元声明）。
+UNIT_TEMPLATE_DENYLIST = ("/home/", "miniconda", "User=coretek")
+
 
 class CheckError(Exception):
     """声明不成立（退出码 2）。"""
@@ -227,6 +235,18 @@ def check_semantics(declaration: dict, repo_root: Path) -> tuple:
             template = repo_root / str(item["template"])
             add("%s：unit 模板存在（%s）" % (pid, item["template"]), template.is_file(),
                 str(template))
+            if template.is_file():
+                text = template.read_text(encoding="utf-8", errors="replace")
+                missing = [token for token in REQUIRED_UNIT_TOKENS if token not in text]
+                add("%s：模板 %s 含全部必需占位符" % (pid, item["name"]), not missing,
+                    "缺失占位符=%s（必需：%s）" % (missing, list(REQUIRED_UNIT_TOKENS)))
+                # 只检查**生效行**（注释里提到开发机不算违规；真正危险的是 ExecStart/Environment 里的硬编码）
+                active = [line.strip() for line in text.splitlines()
+                          if line.strip() and not line.lstrip().startswith(("#", ";"))]
+                traces = sorted({token for line in active for token in UNIT_TEMPLATE_DENYLIST
+                                 if token in line})
+                add("%s：模板 %s 的生效行无开发机硬编码" % (pid, item["name"]), not traces,
+                    "命中开发机痕迹=%s（交付单元不得写死开发机路径/用户/解释器）" % traces)
 
         effective = resolve(profile, defaults)
         missing_effective = [key for key in ("prefix", "config_dir", "log_dir", "data_dir",

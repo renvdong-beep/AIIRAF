@@ -108,3 +108,58 @@ targets:
       - win32
       - win_amd64
       - macosx
+
+  # ── cp311 目标（2026-10-12 新增，依据**实机实测**） ──────────────────────────────
+  # 为什么加：实验室板卡（profiles/boards/intewell_aros_lab.yaml）实测系统解释器是
+  # **Python 3.11.6（cp311）**、glibc 2.38、aarch64；而此前只有 cp310 目标 ⇒ 离线 wheelhouse
+  # 与目标端解释器 ABI 不匹配，install 预检会（正确地）拒绝。这是"声明与实测不一致"的修法，
+  # 不是放宽预检。
+  # boards 只列**实测过**的板卡：e300 / firefly_rk3588 的 python_tag 仍是 unverified，
+  # 不得顺手写进来（铁律 3.2）。
+  - id: aarch64-manylinux_2_28-cp311
+    arch: aarch64
+    platform_tag: manylinux_2_28_aarch64
+    python_tag: cp311
+    # 纯 Python 依赖：无 ABI 要求，可直接取 py3-none-any wheel（与 cp310 目标同集）。
+    pure_python:
+      - jsonschema
+      - pyyaml
+      - absl-py
+      - attrs
+      - etils
+      - fsspec
+      - jsonschema-specifications
+      - pyopengl
+      - referencing
+      - typing-extensions
+      - zipp
+    # 二进制依赖：必须按 platform_tag + python_tag 过滤；清单覆盖传递闭包（见上一条目标的说明）。
+    wheels:
+      - mujoco
+      - numpy
+      - grpcio
+      - protobuf
+      - pyyaml
+      - pillow
+      - absl-py
+      - attrs
+      - etils
+      - fsspec
+      - glfw
+      - jsonschema-specifications
+      - pyopengl
+      - referencing
+      - rpds-py
+      - typing-extensions
+      - zipp
+    index_url: https://mirrors.aliyun.com/pypi/simple/
+    index_url_declared_at: "2026-10-12"
+    index_url_note: >-
+      cp311 目标沿用决策 2（aliyun 镜像，实测含 aarch64 wheel）；换内网私有源时只改本字段一行。
+    boards:
+      - intewell_aros_lab
+    reject_platform_tags:
+      - win_arm64
+      - win32
+      - win_amd64
+      - macosx

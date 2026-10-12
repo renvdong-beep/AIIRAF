@@ -1,0 +1,39 @@
+# IRAF 运行期单元模板（HTTP 开发/常驻入口）—— 安装时由 install-iraf.sh 按声明渲染。
+#
+# 为什么要有模板而不用 deploy/iraf-runtime.service：那是**开发机专用**单元（写死
+# /home/coretek/AIIRAF、User=coretek、miniconda 解释器），装到别的机器上必然错；
+# 而"路径/解释器/用户不得散落硬编码"是铁律 5.3。所有机器相关的值都以 @TOKEN@ 形式给出，
+# 由安装器从 config/install/install_profiles.yaml 的**生效值**填入。
+#
+# 必需占位符（校验器会强制检查，缺一即拒绝）：
+#   @PROFILE@ @VERSION@ @PREFIX@ @CURRENT_LINK@ @PYTHON_BIN@ @CONFIG_DIR@ @LOG_DIR@ @DATA_DIR@ @RUN_USER@
+#
+# 安全边界（与 AGENTS.md 一致）：
+#   · 本单元只跑 IRAF 运行期入口；真机路径不得加载仿真适配器（simulation 标志必须如实）。
+#   · EnvironmentFile 指向安装器渲染的 env 文件（内含 IRAF_* 六项必需环境）。
+#   · NoNewPrivileges / PrivateTmp / ProtectSystem 保持开启；写权限只给日志与数据目录。
+
+[Unit]
+Description=IRAF runtime HTTP adapter (profile=@PROFILE@ version=@VERSION@)
+Documentation=file:@PREFIX@/@CURRENT_LINK@/config/install/install_profiles.yaml
+After=network.target
+
+[Service]
+Type=simple
+User=@RUN_USER@
+WorkingDirectory=@PREFIX@/@CURRENT_LINK@
+Environment=PYTHONPATH=@PREFIX@/@CURRENT_LINK@/src:@PREFIX@/@CURRENT_LINK@/lib
+EnvironmentFile=-@CONFIG_DIR@/@PROFILE@.env
+ExecStartPre=/bin/mkdir -p @LOG_DIR@ @DATA_DIR@
+ExecStart=@PYTHON_BIN@ -m iraf_adapters.http.runtime_http
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@LOG_DIR@ @DATA_DIR@
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

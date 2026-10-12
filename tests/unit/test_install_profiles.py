@@ -44,8 +44,8 @@ FIXTURES = (
     "config/install/install_profiles.schema.json",
     "pyproject.toml",
     "deploy/iraf-runtime.env",
-    "deploy/iraf-runtime.service",
-    "deploy/iraf-runtime-grpc.service",
+    "deploy/sdk/units/iraf-runtime-http.service.tmpl",
+    "deploy/sdk/units/iraf-runtime-grpc.service.tmpl",
     "deploy/sdk/iraf-sdk-board.service",
 )
 
@@ -180,10 +180,41 @@ class InstallProfileDeclarationTest(unittest.TestCase):
 
     def test_missing_unit_template_is_rejected(self):
         data = self._declaration()
-        (self.root / "deploy/iraf-runtime.service").unlink()
+        (self.root / "deploy/sdk/units/iraf-runtime-http.service.tmpl").unlink()
         self._write_declaration(data)
         names = self._failed_names()
         self.assertTrue(any("unit 模板存在" in name for name in names), names)
+
+    def test_unit_template_must_have_tokens(self):
+        """模板缺占位符 ⇒ 拒绝（否则安装器无法按声明渲染，只能写死路径）。"""
+        data = self._declaration()
+        target = self.root / "deploy/sdk/units/iraf-runtime-grpc.service.tmpl"
+        target.write_text("[Service]\nExecStart=/opt/fixed/python -m x\n", encoding="utf-8")
+        self._write_declaration(data)
+        names = self._failed_names()
+        self.assertTrue(any("含全部必需占位符" in name for name in names), names)
+
+    def test_unit_template_must_not_hardcode_dev_paths(self):
+        """实测踩到：开发机专用单元在**生效行**里写死开发机路径与解释器，却被当交付单元声明。"""
+        data = self._declaration()
+        target = self.root / "deploy/sdk/units/iraf-runtime-http.service.tmpl"
+        text = target.read_text(encoding="utf-8")
+        target.write_text(text + "\nExecStart=/home/coretek/miniconda3/envs/mujoco/bin/python -m x\n",
+                          encoding="utf-8")
+        self._write_declaration(data)
+        names = self._failed_names()
+        self.assertTrue(any("生效行无开发机硬编码" in name for name in names), names)
+
+    def test_unit_template_comments_may_mention_dev_machine(self):
+        """注释里提到开发机**不算违规**：只判生效行（否则模板没法写明"为什么不用那个单元"）。"""
+        data = self._declaration()
+        target = self.root / "deploy/sdk/units/iraf-runtime-http.service.tmpl"
+        text = target.read_text(encoding="utf-8")
+        target.write_text(text + "\n# 不要用开发机那个单元（User=coretek / miniconda 解释器）\n",
+                          encoding="utf-8")
+        self._write_declaration(data)
+        names = self._failed_names()
+        self.assertFalse(any("生效行无开发机硬编码" in name for name in names), names)
 
     def test_schema_rejects_unknown_key(self):
         data = self._declaration()

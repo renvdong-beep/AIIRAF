@@ -1,0 +1,32 @@
+# IRAF 运行期单元模板（gRPC 跨域入口）—— 安装时由 install-iraf.sh 按声明渲染。
+#
+# 边界（AGENTS.md 1.4 / 2.11 / 6.11）：
+#   · 本单元是**跨域版本化接口**的服务端；智能域用它接收任务，运控域用它暴露能力。
+#   · 只允许绑定声明的地址（默认回环）；生产用 mTLS + 独立 netns，不得为图方便放宽绑定。
+#   · 与 HTTP 单元同源渲染：机器相关的值一律走占位符，不得写死。
+
+[Unit]
+Description=IRAF runtime gRPC adapter (profile=@PROFILE@ version=@VERSION@)
+Documentation=file:@PREFIX@/@CURRENT_LINK@/config/install/install_profiles.yaml
+After=network.target
+Requires=network.target
+
+[Service]
+Type=simple
+User=@RUN_USER@
+WorkingDirectory=@PREFIX@/@CURRENT_LINK@
+Environment=PYTHONPATH=@PREFIX@/@CURRENT_LINK@/src:@PREFIX@/@CURRENT_LINK@/lib
+EnvironmentFile=-@CONFIG_DIR@/@PROFILE@.env
+ExecStartPre=/bin/mkdir -p @LOG_DIR@ @DATA_DIR@
+ExecStart=@PYTHON_BIN@ -m iraf_adapters.grpc.server
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@LOG_DIR@ @DATA_DIR@
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

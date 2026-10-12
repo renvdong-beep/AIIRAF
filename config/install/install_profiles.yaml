@@ -83,12 +83,16 @@ profiles:
     backend_entrypoint: iraf_adapters.mujoco.mujoco_backend:MujocoBackend
     services:
       - name: iraf-runtime-http
-        template: deploy/iraf-runtime.service
+        # 用**占位符模板**（deploy/sdk/units/*.tmpl）：机器相关的路径/用户/解释器一律由安装器
+        # 从本声明的生效值渲染。deploy/iraf-runtime.service 是开发机专用单元（写死
+        # /home/coretek、User=coretek、miniconda 解释器），**不得**作为交付单元使用 ——
+        # 校验器会强制检查模板含必需占位符，缺一即拒（铁律 5.3）。
+        template: deploy/sdk/units/iraf-runtime-http.service.tmpl
         scope: user
         ports: [8765]
         optional: true
       - name: iraf-runtime-grpc
-        template: deploy/iraf-runtime-grpc.service
+        template: deploy/sdk/units/iraf-runtime-grpc.service.tmpl
         scope: user
         ports: [50051]
         optional: true
@@ -167,7 +171,7 @@ profiles:
     backend_entrypoint: unverified
     services:
       - name: iraf-runtime-grpc
-        template: deploy/iraf-runtime-grpc.service
+        template: deploy/sdk/units/iraf-runtime-grpc.service.tmpl
         scope: system
         ports: [50051]
         optional: false
