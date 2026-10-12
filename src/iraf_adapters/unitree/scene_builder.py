@@ -1728,6 +1728,12 @@ def _joint_reference_resolution(root, solver, placement, robot_id, targets, mode
     # 即"同一算法"，不再手抄世界坐标；偏移由声明 `target_derivation_offset_m` 给出（缺省零）。
     _target_override = (solver or {}).get("target_override_world_m")
     _derivation = {"source": None, "value": None, "reason": None}
+    # A3 交叉校验用：即便走了字面量分支，也把**派生值**算出来做比对（仅当声明了派生模式）。
+    _derived_for_check = None
+    _mode_declared = str((solver or {}).get("target_derivation") or "").strip()
+    if _mode_declared == "from_carrier_station":
+        _derived_for_check, _derive_reason = _derive_grasp_target_from_station(
+            place_targets, model, injections or {}, solver)
     if isinstance(_target_override, (list, tuple)) and len(_target_override) == 3:
         target_world = np.asarray([float(v) for v in _target_override], dtype=float)
         local = rotation.T @ (target_world - np.asarray(pos, dtype=float))
@@ -1755,8 +1761,44 @@ def _joint_reference_resolution(root, solver, placement, robot_id, targets, mode
             _fail(EXIT_DECLARATION,
                   "robots.%s.reference_solver.target_derivation 只允许 "
                   "from_carrier_station（实际 %r）" % (robot_id, _mode))
+    # ---- A3 交叉校验（P6，2026-10-12）：**同时声明**站位帧与抓取目标字面量时，
+    #      两者是同一事实（载体停靠时载荷在哪）；矛盾即**构建期 fail-closed**。
+    # 为什么必须（本仓"同一事实多处"的历史教训）：站位帧改了、字面量没改 ⇒ 运行期才炸
+    # （实测 s06「实测目标 vs 名义解差 0.272365942 m > 0.07」）；在构建期拦下，代价最小。
+    # 口径：只在**同时声明**（字面量存在且可派生）时校验；派生路径本身不触发。
+    _cross_check = {"checked": False, "reason": None}
+    if (_derivation.get("source") == "declared_literal"
+            and str((solver or {}).get("target_derivation") or "").strip()
+            and _derived_for_check is not None):
+        _declared_vec = np.asarray(_derivation["value"], dtype=float)
+        _derived_vec = np.asarray(_derived_for_check, dtype=float)
+        _delta_m = float(np.linalg.norm(_declared_vec - _derived_vec))
+        _tol = solver.get("target_cross_check_tolerance_m")
+        _tol = float(_tol) if isinstance(_tol, (int, float)) and not isinstance(_tol, bool) else 0.001
+        _cross_check = {
+            "checked": True,
+            "declared_literal_m": [round(float(v), 9) for v in _declared_vec],
+            "derived_from_station_m": [round(float(v), 9) for v in _derived_vec],
+            "delta_m": round(_delta_m, 9),
+            "tolerance_m": _tol,
+            "ok": bool(_delta_m <= _tol),
+            "station_frame": (str(solver.get("place_carrier_frame") or "").strip()
+                              or "handoff_station_frame"),
+            "declared_key": "robots.%s.reference_solver.target_override_world_m" % robot_id,
+        }
+        if _delta_m > _tol:
+            _fail(EXIT_REFERENCE,
+                  "位置类声明**交叉校验失败**（A3）：`%s` = %s 与从站位帧 "
+                  "`%s` 派生的目标 %s 差 %.9f m > 容差 %.9f m ⇒ 拒绝构建"
+                  "（两者是同一事实：载体停靠时载荷在哪；不同改会让运行期才发现）"
+                  % (_cross_check["declared_key"],
+                     _cross_check["declared_literal_m"],
+                     _cross_check["station_frame"],
+                     _cross_check["derived_from_station_m"],
+                     _delta_m, _tol))
     # 交叉校验痕迹（P6 的判定依据；来源与值一并进报告，供 A3 校验与人工对账）。
     resolution_target_derivation = _derivation
+    resolution_target_cross_check = _cross_check
 
 
     entry, module_path = _load_declared_callable(root, solver, robot_id, "reference_solver")
@@ -1873,6 +1915,7 @@ def _joint_reference_resolution(root, solver, placement, robot_id, targets, mode
         # A2/P6 留痕：抓取目标的**来源与值**（declared_literal / derived_from_carrier_station），
         # 供构建期交叉校验与人工对账（同一事实两处的消债）。
         "target_derivation": resolution_target_derivation,
+        "target_cross_check": resolution_target_cross_check,
         "reference": reference,
         "baseline_doc": baseline_doc,
         "baseline_overrides": (baseline_overrides if baseline_overrides else None),
@@ -2779,6 +2822,8 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
                 # A2/P6：抓取目标的**来源与值**（declared_literal / derived_from_carrier_station），
                 # 供构建期交叉校验（P6）与人工对账（消"同一事实两处"的债）。
                 "target_derivation": resolution.get("target_derivation"),
+                # A3：位置类声明的**交叉校验**痕迹（同时声明字面量与派生时才有 checked=True）。
+                "target_cross_check": resolution.get("target_cross_check"),
                 "local_target_m": resolution["local_target_m"],
                 "local_xy_radius_m": resolution["local_xy_radius_m"],
                 "resolved_pad_offset_m": resolution["pad_offset_m"],
