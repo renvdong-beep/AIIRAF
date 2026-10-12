@@ -82,3 +82,24 @@ def place_phase_names(positions_keys):
     ordered = [phase.name for phase in PLACE_PHASES if phase.positions_key in present]
     unknown = [key for key in positions_keys if key not in PLACE_PHASE_NAME_BY_KEY]
     return tuple(ordered) + tuple(unknown)
+
+
+def validate_place_optional_keys(grasp_cfg):
+    """放置段**可选键**的声明校验（D2，2026-10-12）：纯校验，不建模型。
+
+    把 via / elbow 的拒绝逻辑收到**一处**（与相位表同模块），使"错误枚举 / 缺配对键"
+    这些 fail-closed 分支能在不加载 MuJoCo 模型的情况下单测（此前只有 raise、无覆盖），
+    并保证构建器与其它消费方**同一口径**（避免"一处接受、另一处拒绝"的漂移）。
+
+    返回规范化后的 `{"via": str, "elbow_body": str, "elbow_pref": str}`；任一声明非法即
+    `ValueError`（不静默忽略）。
+    """
+    via_mode = str((grasp_cfg or {}).get("place_via") or "").strip()
+    if via_mode and via_mode != "midpoint":
+        raise ValueError("grasp.place_via 只允许 midpoint（实际 %r）" % via_mode)
+    elbow_body_name = str((grasp_cfg or {}).get("place_elbow_body") or "").strip()
+    elbow_pref = str((grasp_cfg or {}).get("place_elbow_pref") or "").strip()
+    if bool(elbow_body_name) != (elbow_pref in ("high", "low")):
+        raise ValueError("grasp.place_elbow_body 与 grasp.place_elbow_pref（high/low）必须同时声明"
+                         "（实际 %r / %r）" % (elbow_body_name, elbow_pref))
+    return {"via": via_mode, "elbow_body": elbow_body_name, "elbow_pref": elbow_pref}

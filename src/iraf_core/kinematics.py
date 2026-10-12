@@ -663,3 +663,26 @@ def gravity_hold_ctrl(
             "tolerance_rad": float(tolerance_rad),
         },
     )
+
+
+def horizontal_reach_ok(horizontal_m, vertical_m, reach_m):
+    """可达性快速判据（D1，2026-10-12）：`sqrt(horizontal² + vertical²) <= reach`。
+
+    为什么需要（本仓 2026-10-08 §11.95 的布置扫描口径）：单臂架高布置的可达边界是
+    一条**只依赖两个量**的不等式（距基座的水平距离、目标相对 joint1 轴的竖向高度），
+    但它当时只写在注释里、靠一次性脚本算 ⇒ 布置一改就得重手算、无法回归。
+    这里固化成纯函数：给定水平/竖向距离与可达半径，返回 True/False。
+
+    参数单位一律 m；非有限值或负半径即**显式失败**（不静默给判断）。
+    """
+    import math as _math
+
+    for name, value in (("horizontal_m", horizontal_m), ("vertical_m", vertical_m),
+                        ("reach_m", reach_m)):
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise ValueError("horizontal_reach_ok 的 %s 必须是数值（实际 %r）" % (name, value))
+        if not _math.isfinite(float(value)):
+            raise ValueError("horizontal_reach_ok 的 %s 必须有限（实际 %r）" % (name, value))
+    if float(reach_m) <= 0.0:
+        raise ValueError("reach_m 必须为正（实际 %r）" % (reach_m,))
+    return _math.hypot(float(horizontal_m), float(vertical_m)) <= float(reach_m)

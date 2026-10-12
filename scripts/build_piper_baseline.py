@@ -27,7 +27,8 @@ from iraf_core.kinematics import (
     solve_position_ik,
 )
 # 放置相位的**单点声明**（P4 / B1+B2）：plan 的键序与合法性从这里取，不再自抄一份相位表。
-from iraf_skills.common.place_phases import PLACE_PHASE_NAMES
+# via/elbow 的声明校验（D2）同样收在该模块，保证构建器与其它消费方**同一口径**。
+from iraf_skills.common.place_phases import PLACE_PHASE_NAMES, validate_place_optional_keys
 
 DEFAULT_BASELINE = "config/piper_simulation_baseline.yaml"
 
@@ -109,6 +110,7 @@ def build_reference_feedforward(model, reference, baseline, prefix="", gripper_p
         feedforward[phase] = compensation
         feedforward_evidence[phase] = evidence
     return feedforward, feedforward_evidence
+
 
 
 def build_place_reference_poses(root, baseline, target_local_m, payload_half_m, grip_height_m,
@@ -211,10 +213,11 @@ def build_place_reference_poses(root, baseline, target_local_m, payload_half_m, 
     # 为什么必须能拆腿：transit→above 是一条**关节空间插值**，实测它的**中点**会下探穿过台面
     #   （`path:transit>above` frac 0.5 前臂 −0.061694 m ↔ world；提高两端航点只值 ~8 mm ⇒ 压不住）。
     # 口径：取 transit 与 above 的笛卡尔中点，并把 z 抬到两者的**较高者**（保持高位绕行）。
-    via_mode = str(grasp_cfg.get("place_via") or "").strip()
+    # via / elbow 的声明校验统一走共享校验器（D2，`iraf_skills.common.place_phases`）：
+    # 纯校验、可单测，且与其它消费方**同一口径**（避免"一处接受、另一处拒绝"的漂移）。
+    _optional = validate_place_optional_keys(grasp_cfg)
+    via_mode = _optional["via"]
     if via_mode:
-        if via_mode != "midpoint":
-            raise ValueError("grasp.place_via 只允许 midpoint（实际 %r）" % via_mode)
         if "transit" not in plan:
             raise ValueError("grasp.place_via=midpoint 需要调用方给出 transit_local_m")
         _t = np.asarray(plan["transit"], dtype=float)
@@ -264,11 +267,8 @@ def build_place_reference_poses(root, baseline, target_local_m, payload_half_m, 
     #   且换 IK 种子、换臂基座都无法纠正）。
     # 声明 `place_elbow_body`（该臂的肘部 body 名）+ `place_elbow_pref: high|low` 后，
     #   在同半球且残差达标的候选里改按该 body 的**世界 z** 排序（两个键必须同时给）。
-    elbow_body_name = str(grasp_cfg.get("place_elbow_body") or "").strip()
-    elbow_pref = str(grasp_cfg.get("place_elbow_pref") or "").strip()
-    if bool(elbow_body_name) != (elbow_pref in ("high", "low")):
-        raise ValueError("grasp.place_elbow_body 与 grasp.place_elbow_pref（high/low）必须同时声明"
-                         "（实际 %r / %r）" % (elbow_body_name, elbow_pref))
+    elbow_body_name = _optional["elbow_body"]
+    elbow_pref = _optional["elbow_pref"]
     _elbow_id = _body_id(model, elbow_body_name) if elbow_body_name else -1
     if elbow_body_name and _elbow_id < 0:
         raise ValueError("grasp.place_elbow_body=%s 不在模型里" % elbow_body_name)
