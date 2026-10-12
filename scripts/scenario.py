@@ -255,7 +255,8 @@ MEASUREMENT_KEYS = ("sim_time_advance_s", "final_speed_mps", "wall_seconds", "ev
                     "regrasp_pad_minus_payload_z_m", "regrasp_payload_pad_lateral_m",
                     "regrasp_left_force_n", "regrasp_right_force_n", "regrasp_force_ok",
                     "regrasp_pre_lift_delta_m", "regrasp_pad_minus_payload_after_pre_lift_m",
-                    "place_settled_gap_m", "place_settled_speed_mps", "place_settled_on_target")
+                    "place_settled_gap_m", "place_settled_speed_mps", "place_settled_on_target",
+                    "place_arm_carrier_contact_count")
 
 #: 步骤分类（报告里逐项可见，避免"没跑"和"跑过了"混在一起）。
 STEP_EXECUTED = "EXECUTED"
@@ -1155,6 +1156,11 @@ def measure_step(before, after, evidence, wall_seconds):
             measured["accept_last_speed_mps"] = float(evidence["last_speed_mps"])
         if evidence.get("resting_gap_m") is not None:
             measured["accept_resting_gap_m"] = float(evidence["resting_gap_m"])
+        # 臂↔载体接触对（2026-10-08 C1，**诊断量、不是判据**）：把"演示有没有碰载体"从调试通路
+        # 搬到默认报告 ⇒ 默认运行即可读到"臂↔Go2 接触 0 条"，不必开 `IRAF_DEBUG_PLACE`。
+        if evidence.get("arm_carrier_contact_count") is not None:
+            measured["place_arm_carrier_contact_count"] = int(
+                evidence["arm_carrier_contact_count"])
         # 搬运节拍实测（诊断量，**不是判据**）：随负载波动（实测 25/40 步），归档进报告便于事后对账
         cadence = evidence.get("carry_cadence")
         if isinstance(cadence, dict) and cadence.get("max_plant_steps_per_iteration") is not None:

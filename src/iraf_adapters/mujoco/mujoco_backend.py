@@ -2688,6 +2688,9 @@ class MujocoBackend:
         _trace("after_settle", final, "落稳窗结束（载荷应静止在承载面上）")
 
         # ---- 判据（事实，不设阈值）
+        # 臂↔载体接触对（C1 常规证据）：在**末帧**取一次（`_arm_carrier_contacts` 只读 contact，
+        # 不推进植物、不改状态）。与 phase_trace 里的 `arm_contacts` 同一层观测量。
+        _arm_carrier_hits = self._arm_carrier_contacts()
         left_id = self._body_id(gripper["left_finger_body"])
         right_id = self._body_id(gripper["right_finger_body"])
         # `released` = 张开后指腹与载荷**不再接触**（事实判据，不设力阈值）
@@ -2772,6 +2775,14 @@ class MujocoBackend:
             # 运行期触地纠偏的痕迹（mode=touchdown 时；否则 None）——含纠偏前后两次实测与自证结果
             "place_touchdown_correction": touch_record,
             "place_settled_margin_m": float(settled_facts["contact_margin_m"]),
+            # **臂↔载体接触对**（2026-10-08 C1，常规证据化）：把"演示是否碰载体"从调试通路
+            # （`IRAF_DEBUG_PLACE=1`）搬到默认报告 —— 默认运行为 0 条即"全程未碰载体"，
+            # 与调试通路数值一致（口径同 `scene_builder._in_carrier_subtree`）。
+            "arm_carrier_contact_pairs": [dict(item) for item in _arm_carrier_hits],
+            "arm_carrier_contact_count": int(len(_arm_carrier_hits)),
+            "arm_carrier_deepest_pair": (
+                min(_arm_carrier_hits, key=lambda item: float(item["dist_m"]))
+                if _arm_carrier_hits else None),
             "runtime_source": "live_fk",
             "phase_trace": phase_trace,
             "segment_samples": segment_samples,
@@ -4150,6 +4161,92 @@ class MujocoBackend:
                 qpos = float(self.data.qpos[int(self.model.jnt_qposadr[joint_id])])
                 out[str(name)] = round(abs(qpos - float(self.data.ctrl[actuator])), 6)
         return out
+
+    def _carrier_root_body_id(self):
+        """载体**子树根**的 body id（本次放置的接收体挂在哪个载体上）。
+
+        为什么需要：判"臂擦了载体"必须按**运动学子树**界定，不能按"名字里没有前缀"
+        （`scene_builder._in_carrier_subtree` 的既有判例）：后者会把 `world`（台面）
+        也算成载体，从而把"臂底座 ↔ world"这条**正常固定接触**误报成撞载体
+        （fail-closed 生效但过宽）。
+
+        口径：从接收体声明 `place_targets.targets[].mount.body`（挂载道具的 body 名）
+        沿 `body_parentid` 上溯到 **1 号 body**（`base_link`），它即载体子树根；
+        无 `mount` 的接收体（世界固定托盘）返回 None ⇒ 本项证据为空、不误报。
+        """
+        roots = []
+        for record in (self._place_targets or {}).values():
+            mount = record.get("mount") if isinstance(record, dict) else None
+            body_name = (mount or {}).get("body") if isinstance(mount, dict) else None
+            if not body_name:
+                continue
+            current = int(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, str(body_name)))
+            if current < 0:
+                continue
+            # 上溯到**最顶层的非 world 祖先**（world 的 id = 0）：它就是载体子树根。
+            while int(self.model.body_parentid[current]) > 0:
+                current = int(self.model.body_parentid[current])
+            roots.append(current)
+        if not roots:
+            return None
+        # 多个接收体时取**公共祖先**，保证"载体"是它们共同挂载的那个本体。
+        root = roots[0]
+        for other in roots[1:]:
+            while root != other and root > 0:
+                root = int(self.model.body_parentid[root])
+            if root <= 0:
+                return None
+        return int(root)
+
+    def _in_carrier_subtree(self, body_id, carrier_root):
+        """body 是否属于**载体子树**（沿 `body_parentid` 上溯到 carrier_root）。"""
+        if carrier_root is None or carrier_root <= 0:
+            return False
+        current = int(body_id)
+        while current > 0:
+            if current == carrier_root:
+                return True
+            current = int(self.model.body_parentid[current])
+        return False
+
+    def _arm_carrier_contacts(self):
+        """**臂本体 geom ↔ 载体子树 geom** 的接触清单（常规证据；2026-10-08 C1）。
+
+        与 `_arm_outer_contacts` 的区别：后者按"本体内外"分（把台面/道具也算 outside），
+        本函数按**载体子树**界定 —— 只回答"臂有没有碰到载体（狗）"。口径与构建期航点自检
+        `scene_builder._joint_place_resolution` 里的 `_in_carrier_subtree` **完全一致**，
+        把这条事实从调试通路（`IRAF_DEBUG_PLACE=1`）搬到常规 evidence。
+
+        只读当前 `data.contact`，不做 `mj_forward`（观测不得改变被观测对象）。
+        返回列表：每项 `{"arm_body", "carrier_body", "dist_m"}`（dist < 0 即穿透）。
+        """
+        scope = {str(value) for value in (self._name_map or {}).values()}
+        if not scope:
+            return []
+        carrier_root = self._carrier_root_body_id()
+        if carrier_root is None:
+            return []
+        hits = []
+        with self._data_lock:
+            for index in range(int(self.data.ncon)):
+                contact = self.data.contact[index]
+                ids = (int(contact.geom1), int(contact.geom2))
+                bodies = [int(self.model.geom_bodyid[item]) for item in ids]
+                names = [str(mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_BODY, item) or "")
+                         for item in bodies]
+                # 一端在**臂 scope**、另一端在**载体子树** ⇒ 记为"臂↔载体"接触。
+                arm_side = [item for item, name in zip(bodies, names)
+                            if name in scope and not self._in_carrier_subtree(item, carrier_root)]
+                carrier_side = [item for item in bodies if self._in_carrier_subtree(item, carrier_root)]
+                if arm_side and carrier_side:
+                    hits.append({
+                        "arm_body": str(mujoco.mj_id2name(
+                            self.model, mujoco.mjtObj.mjOBJ_BODY, arm_side[0]) or ""),
+                        "carrier_body": str(mujoco.mj_id2name(
+                            self.model, mujoco.mjtObj.mjOBJ_BODY, carrier_side[0]) or ""),
+                        "dist_m": round(float(contact.dist), 6),
+                    })
+        return hits
 
     def _arm_outer_contacts(self):
         """**本本体 geom ↔ 本体外**的接触清单（运动途中判"臂擦了东西"；2026-09-30 §11.63）。

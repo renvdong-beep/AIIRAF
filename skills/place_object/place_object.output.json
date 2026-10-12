@@ -40,6 +40,62 @@
       ],
       "additionalProperties": false,
       "properties": {
+        "arm_carrier_contact_pairs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "arm_body",
+              "carrier_body",
+              "dist_m"
+            ],
+            "properties": {
+              "arm_body": {
+                "type": "string",
+                "description": "接触对里属于**臂**的 body 名。"
+              },
+              "carrier_body": {
+                "type": "string",
+                "description": "接触对里属于**载体子树**的 body 名（按 body_parentid 上溯到载体子树根判定，口径同构建期 `scene_builder._in_carrier_subtree`）。"
+              },
+              "dist_m": {
+                "type": "number",
+                "description": "接触距离（m，带符号；< 0 = 穿透）。"
+              }
+            }
+          },
+          "description": "**臂↔载体接触对**逐条清单（2026-10-08 C1，常规证据化）：把“演示是否碰载体”从调试通路（`IRAF_DEBUG_PLACE=1`）搬到默认报告。空数组 = 全程未碰载体。判定按**载体子树**界定，排除“臂底座 ↔ world”这类正常固定接触。"
+        },
+        "arm_carrier_contact_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "**臂↔载体接触对**条数（= arm_carrier_contact_pairs 的长度；常规诊断量，不是判据）。默认运行读到 0 即“全程未碰载体”。"
+        },
+        "arm_carrier_deepest_pair": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "arm_body",
+            "carrier_body",
+            "dist_m"
+          ],
+          "properties": {
+            "arm_body": {
+              "type": "string"
+            },
+            "carrier_body": {
+              "type": "string"
+            },
+            "dist_m": {
+              "type": "number"
+            }
+          },
+          "description": "臂↔载体接触对里**穿透最深**的一条（dist_m 最小）；无接触时为 null。"
+        },
         "arm_joint_positions": {
           "type": [
             "object",
