@@ -24,6 +24,7 @@ dev = ["pytest>=8,<9"]
 iraf-runtime-http = "iraf_adapters.http.runtime_http:main"
 iraf-runtime-grpc = "iraf_adapters.grpc.server:main"
 iraf-task = "iraf_tools.run_task:main"
+iraf-agentos = "iraf_adapters.agentos.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
