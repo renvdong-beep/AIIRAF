@@ -1599,7 +1599,73 @@ def _deep_merge(base, overrides, path):
     return out
 
 
-def _joint_reference_resolution(root, solver, placement, robot_id, targets, model, prefix):
+def _derive_grasp_target_from_station(place_targets, model, injections, solver):
+    """从**载体站位帧**派生抓取名义目标（A2，2026-10-12）。
+
+    算法与 `_place_targets` 的 `nominal_docked_station` **同源**，但把载体摆在
+    `reference_solver.place_carrier_frame`（缺省 `handoff_station_frame`）声明的**部署站位**：
+      ① 从 `injections["world_frames"]` 取站位位姿；
+      ② 把载体 trunk 自由关节摆到「站位 xy + 关键帧实测基座高度 + 站位姿态」；
+      ③ `mj_forward` 后读**挂载接收体**（`mount` 非空）的 FK 位姿；
+      ④ z 再叠加声明的 `target_derivation_offset_m`（缺省零向量）。
+
+    返回 `(target_world_m, None)` 或 `(None, reason)`。
+    """
+    targets = (place_targets or {}).get("targets") or []
+    mounted = [item for item in targets if isinstance(item, dict)
+               and isinstance(item.get("mount"), dict)]
+    if not mounted:
+        return None, "place_targets 里没有挂载接收体（mount）⇒ 无法从站位派生"
+    if len(mounted) > 1:
+        return None, ("place_targets 里有多个挂载接收体 %s ⇒ 派生有歧义，"
+                      "请显式声明 target_override_world_m" % [item.get("id") for item in mounted])
+    prop_body_name = str(mounted[0].get("body") or "")
+    carrier_body_name = str((mounted[0].get("mount") or {}).get("body") or "")
+    # 载体的**子树根**：从挂载道具沿 body_parentid 上溯到最顶层非 world 祖先。
+    # （`mount.entity` 是本体 id（如 unitree_go2），模型里真正可摆的是它的 trunk body；
+    #   `mount.body` 是挂载道具自身，其上溯到顶即 trunk。）
+    prop_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, prop_body_name)
+    if prop_id < 0:
+        return None, "联合模型里找不到挂载接收体 body %r" % prop_body_name
+    trunk_id = int(prop_id)
+    while int(model.body_parentid[trunk_id]) > 0:
+        trunk_id = int(model.body_parentid[trunk_id])
+    # 站位帧
+    station_name = str((solver or {}).get("place_carrier_frame") or "").strip() \
+        or "handoff_station_frame"
+    station = None
+    for item in (injections.get("world_frames") or []):
+        if str(item.get("id")) == station_name:
+            station = item
+            break
+    if station is None:
+        return None, "injections.world_frames 里找不到站位帧 %r" % station_name
+    station_pos = _vec3(station.get("pos_m"), "frames.%s.pos_m" % station_name)
+    station_quat = _quat_wxyz(station.get("quat_wxyz"), "frames.%s.quat_wxyz" % station_name)
+    # 载体 trunk 必须带自由关节，才能摆到站位（静态体不可能"停靠在站位"）。
+    free_adr = None
+    if int(model.body_jntnum[trunk_id]) > 0:
+        candidate = int(model.body_jntadr[trunk_id])
+        if int(model.jnt_type[candidate]) == int(mujoco.mjtJoint.mjJNT_FREE):
+            free_adr = int(model.jnt_qposadr[candidate])
+    if free_adr is None:
+        return None, "载体 trunk（%s 的顶层祖先）没有自由关节，无法摆到站位" % prop_body_name
+    data = mujoco.MjData(model)
+    if int(getattr(model, "nkey", 0) or 0) > 0:
+        mujoco.mj_resetDataKeyframe(model, data, 0)
+    base_height = float(data.qpos[free_adr + 2]) if int(getattr(model, "nkey", 0) or 0) else 0.0
+    data.qpos[free_adr:free_adr + 3] = [station_pos[0], station_pos[1], base_height]
+    data.qpos[free_adr + 3:free_adr + 7] = station_quat
+    mujoco.mj_forward(model, data)
+    prop_world = np.asarray(data.xpos[prop_id], dtype=float)
+    offset = (solver or {}).get("target_derivation_offset_m") or [0.0, 0.0, 0.0]
+    if not (isinstance(offset, (list, tuple)) and len(offset) == 3):
+        return None, "target_derivation_offset_m 必须是长度 3 的向量"
+    return [float(prop_world[index]) + float(offset[index]) for index in range(3)], None
+
+
+def _joint_reference_resolution(root, solver, placement, robot_id, targets, model, prefix,
+                                place_targets=None, injections=None):
     """在**臂基座系**重解参考姿态：目标换算 → **按声明**调用求解器 → 校验输出。
 
     背景（`docs/debug/2026-09-24-joint-model-dog-arm.md` §11.3–§11.5）：
@@ -1655,10 +1721,43 @@ def _joint_reference_resolution(root, solver, placement, robot_id, targets, mode
     # 1.18 m > 可达 1.05 m ⇒ 姿态翻反向分支：夹爪指向偏差 171.715 deg / 开合轴 32.670 deg，limit 3 deg）。
     # 目标由 `robots[].reference_solver.target_override_world_m` 声明（世界系 xyz），缺省不覆盖
     # ⇒ 行为与改动前逐位一致。下面 entry 调用传的 xy/z override 由此**自动**变成覆盖后的值。
+    # A2（2026-10-12）：目标**从载体站位帧派生**（缺省），显式字面量降级为**覆盖**。
+    # 为什么（2026-10-08 实测教训）：本键与站点帧是同一事实的两处，站位改动时若不同改，
+    # 运行期报「实测目标 vs 名义解差 0.272365942 m > 0.07」⇒ s06 被拒。
+    # 派生复用 `_place_targets` 的 `nominal_docked_station` 结果（挂载接收体的名义位姿），
+    # 即"同一算法"，不再手抄世界坐标；偏移由声明 `target_derivation_offset_m` 给出（缺省零）。
     _target_override = (solver or {}).get("target_override_world_m")
+    _derivation = {"source": None, "value": None, "reason": None}
     if isinstance(_target_override, (list, tuple)) and len(_target_override) == 3:
         target_world = np.asarray([float(v) for v in _target_override], dtype=float)
         local = rotation.T @ (target_world - np.asarray(pos, dtype=float))
+        _derivation["source"] = "declared_literal"
+        _derivation["value"] = [round(float(v), 9) for v in target_world]
+    else:
+        # **派生门控（A2，2026-10-12）**：派生必须**显式声明**才启用
+        # （`reference_solver.target_derivation: from_carrier_station`）。
+        # 为什么不"缺省即派生"：本场景有两台臂，piper 的 reference_solver 既无
+        # `target_override_world_m` 也**不应**从载体站位派生（它的目标是台面方块）——缺省派生
+        # 会静默改掉它的目标（实测：联合构建 exit 5，piper grasp 相位侵入目标 piper_link6
+        # −0.006145 m）。缺省行为保持"不覆盖"（逐位不变），派生只在声明时生效。
+        _mode = str((solver or {}).get("target_derivation") or "").strip()
+        if _mode == "from_carrier_station":
+            _derived, _reason = _derive_grasp_target_from_station(
+                place_targets, model, injections or {}, solver)
+            if _derived is not None:
+                target_world = np.asarray(_derived, dtype=float)
+                local = rotation.T @ (target_world - np.asarray(pos, dtype=float))
+                _derivation["source"] = "derived_from_carrier_station"
+                _derivation["value"] = [round(float(v), 9) for v in target_world]
+            else:
+                _derivation["reason"] = _reason
+        elif _mode:
+            _fail(EXIT_DECLARATION,
+                  "robots.%s.reference_solver.target_derivation 只允许 "
+                  "from_carrier_station（实际 %r）" % (robot_id, _mode))
+    # 交叉校验痕迹（P6 的判定依据；来源与值一并进报告，供 A3 校验与人工对账）。
+    resolution_target_derivation = _derivation
+
 
     entry, module_path = _load_declared_callable(root, solver, robot_id, "reference_solver")
     baseline_path = Path(str(solver["baseline"]))
@@ -1771,6 +1870,9 @@ def _joint_reference_resolution(root, solver, placement, robot_id, targets, mode
         "target_world_m": [round(float(v), 9) for v in target_world],
         "local_target_m": [round(float(v), 9) for v in local],
         "local_xy_radius_m": round(float(np.linalg.norm(local[:2])), 9),
+        # A2/P6 留痕：抓取目标的**来源与值**（declared_literal / derived_from_carrier_station），
+        # 供构建期交叉校验与人工对账（同一事实两处的消债）。
+        "target_derivation": resolution_target_derivation,
         "reference": reference,
         "baseline_doc": baseline_doc,
         "baseline_overrides": (baseline_overrides if baseline_overrides else None),
@@ -2393,7 +2495,7 @@ def _align_feedforward_channels(model, gripper, source):
 
 def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, declared_names=None,
                         reference_solver=None, placement=None, robot_id=None, place_targets=None,
-                        carrier_trunk=None):
+                        carrier_trunk=None, injections=None):
     """联合报告的 manipulation 事实：继承**臂自己报告**的声明事实，并按**可判定规则**改写名字。
 
     改名规则（不猜）：某个名字 `n` 改写成 `<prefix>n` **当且仅当** `<prefix>n` 出现在联合模型的
@@ -2541,7 +2643,8 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
               "（取决于附加本体的 placement 与本场景的目标几何），联合模型必须重解；"
               "静默继承曾造成 0.367696068 m 的抓取残差" % robot_id)
     resolution = _joint_reference_resolution(
-        root, reference_solver, placement, robot_id, targets, model, prefix)
+        root, reference_solver, placement, robot_id, targets, model, prefix,
+        place_targets=place_targets, injections=injections)
     replaced = {}
     for phase, positions_key in REFERENCE_POSE_PHASES:
         positions = dict(resolution["resolved"][phase]["positions"])
@@ -2673,6 +2776,9 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
                 "solver": resolution["solver"],
                 "placement": resolution["placement"],
                 "target_world_m": resolution["target_world_m"],
+                # A2/P6：抓取目标的**来源与值**（declared_literal / derived_from_carrier_station），
+                # 供构建期交叉校验（P6）与人工对账（消"同一事实两处"的债）。
+                "target_derivation": resolution.get("target_derivation"),
                 "local_target_m": resolution["local_target_m"],
                 "local_xy_radius_m": resolution["local_xy_radius_m"],
                 "resolved_pad_offset_m": resolution["pad_offset_m"],
@@ -3730,7 +3836,8 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
                                            reference_solver=arm_reference_solver,
                                            placement=arm_placement, robot_id=robot_id,
                                            place_targets=place_targets,
-                                           carrier_trunk=trunk_body_name)
+                                           carrier_trunk=trunk_body_name,
+                                           injections=injections)
         # ---- I1b：**按本体**给出 manipulation 段（2026-09-29）
         # 为什么必须（多臂）：顶层 manipulation/gripper/targets 只能描述一台臂。第二台臂若要跑技能，
         # 必须能从**它自己**的段里解析 name_map/参考姿态/夹持事实 —— 否则要么被 `scenario.py` 的
@@ -3760,7 +3867,8 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
                         declared_names,
                         reference_solver=attached_entity.get("reference_solver"),
                         placement=attached_entity.get("placement"), robot_id=attached_id,
-                        place_targets=place_targets, carrier_trunk=trunk_body_name)
+                        place_targets=place_targets, carrier_trunk=trunk_body_name,
+                        injections=injections)
                 except (Exception, SystemExit) as error:  # noqa: BLE001
                     per_robot[attached_id] = {
                         "resolved": False, "prefix": "%s_" % attached_id,
@@ -3770,6 +3878,12 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
             _override = ((attached_entity.get("reference_solver") or {})
                          .get("target_override_world_m"))
             _first_target = ((record.get("targets") or [{}]) or [{}])[0]
+            # 目标优先级（A2，2026-10-12）：**重解后的目标**（reference_pose_resolution.target_world_m，
+            # 已含"字面量覆盖"或"从载体站位派生"两条路径）> 声明的字面量 > 目标体 FK。
+            # 为什么必须用重解值：派生模式下字面量不再存在，若仍只读 `_override` 会静默退回
+            # 臂侧台面位姿 ⇒ s06 卸载步拿到错目标。
+            _resolved_target = ((record.get("reference_pose_resolution") or {})
+                                .get("target_world_m"))
             per_robot[attached_id] = {
                 "resolved": True, "prefix": "%s_" % attached_id,
                 "manipulation_report": str(attached_report),
@@ -3778,8 +3892,14 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
                 # 据此构造 `pick_object` 的判据位姿 —— 对"托盘里的活体载荷"而言，臂侧报告里的
                 # 初始位姿是错的（那是台面上的位置），必须用本场景的目标。
                 "joint_scene_target_m": (
-                    [float(v) for v in _override] if isinstance(_override, (list, tuple)) and len(_override) == 3
-                    else _first_target.get("position_m")),
+                    [float(v) for v in _resolved_target]
+                    if isinstance(_resolved_target, (list, tuple)) and len(_resolved_target) == 3
+                    else ([float(v) for v in _override]
+                          if isinstance(_override, (list, tuple)) and len(_override) == 3
+                          else _first_target.get("position_m"))),
+                "joint_scene_target_source": (
+                    ((record.get("reference_pose_resolution") or {})
+                     .get("target_derivation") or {}).get("source")),
                 "joint_scene_target_quat_wxyz": _first_target.get("quaternion_wxyz"),
                 "gripper": record.get("gripper"), "targets": record.get("targets"),
                 "target_id": record.get("target_id"), "vision": record.get("vision"),

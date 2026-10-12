@@ -392,6 +392,22 @@
               },
               "description": "该臂在**本联合场景**里的抓取目标（世界系 xyz）。缺省 = 用场景道具的默认位置。用于臂的基座/朝向与默认目标不匹配的情形（实测 UR5e：默认目标距基座 1.18 m 超出可达 1.05 m ⇒ 姿态翻到反向分支）。"
             },
+            "target_derivation": {
+              "type": "string",
+              "enum": [
+                "from_carrier_station"
+              ],
+              "description": "抓取目标的**派生来源**（2026-10-12 新增）。`from_carrier_station` = 目标由载体站位帧派生：取 `place_targets` 里**挂载接收体**（`mount` 非空）的 `nominal_pose_m`（即 `nominal_docked_station` 算法，与站点帧同一事实）+ 可选 `target_derivation_offset_m`。用于消除「站点帧 ↔ `target_override_world_m` 同一事实两处手抄同改」的债（实测：站位改动时不同改 ⇒ 运行期报实测目标 vs 名义解差 0.272365942 m > 0.07 ⇒ s06 被拒）。缺省不声明 ⇒ 行为不变（**逐位**）；派生与 `target_override_world_m` **同时声明**时以字面量为准（覆盖），并由构建期交叉校验检查两者一致（P6）。"
+            },
+            "target_derivation_offset_m": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "number"
+              },
+              "description": "`target_derivation: from_carrier_station` 时叠加在挂载接收体 `nominal_pose_m` 上的世界系偏移（xyz，缺省零向量）。"
+            },
         "baseline_overrides": {
           "type": "object",
           "minProperties": 1,
