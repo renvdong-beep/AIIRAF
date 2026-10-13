@@ -35,6 +35,12 @@ defaults:
   # 清单外文件/记录缺失/SHA 不符一律拒绝（不做“尽力而为”删除）。
   file_record: iraf-install-files.json
   python_min: "3.9"
+  # 安装预检与渲染需要的部署期参数：**显式声明**，脚本里不得再内置默认值（铁律 5.3）。
+  min_free_mb: 1024
+  # 交付单元与自检用的解释器（目标端实测后应回填为该机的真实路径）。
+  python_bin: /usr/bin/python3
+  # 单元里的运行用户；特殊值 @current@ = 安装时的调用者（单机开发形态无需 root）。
+  run_user: "@current@"
   # venv = 单机/开发形态（快，需要网络或本地 wheel 缓存）；target = 交付形态（离线 wheelhouse，--target）
   install_method: venv
   # user = systemctl --user（无需 root，单机形态）；system = /etc/systemd/system（交付形态）
@@ -226,10 +232,12 @@ profiles:
     forbidden_components: [adapters_sim, adapters_http, adapters_agentos]
     backend_entrypoint: unverified
     services:
-      - name: iraf-sdk-board
-        # ⚠ 现状：该模板是**就绪占位**（oneshot，只写一行 board-ready.log）；
-        # 控制域真实 Provider 入口未定义前，本域只允许桩（铁律 6.8），装完不得声称“运行时已启动”。
-        template: deploy/sdk/iraf-sdk-board.service
+      - name: iraf-control-provider
+        # 用与其它交付单元**同一套占位符**的模板。原先指向 deploy/sdk/iraf-sdk-board.service
+        # 是错配：那是 bundle 通道的模板（占位符集合不同，由 lib_board_bundle.py 渲染），
+        # 装到本通道会因"未知占位符"直接失败 —— 实测踩到，已改。
+        # ⚠ 本单元是**就绪占位**：控制域真机入口未定义前只允许桩（铁律 6.8），不得据此声称运行时已启动。
+        template: deploy/sdk/units/iraf-control-provider.service.tmpl
         scope: system
         ports: []
         optional: false
@@ -246,9 +254,9 @@ profiles:
       independent_device_ownership: true
     residue:
       scan_roots: ["{prefix}", "{config_dir}"]
-      units: ["iraf-sdk-board.service"]
+      units: ["iraf-control-provider.service"]
       ports: []
-      processes: ["iraf-control-provider-stub"]
+      processes: ["iraf-control-provider"]
 
 # 允许的组件 id（受控枚举；schema 亦校验）。新增组件必须同时改本表与 schema。
 # 说明：组件是“装什么”的最小粒度，不含版本（版本来自 sdk.version_ref）。

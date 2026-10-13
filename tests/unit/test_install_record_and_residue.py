@@ -20,6 +20,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -260,6 +261,118 @@ class InstallLayoutTest(unittest.TestCase):
         code, output = self._run("layout", "--profile", "nope")
         self.assertEqual(code, lib.EXIT_USAGE)
         self.assertIn("未知安装角色", output)
+
+
+class InstallActionTest(unittest.TestCase):
+    """安装动作的成功/拒绝路径（用**自造的最小件**，不联网、不碰真实系统目录）。"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.effective = lib.effective_layout(REPO, PROFILE)
+        self.art = self.root / "artifacts"
+        (self.art / "wheelhouse").mkdir(parents=True, exist_ok=True)
+        self.wheel = self._make_wheel(self.art / "wheelhouse")
+        (self.art / "wheelhouse" / "wheelhouse.json").write_text(
+            '{"schema_version": "iraf.wheelhouse/v1"}\n', encoding="utf-8")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _make_wheel(self, dest: Path) -> Path:
+        import zipfile
+        wheel = dest / "iraf_sdk-0.2.0-py3-none-any.whl"
+        with zipfile.ZipFile(wheel, "w") as zf:
+            zf.writestr("iraf_sdk/__init__.py", "__version__ = '0.2.0'\n")
+            zf.writestr("iraf_sdk-0.2.0.dist-info/METADATA",
+                        "Metadata-Version: 2.1\nName: iraf_sdk\nVersion: 0.2.0\n")
+            zf.writestr("iraf_sdk-0.2.0.dist-info/WHEEL",
+                        "Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\nTag: py3-none-any\n")
+            zf.writestr("iraf_sdk-0.2.0.dist-info/RECORD", "")
+        return wheel
+
+    def _install(self, **overrides):
+        kwargs = dict(sdk_wheel=self.wheel, wheelhouse=self.art / "wheelhouse",
+                      allow_unverified=True, rehearsal=True)
+        kwargs.update(overrides)
+        return lib.apply_install(self.effective, self.root, **kwargs)
+
+    def _version_dir(self) -> Path:
+        return Path(str(self.root) + str(self.effective["prefix"])) / "0.2.0"
+
+    def test_dry_run_writes_nothing(self):
+        plan = self._install(dry_run=True)
+        self.assertTrue(plan["dry_run"])
+        self.assertIn("steps", plan["will_do"])
+        self.assertFalse(Path(str(self.root) + str(self.effective["prefix"])).exists())
+        self.assertFalse(Path(str(self.root) + str(self.effective["config_dir"])).exists())
+
+    def test_install_then_uninstall_leaves_no_residue(self):
+        plan = self._install()
+        self.assertTrue(plan["ok"])
+        self.assertTrue((self._version_dir() / "lib/iraf_sdk/__init__.py").is_file())
+        self.assertTrue(Path(plan["env_file"]).is_file())
+        self.assertEqual(len(plan["units"]), 1)
+        self.assertTrue(Path(plan["units"][0]).read_text(encoding="utf-8").count("@") == 0,
+                        "渲染后不得残留占位符")
+        record = lib.read_record(self.effective, self._version_dir())
+        removed = lib.apply_uninstall(lib.plan_uninstall(self.effective, self.root, record), root=self.root)
+        self.assertTrue(removed)
+        self.assertTrue(lib.residue_is_clean(lib.residue_scan(self.effective, self.root)))
+
+    def test_rehearsal_refuses_real_root(self):
+        with self.assertRaises(lib.InstallError) as ctx:
+            lib.apply_install(self.effective, Path("/"), sdk_wheel=self.wheel,
+                              allow_unverified=True, rehearsal=True, dry_run=True)
+        self.assertEqual(ctx.exception.code, lib.EXIT_USAGE)
+        self.assertIn("真实根", str(ctx.exception))
+
+    def test_rehearsal_requires_allow_unverified(self):
+        with self.assertRaises(lib.InstallError) as ctx:
+            self._install(allow_unverified=False, dry_run=True)
+        self.assertIn("--allow-unverified", str(ctx.exception))
+
+    def test_precheck_fails_without_wheelhouse_manifest(self):
+        (self.art / "wheelhouse" / "wheelhouse.json").unlink()
+        checks = lib.precheck(self.effective, self.root, allow_unverified=True,
+                              wheelhouse=self.art / "wheelhouse", sdk_wheel=self.wheel,
+                              python_exe=sys.executable, rehearsal=True)
+        failed = [item["name"] for item in checks if not item["ok"]]
+        self.assertTrue(any("离线 wheelhouse" in name for name in failed), failed)
+
+    def test_precheck_fails_without_sdk_wheel(self):
+        checks = lib.precheck(self.effective, self.root, allow_unverified=True,
+                              wheelhouse=self.art / "wheelhouse", sdk_wheel=None,
+                              python_exe=sys.executable, rehearsal=True)
+        failed = [item["name"] for item in checks if not item["ok"]]
+        self.assertTrue(any("SDK wheel 可读" in name for name in failed), failed)
+
+    def test_install_refuses_when_unit_exists_and_rolls_back(self):
+        unit_name = "%s.service" % self.effective["services"][0]["name"]
+        unit_dir = Path(str(self.root) + "/etc/systemd/system")
+        unit_dir.mkdir(parents=True, exist_ok=True)
+        (unit_dir / unit_name).write_text("[Unit]\n", encoding="utf-8")
+        with self.assertRaises(lib.InstallError) as ctx:
+            self._install()
+        self.assertEqual(ctx.exception.code, lib.EXIT_MISMATCH)
+        self.assertFalse(self._version_dir().exists(), "回滚后不得残留版本目录")
+        self.assertFalse((Path(str(self.root) + str(self.effective["config_dir"]))
+                         / ("%s.env" % PROFILE)).exists(), "回滚后不得残留 env 文件")
+
+    def test_render_template_rejects_unknown_placeholder(self):
+        template = self.root / "weird.service.tmpl"
+        template.write_text("[Service]\nExecStart=@NOPE@/x\n", encoding="utf-8")
+        with self.assertRaises(lib.InstallError) as ctx:
+            lib.render_template(template, {"PREFIX": "/x"})
+        self.assertEqual(ctx.exception.code, lib.EXIT_DECLARATION)
+        self.assertIn("未知占位符", str(ctx.exception))
+
+    def test_wheelhouse_is_used_offline(self):
+        """依赖来源=wheelhouse 时必须带 --no-index/--find-links（离线可装，不碰网络）。"""
+        plan = self._install()
+        self.assertEqual(plan["install_method"], "target")
+        self.assertEqual(plan["wheelhouse"], str(self.art / "wheelhouse"))
+        self.assertEqual(plan["pip_returncode"], 0)
 
 
 if __name__ == "__main__":

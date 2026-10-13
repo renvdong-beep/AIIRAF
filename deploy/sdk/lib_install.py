@@ -119,6 +119,7 @@ def effective_layout(repo_root: Path, profile_id: str) -> dict:
     declaration = load_declaration(repo_root)
     profile = profile_by_id(declaration, profile_id)
     effective = checker.resolve(profile, declaration["defaults"])
+    target = profile.get("target", {})
     effective["id"] = profile_id
     effective["label"] = profile.get("label")
     effective["version"] = checker.read_toml_field(repo_root, declaration["sdk"]["version_ref"])
@@ -128,6 +129,20 @@ def effective_layout(repo_root: Path, profile_id: str) -> dict:
     effective["services"] = list(profile["services"])
     effective["simulation_only"] = bool(profile.get("simulation_only"))
     effective["purge_flag"] = declaration["defaults"]["uninstall"]["purge_flag"]
+    # 预检需要的目标端事实与部署期参数（全部来自声明；这里只做展开，不补默认值）
+    effective["declaration_verification"] = profile.get("verification")
+    effective["target_arch"] = target.get("arch")
+    effective["target_os"] = target.get("os")
+    effective["target_os_version"] = target.get("os_version")
+    effective["target_kernel"] = target.get("kernel")
+    effective["target_python_tag"] = target.get("python_tag")
+    effective["target_platform_tag"] = target.get("platform_tag")
+    effective["target_glibc_min"] = target.get("glibc_min")
+    for key in ("min_free_mb", "python_bin", "run_user", "robot_profile", "safety_policy",
+                "backend_config", "runtime_subject"):
+        if key in declaration["defaults"]:
+            effective[key] = declaration["defaults"][key]
+    effective["_repo_root"] = str(repo_root)
     return effective
 
 
@@ -518,6 +533,366 @@ def apply_uninstall(plan: dict, *, root: Path) -> list:
     return removed
 
 
+# ─────────────────────────── 安装动作 ───────────────────────────
+
+#: env 文件的头部（由声明与安装记录共同解释；不含任何机器硬编码）
+ENV_FILE_HEADER = """# IRAF 运行期环境（由 install-iraf.sh 按 config/install/install_profiles.yaml 渲染）
+# 角色=%(profile)s 版本=%(version)s 生成于 %(generated_at)s
+# 修改请改声明后重装；本文件已登记进安装记录（卸载会移除；手工改动会被哈希校验拦下）
+"""
+
+#: 渲染占位符时使用的 token → 取值函数（机器相关的值一律来自声明的生效值）
+UNIT_TOKENS = ("PROFILE", "VERSION", "PREFIX", "CURRENT_LINK", "PYTHON_BIN", "CONFIG_DIR",
+               "LOG_DIR", "DATA_DIR", "RUN_USER", "ENV_FILE")
+
+
+def _unit_tokens(effective: dict, root: Path, *, python_bin: str, run_user: str) -> dict:
+    return {
+        "PROFILE": str(effective["id"]),
+        "VERSION": str(effective["version"]),
+        "PREFIX": str(root) + str(effective["prefix"]),
+        "CURRENT_LINK": str(effective["current_link"]),
+        "PYTHON_BIN": python_bin,
+        "CONFIG_DIR": str(root) + str(effective["config_dir"]),
+        "LOG_DIR": str(root) + str(effective["log_dir"]),
+        "DATA_DIR": str(root) + str(effective["data_dir"]),
+        "RUN_USER": run_user,
+        "ENV_FILE": "%s.env" % effective["id"],
+    }
+
+
+def render_template(template: Path, tokens: dict) -> str:
+    """按 @TOKEN@ 渲染模板；出现未登记的占位符即失败（防止模板悄悄多出一个没人填的 token）。"""
+    if not template.is_file():
+        raise InstallError("unit 模板不存在：%s" % template, EXIT_DECLARATION)
+    text = template.read_text(encoding="utf-8")
+    for key, value in tokens.items():
+        text = text.replace("@%s@" % key, str(value))
+    leftovers = sorted(set(re.findall(r"@([A-Z_]+)@", text)))
+    if leftovers:
+        raise InstallError("模板 %s 含未知占位符 %s（已知：%s）"
+                           % (template, leftovers, list(UNIT_TOKENS)), EXIT_DECLARATION)
+    return text
+
+
+def render_env_file(effective: dict, root: Path, tokens: dict) -> str:
+    lines = [ENV_FILE_HEADER % {"profile": effective["id"], "version": effective["version"],
+                                "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}]
+    prefix_current = "%s/%s" % (tokens["PREFIX"], tokens["CURRENT_LINK"])
+    lines += [
+        "# —— 运行期必需环境（与 src/iraf_adapters/bootstrap.py 同源；缺项即显式失败）——",
+        "IRAF_PROFILE=%s" % (effective.get("robot_profile") or "<按部署填写：profiles/<机型>.yaml>"),
+        "IRAF_SAFETY_POLICY=%s" % (effective.get("safety_policy") or "<按部署填写：profiles/safety/<策略>.yaml>"),
+        "IRAF_SKILL_ROOT=%s/skills" % prefix_current,
+        "IRAF_BACKEND_ENTRYPOINT=%s" % effective["backend_entrypoint"],
+        "IRAF_BACKEND_CONFIG=%s" % (effective.get("backend_config") or "<按部署生成：scripts/emit_backend_config.py>"),
+        "IRAF_EVENT_STORE=%s/iraf-runtime.db" % tokens["DATA_DIR"],
+        "# —— 跨域/入口 ——",
+        "IRAF_RUNTIME_SUBJECT=%s" % (effective.get("runtime_subject") or "iraf-runtime"),
+    ]
+    for item in effective["services"]:
+        for port in (item.get("ports") or []):
+            key = "IRAF_RUNTIME_PORT" if int(port) == 8765 else "IRAF_GRPC_PORT"
+            lines.append("%s=%d" % (key, int(port)))
+    lines.append("IRAF_PATH_ROOT=%s" % prefix_current)
+    return "\n".join(lines) + "\n"
+
+
+def precheck(effective: dict, root: Path, *, allow_unverified: bool, wheelhouse: Path | None,
+             sdk_wheel: Path | None, python_exe: str, rehearsal: bool = False) -> list:
+    """安装预检（fail-closed；每项都产出可读的实测值，便于写进证据）。
+
+    `rehearsal`（演练）：只在**跨架构沙箱**里放宽"目标端事实"三项（架构 / OS / Python 标签 / glibc），
+    其余检查（磁盘、端口、wheelhouse、SDK wheel、模板、未实测门禁）一律照旧。
+    放宽项在报告里逐条标明 `relaxed=True`，且 CLI 层禁止在真实根（/）上开演练。
+    """
+    import platform
+    import shutil as _shutil
+    import sys as _sys
+
+    checks = []
+
+    def add(name, ok, detail, relaxed=False):
+        checks.append({"name": name, "ok": bool(ok), "detail": detail, "relaxed": bool(relaxed)})
+
+    target = {"arch": effective.get("target_arch"), "os": effective.get("target_os"),
+              "os_version": effective.get("target_os_version"), "python_tag": effective.get("target_python_tag"),
+              "glibc_min": effective.get("target_glibc_min"), "platform_tag": effective.get("target_platform_tag")}
+
+    measured_arch = platform.machine()
+    add("%s：目标架构" % effective["id"],
+        rehearsal or target["arch"] in (None, "unverified", measured_arch),
+        "声明=%s 实测=%s%s" % (target["arch"], measured_arch, "（演练放宽）" if rehearsal else ""),
+        relaxed=rehearsal)
+
+    if target["python_tag"] not in (None, "unverified"):
+        expected = "cp%d%d" % (_sys.version_info[:2])
+        add("%s：Python 标签" % effective["id"], rehearsal or expected == target["python_tag"],
+            "声明=%s 实测=%s（%s）%s" % (target["python_tag"], expected, _sys.version.split()[0],
+                                       "（演练放宽）" if rehearsal else ""), relaxed=rehearsal)
+
+    if target["glibc_min"] not in (None, "unverified"):
+        try:
+            measured = os.confstr("CS_GNU_LIBC_VERSION").split()[1]
+        except (ValueError, OSError):
+            measured = "unverified"
+        ok = measured != "unverified" and tuple(map(int, measured.split("."))) >= \
+            tuple(map(int, str(target["glibc_min"]).split(".")))
+        add("%s：glibc" % effective["id"], rehearsal or ok,
+            "声明最低=%s 实测=%s%s" % (target["glibc_min"], measured, "（演练放宽）" if rehearsal else ""),
+            relaxed=rehearsal)
+
+    if str(target["os"]) not in ("unverified", "None") and target["os"]:
+        os_release = Path(str(root) + "/etc/os-release")
+        text = os_release.read_text(encoding="utf-8", errors="replace") if os_release.is_file() else ""
+        got = ""
+        for line in text.splitlines():
+            if line.startswith("ID="):
+                got = line.split("=", 1)[1].strip().strip('"')
+        want = str(target["os"]).split()[0].lower()
+        add("%s：OS" % effective["id"], rehearsal or got == want or not got,
+            "声明=%s 实测=%s（%s）%s" % (target["os"], got or "unverified", os_release,
+                                       "（演练放宽）" if rehearsal else ""), relaxed=rehearsal)
+
+    free_mb = _shutil.disk_usage(str(root)).free // (1024 * 1024)
+    need_mb = int(effective.get("min_free_mb") or 0)
+    add("%s：磁盘余量" % effective["id"], free_mb >= need_mb,
+        "需要≥%d MB 实测余量=%d MB（根=%s）" % (need_mb, free_mb, root))
+
+    if effective.get("services"):
+        add("%s：systemd 可用" % effective["id"], bool(_shutil.which("systemctl")),
+            "systemctl=%s scope=%s" % (_shutil.which("systemctl") or "缺失", effective.get("systemd_scope")))
+
+    unverified = []
+    if str(effective.get("declaration_verification")) == "unverified" or \
+            any(str(target[key]) == "unverified" for key in ("arch", "os", "os_version", "python_tag",
+                                                            "platform_tag", "glibc_min")):
+        unverified = [key for key in ("arch", "os", "os_version", "python_tag", "platform_tag", "glibc_min")
+                      if str(target.get(key)) == "unverified"]
+    add("%s：声明已实测（否则需 --allow-unverified）" % effective["id"],
+        (not unverified) or allow_unverified,
+        "未实测字段=%s 放行=%s（板卡声明回填见 profiles/boards/*.yaml）"
+        % (unverified, allow_unverified))
+
+    if effective.get("dependency_source", {}).get("kind") == "wheelhouse":
+        manifest = (wheelhouse / "wheelhouse.json") if wheelhouse else None
+        add("%s：离线 wheelhouse" % effective["id"],
+            bool(wheelhouse and wheelhouse.is_dir() and manifest and manifest.is_file()),
+            "目录=%s 清单=%s" % (wheelhouse, manifest))
+    add("%s：SDK wheel 可读" % effective["id"], bool(sdk_wheel and Path(sdk_wheel).is_file()),
+        str(sdk_wheel))
+
+    listening = _listening_ports()
+    conflicts = [int(port) for item in effective["services"] for port in (item.get("ports") or [])
+                 if int(port) in listening]
+    add("%s：端口空闲" % effective["id"], not conflicts,
+        "冲突端口=%s（本机监听=%s）" % (conflicts, sorted(listening)[:12]))
+
+    for item in effective["services"]:
+        template = Path(str(effective["_repo_root"])) / str(item["template"])
+        add("%s：模板可渲染（%s）" % (effective["id"], item["name"]), template.is_file(), str(template))
+    return checks
+
+
+def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundle: Path | None = None,
+                  wheelhouse: Path | None = None, python_exe: str | None = None,
+                  allow_unverified: bool = False, dry_run: bool = False,
+                  run_user: str | None = None, rehearsal: bool = False) -> dict:
+    """按声明安装；**任何一步失败即回滚本次创建的内容**（只回滚本次，不碰既有安装）。"""
+    import getpass
+    import tarfile
+
+    if rehearsal and Path(root).resolve() == Path("/").resolve():
+        raise InstallError("拒绝在真实根（/）上开演练：--rehearsal 必须配 --root <沙箱目录>", EXIT_USAGE)
+    if rehearsal and not allow_unverified:
+        raise InstallError("演练会放宽目标端事实检查 ⇒ 必须同时给 --allow-unverified"
+                           "（两者都只用于探索，不构成验收证据）", EXIT_USAGE)
+
+    python_exe = python_exe or str(effective.get("python_bin") or sys.executable)
+    run_user = run_user or ("<current>" if str(effective.get("run_user")) == "@current@"
+                            else str(effective.get("run_user") or "root"))
+    if run_user == "<current>":
+        try:
+            run_user = getpass.getuser()
+        except Exception:  # pragma: no cover - 无用户名环境
+            run_user = "root"
+
+    checks = precheck(effective, root, allow_unverified=allow_unverified, wheelhouse=wheelhouse,
+                      sdk_wheel=sdk_wheel, python_exe=python_exe, rehearsal=rehearsal)
+    failed = [item for item in checks if not item["ok"]]
+    if failed:
+        raise InstallError("安装预检未通过（%d 项）：\n  - %s"
+                           % (len(failed), "\n  - ".join("%s：%s" % (i["name"], i["detail"]) for i in failed)),
+                           EXIT_DECLARATION)
+
+    prefix = Path(str(root) + str(effective["prefix"]))
+    config_dir = Path(str(root) + str(effective["config_dir"]))
+    log_dir = Path(str(root) + str(effective["log_dir"]))
+    data_dir = Path(str(root) + str(effective["data_dir"]))
+    version_dir = prefix / str(effective["version"])
+    current = prefix / str(effective["current_link"])
+    tokens = _unit_tokens(effective, root, python_bin=python_exe, run_user=run_user)
+
+    plan = {
+        "profile": effective["id"], "root": str(root), "version_dir": str(version_dir),
+        "prefix": str(prefix), "python_exe": python_exe, "run_user": run_user,
+        "install_method": effective.get("install_method"),
+        "wheelhouse": str(wheelhouse) if wheelhouse else None,
+        "sdk_wheel": str(sdk_wheel), "runtime_bundle": str(runtime_bundle) if runtime_bundle else None,
+        "checks": checks,
+        "steps": ["创建版本目录", "安装 SDK wheel（+ wheelhouse 依赖）",
+                  "解 runtime bundle（若给）", "渲染 env 文件", "渲染 systemd 单元",
+                  "切换 current 链接", "写安装记录", "后置自检（import iraf_sdk）"],
+    }
+    if dry_run:
+        return {"dry_run": True, "will_do": plan}
+
+    created_dirs, created_files, removed = [], [], []
+    previous_link_target = None
+    if current.is_symlink():
+        previous_link_target = os.readlink(str(current))
+
+    def _mkdir(path: Path):
+        if not path.exists():
+            created_dirs.append(path)
+        path.mkdir(parents=True, exist_ok=True)
+
+    try:
+        _mkdir(version_dir)
+        lib_dir = version_dir / "lib"
+        src_dir = version_dir / "src"
+        _mkdir(lib_dir)
+        pip_args = [python_exe, "-m", "pip", "install", "--disable-pip-version-check",
+                    "--no-warn-script-location", "--target", str(lib_dir)]
+        if effective.get("dependency_source", {}).get("kind") == "wheelhouse":
+            pip_args += ["--no-index", "--find-links", str(wheelhouse)]
+        else:
+            index = effective.get("dependency_source", {}).get("index_url")
+            if index:
+                pip_args += ["--index-url", str(index)]
+        pip_args.append(str(sdk_wheel))
+        info("安装 SDK wheel → %s（%s）" % (lib_dir, "离线 wheelhouse" if wheelhouse else "索引"))
+        proc = subprocess.run(pip_args, capture_output=True, text=True, timeout=1800)
+        if proc.returncode != 0:
+            tail = [line for line in (proc.stderr or "").strip().splitlines() if line][-3:]
+            raise InstallError("pip 安装失败（%d）：%s" % (proc.returncode, tail), EXIT_IO)
+        plan["pip_returncode"] = proc.returncode
+
+        if runtime_bundle:
+            bundle = Path(runtime_bundle)
+            if not bundle.is_file():
+                raise InstallError("runtime bundle 不存在：%s" % bundle, EXIT_IO)
+            # 解到**版本目录根**（不是 src/）：真实 runtime 包内含 src/ config/ skills/ profiles/ 等多顶层，
+            # 若解到 src/ 会变成 src/src/…（实测的错配）。含单一顶层目录时剥掉该层。
+            with tarfile.open(bundle, "r:gz") as tar:
+                members = tar.getmembers()
+                top = {item.name.split("/")[0] for item in members}
+                if len(top) == 1:
+                    # 剥掉单一顶层目录：必须**改写 member.name**，只过滤列表不会改变解包路径
+                    # （实测踩到：过滤后仍解成 <version>/<top>/src/… ⇒ 多一层目录）
+                    prefix_name = top.pop() + "/"
+                    stripped = []
+                    for item in members:
+                        if item.name == prefix_name.rstrip("/"):
+                            continue
+                        if not item.name.startswith(prefix_name):
+                            continue
+                        item.name = item.name[len(prefix_name):]
+                        stripped.append(item)
+                    members = stripped
+                tar.extractall(path=str(version_dir), members=members,
+                               filter="data" if hasattr(tarfile, "data_filter") else None)
+            plan["runtime_extracted_to"] = str(version_dir)
+
+        env_path = config_dir / ("%s.env" % effective["id"])
+        _mkdir(config_dir)
+        env_path.write_text(render_env_file(effective, root, tokens), encoding="utf-8")
+        created_files.append(env_path)
+        plan["env_file"] = str(env_path)
+
+        unit_dir = Path(str(root) + ("/etc/systemd/system" if str(effective["systemd_scope"]) == "system"
+                                     else "/etc/systemd/user"))
+        rendered_units = []
+        for item in effective["services"]:
+            template = Path(str(effective["_repo_root"])) / str(item["template"])
+            content = render_template(template, tokens)
+            _mkdir(unit_dir)
+            unit_path = unit_dir / ("%s.service" % item["name"])
+            if unit_path.exists():
+                raise InstallError("unit 已存在，拒绝覆盖（请先走受控卸载/变更流程）：%s" % unit_path,
+                                   EXIT_MISMATCH)
+            unit_path.write_text(content, encoding="utf-8")
+            created_files.append(unit_path)
+            rendered_units.append(str(unit_path))
+        plan["units"] = rendered_units
+
+        if current.is_symlink() or current.exists():
+            current.unlink()
+        current.symlink_to(version_dir.name)
+        plan["current_link"] = "%s -> %s" % (current, version_dir.name)
+
+        for directory in (log_dir, data_dir):
+            if not directory.exists():
+                created_dirs.append(directory)
+            directory.mkdir(parents=True, exist_ok=True)
+
+        record = write_record(effective, version_dir, note="install-iraf.sh",
+                              config_paths=[env_path], created_dirs=created_dirs)
+        plan["record"] = str(record)
+
+        probe = subprocess.run([python_exe, "-c", "import iraf_sdk; print('iraf_sdk-ok')"],
+                               capture_output=True, text=True,
+                               env={**os.environ, "PYTHONPATH": "%s:%s" % (lib_dir, src_dir)},
+                               timeout=120)
+        plan["self_check"] = {"returncode": probe.returncode,
+                              "stdout": (probe.stdout or "").strip().splitlines()[-1:] or [],
+                              "stderr_tail": (probe.stderr or "").strip().splitlines()[-2:]}
+        if probe.returncode != 0:
+            raise InstallError("后置自检失败：import iraf_sdk 不通过（%s）"
+                               % plan["self_check"]["stderr_tail"], EXIT_SERVICE)
+        plan["ok"] = True
+        return plan
+    except Exception as exc:  # 回滚：只删本次创建的内容，并还原链接
+        info("安装失败，开始回滚本次创建的内容（%d 个目录 / %d 个文件）"
+             % (len(created_dirs), len(created_files)))
+        for path in reversed(created_files):
+            try:
+                path.unlink()
+                removed.append(str(path))
+            except OSError:
+                pass
+        if version_dir.is_dir():
+            try:
+                shutil.rmtree(version_dir)
+                removed.append(str(version_dir))
+            except OSError:
+                pass
+        if current.is_symlink() or current.exists():
+            try:
+                current.unlink()
+            except OSError:
+                pass
+        if previous_link_target:
+            try:
+                current.symlink_to(previous_link_target)
+                removed.append("已还原 current 链接 → %s" % previous_link_target)
+            except OSError:
+                pass
+        for path in reversed(created_dirs):
+            try:
+                if path.is_dir() and not any(path.iterdir()):
+                    path.rmdir()
+                    removed.append(str(path) + "（空目录）")
+            except OSError:
+                pass
+        plan["ok"] = False
+        plan["rolled_back"] = removed
+        if isinstance(exc, InstallError):
+            raise
+        raise InstallError("安装失败并已回滚：%s" % exc, EXIT_IO) from exc
+    return plan
+
+
 # ─────────────────────────── 命令行 ───────────────────────────
 
 def _print_json(payload) -> None:
@@ -562,6 +937,22 @@ def main(argv=None) -> int:
                       help="本次安装新建的目录（变空才删）；可重复。漏记 ⇒ 卸载后留空壳")
     p_rw.add_argument("--note", default="")
 
+    p_ins = sub.add_parser("install", help="按声明安装（预检 → 版本化目录 → 渲染 → 写记录 → 自检；失败回滚）",
+                           parents=[common])
+    p_ins.add_argument("--profile", required=True)
+    p_ins.add_argument("--root", type=Path, default=Path("/"))
+    p_ins.add_argument("--sdk-wheel", type=Path, required=True, help="SDK wheel（由 build_sdk.sh 产出）")
+    p_ins.add_argument("--runtime-bundle", type=Path, default=None, help="runtime 源码包（可选）")
+    p_ins.add_argument("--wheelhouse", type=Path, default=None, help="离线 wheelhouse 目录（依赖来源=wheelhouse 时必填）")
+    p_ins.add_argument("--python", dest="python_exe", default=None, help="解释器（默认取声明的 python_bin）")
+    p_ins.add_argument("--run-user", default=None, help="单元里的运行用户（默认取声明的 run_user）")
+    p_ins.add_argument("--allow-unverified", action="store_true",
+                       help="显式放行\"声明未实测\"（板卡声明回填前只能这样探索，不构成验收证据）")
+    p_ins.add_argument("--rehearsal", action="store_true",
+                       help="沙箱演练：放宽目标端事实检查（架构/OS/Python 标签/glibc）；必须配 --root 沙箱")
+    p_ins.add_argument("--dry-run", action="store_true", help="只跑预检并打印计划，不写任何文件")
+    p_ins.add_argument("--json", action="store_true")
+
     p_rs = sub.add_parser("record-show", help="打印安装记录摘要", parents=[common])
     p_rs.add_argument("--profile", required=True)
     p_rs.add_argument("--installed-dir", type=Path, required=True)
@@ -582,6 +973,30 @@ def main(argv=None) -> int:
             write_record(effective, args.installed_dir, note=args.note,
                          config_paths=list(args.config_file or []),
                          created_dirs=list(args.created_dir or []))
+            return EXIT_OK
+
+        if args.command == "install":
+            plan = apply_install(effective, args.root, sdk_wheel=args.sdk_wheel,
+                                 runtime_bundle=args.runtime_bundle, wheelhouse=args.wheelhouse,
+                                 python_exe=args.python_exe, allow_unverified=args.allow_unverified,
+                                 dry_run=args.dry_run, run_user=args.run_user,
+                                 rehearsal=args.rehearsal)
+            if args.json:
+                _print_json(plan)
+            elif args.dry_run:
+                info("演练：预检 %d 项全过，未写任何文件" % len(plan["will_do"]["checks"]))
+                for name, value in plan["will_do"].items():
+                    if name != "checks":
+                        print("  %-20s %s" % (name, value))
+            else:
+                info("安装完成：%s" % plan.get("version_dir"))
+                print("  env 文件   %s" % plan.get("env_file"))
+                print("  单元       %s" % ", ".join(plan.get("units") or []))
+                print("  current    %s" % plan.get("current_link"))
+                print("  安装记录   %s" % plan.get("record"))
+                print("  自检       %s" % plan.get("self_check", {}).get("stdout"))
+                info("下一步：bash deploy/sdk/verify_residue.sh 会报'不干净'（正常，已装即有内容）；"
+                     "要确认可干净清除，请跑 deploy/sdk/rehearse_install_chain.sh 或走受控卸载")
             return EXIT_OK
 
         if args.command == "record-show":

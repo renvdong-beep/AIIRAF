@@ -1,0 +1,34 @@
+# IRAF 运控域（控制域）单元模板 —— ⚠ 当前是**就绪占位**，不是"实时控制已启动"的证据。
+#
+# 为什么是占位（不得含糊）：
+#   · 控制域 Capability Provider 的**真机入口尚未定义**（驱动/现场总线主站/看门狗都在这一域）；
+#   · 在入口定义前，只允许放**桩**（AGENTS 6.8：不得把仿真适配器装到真机路径上顶替能力）；
+#   · 因此本单元只做目录与 env 自检并写一行就绪记录。**不得**据此声称"运行时已启动"或
+#     "实时控制可用"—— 那时才需要新的验收证据（HIL / 真机）。
+#
+# 占位符集合与其它交付单元一致（由 install-iraf.sh 按声明渲染）：
+#   @PROFILE@ @VERSION@ @PREFIX@ @CURRENT_LINK@ @PYTHON_BIN@ @CONFIG_DIR@ @LOG_DIR@ @DATA_DIR@ @RUN_USER@
+
+[Unit]
+Description=IRAF control-domain provider (profile=@PROFILE@ version=@VERSION@) [readiness placeholder]
+Documentation=file:@PREFIX@/@CURRENT_LINK@/config/install/install_profiles.yaml
+After=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=@RUN_USER@
+WorkingDirectory=@PREFIX@/@CURRENT_LINK@
+Environment=PYTHONPATH=@PREFIX@/@CURRENT_LINK@/src:@PREFIX@/@CURRENT_LINK@/lib
+EnvironmentFile=-@CONFIG_DIR@/@PROFILE@.env
+ExecStartPre=/bin/mkdir -p @LOG_DIR@ @DATA_DIR@
+ExecStart=/bin/sh -c 'echo "$(date -Is) iraf-control-provider ready profile=@PROFILE@ version=@VERSION@ python=@PYTHON_BIN@ simulation=false note=readiness-placeholder" >> @LOG_DIR@/control-provider-ready.log'
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@LOG_DIR@ @DATA_DIR@
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

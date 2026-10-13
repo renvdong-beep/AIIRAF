@@ -46,6 +46,7 @@ FIXTURES = (
     "deploy/iraf-runtime.env",
     "deploy/sdk/units/iraf-runtime-http.service.tmpl",
     "deploy/sdk/units/iraf-runtime-grpc.service.tmpl",
+    "deploy/sdk/units/iraf-control-provider.service.tmpl",
     "deploy/sdk/iraf-sdk-board.service",
 )
 
