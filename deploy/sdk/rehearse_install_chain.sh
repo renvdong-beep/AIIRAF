@@ -90,9 +90,12 @@ with zipfile.ZipFile(whl, "w") as zf:
     zf.writestr("iraf_sdk-0.2.0.dist-info/WHEEL",
                 "Wheel-Version: 1.0\nGenerator: rehearsal\nRoot-Is-Purelib: true\nTag: py3-none-any\n")
     zf.writestr("iraf_sdk-0.2.0.dist-info/RECORD", "")
+# 清单必须写明**构建目标**：安装预检会比对声明里的 dependency_source.target_id
+TARGET_ID = "aarch64-manylinux_2_28-cp311"
 (dest / "wheelhouse.json").write_text(
-    '{"schema_version": "iraf.wheelhouse/v1", "note": "沙箱演练自造，不含真实依赖",'
-    ' "files": [{"name": "%s"}]}\n' % whl.name, encoding="utf-8")
+    '{"schema_version": "iraf.wheelhouse/v1", "target": "%s",'
+    ' "note": "沙箱演练自造，不含真实依赖", "files": [{"name": "%s"}]}\n' % (TARGET_ID, whl.name),
+    encoding="utf-8")
 print(whl)
 PY
 )"

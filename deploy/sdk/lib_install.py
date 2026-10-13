@@ -654,10 +654,20 @@ def precheck(effective: dict, root: Path, *, allow_unverified: bool, wheelhouse:
             "声明=%s 实测=%s（%s）%s" % (target["os"], got or "unverified", os_release,
                                        "（演练放宽）" if rehearsal else ""), relaxed=rehearsal)
 
-    free_mb = _shutil.disk_usage(str(root)).free // (1024 * 1024)
+    # 磁盘余量：沙箱根可能**尚不存在**（演练时由安装过程创建）⇒ 用最近的已存在祖先测量，
+    # 且任何 statvfs 失败都必须变成"一项失败的检查"，不能抛裸异常（实测踩到过 traceback）。
+    probe_root = Path(root)
+    while not probe_root.exists() and probe_root != probe_root.parent:
+        probe_root = probe_root.parent
+    try:
+        free_mb = _shutil.disk_usage(str(probe_root)).free // (1024 * 1024)
+        measured_ok = True
+        measured_detail = "根=%s（实测于 %s）" % (root, probe_root)
+    except OSError as exc:
+        free_mb, measured_ok, measured_detail = 0, False, "无法测量（%s）：%s" % (probe_root, exc)
     need_mb = int(effective.get("min_free_mb") or 0)
-    add("%s：磁盘余量" % effective["id"], free_mb >= need_mb,
-        "需要≥%d MB 实测余量=%d MB（根=%s）" % (need_mb, free_mb, root))
+    add("%s：磁盘余量" % effective["id"], measured_ok and free_mb >= need_mb,
+        "需要≥%d MB 实测余量=%d MB %s" % (need_mb, free_mb, measured_detail))
 
     if effective.get("services"):
         add("%s：systemd 可用" % effective["id"], bool(_shutil.which("systemctl")),
@@ -728,8 +738,14 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
         except Exception:  # pragma: no cover - 无用户名环境
             run_user = "root"
 
-    checks = precheck(effective, root, allow_unverified=allow_unverified, wheelhouse=wheelhouse,
-                      sdk_wheel=sdk_wheel, python_exe=python_exe, rehearsal=rehearsal)
+    # 预检本身也要 fail-closed 且**不许抛裸异常**（实测踩到：沙箱根不存在时 statvfs 抛
+    # FileNotFoundError，直接把 traceback 甩给使用者；那不是可操作的中文原因）
+    try:
+        checks = precheck(effective, root, allow_unverified=allow_unverified, wheelhouse=wheelhouse,
+                          sdk_wheel=sdk_wheel, python_exe=python_exe, rehearsal=rehearsal)
+    except Exception as exc:  # noqa: BLE001 - 预检任何意外都必须变成显式失败
+        raise InstallError("预检本身出错（未写任何文件）：%s: %s" % (type(exc).__name__, exc),
+                           EXIT_DECLARATION) from exc
     failed = [item for item in checks if not item["ok"]]
     if failed:
         raise InstallError("安装预检未通过（%d 项）：\n  - %s"

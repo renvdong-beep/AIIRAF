@@ -47,6 +47,8 @@ RUNTIME_BUNDLE=""
 WHEELHOUSE=""
 APPLY="0"
 ALLOW_UNVERIFIED="0"
+REHEARSAL="0"
+REMOTE_ROOT=""
 
 log() { printf '[board-deploy] %s\n' "$*" >&2; }
 err() { printf '[board-deploy][错误] %s\n' "$*" >&2; }
@@ -68,6 +70,9 @@ usage() {
   --apply                 真部署（默认只演练、不写任何远端文件）
   --allow-unverified      放行"板卡声明未实测"（探索用；不构成验收证据）
   --remote-dir <dir>      远端落地目录（默认 /root/iraf-deploy；也可用 IRAF_BOARD_REMOTE_DIR）
+  --rehearsal             目标端以**沙箱演练**方式安装（放宽目标端事实检查）；必须配 --remote-root 且非 /
+                          用途：替身主机/本地管线上端到端自测。**不构成板卡证据**
+  --remote-root <dir>     传给远端 install-iraf.sh 的 --root（默认不传 = 目标端真实根 /）
 
 环境变量：IRAF_BOARD_HOST（必填）、IRAF_BOARD_USER、IRAF_BOARD_PORT、SSHPASS（必填）
 
@@ -80,6 +85,8 @@ while [ "$#" -gt 0 ]; do
     -h|--help) usage; exit 0 ;;
     --apply) APPLY="1" ;;
     --allow-unverified) ALLOW_UNVERIFIED="1" ;;
+    --rehearsal) REHEARSAL="1" ;;
+    --remote-root) REMOTE_ROOT="$2"; shift ;;
     --profile) PROFILE="$2"; shift ;;
     --sdk-wheel) SDK_WHEEL="$2"; shift ;;
     --runtime-bundle) RUNTIME_BUNDLE="$2"; shift ;;
@@ -94,6 +101,13 @@ done
 [ -n "${SSHPASS:-}" ] || { err "缺少 SSHPASS（板卡密码；只从环境变量传）"; exit 1; }
 [ -n "${PROFILE}" ] || { err "缺少 --profile"; exit 1; }
 [ -n "${SDK_WHEEL}" ] || { err "缺少 --sdk-wheel"; exit 1; }
+# 演练语义与目标端 install-iraf.sh 保持一致：必须沙箱根 + 放行未实测
+if [ "${REHEARSAL}" = "1" ]; then
+  [ -n "${REMOTE_ROOT}" ] || { err "--rehearsal 必须同时给 --remote-root <沙箱目录>（不得在目标端真实根上演练）"; exit 1; }
+  [ "${REMOTE_ROOT}" != "/" ] || { err "--rehearsal 的 --remote-root 不得是 /"; exit 1; }
+  [ "${ALLOW_UNVERIFIED}" = "1" ] || { err "--rehearsal 会放宽目标端事实检查 ⇒ 必须同时给 --allow-unverified"; exit 1; }
+  log "模式：**替身/沙箱演练**（目标端 --root=${REMOTE_ROOT}）；结果不构成板卡证据"
+fi
 command -v sshpass >/dev/null 2>&1 || { err "找不到 sshpass"; exit 1; }
 
 # 本地预检：角色的生效布局 + 制品存在性（**目标端事实**由远端 install-iraf.sh 再查一遍）
@@ -115,12 +129,19 @@ if [ "${need_wheelhouse}" = "wheelhouse" ]; then
   fi
 fi
 
+# ssh/scp 的端口选项**不同**：ssh 用 -p，scp 用 -P（实测踩到：给 scp 传 -p 会被当成"保留时间戳"，
+# 端口变成文件名 → 报 "22: No such file or directory"）。因此基础选项与端口分开拼。
 SSH_OPTS=(-o "StrictHostKeyChecking=accept-new"
           -o "UserKnownHostsFile=${REPO_ROOT}/build/board/${IRAF_BOARD_NAME:-board}/ssh/known_hosts"
-          -o "ConnectTimeout=10" -o "BatchMode=no" -p "${SSH_PORT}")
+          -o "ConnectTimeout=10" -o "BatchMode=no")
+SSH_OPTS+=(-p "${SSH_PORT}")
+SCP_OPTS=(-o "StrictHostKeyChecking=accept-new"
+          -o "UserKnownHostsFile=${REPO_ROOT}/build/board/${IRAF_BOARD_NAME:-board}/ssh/known_hosts"
+          -o "ConnectTimeout=10" -o "BatchMode=no")
+SCP_OPTS+=(-P "${SSH_PORT}")
 TARGET="${BOARD_USER}@${HOST}"
 remote() { SSHPASS="${SSHPASS}" timeout "${IRAF_BOARD_PROBE_TIMEOUT:-600}" sshpass -e ssh "${SSH_OPTS[@]}" "${TARGET}" "$1"; }
-copy() { SSHPASS="${SSHPASS}" timeout "${IRAF_BOARD_PROBE_TIMEOUT:-600}" sshpass -e scp "${SSH_OPTS[@]}" "$@"; }
+copy() { SSHPASS="${SSHPASS}" timeout "${IRAF_BOARD_PROBE_TIMEOUT:-600}" sshpass -e scp "${SCP_OPTS[@]}" "$@"; }
 
 mkdir -p "${REPO_ROOT}/build/board/${IRAF_BOARD_NAME:-board}/ssh"
 
@@ -128,16 +149,23 @@ REMOTE_SDK_DIR="${REMOTE_DIR}/deploy/sdk"
 log "目标 ${TARGET}｜角色 ${PROFILE}｜落地目录 ${REMOTE_DIR}"
 log "制品：wheel=$(basename "${SDK_WHEEL}")"$'\n'"      runtime=$(basename "${RUNTIME_BUNDLE:-（无）}")"$'\n'"      wheelhouse=${WHEELHOUSE:-（无）}"
 
-INSTALL_CMD="bash ${REMOTE_SDK_DIR}/install-iraf.sh --profile ${PROFILE} --sdk-wheel ${REMOTE_DIR}/iraf_sdk.whl"
-[ -n "${RUNTIME_BUNDLE}" ] && INSTALL_CMD="${INSTALL_CMD} --runtime-bundle ${REMOTE_DIR}/iraf-runtime.tar.gz"
+SDK_WHEEL_REMOTE="${REMOTE_DIR}/artifacts/$(basename "${SDK_WHEEL}")"
+RUNTIME_REMOTE="${RUNTIME_BUNDLE:+${REMOTE_DIR}/artifacts/$(basename "${RUNTIME_BUNDLE}")}"
+INSTALL_CMD="bash ${REMOTE_SDK_DIR}/install-iraf.sh --profile ${PROFILE} --sdk-wheel ${SDK_WHEEL_REMOTE}"
+[ -n "${RUNTIME_REMOTE}" ] && INSTALL_CMD="${INSTALL_CMD} --runtime-bundle ${RUNTIME_REMOTE}"
 [ -n "${WHEELHOUSE}" ] && INSTALL_CMD="${INSTALL_CMD} --wheelhouse ${REMOTE_DIR}/wheelhouse"
 [ "${ALLOW_UNVERIFIED}" = "1" ] && INSTALL_CMD="${INSTALL_CMD} --allow-unverified"
+[ "${REHEARSAL}" = "1" ] && INSTALL_CMD="${INSTALL_CMD} --rehearsal --root ${REMOTE_ROOT}"
+RESIDUE_CMD="bash ${REMOTE_SDK_DIR}/verify_residue.sh --profile ${PROFILE} --json"
+UNINSTALL_CMD="bash ${REMOTE_SDK_DIR}/uninstall-iraf.sh --profile ${PROFILE}"
+[ -n "${REMOTE_ROOT}" ] && { RESIDUE_CMD="${RESIDUE_CMD} --root ${REMOTE_ROOT}"; UNINSTALL_CMD="${UNINSTALL_CMD} --root ${REMOTE_ROOT}"; }
 
 if [ "${APPLY}" != "1" ]; then
   log "== 演练（未加 --apply，不写任何远端文件）=="
   cat <<PLAN | tee "${REPO_ROOT}/build/board/${IRAF_BOARD_NAME:-board}/deploy-plan.txt"
 
- 1) 远端建目录： mkdir -p ${REMOTE_SDK_DIR}/units ${REMOTE_DIR}/scripts ${REMOTE_DIR}/config/install ${REMOTE_DIR}/wheelhouse
+ 1) 远端建目录： mkdir -p ${REMOTE_SDK_DIR}/units ${REMOTE_DIR}/scripts ${REMOTE_DIR}/config/install \
+                          ${REMOTE_DIR}/wheelhouse ${REMOTE_DIR}/artifacts
                  （目标端镜像仓库布局：deploy/sdk 下放脚本与模板，scripts/ 下放校验器，
                    config/install 下放声明，pyproject.toml 放根 —— 这样 SCRIPT_DIR/../.. 正好是 repo 根）
  2) 推送脚本  ： scp deploy/sdk/*.sh deploy/sdk/lib_install.py → ${REMOTE_SDK_DIR}/
@@ -145,11 +173,13 @@ if [ "${APPLY}" != "1" ]; then
                   scp scripts/install_profile_check.py           → ${REMOTE_DIR}/scripts/
                   scp config/install/*                           → ${REMOTE_DIR}/config/install/
                   scp pyproject.toml                             → ${REMOTE_DIR}/
- 3) 推送制品  ： scp <sdk wheel> → ${REMOTE_DIR}/iraf_sdk.whl；<runtime 包> → ${REMOTE_DIR}/iraf-runtime.tar.gz；
-                  scp -r <wheelhouse> → ${REMOTE_DIR}/wheelhouse/
+ 3) 推送制品  ： scp <sdk wheel> → ${REMOTE_DIR}/artifacts/$(basename "${SDK_WHEEL}")
+                  scp <runtime 包> → ${REMOTE_DIR}/artifacts/$(basename "${RUNTIME_BUNDLE:-<无>}")
+                  scp <wheelhouse 内容> → ${REMOTE_DIR}/wheelhouse/
+                  ⚠ 制品**保持原始文件名**：pip 按文件名做 PEP 427 校验，改名会被拒
  4) 远端安装  ： cd ${REMOTE_DIR} && ${INSTALL_CMD}
                   （目标端自行预检：架构/Python 标签/glibc/磁盘/systemd/端口/声明是否已实测；失败自动回滚）
- 5) 远端判读  ： bash ${REMOTE_SDK_DIR}/verify_residue.sh --profile ${PROFILE} --json
+ 5) 远端判读  ： ${RESIDUE_CMD}
                   并回到开发机跑 deploy/sdk/board_diag.sh 拿完整判读（含 CLI --list-skills 自检）
 
  注：演练只证明"命令与制品齐备"，不构成任何板卡侧证据。
@@ -161,6 +191,10 @@ log "== 真实部署（--apply）=="
 log "① 远端建目录（目标端的目录布局**镜像仓库**：SCRIPT_DIR/../.. 必须等于 repo 根）"
 remote "mkdir -p ${REMOTE_SDK_DIR}/units ${REMOTE_DIR}/scripts ${REMOTE_DIR}/config/install ${REMOTE_DIR}/wheelhouse" \
   || { err "远端建目录失败"; exit 3; }
+if [ -n "${REMOTE_ROOT}" ]; then
+  # 演练用的沙箱根可能尚不存在；先建出来（真实安装时不设 REMOTE_ROOT ⇒ 不额外建任何目录）
+  remote "mkdir -p ${REMOTE_ROOT}" || { err "远端沙箱根创建失败：${REMOTE_ROOT}"; exit 3; }
+fi
 
 log "② 推送脚本与声明（按角色通道所需的最小集）"
 copy "${SCRIPT_DIR}/install-iraf.sh" "${SCRIPT_DIR}/lib_install.py" "${SCRIPT_DIR}/verify_residue.sh" \
@@ -171,10 +205,20 @@ copy "${REPO_ROOT}/scripts/install_profile_check.py" "${TARGET}:${REMOTE_DIR}/sc
 copy "${REPO_ROOT}/config/install/"* "${TARGET}:${REMOTE_DIR}/config/install/" || { err "声明文件传输失败"; exit 3; }
 copy "${REPO_ROOT}/pyproject.toml" "${TARGET}:${REMOTE_DIR}/" || { err "pyproject 传输失败"; exit 3; }
 
-log "③ 推送制品"
-copy "${SDK_WHEEL}" "${TARGET}:${REMOTE_DIR}/iraf_sdk.whl" || { err "SDK wheel 传输失败"; exit 3; }
-[ -n "${RUNTIME_BUNDLE}" ] && { copy "${RUNTIME_BUNDLE}" "${TARGET}:${REMOTE_DIR}/iraf-runtime.tar.gz" || { err "runtime 包传输失败"; exit 3; }; }
-[ -n "${WHEELHOUSE}" ] && { copy -r "${WHEELHOUSE}" "${TARGET}:${REMOTE_DIR}/wheelhouse/" || { err "wheelhouse 传输失败"; exit 3; }; }
+log "③ 推送制品（保持原始文件名：pip 按文件名做 PEP 427 校验，改名会被拒）"
+remote "mkdir -p ${REMOTE_DIR}/artifacts" || { err "远端制品目录创建失败"; exit 3; }
+SDK_WHEEL_REMOTE="${REMOTE_DIR}/artifacts/$(basename "${SDK_WHEEL}")"
+copy "${SDK_WHEEL}" "${TARGET}:${REMOTE_DIR}/artifacts/" || { err "SDK wheel 传输失败"; exit 3; }
+RUNTIME_REMOTE=""
+if [ -n "${RUNTIME_BUNDLE}" ]; then
+  RUNTIME_REMOTE="${REMOTE_DIR}/artifacts/$(basename "${RUNTIME_BUNDLE}")"
+  copy "${RUNTIME_BUNDLE}" "${TARGET}:${REMOTE_DIR}/artifacts/" || { err "runtime 包传输失败"; exit 3; }
+fi
+[ -n "${WHEELHOUSE}" ] && {
+  # 拷贝**目录内容**而不是目录本身：① 直接 scp -r <dir> 到已存在目录会变成 <dest>/<dir>/…；
+  # ② 新版 OpenSSH 的 scp 拒绝 `<dir>/.`（报 "unexpected filename: ."）⇒ 用本地 glob 展开内容。
+  copy "${WHEELHOUSE}"/* "${TARGET}:${REMOTE_DIR}/wheelhouse/" || { err "wheelhouse 传输失败"; exit 3; }
+}
 
 log "④ 远端安装（目标端自行预检；失败会回滚）"
 set +e
@@ -186,10 +230,24 @@ if [ "${rc}" -ne 0 ]; then
   exit 4
 fi
 
-log "⑤ 远端判读（IRAF 就绪逐项）"
+log "⑤ 远端判读（残留核验：装完应报不干净 —— 那是「已装即有内容」，不是缺陷）"
 set +e
-remote "cd ${REMOTE_DIR} && IRAF_REPO_ROOT=${REMOTE_DIR} bash ${REMOTE_SDK_DIR}/verify_residue.sh --profile ${PROFILE} --json" \
+remote "cd ${REMOTE_DIR} && IRAF_REPO_ROOT=${REMOTE_DIR} ${RESIDUE_CMD}" \
   2>&1 | tee "${REPO_ROOT}/build/board/${IRAF_BOARD_NAME:-board}/deploy-residue.json" | tail -5
 set -e
+if [ "${REHEARSAL}" = "1" ]; then
+  log "⑥ 替身演练收尾：远端受控卸载 + 残留核验（证明管线可干净回收）"
+  set +e
+  remote "cd ${REMOTE_DIR} && IRAF_REPO_ROOT=${REMOTE_DIR} ${UNINSTALL_CMD}" >/dev/null 2>&1
+  remote "cd ${REMOTE_DIR} && IRAF_REPO_ROOT=${REMOTE_DIR} ${RESIDUE_CMD}" \
+    > "${REPO_ROOT}/build/board/${IRAF_BOARD_NAME:-board}/deploy-residue-after-uninstall.json" 2>&1
+  rc=$?
+  set -e
+  if [ "${rc}" -eq 0 ]; then
+    log "  ✓ 卸载后六路残留全 0（管线可干净回收）"
+  else
+    log "  ✗ 卸载后仍有残留（rc=${rc}）——见 deploy-residue-after-uninstall.json"
+  fi
+fi
 log "部署完成：请回到开发机跑 deploy/sdk/board_diag.sh --profile ${PROFILE} 拿完整判读（含 CLI --list-skills 自检）"
 exit 0
