@@ -273,8 +273,11 @@ class InstallActionTest(unittest.TestCase):
         self.art = self.root / "artifacts"
         (self.art / "wheelhouse").mkdir(parents=True, exist_ok=True)
         self.wheel = self._make_wheel(self.art / "wheelhouse")
+        # 清单里必须写明 wheelhouse 属于哪个**构建目标**：声明里 dependency_source.target_id 会与它比对
+        # （装错标签的包属于"静默装错"，必须在预检拦住）
         (self.art / "wheelhouse" / "wheelhouse.json").write_text(
-            '{"schema_version": "iraf.wheelhouse/v1"}\n', encoding="utf-8")
+            '{"schema_version": "iraf.wheelhouse/v1", "target": "aarch64-manylinux_2_28-cp311"}\n',
+            encoding="utf-8")
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -366,6 +369,17 @@ class InstallActionTest(unittest.TestCase):
             lib.render_template(template, {"PREFIX": "/x"})
         self.assertEqual(ctx.exception.code, lib.EXIT_DECLARATION)
         self.assertIn("未知占位符", str(ctx.exception))
+
+    def test_precheck_rejects_wheelhouse_target_mismatch(self):
+        """wheelhouse 属于别的构建目标 ⇒ 预检必须拒绝（装错标签=静默装错）。"""
+        (self.art / "wheelhouse" / "wheelhouse.json").write_text(
+            '{"schema_version": "iraf.wheelhouse/v1", "target": "aarch64-manylinux_2_28-cp310"}\n',
+            encoding="utf-8")
+        checks = lib.precheck(self.effective, self.root, allow_unverified=True,
+                              wheelhouse=self.art / "wheelhouse", sdk_wheel=self.wheel,
+                              python_exe=sys.executable, rehearsal=True)
+        failed = [item["name"] for item in checks if not item["ok"]]
+        self.assertTrue(any("wheelhouse 构建目标一致" in name for name in failed), failed)
 
     def test_wheelhouse_is_used_offline(self):
         """依赖来源=wheelhouse 时必须带 --no-index/--find-links（离线可装，不碰网络）。"""

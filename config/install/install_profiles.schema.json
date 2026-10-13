@@ -57,7 +57,9 @@
           "description": "index = 在线索引（快速安装）；wheelhouse = 离线目录（隔离网/板卡）。"
         },
         "index_url": {"type": "string", "minLength": 1},
-        "wheelhouse_root": {"type": "string", "minLength": 1}
+        "wheelhouse_root": {"type": "string", "minLength": 1},
+        "target_id": {"type": "string", "minLength": 1,
+                      "description": "离线 wheelhouse 来自哪个构建目标（config/sdk/package_matrix.yaml 的 id）；声明后安装前会校验目录清单的目标是否一致。"}
       }
     },
     "install_layout": {

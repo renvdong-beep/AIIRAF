@@ -164,6 +164,9 @@ profiles:
       kind: wheelhouse
       index_url: https://mirrors.aliyun.com/pypi/simple/
       wheelhouse_root: build/wheelhouse
+      # 本角色的离线 wheelhouse 来自哪个**构建目标**（config/sdk/package_matrix.yaml 的 id）。
+      # 声明它才能在安装前校验"抓的包与目标端 ABI 一致"，避免装错标签的包（本机实测踩到过一次）。
+      target_id: aarch64-manylinux_2_28-cp311
     components:
       - sdk_core
       - core
@@ -222,6 +225,9 @@ profiles:
       kind: wheelhouse
       index_url: https://mirrors.aliyun.com/pypi/simple/
       wheelhouse_root: build/wheelhouse
+      # 本角色的离线 wheelhouse 来自哪个**构建目标**（config/sdk/package_matrix.yaml 的 id）。
+      # 声明它才能在安装前校验"抓的包与目标端 ABI 一致"，避免装错标签的包（本机实测踩到过一次）。
+      target_id: aarch64-manylinux_2_28-cp311
     # 本域只装能力实现与声明；TaskFlow/Skill/Policy 不落这里（不得跨域合并安全边界）。
     components:
       - sdk_core

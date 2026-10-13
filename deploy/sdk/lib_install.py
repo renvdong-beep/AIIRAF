@@ -679,6 +679,17 @@ def precheck(effective: dict, root: Path, *, allow_unverified: bool, wheelhouse:
         add("%s：离线 wheelhouse" % effective["id"],
             bool(wheelhouse and wheelhouse.is_dir() and manifest and manifest.is_file()),
             "目录=%s 清单=%s" % (wheelhouse, manifest))
+        # 声明了 target_id 就做一致性校验：抓的包必须属于声明的构建目标（装错标签是"静默装错"）
+        declared_target = effective.get("dependency_source", {}).get("target_id")
+        if declared_target and manifest and manifest.is_file():
+            try:
+                got = json.loads(manifest.read_text(encoding="utf-8")).get("target")
+            except json.JSONDecodeError:
+                got = None
+            got_id = got.get("id") if isinstance(got, dict) else got
+            add("%s：wheelhouse 构建目标一致" % effective["id"],
+                str(got_id) == str(declared_target),
+                "声明=%s 清单=%s" % (declared_target, got_id))
     add("%s：SDK wheel 可读" % effective["id"], bool(sdk_wheel and Path(sdk_wheel).is_file()),
         str(sdk_wheel))
 
