@@ -511,6 +511,48 @@ class InstallActionTest(unittest.TestCase):
         self.assertIn("兜底清理", output)
         self.assertFalse(unit_dir.joinpath("%s.service" % self.effective["services"][0]["name"]).exists())
 
+    def test_sim_scene_is_copied_and_backend_config_generated(self):
+        """仿真档：声明的场景（XML + 旁挂报告）复制进版本目录，并在**目标端**生成 IRAF_BACKEND_CONFIG。
+
+        为什么必须自动化：这份 JSON 手写会随契约演进静默过期（实测两次：缺 finger_geom → 装配失败；
+        缺 vision 段 → visual_pick 报"未提供视觉证据路径"）⇒ 一律由场景报告生成。
+        """
+        # 造最小场景（emit_backend_config 需要 target_id + gripper）
+        scene_dir = self.art / "scene"
+        scene_dir.mkdir(parents=True, exist_ok=True)
+        (scene_dir / "demo-pick-scene.xml").write_text("<mujoco/>\n", encoding="utf-8")
+        (scene_dir / "demo-pick-scene.json").write_text(
+            json.dumps({"target_id": "box_01", "pose_tolerance_m": 0.005,
+                        "gripper": {"left_finger_body": "l", "right_finger_body": "r"},
+                        "vision": None}), encoding="utf-8")
+
+        self.effective["sim_scene"] = str(scene_dir / "demo-pick-scene.xml")
+        self.effective["backend_config"] = None
+        plan = self._install()
+
+        self.assertTrue(plan["ok"])
+        # 场景两个文件都进了版本目录（并被纳入安装记录 ⇒ 卸载会一起清掉）
+        self.assertTrue((self._version_dir() / "models/demo-pick-scene.xml").is_file())
+        self.assertTrue((self._version_dir() / "models/demo-pick-scene.json").is_file())
+        record = lib.read_record(self.effective, self._version_dir())
+        paths = [item["path"] for item in record["files"]]
+        self.assertIn("models/demo-pick-scene.xml", paths)
+        # env 里的 IRAF_BACKEND_CONFIG 被填上且是合法 JSON，model_path 指向版本目录内的场景
+        env_text = Path(plan["env_file"]).read_text(encoding="utf-8")
+        line = [l for l in env_text.splitlines() if l.startswith("IRAF_BACKEND_CONFIG=")][0]
+        config = json.loads(line.split("=", 1)[1])
+        self.assertEqual(config["target_id"] if "target_id" in config else config["manipulation"]["targets"].popitem()[0],
+                         "box_01")
+        self.assertIn(str(self._version_dir() / "models"), config["model_path"])
+
+    def test_sim_scene_missing_report_is_rejected(self):
+        """声明了场景但缺同名 .json 旁挂报告 ⇒ 安装失败（不许产出半套配置）。"""
+        self.effective["sim_scene"] = str(self.art / "scene" / "definitely-missing.xml")
+        self.effective["backend_config"] = None
+        with self.assertRaises(lib.InstallError) as ctx:
+            self._install()
+        self.assertIn("仿真场景缺文件", str(ctx.exception))
+
     def test_wheelhouse_is_used_offline(self):
         """依赖来源=wheelhouse 时必须带 --no-index/--find-links（离线可装，不碰网络）。"""
         plan = self._install()

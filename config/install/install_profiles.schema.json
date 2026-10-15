@@ -4,7 +4,13 @@
   "description": "校验 config/install/install_profiles.yaml。该文件是安装包路径/端口/单元/组件清单的唯一事实来源（AGENTS 5.3）。这里**不重复**组件枚举：schema 只要求 components 是非空字符串数组，成员是否合法由 scripts/install_profile_check.py 按本文件的 components_enum 判定（避免同一事实两份）。未实测的目标端取值必须写 unverified，禁止猜测（AGENTS 3.2）。",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "sdk", "defaults", "profiles", "components_enum"],
+  "required": [
+    "schema_version",
+    "sdk",
+    "defaults",
+    "profiles",
+    "components_enum"
+  ],
   "properties": {
     "schema_version": {
       "const": "iraf.install-profiles/v1",
@@ -13,7 +19,10 @@
     "sdk": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["version_ref", "dist_name_ref"],
+      "required": [
+        "version_ref",
+        "dist_name_ref"
+      ],
       "properties": {
         "version_ref": {
           "type": "string",
@@ -27,18 +36,25 @@
         }
       }
     },
-    "defaults": {"$ref": "#/definitions/install_layout"},
+    "defaults": {
+      "$ref": "#/definitions/install_layout"
+    },
     "profiles": {
       "type": "array",
       "minItems": 1,
       "description": "安装角色清单。四种角色互不替代：single-ubuntu2204 / sim-x86 / edge-intel / edge-motion。",
-      "items": {"$ref": "#/definitions/profile"}
+      "items": {
+        "$ref": "#/definitions/profile"
+      }
     },
     "components_enum": {
       "type": "object",
       "minProperties": 1,
       "description": "受控的组件 id → 中文说明。components 的成员必须在这里出现（由校验脚本判定）。",
-      "additionalProperties": {"type": "string", "minLength": 1}
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
     }
   },
   "definitions": {
@@ -50,44 +66,106 @@
     "dependency_source": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "index_url"],
+      "required": [
+        "kind",
+        "index_url"
+      ],
       "properties": {
         "kind": {
-          "enum": ["index", "wheelhouse"],
+          "enum": [
+            "index",
+            "wheelhouse"
+          ],
           "description": "index = 在线索引（快速安装）；wheelhouse = 离线目录（隔离网/板卡）。"
         },
-        "index_url": {"type": "string", "minLength": 1},
-        "wheelhouse_root": {"type": "string", "minLength": 1},
-        "target_id": {"type": "string", "minLength": 1,
-                      "description": "离线 wheelhouse 来自哪个构建目标（config/sdk/package_matrix.yaml 的 id）；声明后安装前会校验目录清单的目标是否一致。"}
+        "index_url": {
+          "type": "string",
+          "minLength": 1
+        },
+        "wheelhouse_root": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "离线 wheelhouse 来自哪个构建目标（config/sdk/package_matrix.yaml 的 id）；声明后安装前会校验目录清单的目标是否一致。"
+        }
       }
     },
     "install_layout": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["prefix", "version_dir_layout", "current_link", "config_dir", "log_dir", "data_dir",
-                   "file_record", "python_min", "min_free_mb", "python_bin", "run_user",
-                   "runtime_dependencies", "python_stubs_dir",
-                   "install_method", "systemd_scope", "dependency_source", "uninstall",
-                   "install_boundaries"],
+      "required": [
+        "prefix",
+        "version_dir_layout",
+        "current_link",
+        "config_dir",
+        "log_dir",
+        "data_dir",
+        "file_record",
+        "python_min",
+        "min_free_mb",
+        "python_bin",
+        "run_user",
+        "runtime_dependencies",
+        "python_stubs_dir",
+        "install_method",
+        "systemd_scope",
+        "dependency_source",
+        "uninstall",
+        "install_boundaries"
+      ],
       "properties": {
-        "prefix": {"$ref": "#/definitions/path_or_unverified"},
-        "version_dir_layout": {"type": "string", "pattern": "\\{prefix\\}/\\{version\\}"},
-        "current_link": {"type": "string", "minLength": 1},
-        "config_dir": {"$ref": "#/definitions/path_or_unverified"},
-        "log_dir": {"$ref": "#/definitions/path_or_unverified"},
-        "data_dir": {"$ref": "#/definitions/path_or_unverified"},
-        "file_record": {"type": "string", "pattern": "\\.json$"},
-        "python_min": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+$"},
-        "min_free_mb": {"type": "integer", "minimum": 1,
-                        "description": "安装预检要求的最小磁盘余量（MB）。显式声明，脚本不得内置默认值。"},
-        "python_bin": {"type": "string", "minLength": 1,
-                       "description": "交付单元与后置自检使用的解释器（目标端实测值）。"},
-        "run_user": {"type": "string", "minLength": 1,
-                     "description": "单元里的运行用户；特殊值 @current@ = 安装时的调用者（单机形态无需 root）。"},
+        "prefix": {
+          "$ref": "#/definitions/path_or_unverified"
+        },
+        "version_dir_layout": {
+          "type": "string",
+          "pattern": "\\{prefix\\}/\\{version\\}"
+        },
+        "current_link": {
+          "type": "string",
+          "minLength": 1
+        },
+        "config_dir": {
+          "$ref": "#/definitions/path_or_unverified"
+        },
+        "log_dir": {
+          "$ref": "#/definitions/path_or_unverified"
+        },
+        "data_dir": {
+          "$ref": "#/definitions/path_or_unverified"
+        },
+        "file_record": {
+          "type": "string",
+          "pattern": "\\.json$"
+        },
+        "python_min": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+$"
+        },
+        "min_free_mb": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "安装预检要求的最小磁盘余量（MB）。显式声明，脚本不得内置默认值。"
+        },
+        "python_bin": {
+          "type": "string",
+          "minLength": 1,
+          "description": "交付单元与后置自检使用的解释器（目标端实测值）。"
+        },
+        "run_user": {
+          "type": "string",
+          "minLength": 1,
+          "description": "单元里的运行用户；特殊值 @current@ = 安装时的调用者（单机形态无需 root）。"
+        },
         "runtime_dependencies": {
           "type": "array",
-          "items": {"type": "string", "minLength": 1},
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
           "description": "运行期需要、必须装进 <version>/lib 的 Python 发行包（SDK wheel 的 METADATA 不声明依赖，实测）。"
         },
         "python_stubs_dir": {
@@ -95,30 +173,60 @@
           "minLength": 1,
           "description": "proto 桩目录（运行期 import iraf.v1.* 需要）；安装器拷进 <version>/lib 并纳入安装记录。"
         },
-        "install_method": {"enum": ["venv", "target"]},
-        "systemd_scope": {"enum": ["user", "system"]},
-        "dependency_source": {"$ref": "#/definitions/dependency_source"},
+        "install_method": {
+          "enum": [
+            "venv",
+            "target"
+          ]
+        },
+        "systemd_scope": {
+          "enum": [
+            "user",
+            "system"
+          ]
+        },
+        "dependency_source": {
+          "$ref": "#/definitions/dependency_source"
+        },
         "uninstall": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["keep", "purge_flag"],
+          "required": [
+            "keep",
+            "purge_flag"
+          ],
           "properties": {
             "keep": {
               "type": "array",
-              "items": {"$ref": "#/definitions/path_or_unverified"},
+              "items": {
+                "$ref": "#/definitions/path_or_unverified"
+              },
               "description": "卸载保留项（数据与日志）。只有显式 --purge 才删。"
             },
-            "purge_flag": {"type": "string", "pattern": "^--purge$"}
+            "purge_flag": {
+              "type": "string",
+              "pattern": "^--purge$"
+            }
           }
         },
         "install_boundaries": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["write_system_site_packages", "use_system_package_manager", "touch_agentos_files"],
+          "required": [
+            "write_system_site_packages",
+            "use_system_package_manager",
+            "touch_agentos_files"
+          ],
           "properties": {
-            "write_system_site_packages": {"const": false},
-            "use_system_package_manager": {"const": false},
-            "touch_agentos_files": {"const": false}
+            "write_system_site_packages": {
+              "const": false
+            },
+            "use_system_package_manager": {
+              "const": false
+            },
+            "touch_agentos_files": {
+              "const": false
+            }
           }
         }
       }
@@ -126,97 +234,320 @@
     "target": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["os", "os_version", "arch"],
+      "required": [
+        "os",
+        "os_version",
+        "arch"
+      ],
       "properties": {
-        "os": {"type": "string", "minLength": 1, "description": "如 ubuntu / openEuler / unverified"},
-        "os_version": {"type": "string", "minLength": 1},
-        "arch": {"enum": ["x86_64", "aarch64", "unverified"]},
-        "kernel": {"type": "string"},
-        "python_tag": {"type": "string"},
-        "platform_tag": {"type": "string"},
-        "glibc_min": {"type": "string"}
+        "os": {
+          "type": "string",
+          "minLength": 1,
+          "description": "如 ubuntu / openEuler / unverified"
+        },
+        "os_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "arch": {
+          "enum": [
+            "x86_64",
+            "aarch64",
+            "unverified"
+          ]
+        },
+        "kernel": {
+          "type": "string"
+        },
+        "python_tag": {
+          "type": "string"
+        },
+        "platform_tag": {
+          "type": "string"
+        },
+        "glibc_min": {
+          "type": "string"
+        }
       }
     },
     "service": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "template", "scope", "optional"],
+      "required": [
+        "name",
+        "template",
+        "scope",
+        "optional"
+      ],
       "properties": {
-        "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
-        "template": {"type": "string", "minLength": 1, "description": "unit 模板相对仓库根的路径"},
-        "scope": {"enum": ["user", "system"]},
-        "ports": {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 65535}},
-        "optional": {"type": "boolean"}
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "template": {
+          "type": "string",
+          "minLength": 1,
+          "description": "unit 模板相对仓库根的路径"
+        },
+        "scope": {
+          "enum": [
+            "user",
+            "system"
+          ]
+        },
+        "ports": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          }
+        },
+        "optional": {
+          "type": "boolean"
+        }
       }
     },
     "cross_domain": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["role", "peers", "transport", "deadline_ms"],
+      "required": [
+        "role",
+        "peers",
+        "transport",
+        "deadline_ms"
+      ],
       "properties": {
-        "role": {"enum": ["upstream", "downstream"]},
-        "peers": {"type": "array", "minItems": 1, "items": {"type": "string"}},
-        "transport": {"enum": ["grpc", "ros2"]},
-        "deadline_ms": {"type": "integer", "minimum": 1},
-        "authenticated": {"type": "boolean"}
+        "role": {
+          "enum": [
+            "upstream",
+            "downstream"
+          ]
+        },
+        "peers": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "transport": {
+          "enum": [
+            "grpc",
+            "ros2"
+          ]
+        },
+        "deadline_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "authenticated": {
+          "type": "boolean"
+        }
       }
     },
     "safety_boundary": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["merge_allowed", "independent_process", "independent_limits",
-                   "independent_device_ownership"],
+      "required": [
+        "merge_allowed",
+        "independent_process",
+        "independent_limits",
+        "independent_device_ownership"
+      ],
       "description": "AGENTS 6.11：多角色合并部署时不得合并安全边界。",
       "properties": {
-        "merge_allowed": {"const": false},
-        "independent_process": {"type": "boolean"},
-        "independent_limits": {"type": "boolean"},
-        "independent_device_ownership": {"type": "boolean"}
+        "merge_allowed": {
+          "const": false
+        },
+        "independent_process": {
+          "type": "boolean"
+        },
+        "independent_limits": {
+          "type": "boolean"
+        },
+        "independent_device_ownership": {
+          "type": "boolean"
+        }
       }
     },
     "residue": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["scan_roots", "units", "ports", "processes"],
+      "required": [
+        "scan_roots",
+        "units",
+        "ports",
+        "processes"
+      ],
       "description": "卸载后的残留判据（六路扫描：文件/目录=scan_roots、单元=units、端口=ports、进程=processes）。全 0 才允许判“清干净”。",
       "properties": {
-        "scan_roots": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
-        "units": {"type": "array", "items": {"type": "string", "minLength": 1}},
-        "ports": {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 65535}},
-        "processes": {"type": "array", "items": {"type": "string", "minLength": 1}}
+        "scan_roots": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "units": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "ports": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          }
+        },
+        "processes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
       }
     },
     "profile": {
       "type": "object",
       "additionalProperties": false,
       "description": "安装角色。路径/安装方式等**可以从 defaults 继承**（defaults 是显式声明的唯一来源，不是隐式默认值）；继承结果由 scripts/install_profile_check.py 的 resolve() 解析并用 --profile 打印。因此这里不把它们列为 required，改由语义检查“解析后必须齐备”兜底。",
-      "required": ["id", "label", "purpose", "target", "verification", "simulation_only",
-                   "components", "backend_entrypoint", "services", "residue"],
+      "required": [
+        "id",
+        "label",
+        "purpose",
+        "target",
+        "verification",
+        "simulation_only",
+        "components",
+        "backend_entrypoint",
+        "services",
+        "residue"
+      ],
       "properties": {
-        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
-        "label": {"type": "string", "minLength": 1},
-        "purpose": {"enum": ["development", "simulation", "edge_runtime", "edge_control"]},
-        "target": {"$ref": "#/definitions/target"},
-        "verification": {"enum": ["development", "unverified", "verified"]},
-        "simulation_only": {"type": "boolean"},
-        "prefix": {"$ref": "#/definitions/path_or_unverified"},
-        "config_dir": {"$ref": "#/definitions/path_or_unverified"},
-        "log_dir": {"$ref": "#/definitions/path_or_unverified"},
-        "data_dir": {"$ref": "#/definitions/path_or_unverified"},
-        "systemd_scope": {"enum": ["user", "system"]},
-        "install_method": {"enum": ["venv", "target"]},
-        "dependency_source": {"$ref": "#/definitions/dependency_source"},
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "purpose": {
+          "enum": [
+            "development",
+            "simulation",
+            "edge_runtime",
+            "edge_control"
+          ]
+        },
+        "target": {
+          "$ref": "#/definitions/target"
+        },
+        "verification": {
+          "enum": [
+            "development",
+            "unverified",
+            "verified"
+          ]
+        },
+        "simulation_only": {
+          "type": "boolean"
+        },
+        "prefix": {
+          "$ref": "#/definitions/path_or_unverified"
+        },
+        "config_dir": {
+          "$ref": "#/definitions/path_or_unverified"
+        },
+        "log_dir": {
+          "$ref": "#/definitions/path_or_unverified"
+        },
+        "data_dir": {
+          "$ref": "#/definitions/path_or_unverified"
+        },
+        "systemd_scope": {
+          "enum": [
+            "user",
+            "system"
+          ]
+        },
+        "install_method": {
+          "enum": [
+            "venv",
+            "target"
+          ]
+        },
+        "dependency_source": {
+          "$ref": "#/definitions/dependency_source"
+        },
         "components": {
           "type": "array",
           "minItems": 1,
-          "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_]*$"}
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_]*$"
+          }
         },
-        "forbidden_components": {"type": "array", "items": {"type": "string"}},
-        "backend_entrypoint": {"type": "string", "minLength": 1},
-        "services": {"type": "array", "items": {"$ref": "#/definitions/service"}},
-        "cross_domain": {"$ref": "#/definitions/cross_domain"},
-        "safety_boundary": {"$ref": "#/definitions/safety_boundary"},
-        "residue": {"$ref": "#/definitions/residue"}
+        "forbidden_components": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "backend_entrypoint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "services": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/service"
+          }
+        },
+        "cross_domain": {
+          "$ref": "#/definitions/cross_domain"
+        },
+        "safety_boundary": {
+          "$ref": "#/definitions/safety_boundary"
+        },
+        "residue": {
+          "$ref": "#/definitions/residue"
+        },
+        "robot_profile": {
+          "type": "string",
+          "minLength": 1,
+          "description": "机型 RobotProfile 路径（按**驱动的机器人**选，与板卡无关）。仿真档给仿真机型；真机档留空待运控域定义。"
+        },
+        "safety_policy": {
+          "type": "string",
+          "minLength": 1,
+          "description": "安全策略路径。仿真档给 simulation_only: true 的策略；真机需 BoardProfile 签字后才允许 false。"
+        },
+        "backend_config": {
+          "type": "string",
+          "minLength": 1,
+          "description": "运行期后端配置（IRAF_BACKEND_CONFIG）。**由场景报告生成**，不手写；此处仅在明确知道取值时声明。"
+        },
+        "sim_scene": {
+          "type": "string",
+          "minLength": 1,
+          "description": "仿真档场景的**仓库相对**路径（模型 XML，需有同名 .json 旁挂报告）。安装器会把它复制进版本目录并在目标端生成 IRAF_BACKEND_CONFIG（不手写）。"
+        },
+        "runtime_dependencies": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "角色级运行期依赖覆盖（例如仿真档要 mujoco/numpy/pillow）。"
+        }
       }
     }
   }

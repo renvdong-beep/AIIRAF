@@ -269,6 +269,19 @@ copy -r "${REPO_ROOT}/${STUBS_DIR}/iraf" "${TARGET}:${REMOTE_DIR}/${STUBS_DIR}/"
 remote "test -d ${REMOTE_DIR}/${STUBS_DIR}/iraf/v1 && echo stubs-ok" \
   | grep -q stubs-ok || { err "proto 桩落地位置不符（期望 ${REMOTE_DIR}/${STUBS_DIR}/iraf/v1）"; exit 3; }
 
+# 仿真档场景 + 生成器：声明里的 sim_scene 是**仓库相对**路径，推到远端同位置；
+# 目标端安装器据此复制进版本目录并在板上生成 IRAF_BACKEND_CONFIG（不手写）。
+SIM_SCENE="$("${PYTHON}" -c "import json,sys;print(json.loads(sys.argv[1]).get('sim_scene') or '')" "${LAYOUT}")"
+if [ -n "${SIM_SCENE}" ]; then
+  [ -f "${REPO_ROOT}/${SIM_SCENE}" ] || { err "声明的仿真场景不存在：${REPO_ROOT}/${SIM_SCENE}"; exit 2; }
+  [ -f "${REPO_ROOT}/${SIM_SCENE%.*}.json" ] || { err "场景旁挂报告缺失：${REPO_ROOT}/${SIM_SCENE%.*}.json（先跑 scripts/build_baseline.py）"; exit 2; }
+  remote "mkdir -p ${REMOTE_DIR}/$(dirname "${SIM_SCENE}") ${REMOTE_DIR}/scripts" || { err "远端场景目录创建失败"; exit 3; }
+  copy "${REPO_ROOT}/${SIM_SCENE}" "${REPO_ROOT}/${SIM_SCENE%.*}.json" "${TARGET}:${REMOTE_DIR}/$(dirname "${SIM_SCENE}")/" \
+    || { err "场景传输失败"; exit 3; }
+  copy "${REPO_ROOT}/scripts/emit_backend_config.py" "${TARGET}:${REMOTE_DIR}/scripts/" || { err "生成器传输失败"; exit 3; }
+  log "  ✓ 仿真场景与生成器已推送（${SIM_SCENE}）"
+fi
+
 log "③ 推送制品（保持原始文件名：pip 按文件名做 PEP 427 校验，改名会被拒）"
 remote "mkdir -p ${REMOTE_DIR}/artifacts" || { err "远端制品目录创建失败"; exit 3; }
 SDK_WHEEL_REMOTE="${REMOTE_DIR}/artifacts/$(basename "${SDK_WHEEL}")"

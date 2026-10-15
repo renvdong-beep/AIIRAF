@@ -213,6 +213,88 @@ profiles:
       ports: [50051]
       processes: ["iraf-runtime-grpc", "iraf-agentos"]
 
+  - id: edge-intel-sim
+    label: 边缘智能域 · 仿真档（aarch64 Hyper；**默认仿真**，场景由 AgentOS 语义触发）
+    purpose: edge_runtime
+    # 与 edge-intel（真机档）的区别**只在仿真档位**：多装 adapters_sim、后端指向 MuJoCo、
+    # 策略是 simulation_only=true 的。两个角色**不要同时装在同一台机器**（同占 50051 端口）。
+    # 铁律 1.7：仿真档的一切结论必须带 simulation=true，不得表述为真机能力。
+    target:
+      # 这些是**实测值**（来源 build/board/e300-lab 证据：openEuler 24.03 (LTS-SP1) / Python 3.11.6 /
+      # glibc 2.38 / kernel 6.6.10；板级权威声明仍以 profiles/boards/*.yaml 为准）
+      os: "openEuler 24.03 (LTS-SP1)"
+      os_version: "24.03"
+      arch: aarch64
+      kernel: "6.6.10"
+      python_tag: cp311
+      platform_tag: manylinux_2_28_aarch64
+      glibc_min: "2.38"
+    verification: development
+    simulation_only: true
+    prefix: /opt/iraf-sdk
+    config_dir: /etc/iraf
+    log_dir: /var/log/iraf
+    data_dir: /var/lib/iraf
+    systemd_scope: system
+    install_method: target
+    dependency_source:
+      kind: wheelhouse
+      index_url: https://mirrors.aliyun.com/pypi/simple/
+      wheelhouse_root: build/wheelhouse
+      target_id: aarch64-manylinux_2_28-cp311
+    components:
+      - sdk_core
+      - core
+      - skills
+      - profiles
+      - scenarios
+      - config
+      - adapters_sim
+      - adapters_grpc
+      - adapters_agentos
+    forbidden_components: []
+    backend_entrypoint: iraf_adapters.mujoco.mujoco_backend:MujocoBackend
+    # 仿真档默认（**角色级**声明）：机型由"场景要演示什么机器人"决定，这里给机械臂仿真的默认档；
+    # AgentOS 语义触发场景时按场景选择的 Skill 走同一条 SkillRuntime 链。
+    robot_profile: profiles/piper_mujoco.yaml
+    safety_policy: profiles/safety/simulation_lab.yaml
+    # 仿真档要的依赖（含 MuJoCo）：pip 会从**同一 wheelhouse** 解析 mujoco 的传递依赖
+    # （absl-py / etils / glfw / numpy / pyopengl 都在 cp311 目标里）
+    runtime_dependencies:
+      - mujoco
+      - numpy
+      - pillow
+      - glfw
+      - pyyaml
+      - jsonschema
+      - grpcio
+      - protobuf
+    # 仿真场景（模型 XML + 同名 .json 旁挂报告）：安装器复制进 <版本>/models 并在目标端生成
+    # IRAF_BACKEND_CONFIG。换演示场景只改这一行（不动代码）。
+    sim_scene: build/models/piper-pick-scene.xml
+    services:
+      - name: iraf-runtime-grpc
+        template: deploy/sdk/units/iraf-runtime-grpc.service.tmpl
+        scope: system
+        ports: [50051]
+        optional: false
+    cross_domain:
+      role: upstream
+      peers: ["edge-intel", "edge-motion"]
+      transport: grpc
+      deadline_ms: 30000
+      authenticated: true
+    safety_boundary:
+      merge_allowed: false
+      independent_process: true
+      independent_limits: true
+      independent_device_ownership: true
+    residue:
+      scan_roots: ["{prefix}", "{config_dir}"]
+      units: ["iraf-runtime-grpc.service"]
+      ports: [50051]
+      processes: ["iraf-runtime-grpc", "iraf-agentos"]
+
   - id: edge-motion
     label: 边缘运控域（aarch64 Hyper，控制域 Capability Provider 实时段）
     purpose: edge_control

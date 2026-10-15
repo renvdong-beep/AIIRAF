@@ -48,9 +48,10 @@ SCHEMA = Path("config/install/install_profiles.schema.json")
 RUNTIME_ENV = Path("deploy/iraf-runtime.env")
 
 #: 形态定义（写死在**校验脚本**里，不是写死在安装脚本里）：形态 A 是单机 Ubuntu 22.04，
+#: 边缘角色含"真机档 edge-intel / edge-motion"与"仿真档 edge-intel-sim"（默认仿真、场景由 AgentOS 语义触发）；
 #: 形态 B 的仿真侧同样是 x86 Ubuntu 22.04，边缘两角色必须是 aarch64。
 X86_FORM_IDS = ("single-ubuntu2204", "sim-x86")
-EDGE_FORM_IDS = ("edge-intel", "edge-motion")
+EDGE_FORM_IDS = ("edge-intel", "edge-motion", "edge-intel-sim")
 REQUIRED_UBUNTU_VERSION = "22.04"
 
 #: 交付单元模板**必须**包含的占位符：机器相关的路径/解释器一律由安装器按声明渲染，
@@ -181,7 +182,7 @@ def check_semantics(declaration: dict, repo_root: Path) -> tuple:
     ids = [str(item["id"]) for item in profiles]
     expected_ids = set(X86_FORM_IDS) | set(EDGE_FORM_IDS)
     add("角色 id 唯一", len(ids) == len(set(ids)), "profiles=%s" % ids)
-    add("四种正式角色齐备", set(ids) == expected_ids,
+    add("正式角色齐备（含板卡仿真档）", set(ids) == expected_ids,
         "缺少=%s 多余=%s" % (sorted(expected_ids - set(ids)), sorted(set(ids) - expected_ids)))
 
     port_owner = {}
@@ -213,10 +214,16 @@ def check_semantics(declaration: dict, repo_root: Path) -> tuple:
                          % (pid, target["os"], target.get("kernel", "unverified"),
                             target.get("python_tag", "unverified")))
 
-        # 仿真/真机边界：边缘角色不得装仿真 Provider（AGENTS 1.7）
-        if pid in EDGE_FORM_IDS:
-            add("%s：未安装仿真 Provider（adapters_sim）" % pid, "adapters_sim" not in components,
-                "components=%s" % components)
+        # 仿真/真机边界（AGENTS 1.7）：按**档位**判，而不是按"是不是边缘"判。
+        #  · 真机档（simulation_only: false）：不得装仿真 Provider —— 仿真不得进真机路径
+        #  · 仿真档（simulation_only: true）：必须装仿真 Provider —— 否则声明了仿真却没有仿真后端
+        simulation_only = bool(profile.get("simulation_only"))
+        if simulation_only:
+            add("%s：仿真档已安装仿真 Provider（adapters_sim）" % pid, "adapters_sim" in components,
+                "simulation_only=true components=%s" % components)
+        else:
+            add("%s：真机档未安装仿真 Provider（adapters_sim）" % pid, "adapters_sim" not in components,
+                "simulation_only=false components=%s" % components)
 
         units = [str(item["name"]) + ".service" for item in profile["services"]]
         residue = profile["residue"]

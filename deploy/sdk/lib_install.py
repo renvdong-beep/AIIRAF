@@ -139,8 +139,13 @@ def effective_layout(repo_root: Path, profile_id: str) -> dict:
     effective["target_platform_tag"] = target.get("platform_tag")
     effective["target_glibc_min"] = target.get("glibc_min")
     for key in ("min_free_mb", "python_bin", "run_user", "robot_profile", "safety_policy",
-                "backend_config", "runtime_subject", "runtime_dependencies", "python_stubs_dir"):
-        if key in declaration["defaults"]:
+                "backend_config", "runtime_subject", "runtime_dependencies", "python_stubs_dir",
+                "sim_scene"):
+        # **角色级优先**：仿真档声明仿真机型/仿真策略，真机档留空待运控域 —— 不能让真机档继承仿真档的
+        # safety_policy（那会把 simulation_only=true 的策略带到真机路径上）。
+        if key in profile:
+            effective[key] = profile[key]
+        elif key in declaration["defaults"]:
             effective[key] = declaration["defaults"][key]
     effective["_repo_root"] = str(repo_root)
     return effective
@@ -924,6 +929,41 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
             probe_ok = (lib_dir / "iraf" / "v1").is_dir()
             if not probe_ok:
                 raise InstallError("桩目录结构异常：%s 下没有 iraf/v1/" % source, EXIT_IO)
+
+        # 仿真档：把声明的场景（模型 XML + 同名旁挂报告）复制进版本目录，并在**目标端**生成
+        # IRAF_BACKEND_CONFIG（铁律：这份 JSON 一律由场景报告生成，不手写 —— 手写副本已实测静默过期两次）。
+        sim_scene = effective.get("sim_scene")
+        if sim_scene and not effective.get("backend_config"):
+            source_xml = Path(str(effective["_repo_root"])) / str(sim_scene)
+            source_json = source_xml.with_suffix(".json")
+            if not source_xml.is_file() or not source_json.is_file():
+                raise InstallError("声明的仿真场景缺文件：%s（需同时存在同名 .json 旁挂报告）"
+                                   % source_xml, EXIT_IO)
+            models_dir = version_dir / "models"
+            models_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_xml, models_dir / source_xml.name)
+            shutil.copy2(source_json, models_dir / source_json.name)
+            emitter = Path(str(effective["_repo_root"])) / "scripts" / "emit_backend_config.py"
+            if not emitter.is_file():
+                raise InstallError("缺少 %s（生成 IRAF_BACKEND_CONFIG 的唯一入口）" % emitter, EXIT_IO)
+            proc_emit = subprocess.run(
+                [python_exe, str(emitter), "--scene", str(models_dir / source_xml.name),
+                 "--compact", "--root", str(effective["_repo_root"])],
+                capture_output=True, text=True, timeout=300)
+            if proc_emit.returncode != 0:
+                raise InstallError("生成 IRAF_BACKEND_CONFIG 失败（%d）：%s"
+                                   % (proc_emit.returncode, (proc_emit.stderr or "").strip()[-300:]),
+                                   EXIT_IO)
+            config_text = proc_emit.stdout.strip()
+            try:
+                json.loads(config_text)
+            except json.JSONDecodeError as exc:
+                raise InstallError("生成的 IRAF_BACKEND_CONFIG 不是合法 JSON（%s）" % exc, EXIT_IO)
+            effective["backend_config"] = config_text
+            plan["backend_config_from"] = str(models_dir / source_xml.name)
+            plan["backend_config_bytes"] = len(config_text)
+            info("IRAF_BACKEND_CONFIG 已由场景报告生成：%d 字节（场景=%s）"
+                 % (len(config_text), source_xml.name))
 
         env_path = config_dir / ("%s.env" % effective["id"])
         _mkdir(config_dir)
