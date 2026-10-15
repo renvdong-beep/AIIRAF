@@ -49,6 +49,14 @@ flowchart TB
 
 ---
 
+> **2026-10-15 决定（仿真只在 x86）**：仿真引擎与其依赖（MuJoCo、模型、GL 依赖）**只部署在 x86 仿真主机**
+> （角色 `single-ubuntu2204` / `sim-x86`，`arch: x86_64`）；**边缘板卡的智能域不装仿真**，只部署运行面
+> （TaskFlow / Skill Runtime / Policy Gateway / AgentOSBridge）与跨域版本化接口。
+> 连到仿真的那条路走**跨机/跨域**：板卡的 AgentOS 经公共服务调 IRAF，或智能域经跨域接口把任务交给 x86 仿真 Provider
+> （后者需要"智能域侧的远端 Provider 后端"，当前**尚未实现**，列为缺口）。
+> 该约束已做成机器可查规则：`scripts/install_profile_check.py` 拒绝任何装了 `adapters_sim` 但 `arch != x86_64` 的角色；
+> 负向用例见 `tests/unit/test_install_profiles.py::test_simulation_provider_only_allowed_on_x86`。
+
 ## 2. IRAF 分层 ↔ 域 ↔ 声明来源
 
 | IRAF 层 | 落在哪个域 | 声明/配置来源 | 证据形态 | 不得做什么 |

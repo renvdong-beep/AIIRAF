@@ -134,13 +134,16 @@ class InstallProfileDeclarationTest(unittest.TestCase):
         self._write_declaration(data)
         self.assertIn("edge-intel：真机档未安装仿真 Provider（adapters_sim）", self._failed_names())
 
-    def test_simulation_role_must_install_simulation_provider(self):
-        """仿真档（simulation_only=true）必须装仿真 Provider —— 否则声明了仿真却没有仿真后端。"""
+    def test_simulation_provider_only_allowed_on_x86(self):
+        """**板卡不装仿真**（使用者口径 2026-10-15）：装 adapters_sim 的角色必须是 x86_64。
+
+        把 x86 的角色改成 aarch64（模拟"把仿真搬到板卡"）⇒ 必须被拒绝。
+        """
         data = self._declaration()
-        profile = self._profile(data, "edge-intel-sim")
-        profile["components"] = [item for item in profile["components"] if item != "adapters_sim"]
+        self._profile(data, "single-ubuntu2204")["target"]["arch"] = "aarch64"
         self._write_declaration(data)
-        self.assertIn("edge-intel-sim：仿真档已安装仿真 Provider（adapters_sim）", self._failed_names())
+        self.assertIn("single-ubuntu2204：仿真依赖只允许部署在 x86 主机（板卡不装仿真）",
+                      self._failed_names())
 
     def test_component_must_be_registered(self):
         data = self._declaration()

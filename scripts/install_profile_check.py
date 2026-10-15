@@ -51,7 +51,7 @@ RUNTIME_ENV = Path("deploy/iraf-runtime.env")
 #: 边缘角色含"真机档 edge-intel / edge-motion"与"仿真档 edge-intel-sim"（默认仿真、场景由 AgentOS 语义触发）；
 #: 形态 B 的仿真侧同样是 x86 Ubuntu 22.04，边缘两角色必须是 aarch64。
 X86_FORM_IDS = ("single-ubuntu2204", "sim-x86")
-EDGE_FORM_IDS = ("edge-intel", "edge-motion", "edge-intel-sim")
+EDGE_FORM_IDS = ("edge-intel", "edge-motion")
 REQUIRED_UBUNTU_VERSION = "22.04"
 
 #: 交付单元模板**必须**包含的占位符：机器相关的路径/解释器一律由安装器按声明渲染，
@@ -182,7 +182,7 @@ def check_semantics(declaration: dict, repo_root: Path) -> tuple:
     ids = [str(item["id"]) for item in profiles]
     expected_ids = set(X86_FORM_IDS) | set(EDGE_FORM_IDS)
     add("角色 id 唯一", len(ids) == len(set(ids)), "profiles=%s" % ids)
-    add("正式角色齐备（含板卡仿真档）", set(ids) == expected_ids,
+    add("四种正式角色齐备", set(ids) == expected_ids,
         "缺少=%s 多余=%s" % (sorted(expected_ids - set(ids)), sorted(set(ids) - expected_ids)))
 
     port_owner = {}
@@ -213,6 +213,13 @@ def check_semantics(declaration: dict, repo_root: Path) -> tuple:
                          "HyperProfile/Release manifest（AGENTS 6.10），否则安装只能 --allow-unverified"
                          % (pid, target["os"], target.get("kernel", "unverified"),
                             target.get("python_tag", "unverified")))
+
+        # **仿真只允许在 x86**（使用者口径 2026-10-15）：仿真引擎与模型只部署在 x86 仿真主机；
+        # 边缘板卡只放运行面与跨域接口。任何装 adapters_sim 的角色都必须是 x86_64。
+        if "adapters_sim" in components:
+            add("%s：仿真依赖只允许部署在 x86 主机（板卡不装仿真）" % pid,
+                str(target.get("arch")) == "x86_64",
+                "components 含 adapters_sim，但 arch=%s" % target.get("arch"))
 
         # 仿真/真机边界（AGENTS 1.7）：按**档位**判，而不是按"是不是边缘"判。
         #  · 真机档（simulation_only: false）：不得装仿真 Provider —— 仿真不得进真机路径
