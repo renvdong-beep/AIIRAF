@@ -278,6 +278,10 @@ class InstallActionTest(unittest.TestCase):
         (self.art / "wheelhouse" / "wheelhouse.json").write_text(
             '{"schema_version": "iraf.wheelhouse/v1", "target": "aarch64-manylinux_2_28-cp311"}\n',
             encoding="utf-8")
+        # 本类测的是"记录/残留/回滚"的机制，不是运行期依赖与桩的装配：
+        # 把这两项在夹具里显式清空（它们各有专门的用例 test_runtime_deps_and_stubs_are_installed）
+        self.effective["runtime_dependencies"] = []
+        self.effective["python_stubs_dir"] = None
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -302,6 +306,15 @@ class InstallActionTest(unittest.TestCase):
 
     def _version_dir(self) -> Path:
         return Path(str(self.root) + str(self.effective["prefix"])) / "0.2.0"
+
+    def _run(self, *args):
+        """跑命令行入口，返回 (退出码, stdout+stderr 合并)。"""
+        import contextlib
+        import io
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = lib.main(["--repo-root", str(REPO), *args])
+        return code, out.getvalue() + err.getvalue()
 
     def test_dry_run_writes_nothing(self):
         plan = self._install(dry_run=True)
@@ -380,6 +393,123 @@ class InstallActionTest(unittest.TestCase):
                               python_exe=sys.executable, rehearsal=True)
         failed = [item["name"] for item in checks if not item["ok"]]
         self.assertTrue(any("wheelhouse 构建目标一致" in name for name in failed), failed)
+
+    def _make_dep_wheel(self, dest: Path, name: str, version: str = "1.0.0") -> Path:
+        """造一个最小的纯 Python 依赖 wheel（只为验证"按声明装依赖"这条链路）。"""
+        import zipfile
+        wheel = dest / ("%s-%s-py3-none-any.whl" % (name, version))
+        with zipfile.ZipFile(wheel, "w") as zf:
+            zf.writestr("%s/__init__.py" % name, "__version__ = '%s'\n" % version)
+            zf.writestr("%s-%s.dist-info/METADATA" % (name, version),
+                        "Metadata-Version: 2.1\nName: %s\nVersion: %s\n" % (name, version))
+            zf.writestr("%s-%s.dist-info/WHEEL" % (name, version),
+                        "Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\nTag: py3-none-any\n")
+            zf.writestr("%s-%s.dist-info/RECORD" % (name, version), "")
+        return wheel
+
+    def test_runtime_deps_and_stubs_are_installed(self):
+        """按声明装运行期依赖 + 拷 proto 桩，并把"桩可导入"纳入后置自检。
+
+        背景（真机实测踩到）：SDK wheel 的 METADATA 不声明依赖 ⇒ 只装 SDK 会导致运行期
+        `import jsonschema` 失败；runtime 包内也不含 `iraf.v1.*` 桩 ⇒ gRPC 适配器起不来。
+        """
+        for name in ("pyyaml", "jsonschema", "grpcio", "protobuf"):
+            self._make_dep_wheel(self.art / "wheelhouse", name)
+        stubs = self.art / "stubs" / "iraf" / "v1"
+        stubs.mkdir(parents=True, exist_ok=True)
+        (stubs.parent / "__init__.py").write_text("", encoding="utf-8")
+        (stubs / "__init__.py").write_text("", encoding="utf-8")
+        (stubs / "skill_pb2.py").write_text("VALUE = 1\n", encoding="utf-8")
+        self.effective["runtime_dependencies"] = ["pyyaml", "jsonschema", "grpcio", "protobuf"]
+        self.effective["python_stubs_dir"] = str(self.art / "stubs")
+
+        plan = self._install()
+        self.assertTrue(plan["ok"])
+        self.assertGreaterEqual(plan.get("stubs_copied", 0), 1)
+        self.assertTrue((self._version_dir() / "lib/iraf/v1/skill_pb2.py").is_file())
+        self.assertTrue((self._version_dir() / "lib/jsonschema/__init__.py").is_file())
+        # 桩与依赖都在安装记录里（卸载时才会被一起删掉）
+        record = lib.read_record(self.effective, self._version_dir())
+        paths = [item["path"] for item in record["files"]]
+        self.assertIn("lib/iraf/v1/skill_pb2.py", paths)
+        self.assertIn("lib/jsonschema/__init__.py", paths)
+
+    def test_stubs_dir_missing_is_rejected(self):
+        """声明了桩目录但目录不存在 ⇒ 安装必须失败（不许静默少装一半）。"""
+        self.effective["python_stubs_dir"] = str(self.art / "no-such-stubs")
+        with self.assertRaises(lib.InstallError) as ctx:
+            self._install()
+        self.assertIn("桩目录不存在", str(ctx.exception))
+
+    def test_install_refused_when_target_has_traces(self):
+        """目标端已有本角色的痕迹（版本目录/链接/单元）⇒ **写盘之前**就拒绝（实测踩到的半状态根因）。"""
+        unit_name = "%s.service" % self.effective["services"][0]["name"]
+        unit_dir = Path(str(self.root) + "/etc/systemd/system")
+        unit_dir.mkdir(parents=True, exist_ok=True)
+        (unit_dir / unit_name).write_text("[Unit]\n", encoding="utf-8")
+        with self.assertRaises(lib.InstallError) as ctx:
+            self._install()
+        self.assertEqual(ctx.exception.code, lib.EXIT_MISMATCH)
+        self.assertIn("已有本角色的安装痕迹", str(ctx.exception))
+        self.assertIn("--force-clean", str(ctx.exception))
+        # 关键：拒绝发生在写盘之前 —— 版本目录与 env 都不应被创建
+        self.assertFalse(self._version_dir().exists())
+        self.assertFalse((Path(str(self.root) + str(self.effective["config_dir"]))
+                         / ("%s.env" % PROFILE)).exists())
+
+    def test_rollback_keeps_preexisting_version_dir(self):
+        """回滚只能删**本次创建**的东西：预先存在的版本目录必须留下（原来会 rmtree 掉 ⇒ 半状态）。"""
+        version_dir = self._version_dir()
+        version_dir.mkdir(parents=True)
+        (version_dir / "pre-existing.txt").write_text("上一轮安装留下的东西\n", encoding="utf-8")
+        # 用"运行期依赖缺失"制造安装中途失败（pip 阶段就会失败）
+        self.effective["runtime_dependencies"] = ["definitely-not-in-wheelhouse"]
+        with self.assertRaises(lib.InstallError):
+            self._install()
+        self.assertTrue(version_dir.is_dir(), "预先存在的版本目录不得被回滚删除")
+        self.assertTrue((version_dir / "pre-existing.txt").is_file())
+
+    def test_force_clean_removes_declared_paths_and_keeps_data(self):
+        """无记录兜底清理：只删声明路径（前缀/unit/env），数据与日志保留，逐项可列。"""
+        unit_name = "%s.service" % self.effective["services"][0]["name"]
+        unit_dir = Path(str(self.root) + "/etc/systemd/system")
+        config_dir = Path(str(self.root) + str(self.effective["config_dir"]))
+        data_dir = Path(str(self.root) + str(self.effective["data_dir"]))
+        version_dir = self._version_dir()
+        for path, text in ((unit_dir / unit_name, "[Unit]\n"),
+                           (config_dir / ("%s.env" % PROFILE), "IRAF_PROFILE=x\n"),
+                           (version_dir / "leftover.txt", "半状态残留\n"),
+                           (data_dir / "iraf-events.db", "db\n")):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+
+        plan = lib.plan_force_clean(self.effective, self.root)
+        listed = [str(item) for item in plan["delete"]]
+        self.assertTrue(any(str(unit_dir / unit_name) == item for item in listed))
+        self.assertTrue(any(str(config_dir / ("%s.env" % PROFILE)) == item for item in listed))
+        self.assertTrue(any(str(version_dir) == item for item in listed))
+        self.assertIn(str(data_dir), [str(item) for item in plan["keep"]])
+
+        lib.apply_uninstall(plan, root=self.root)
+        self.assertFalse(unit_dir.joinpath(unit_name).exists())
+        self.assertFalse(config_dir.joinpath("%s.env" % PROFILE).exists())
+        self.assertTrue(data_dir.is_dir(), "数据目录默认保留")
+        self.assertTrue(lib.residue_is_clean(lib.residue_scan(self.effective, self.root)))
+
+    def test_uninstall_force_clean_flag_works_without_record(self):
+        """无记录 + --force-clean ⇒ 兜底清理（不再直接拒绝）；不给该开关仍必须拒绝。"""
+        unit_dir = Path(str(self.root) + "/etc/systemd/system")
+        unit_dir.mkdir(parents=True, exist_ok=True)
+        (unit_dir / ("%s.service" % self.effective["services"][0]["name"])).write_text("[Unit]\n", encoding="utf-8")
+        code, output = self._run("uninstall", "--profile", PROFILE, "--root", str(self.root))
+        self.assertEqual(code, lib.EXIT_MISMATCH)
+        # 无记录/无版本目录两种拒绝都算（措辞取决于先撞到哪一层），关键是**明确拒绝且不删任何东西**
+        self.assertTrue("缺少安装记录" in output or "未找到已装版本" in output, output)
+        self.assertTrue(unit_dir.joinpath("%s.service" % self.effective["services"][0]["name"]).exists())
+        code, output = self._run("uninstall", "--profile", PROFILE, "--root", str(self.root), "--force-clean")
+        self.assertEqual(code, lib.EXIT_OK, output)
+        self.assertIn("兜底清理", output)
+        self.assertFalse(unit_dir.joinpath("%s.service" % self.effective["services"][0]["name"]).exists())
 
     def test_wheelhouse_is_used_offline(self):
         """依赖来源=wheelhouse 时必须带 --no-index/--find-links（离线可装，不碰网络）。"""

@@ -40,6 +40,8 @@ usage() {
   --profile <id>          必填：single-ubuntu2204 | sim-x86 | edge-intel | edge-motion
   -n, --dry-run           只打印将删/将保留清单，不删任何文件
   --purge                 连数据与日志一起删（默认保留）
+  --force-clean           无安装记录时的兜底清理：只删**声明里列出的**路径（前缀/unit/env），逐项打印。
+                          用于"有安装痕迹但记录缺失"的半状态（例如上一次安装中途失败）。
   --root <dir>            文件系统根（默认 /；沙箱演练给沙箱目录）
   --installed-dir <dir>   直接指定已装版本目录
   --json                  输出 JSON
@@ -56,7 +58,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     -n|--dry-run) DRY_RUN="1"; PASSTHROUGH+=("$1") ;;
-    --purge|--json) PASSTHROUGH+=("$1") ;;
+    --purge|--json|--force-clean) PASSTHROUGH+=("$1") ;;
     --profile|--root|--installed-dir|--repo-root)
       [ "$#" -ge 2 ] || { err "$1 缺少取值"; exit 1; }
       PASSTHROUGH+=("$1" "$2"); shift ;;

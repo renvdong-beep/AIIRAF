@@ -67,6 +67,7 @@
       "additionalProperties": false,
       "required": ["prefix", "version_dir_layout", "current_link", "config_dir", "log_dir", "data_dir",
                    "file_record", "python_min", "min_free_mb", "python_bin", "run_user",
+                   "runtime_dependencies", "python_stubs_dir",
                    "install_method", "systemd_scope", "dependency_source", "uninstall",
                    "install_boundaries"],
       "properties": {
@@ -84,6 +85,16 @@
                        "description": "交付单元与后置自检使用的解释器（目标端实测值）。"},
         "run_user": {"type": "string", "minLength": 1,
                      "description": "单元里的运行用户；特殊值 @current@ = 安装时的调用者（单机形态无需 root）。"},
+        "runtime_dependencies": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "description": "运行期需要、必须装进 <version>/lib 的 Python 发行包（SDK wheel 的 METADATA 不声明依赖，实测）。"
+        },
+        "python_stubs_dir": {
+          "type": "string",
+          "minLength": 1,
+          "description": "proto 桩目录（运行期 import iraf.v1.* 需要）；安装器拷进 <version>/lib 并纳入安装记录。"
+        },
         "install_method": {"enum": ["venv", "target"]},
         "systemd_scope": {"enum": ["user", "system"]},
         "dependency_source": {"$ref": "#/definitions/dependency_source"},

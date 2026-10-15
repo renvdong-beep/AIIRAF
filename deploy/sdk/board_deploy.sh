@@ -49,6 +49,9 @@ APPLY="0"
 ALLOW_UNVERIFIED="0"
 REHEARSAL="0"
 REMOTE_ROOT=""
+UNINSTALL="0"
+PURGE="0"
+FORCE_CLEAN="0"
 
 log() { printf '[board-deploy] %s\n' "$*" >&2; }
 err() { printf '[board-deploy][错误] %s\n' "$*" >&2; }
@@ -73,6 +76,10 @@ usage() {
   --rehearsal             目标端以**沙箱演练**方式安装（放宽目标端事实检查）；必须配 --remote-root 且非 /
                           用途：替身主机/本地管线上端到端自测。**不构成板卡证据**
   --remote-root <dir>     传给远端 install-iraf.sh 的 --root（默认不传 = 目标端真实根 /）
+  --uninstall             只做**受控卸载**：推脚本 → 远端 uninstall-iraf.sh → 残留核验（应六路全 0）
+  --purge                 配合 --uninstall：连数据与日志一起删（默认保留）
+  --force-clean           配合 --uninstall：无安装记录时的兜底清理（只删声明路径，逐项打印）
+  --force-clean           配合 --uninstall：无安装记录时的兜底清理（只删声明路径，逐项打印）
 
 环境变量：IRAF_BOARD_HOST（必填）、IRAF_BOARD_USER、IRAF_BOARD_PORT、SSHPASS（必填）
 
@@ -84,6 +91,9 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     --apply) APPLY="1" ;;
+    --uninstall) UNINSTALL="1" ;;
+    --purge) PURGE="1" ;;
+    --force-clean) FORCE_CLEAN="1" ;;
     --allow-unverified) ALLOW_UNVERIFIED="1" ;;
     --rehearsal) REHEARSAL="1" ;;
     --remote-root) REMOTE_ROOT="$2"; shift ;;
@@ -100,7 +110,9 @@ done
 [ -n "${HOST}" ] || { err "缺少 IRAF_BOARD_HOST"; exit 1; }
 [ -n "${SSHPASS:-}" ] || { err "缺少 SSHPASS（板卡密码；只从环境变量传）"; exit 1; }
 [ -n "${PROFILE}" ] || { err "缺少 --profile"; exit 1; }
-[ -n "${SDK_WHEEL}" ] || { err "缺少 --sdk-wheel"; exit 1; }
+if [ "${UNINSTALL}" != "1" ]; then
+  [ -n "${SDK_WHEEL}" ] || { err "缺少 --sdk-wheel（安装/演练必需；--uninstall 时不需要）"; exit 1; }
+fi
 # 演练语义与目标端 install-iraf.sh 保持一致：必须沙箱根 + 放行未实测
 if [ "${REHEARSAL}" = "1" ]; then
   [ -n "${REMOTE_ROOT}" ] || { err "--rehearsal 必须同时给 --remote-root <沙箱目录>（不得在目标端真实根上演练）"; exit 1; }
@@ -113,6 +125,7 @@ command -v sshpass >/dev/null 2>&1 || { err "找不到 sshpass"; exit 1; }
 # 本地预检：角色的生效布局 + 制品存在性（**目标端事实**由远端 install-iraf.sh 再查一遍）
 LAYOUT="$("${PYTHON}" "${SCRIPT_DIR}/lib_install.py" layout --profile "${PROFILE}")" || exit 2
 need_wheelhouse="$("${PYTHON}" -c "import json,sys;print(json.loads(sys.argv[1])['dependency_source']['kind'])" "${LAYOUT}")"
+if [ "${UNINSTALL}" != "1" ]; then   # 卸载不需要制品，跳过制品预检
 [ -f "${SDK_WHEEL}" ] || { err "SDK wheel 不存在：${SDK_WHEEL}"; exit 2; }
 if [ -n "${RUNTIME_BUNDLE}" ]; then
   [ -f "${RUNTIME_BUNDLE}" ] || { err "runtime 包不存在：${RUNTIME_BUNDLE}"; exit 2; }
@@ -128,6 +141,7 @@ if [ "${need_wheelhouse}" = "wheelhouse" ]; then
     log "wheelhouse 标签校验：通过"
   fi
 fi
+fi   # end if UNINSTALL != 1
 
 # ssh/scp 的端口选项**不同**：ssh 用 -p，scp 用 -P（实测踩到：给 scp 传 -p 会被当成"保留时间戳"，
 # 端口变成文件名 → 报 "22: No such file or directory"）。因此基础选项与端口分开拼。
@@ -158,7 +172,50 @@ INSTALL_CMD="bash ${REMOTE_SDK_DIR}/install-iraf.sh --profile ${PROFILE} --sdk-w
 [ "${REHEARSAL}" = "1" ] && INSTALL_CMD="${INSTALL_CMD} --rehearsal --root ${REMOTE_ROOT}"
 RESIDUE_CMD="bash ${REMOTE_SDK_DIR}/verify_residue.sh --profile ${PROFILE} --json"
 UNINSTALL_CMD="bash ${REMOTE_SDK_DIR}/uninstall-iraf.sh --profile ${PROFILE}"
+FORCE_CLEAN_ARG=""; [ "${FORCE_CLEAN}" = "1" ] && FORCE_CLEAN_ARG=" --force-clean"
 [ -n "${REMOTE_ROOT}" ] && { RESIDUE_CMD="${RESIDUE_CMD} --root ${REMOTE_ROOT}"; UNINSTALL_CMD="${UNINSTALL_CMD} --root ${REMOTE_ROOT}"; }
+
+if [ "${UNINSTALL}" = "1" ]; then
+  log "== 受控卸载（只按安装记录删；清单外文件即拒绝）=="
+  remote "mkdir -p ${REMOTE_SDK_DIR}/units ${REMOTE_DIR}/scripts ${REMOTE_DIR}/config/install" \
+    || { err "远端目录准备失败"; exit 3; }
+  copy "${SCRIPT_DIR}/lib_install.py" "${SCRIPT_DIR}/uninstall-iraf.sh" "${SCRIPT_DIR}/verify_residue.sh" \
+       "${TARGET}:${REMOTE_SDK_DIR}/" || { err "脚本传输失败"; exit 3; }
+  copy "${REPO_ROOT}/scripts/install_profile_check.py" "${TARGET}:${REMOTE_DIR}/scripts/" || { err "校验器传输失败"; exit 3; }
+  copy "${REPO_ROOT}/config/install/"* "${TARGET}:${REMOTE_DIR}/config/install/" || { err "声明传输失败"; exit 3; }
+  copy "${REPO_ROOT}/pyproject.toml" "${TARGET}:${REMOTE_DIR}/" || { err "pyproject 传输失败"; exit 3; }
+# proto 桩：声明里的 python_stubs_dir 是**仓库相对路径**（build/generated/python），
+# 目标端 repo 根 = REMOTE_DIR，所以必须推到同样的相对位置，安装器才能按声明找到并拷进 lib/
+
+  log "① 卸载演练（--dry-run：只看将删清单，不删任何文件）"
+  set +e
+  remote "cd ${REMOTE_DIR} && PYTHONPATH=${REMOTE_DIR}/pylib IRAF_REPO_ROOT=${REMOTE_DIR} bash ${REMOTE_SDK_DIR}/uninstall-iraf.sh --profile ${PROFILE} --root ${REMOTE_ROOT:-/}${FORCE_CLEAN_ARG} --dry-run" \
+    2>&1 | tee "${REPO_ROOT}/build/board/${IRAF_BOARD_NAME:-board}/uninstall-plan.log" | tail -8
+  plan_rc=${PIPESTATUS[0]}
+  set -e
+
+  log "② 真卸载"
+  set +e
+  remote "cd ${REMOTE_DIR} && PYTHONPATH=${REMOTE_DIR}/pylib IRAF_REPO_ROOT=${REMOTE_DIR} bash ${REMOTE_SDK_DIR}/uninstall-iraf.sh --profile ${PROFILE} --root ${REMOTE_ROOT:-/}$([ \"${PURGE}\" = \"1\" ] && echo ' --purge')${FORCE_CLEAN_ARG}" \
+    2>&1 | tee "${REPO_ROOT}/build/board/${IRAF_BOARD_NAME:-board}/uninstall.log" | tail -6
+  rc=${PIPESTATUS[0]}
+  set -e
+  if [ "${rc}" -ne 0 ]; then err "卸载未执行（退出码 ${rc}）：未删除任何文件"; exit 4; fi
+
+  log "③ 残留核验（期望：六路全 0）"
+  set +e
+  remote "cd ${REMOTE_DIR} && PYTHONPATH=${REMOTE_DIR}/pylib IRAF_REPO_ROOT=${REMOTE_DIR} bash ${REMOTE_SDK_DIR}/verify_residue.sh --profile ${PROFILE} --root ${REMOTE_ROOT:-/} --json" \
+    > "${REPO_ROOT}/build/board/${IRAF_BOARD_NAME:-board}/residue-after-uninstall.json" 2>&1
+  res_rc=$?
+  set -e
+  if [ "${res_rc}" -eq 0 ]; then
+    log "  ✓ 六路残留全 0（IRAF 已从该角色清除；数据与日志按声明保留）"
+  else
+    err "  ✗ 仍有残留（rc=${res_rc}）：见 build/board/.../residue-after-uninstall.json"
+  fi
+  log "卸载流程完成（演练退出码 ${plan_rc} / 真卸 ${rc} / 残留核验 ${res_rc}）"
+  exit $([ "${res_rc}" -eq 0 ] && echo 0 || echo 4)
+fi
 
 if [ "${APPLY}" != "1" ]; then
   log "== 演练（未加 --apply，不写任何远端文件）=="
@@ -204,6 +261,13 @@ copy "${SCRIPT_DIR}/units/"*.tmpl "${TARGET}:${REMOTE_SDK_DIR}/units/" || { err 
 copy "${REPO_ROOT}/scripts/install_profile_check.py" "${TARGET}:${REMOTE_DIR}/scripts/" || { err "校验器传输失败"; exit 3; }
 copy "${REPO_ROOT}/config/install/"* "${TARGET}:${REMOTE_DIR}/config/install/" || { err "声明文件传输失败"; exit 3; }
 copy "${REPO_ROOT}/pyproject.toml" "${TARGET}:${REMOTE_DIR}/" || { err "pyproject 传输失败"; exit 3; }
+STUBS_DIR="$("${PYTHON}" -c "import json,sys;print(json.loads(sys.argv[1])['python_stubs_dir'])" "${LAYOUT}")"
+[ -d "${REPO_ROOT}/${STUBS_DIR}" ] || { err "声明的 proto 桩目录不存在：${REPO_ROOT}/${STUBS_DIR}（先跑 scripts/gen_proto_stubs.sh）"; exit 2; }
+# ⚠ 只建到 STUBS_DIR 这一层：scp -r <src>/iraf 到**已存在**的 <dest>/iraf 会再多一层（iraf/iraf/…）
+remote "mkdir -p ${REMOTE_DIR}/${STUBS_DIR}" || { err "远端桩目录创建失败"; exit 3; }
+copy -r "${REPO_ROOT}/${STUBS_DIR}/iraf" "${TARGET}:${REMOTE_DIR}/${STUBS_DIR}/" || { err "proto 桩传输失败"; exit 3; }
+remote "test -d ${REMOTE_DIR}/${STUBS_DIR}/iraf/v1 && echo stubs-ok" \
+  | grep -q stubs-ok || { err "proto 桩落地位置不符（期望 ${REMOTE_DIR}/${STUBS_DIR}/iraf/v1）"; exit 3; }
 
 log "③ 推送制品（保持原始文件名：pip 按文件名做 PEP 427 校验，改名会被拒）"
 remote "mkdir -p ${REMOTE_DIR}/artifacts" || { err "远端制品目录创建失败"; exit 3; }
@@ -221,8 +285,25 @@ fi
 }
 
 log "④ 远端安装（目标端自行预检；失败会回滚）"
+# 安装器自身的依赖（PyYAML/jsonschema）也要有：目标端系统 python 实测**没有** yaml，
+# 直接跑会 `ModuleNotFoundError: No module named 'yaml'`。做法：从**同一个 wheelhouse** 装到
+# 独立目录 <remote>/pylib，再用 PYTHONPATH 提供给安装脚本 —— 不碰板卡系统 site-packages，
+# 卸载时随 <remote>/pylib 一起删掉（与"干净清除"的边界一致）。
+log "④a 目标端安装器依赖（--no-index --target <remote>/pylib；不写系统 site-packages）"
 set +e
-remote "cd ${REMOTE_DIR} && IRAF_REPO_ROOT=${REMOTE_DIR} ${INSTALL_CMD}" 2>&1 | tee "${REPO_ROOT}/build/board/${IRAF_BOARD_NAME:-board}/deploy-install.log"
+remote "python3 -m pip install --disable-pip-version-check --no-index --find-links ${REMOTE_DIR}/wheelhouse --target ${REMOTE_DIR}/pylib pyyaml jsonschema >/dev/null 2>&1 || pip3 install --disable-pip-version-check --no-index --find-links ${REMOTE_DIR}/wheelhouse --target ${REMOTE_DIR}/pylib pyyaml jsonschema" 2>&1 | tee "${REPO_ROOT}/build/board/${IRAF_BOARD_NAME:-board}/deploy-tooling-deps.log" | tail -3
+rc_tooling=${PIPESTATUS[0]}
+set -e
+if [ "${rc_tooling}" -ne 0 ]; then
+  err "目标端安装器依赖安装失败（退出码 ${rc_tooling}）：见 build/board/.../deploy-tooling-deps.log"
+  exit 3
+fi
+remote "PYTHONPATH=${REMOTE_DIR}/pylib python3 -c 'import yaml, jsonschema; print(\"tooling-deps-ok\")'" \
+  || { err "目标端 PYTHONPATH 自检失败：yaml/jsonschema 不可导入"; exit 3; }
+log "  ✓ 目标端安装器依赖就绪（pylib + PYTHONPATH 自检通过）"
+
+set +e
+remote "cd ${REMOTE_DIR} && PYTHONPATH=${REMOTE_DIR}/pylib IRAF_REPO_ROOT=${REMOTE_DIR} ${INSTALL_CMD}" 2>&1 | tee "${REPO_ROOT}/build/board/${IRAF_BOARD_NAME:-board}/deploy-install.log"
 rc=${PIPESTATUS[0]}
 set -e
 if [ "${rc}" -ne 0 ]; then
@@ -232,14 +313,14 @@ fi
 
 log "⑤ 远端判读（残留核验：装完应报不干净 —— 那是「已装即有内容」，不是缺陷）"
 set +e
-remote "cd ${REMOTE_DIR} && IRAF_REPO_ROOT=${REMOTE_DIR} ${RESIDUE_CMD}" \
+remote "cd ${REMOTE_DIR} && PYTHONPATH=${REMOTE_DIR}/pylib IRAF_REPO_ROOT=${REMOTE_DIR} ${RESIDUE_CMD}" \
   2>&1 | tee "${REPO_ROOT}/build/board/${IRAF_BOARD_NAME:-board}/deploy-residue.json" | tail -5
 set -e
 if [ "${REHEARSAL}" = "1" ]; then
   log "⑥ 替身演练收尾：远端受控卸载 + 残留核验（证明管线可干净回收）"
   set +e
-  remote "cd ${REMOTE_DIR} && IRAF_REPO_ROOT=${REMOTE_DIR} ${UNINSTALL_CMD}" >/dev/null 2>&1
-  remote "cd ${REMOTE_DIR} && IRAF_REPO_ROOT=${REMOTE_DIR} ${RESIDUE_CMD}" \
+  remote "cd ${REMOTE_DIR} && PYTHONPATH=${REMOTE_DIR}/pylib IRAF_REPO_ROOT=${REMOTE_DIR} ${UNINSTALL_CMD}" >/dev/null 2>&1
+  remote "cd ${REMOTE_DIR} && PYTHONPATH=${REMOTE_DIR}/pylib IRAF_REPO_ROOT=${REMOTE_DIR} ${RESIDUE_CMD}" \
     > "${REPO_ROOT}/build/board/${IRAF_BOARD_NAME:-board}/deploy-residue-after-uninstall.json" 2>&1
   rc=$?
   set -e

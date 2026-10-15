@@ -139,11 +139,20 @@ def effective_layout(repo_root: Path, profile_id: str) -> dict:
     effective["target_platform_tag"] = target.get("platform_tag")
     effective["target_glibc_min"] = target.get("glibc_min")
     for key in ("min_free_mb", "python_bin", "run_user", "robot_profile", "safety_policy",
-                "backend_config", "runtime_subject"):
+                "backend_config", "runtime_subject", "runtime_dependencies", "python_stubs_dir"):
         if key in declaration["defaults"]:
             effective[key] = declaration["defaults"][key]
     effective["_repo_root"] = str(repo_root)
     return effective
+
+
+def under_root(root: Path, declared: str) -> Path:
+    """把声明的绝对路径挂到（可能是沙箱的）根下：root="/" + "/opt/x" 应为 "/opt/x" 而不是 "//opt/x"
+    （实测踩到：安装记录里出现 `//opt/iraf-sdk/...`，虽能解析但难看且易误判）。"""
+    text = str(declared)
+    if str(root) in ("", "/"):
+        return Path(text)
+    return Path(str(root).rstrip("/")) / text.lstrip("/")
 
 
 def _sha256(path: Path) -> str:
@@ -242,7 +251,7 @@ def read_record(effective: dict, version_dir: Path) -> dict:
 
 def resolve_version_dir(effective: dict, root: Path, *, version: str | None = None) -> Path:
     """<root><prefix>/<version>；version 缺省取 current 链接指向的目录名。"""
-    prefix = Path(str(root) + str(effective["prefix"]))
+    prefix = under_root(root, str(effective["prefix"]))
     if not version:
         link = prefix / str(effective["current_link"])
         if link.is_symlink():
@@ -310,8 +319,7 @@ def _running_processes() -> list:
 def _unit_state(names: list, *, root: Path, scope: str) -> dict:
     """单元是否存在/启用（沙箱演练不查 systemd，直接看文件）。"""
     result = {}
-    system_dir = Path(str(root) + ("/etc/systemd/system" if scope == "system"
-                                   else "/etc/systemd/user"))
+    system_dir = under_root(root, "/etc/systemd/system" if scope == "system" else "/etc/systemd/user")
     for name in names:
         candidates = [system_dir / name]
         if scope == "system":
@@ -324,7 +332,7 @@ def _unit_state(names: list, *, root: Path, scope: str) -> dict:
 def residue_scan(effective: dict, root: Path, *, record: dict | None = None) -> dict:
     """六路残留扫描。record=None 时不比对记录（只回答"这些根下还剩什么"）。"""
     findings = {"files": [], "dirs": [], "units": {}, "env_files": [], "ports": [], "processes": []}
-    roots = [Path(str(root) + str(item)) for item in effective["residue_scan_roots"]]
+    roots = [under_root(root, str(item)) for item in effective["residue_scan_roots"]]
     for scan_root in roots:
         if not scan_root.exists():
             continue
@@ -339,7 +347,7 @@ def residue_scan(effective: dict, root: Path, *, record: dict | None = None) -> 
     findings["units"] = _unit_state(list(effective["residue_units"]), root=root,
                                     scope=str(effective["systemd_scope"]))
     # env 文件（声明的 config_dir 下，按 profile 的服务命名）
-    config_dir = Path(str(root) + str(effective["config_dir"]))
+    config_dir = under_root(root, str(effective["config_dir"]))
     if config_dir.is_dir():
         findings["env_files"] = [str(p) for p in sorted(config_dir.glob("*.env"))]
     listening = _listening_ports()
@@ -393,9 +401,9 @@ def residue_is_clean(findings: dict) -> bool:
 def plan_uninstall(effective: dict, root: Path, record: dict, *, purge: bool = False) -> dict:
     """生成卸载计划；任何越界/不一致 ⇒ 抛 InstallError（不做尽力而为）。"""
     version_dir = Path(str(record.get("version_dir")))
-    keep_dirs = [Path(str(root) + str(item)) for item in effective["uninstall_keep"]]
-    allowed_roots = [Path(str(root) + str(effective["prefix"])),
-                     Path(str(root) + str(effective["config_dir"]))]
+    keep_dirs = [under_root(root, str(item)) for item in effective["uninstall_keep"]]
+    allowed_roots = [under_root(root, str(effective["prefix"])),
+                     under_root(root, str(effective["config_dir"]))]
     allowed_roots = [item.resolve() for item in allowed_roots]
 
     recorded_rel = {str(item["path"]) for item in record.get("files", [])}
@@ -453,13 +461,13 @@ def plan_uninstall(effective: dict, root: Path, record: dict, *, purge: bool = F
                 kept.append(keep)
 
     # 单元文件与 current 链接（记录里记了名字 ⇒ 属于本包）
-    system_dir = Path(str(root) + ("/etc/systemd/system" if str(effective["systemd_scope"]) == "system"
-                                   else "/etc/systemd/user"))
+    system_dir = under_root(root, "/etc/systemd/system" if str(effective["systemd_scope"]) == "system"
+                                     else "/etc/systemd/user")
     for unit in record.get("units", []):
         for candidate in (system_dir / unit, system_dir / "multi-user.target.wants" / unit):
             if candidate.exists() or candidate.is_symlink():
                 delete.append(candidate)
-    link = Path(str(root) + str(effective["prefix"]) + "/" + str(effective["current_link"]))
+    link = under_root(root, str(effective["prefix"]) + "/" + str(effective["current_link"]))
     if link.is_symlink():
         delete.append(link)
 
@@ -473,6 +481,39 @@ def plan_uninstall(effective: dict, root: Path, record: dict, *, purge: bool = F
     delete_dirs = [Path(str(item)) for item in record.get("created_dirs", [])]
     return {"delete": delete, "delete_dirs": delete_dirs, "keep": kept, "refusals": [],
             "prefix": str(effective["prefix"])}
+
+
+def plan_force_clean(effective: dict, root: Path, *, purge: bool = False) -> dict:
+    """**无记录兜底清理**：只删声明里列出的路径（前缀目录、unit 文件、env 文件、current 链接）。
+
+    适用场景：有安装痕迹但**安装记录缺失**的半状态（例如上一次安装中途失败且回滚不完整）。
+    与受控卸载的区别：没有逐文件 SHA-256 校验（没有记录可比），因此边界靠"只碰声明路径"保证，
+    并且**逐项打印**；数据与日志仍默认保留（--purge 才删）。这不是"尽力而为删除"。
+    """
+    delete = []
+    prefix = under_root(root, str(effective["prefix"]))
+    if prefix.exists() or prefix.is_symlink():
+        if prefix.is_dir():
+            for child in sorted(prefix.iterdir()):
+                delete.append(child)
+        else:
+            delete.append(prefix)
+    unit_dir = under_root(root, "/etc/systemd/system" if str(effective["systemd_scope"]) == "system"
+                          else "/etc/systemd/user")
+    for name in effective["residue_units"]:
+        for candidate in (unit_dir / name, unit_dir / "multi-user.target.wants" / name):
+            if candidate.exists() or candidate.is_symlink():
+                delete.append(candidate)
+    config_dir = under_root(root, str(effective["config_dir"]))
+    if config_dir.is_dir():
+        for candidate in sorted(config_dir.glob("*.env")):
+            delete.append(candidate)
+    kept = []
+    for item in effective["uninstall_keep"]:
+        path = under_root(root, str(item))
+        if path.exists():
+            (kept.append(path) if not purge else delete.append(path))
+    return {"delete": delete, "keep": kept, "prefix": str(effective["prefix"]), "force_clean": True}
 
 
 def apply_uninstall(plan: dict, *, root: Path) -> list:
@@ -493,7 +534,7 @@ def apply_uninstall(plan: dict, *, root: Path) -> list:
     #      **不向上走**（/etc 之类绝不能碰）。
     #   ② 前缀之内的空目录收敛：把删/建路径的**全部前缀内祖先**收集起来，按深度从深到浅
     #      逐个尝试 rmdir（只删空目录），最远到前缀本身为止。
-    stop = Path(str(root) + str(plan["prefix"])).resolve()
+    stop = under_root(root, str(plan["prefix"])).resolve()
     created = [Path(str(item)) for item in plan.get("delete_dirs", [])]
     for candidate in sorted(created, key=lambda item: len(str(item)), reverse=True):
         try:
@@ -550,12 +591,12 @@ def _unit_tokens(effective: dict, root: Path, *, python_bin: str, run_user: str)
     return {
         "PROFILE": str(effective["id"]),
         "VERSION": str(effective["version"]),
-        "PREFIX": str(root) + str(effective["prefix"]),
+        "PREFIX": str(under_root(root, str(effective["prefix"]))),
         "CURRENT_LINK": str(effective["current_link"]),
         "PYTHON_BIN": python_bin,
-        "CONFIG_DIR": str(root) + str(effective["config_dir"]),
-        "LOG_DIR": str(root) + str(effective["log_dir"]),
-        "DATA_DIR": str(root) + str(effective["data_dir"]),
+        "CONFIG_DIR": str(under_root(root, str(effective["config_dir"]))),
+        "LOG_DIR": str(under_root(root, str(effective["log_dir"]))),
+        "DATA_DIR": str(under_root(root, str(effective["data_dir"]))),
         "RUN_USER": run_user,
         "ENV_FILE": "%s.env" % effective["id"],
     }
@@ -581,11 +622,16 @@ def render_env_file(effective: dict, root: Path, tokens: dict) -> str:
     prefix_current = "%s/%s" % (tokens["PREFIX"], tokens["CURRENT_LINK"])
     lines += [
         "# —— 运行期必需环境（与 src/iraf_adapters/bootstrap.py 同源；缺项即显式失败）——",
-        "IRAF_PROFILE=%s" % (effective.get("robot_profile") or "<按部署填写：profiles/<机型>.yaml>"),
-        "IRAF_SAFETY_POLICY=%s" % (effective.get("safety_policy") or "<按部署填写：profiles/safety/<策略>.yaml>"),
+        # 未填的必填项**留空**并在上一行给 TODO 注释：值里不能出现 <…>（shell source 时会被当重定向，
+        # 实测报 `未预期的记号 "newline"`）。空值 + 注释既安全又显式"尚未填写"。
+        "# TODO(部署时必填)：机型 Profile 路径，例如 profiles/piper_mujoco.yaml",
+        "IRAF_PROFILE=%s" % (effective.get("robot_profile") or ""),
+        "# TODO(部署时必填)：安全策略路径，例如 profiles/safety/simulation_lab.yaml",
+        "IRAF_SAFETY_POLICY=%s" % (effective.get("safety_policy") or ""),
         "IRAF_SKILL_ROOT=%s/skills" % prefix_current,
         "IRAF_BACKEND_ENTRYPOINT=%s" % effective["backend_entrypoint"],
-        "IRAF_BACKEND_CONFIG=%s" % (effective.get("backend_config") or "<按部署生成：scripts/emit_backend_config.py>"),
+        "# TODO(部署时必填)：由 scripts/emit_backend_config.py 生成（勿手写，手写副本会静默过期）",
+        "IRAF_BACKEND_CONFIG=%s" % (effective.get("backend_config") or ""),
         "IRAF_EVENT_STORE=%s/iraf-runtime.db" % tokens["DATA_DIR"],
         "# —— 跨域/入口 ——",
         "IRAF_RUNTIME_SUBJECT=%s" % (effective.get("runtime_subject") or "iraf-runtime"),
@@ -643,7 +689,7 @@ def precheck(effective: dict, root: Path, *, allow_unverified: bool, wheelhouse:
             relaxed=rehearsal)
 
     if str(target["os"]) not in ("unverified", "None") and target["os"]:
-        os_release = Path(str(root) + "/etc/os-release")
+        os_release = under_root(root, "/etc/os-release")
         text = os_release.read_text(encoding="utf-8", errors="replace") if os_release.is_file() else ""
         got = ""
         for line in text.splitlines():
@@ -752,13 +798,38 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
                            % (len(failed), "\n  - ".join("%s：%s" % (i["name"], i["detail"]) for i in failed)),
                            EXIT_DECLARATION)
 
-    prefix = Path(str(root) + str(effective["prefix"]))
-    config_dir = Path(str(root) + str(effective["config_dir"]))
-    log_dir = Path(str(root) + str(effective["log_dir"]))
-    data_dir = Path(str(root) + str(effective["data_dir"]))
+    prefix = under_root(root, str(effective["prefix"]))
+    config_dir = under_root(root, str(effective["config_dir"]))
+    log_dir = under_root(root, str(effective["log_dir"]))
+    data_dir = under_root(root, str(effective["data_dir"]))
     version_dir = prefix / str(effective["version"])
     current = prefix / str(effective["current_link"])
     tokens = _unit_tokens(effective, root, python_bin=python_exe, run_user=run_user)
+
+    # ── 前置检查（**在写任何文件之前**）：目标端已有本角色的安装痕迹就拒绝。
+    # 为什么必须前置：实测踩到过一次——安装写到 unit 那一层才发现"unit 已存在"，
+    # 而回滚又删掉了上一轮留下的版本目录 ⇒ 留下"单元在、记录没了"的半状态，
+    # 受控卸载因无记录而正确拒绝，只能人工清理。前置检查把这类破坏挡在写盘之前。
+    traces = []
+    if version_dir.exists():
+        traces.append("版本目录已存在：%s" % version_dir)
+    if current.is_symlink() or current.exists():
+        traces.append("current 链接已存在：%s" % current)
+    if record_path(effective, version_dir).is_file():
+        traces.append("安装记录已存在：%s" % record_path(effective, version_dir))
+    unit_dir_probe = under_root(root, "/etc/systemd/system" if str(effective["systemd_scope"]) == "system"
+                                else "/etc/systemd/user")
+    for item in effective["services"]:
+        candidate = unit_dir_probe / ("%s.service" % item["name"])
+        if candidate.exists() or candidate.is_symlink():
+            traces.append("systemd 单元已存在：%s" % candidate)
+    if traces:
+        raise InstallError(
+            "目标端已有本角色的安装痕迹（%d 项），拒绝在其上覆盖安装：\n  - %s\n"
+            "处置：先跑 `uninstall-iraf.sh --profile %s`（受控卸载，按安装记录删）；"
+            "若因缺少安装记录而无法卸载（半状态），用 `uninstall-iraf.sh --profile %s --force-clean`"
+            "（只删声明里列出的路径，逐项打印）。"
+            % (len(traces), "\n  - ".join(traces), effective["id"], effective["id"]), EXIT_MISMATCH)
 
     plan = {
         "profile": effective["id"], "root": str(root), "version_dir": str(version_dir),
@@ -775,6 +846,7 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
         return {"dry_run": True, "will_do": plan}
 
     created_dirs, created_files, removed = [], [], []
+    made_version_dir = not version_dir.exists()      # 只有本次创建的版本目录才允许被回滚删除
     previous_link_target = None
     if current.is_symlink():
         previous_link_target = os.readlink(str(current))
@@ -797,8 +869,12 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
             index = effective.get("dependency_source", {}).get("index_url")
             if index:
                 pip_args += ["--index-url", str(index)]
+        runtime_deps = [str(item) for item in (effective.get("runtime_dependencies") or [])]
+        pip_args += runtime_deps
         pip_args.append(str(sdk_wheel))
-        info("安装 SDK wheel → %s（%s）" % (lib_dir, "离线 wheelhouse" if wheelhouse else "索引"))
+        info("安装 SDK wheel%s → %s（%s）"
+             % (" + 运行时依赖 %s" % runtime_deps if runtime_deps else "",
+                lib_dir, "离线 wheelhouse" if wheelhouse else "索引"))
         proc = subprocess.run(pip_args, capture_output=True, text=True, timeout=1800)
         if proc.returncode != 0:
             tail = [line for line in (proc.stderr or "").strip().splitlines() if line][-3:]
@@ -831,14 +907,32 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
                                filter="data" if hasattr(tarfile, "data_filter") else None)
             plan["runtime_extracted_to"] = str(version_dir)
 
+        stubs_dir = effective.get("python_stubs_dir")
+        if stubs_dir:
+            source = Path(str(effective["_repo_root"])) / str(stubs_dir)
+            if not source.is_dir():
+                raise InstallError("声明的 proto 桩目录不存在：%s" % source, EXIT_IO)
+            copied = 0
+            for item in source.rglob("*.py"):
+                rel = item.relative_to(source)
+                target = lib_dir / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(item, target)
+                copied += 1
+            plan["stubs_copied"] = copied
+            info("proto 桩已拷入 lib/：%d 个（来自 %s）" % (copied, source))
+            probe_ok = (lib_dir / "iraf" / "v1").is_dir()
+            if not probe_ok:
+                raise InstallError("桩目录结构异常：%s 下没有 iraf/v1/" % source, EXIT_IO)
+
         env_path = config_dir / ("%s.env" % effective["id"])
         _mkdir(config_dir)
         env_path.write_text(render_env_file(effective, root, tokens), encoding="utf-8")
         created_files.append(env_path)
         plan["env_file"] = str(env_path)
 
-        unit_dir = Path(str(root) + ("/etc/systemd/system" if str(effective["systemd_scope"]) == "system"
-                                     else "/etc/systemd/user"))
+        unit_dir = under_root(root, "/etc/systemd/system" if str(effective["systemd_scope"]) == "system"
+                                     else "/etc/systemd/user")
         rendered_units = []
         for item in effective["services"]:
             template = Path(str(effective["_repo_root"])) / str(item["template"])
@@ -867,7 +961,10 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
                               config_paths=[env_path], created_dirs=created_dirs)
         plan["record"] = str(record)
 
-        probe = subprocess.run([python_exe, "-c", "import iraf_sdk; print('iraf_sdk-ok')"],
+        probe = subprocess.run([python_exe, "-c",
+                                "import iraf_sdk; import iraf.v1.skill_pb2; print('iraf_sdk-ok+stubs')"
+                                if effective.get("python_stubs_dir") else
+                                "import iraf_sdk; print('iraf_sdk-ok')"],
                                capture_output=True, text=True,
                                env={**os.environ, "PYTHONPATH": "%s:%s" % (lib_dir, src_dir)},
                                timeout=120)
@@ -888,12 +985,15 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
                 removed.append(str(path))
             except OSError:
                 pass
-        if version_dir.is_dir():
+        if made_version_dir and version_dir.is_dir():
+            # 只删本次创建的版本目录：预先存在的目录不属于本次改动，删掉会造成半状态
             try:
                 shutil.rmtree(version_dir)
                 removed.append(str(version_dir))
             except OSError:
                 pass
+        elif version_dir.is_dir():
+            info("保留预先存在的版本目录（不属于本次改动）：%s" % version_dir)
         if current.is_symlink() or current.exists():
             try:
                 current.unlink()
@@ -952,6 +1052,9 @@ def main(argv=None) -> int:
     p_un.add_argument("--installed-dir", type=Path, default=None)
     p_un.add_argument("--dry-run", action="store_true", help="只列计划，不删任何文件")
     p_un.add_argument("--purge", action="store_true", help="连数据与日志一起删（默认保留）")
+    p_un.add_argument("--force-clean", action="store_true",
+                      help="无安装记录时的兜底清理：只删声明里列出的路径（前缀/unit/env），逐项打印；"
+                           "用于有痕迹但安装记录缺失的半状态")
     p_un.add_argument("--json", action="store_true")
 
     p_rw = sub.add_parser("record-write", help="把已装版本目录写成安装记录（安装的最后一步）",
@@ -975,6 +1078,8 @@ def main(argv=None) -> int:
     p_ins.add_argument("--run-user", default=None, help="单元里的运行用户（默认取声明的 run_user）")
     p_ins.add_argument("--allow-unverified", action="store_true",
                        help="显式放行\"声明未实测\"（板卡声明回填前只能这样探索，不构成验收证据）")
+    p_ins.add_argument("--stubs-dir", type=Path, default=None,
+                       help="覆盖声明的 python_stubs_dir（演练或非常规交付用；默认按声明）")
     p_ins.add_argument("--rehearsal", action="store_true",
                        help="沙箱演练：放宽目标端事实检查（架构/OS/Python 标签/glibc）；必须配 --root 沙箱")
     p_ins.add_argument("--dry-run", action="store_true", help="只跑预检并打印计划，不写任何文件")
@@ -1003,6 +1108,8 @@ def main(argv=None) -> int:
             return EXIT_OK
 
         if args.command == "install":
+            if args.stubs_dir is not None:
+                effective["python_stubs_dir"] = str(args.stubs_dir)
             plan = apply_install(effective, args.root, sdk_wheel=args.sdk_wheel,
                                  runtime_bundle=args.runtime_bundle, wheelhouse=args.wheelhouse,
                                  python_exe=args.python_exe, allow_unverified=args.allow_unverified,
@@ -1069,8 +1176,27 @@ def main(argv=None) -> int:
             return EXIT_OK if clean else EXIT_MISMATCH
 
         if args.command == "uninstall":
-            version_dir = args.installed_dir or resolve_version_dir(effective, args.root)
-            record = read_record(effective, version_dir)
+            try:
+                version_dir = args.installed_dir or resolve_version_dir(effective, args.root)
+                record = read_record(effective, version_dir)
+            except InstallError as exc:
+                if not getattr(args, "force_clean", False):
+                    raise
+                info("受控卸载不可用（%s）⇒ 走 --force-clean 兜底清理" % exc)
+                plan = plan_force_clean(effective, args.root, purge=args.purge)
+                if not plan["delete"]:
+                    info("兜底清理：声明路径下没有可清理的内容 ⇒ 无需操作")
+                    return EXIT_OK
+                if args.dry_run:
+                    info("演练：兜底清理将删除 %d 项（只删声明路径，不删任何文件）" % len(plan["delete"]))
+                    for item in plan["delete"]:
+                        print("  - %s" % item)
+                    return EXIT_OK
+                removed = apply_uninstall(plan, root=args.root)
+                info("兜底清理完成：删除 %d 项（保留 %d 项）" % (len(removed), len(plan["keep"])))
+                for item in plan["keep"]:
+                    print("  = 保留 %s" % item)
+                return EXIT_OK
             plan = plan_uninstall(effective, args.root, record, purge=args.purge)
             if args.dry_run:
                 report = {"profile": args.profile, "dry_run": True, "version_dir": str(version_dir),

@@ -92,6 +92,14 @@ with zipfile.ZipFile(whl, "w") as zf:
     zf.writestr("iraf_sdk-0.2.0.dist-info/RECORD", "")
 # 清单必须写明**构建目标**：安装预检会比对声明里的 dependency_source.target_id
 TARGET_ID = "aarch64-manylinux_2_28-cp311"
+for dep in ("pyyaml", "jsonschema", "grpcio", "protobuf"):
+    with zipfile.ZipFile(dest / ("%s-1.0.0-py3-none-any.whl" % dep), "w") as zf:
+        zf.writestr("%s/__init__.py" % dep, "__version__ = '1.0.0'\n")
+        zf.writestr("%s-1.0.0.dist-info/METADATA" % dep,
+                    "Metadata-Version: 2.1\nName: %s\nVersion: 1.0.0\n" % dep)
+        zf.writestr("%s-1.0.0.dist-info/WHEEL" % dep,
+                    "Wheel-Version: 1.0\nGenerator: rehearsal\nRoot-Is-Purelib: true\nTag: py3-none-any\n")
+        zf.writestr("%s-1.0.0.dist-info/RECORD" % dep, "")
 (dest / "wheelhouse.json").write_text(
     '{"schema_version": "iraf.wheelhouse/v1", "target": "%s",'
     ' "note": "沙箱演练自造，不含真实依赖", "files": [{"name": "%s"}]}\n' % (TARGET_ID, whl.name),
@@ -99,6 +107,14 @@ TARGET_ID = "aarch64-manylinux_2_28-cp311"
 print(whl)
 PY
 )"
+# 自造 proto 桩目录（不依赖 protobuf，仅验证"桩会被拷进 lib/ 并纳入安装记录"这条链路）
+STUBS="${ART}/stubs"
+mkdir -p "${STUBS}/iraf/v1"
+: > "${STUBS}/iraf/__init__.py"
+: > "${STUBS}/iraf/v1/__init__.py"
+printf 'VALUE = 1\n' > "${STUBS}/iraf/v1/skill_pb2.py"
+log "  自造 proto 桩：${STUBS}/iraf/v1"
+
 # 自造 runtime 源码包（单顶层目录，验证解包与去顶层逻辑）
 RUNTIME="$("${PYTHON}" - "${ART}" <<'PY'
 import sys, tarfile
@@ -131,7 +147,7 @@ log "  角色=${PROFILE} 版本=${VERSION} 前缀=${PREFIX}"
 
 INSTALL_ARGS=(--profile "${PROFILE}" --root "${SANDBOX}" --sdk-wheel "${WHEEL}"
               --runtime-bundle "${RUNTIME}" --wheelhouse "${ART}/wheelhouse"
-              --allow-unverified --rehearsal)
+              --stubs-dir "${STUBS}" --allow-unverified --rehearsal)
 
 step "1) 安装演练 --dry-run（期望：退出码 0 且不写任何文件）"
 set +e
@@ -169,6 +185,16 @@ if [ -f "${VERSION_DIR}/src/iraf_core/__init__.py" ]; then
   log "  ✓ runtime 已解包（顶层目录已剥离）"
 else
   log "  ✗ runtime 未解包"; FAILED=1
+fi
+if [ -f "${VERSION_DIR}/lib/iraf/v1/skill_pb2.py" ]; then
+  log "  ✓ proto 桩已拷入 lib/（运行期 import iraf.v1.* 需要）"
+else
+  log "  ✗ proto 桩未拷入 lib/"; FAILED=1
+fi
+if [ -f "${VERSION_DIR}/lib/jsonschema/__init__.py" ]; then
+  log "  ✓ 运行期依赖已装入 lib/（按声明的 runtime_dependencies）"
+else
+  log "  ✗ 运行期依赖缺失"; FAILED=1
 fi
 if grep -q "IRAF_BACKEND_ENTRYPOINT=" "${ENV_FILE}" 2>/dev/null; then
   log "  ✓ env 文件已渲染（含 IRAF_BACKEND_ENTRYPOINT）"

@@ -73,6 +73,7 @@ DATA_DIR="$(read_layout data_dir)"
 CURRENT="$(read_layout current_link)"
 VERSION="$(read_layout version)"
 UNIT="$("${PYTHON}" -c "import json,sys;print(json.loads(sys.argv[1])['residue_units'][0])" "${LAYOUT}")"
+PYTHON_BIN="$(read_layout python_bin)"
 
 OUT_DIR="${REPO_ROOT}/build/board/${BOARD_NAME}/diag/${STAMP}"
 RAW_DIR="${OUT_DIR}/raw"
@@ -112,7 +113,7 @@ probe runtime "python3 -V; echo ---; ldd --version | head -1; echo ---; systemct
 probe iraf_tree "ls -la '${PREFIX}' 2>/dev/null || echo 'NO-PREFIX'; echo ---;
   ls -la '${PREFIX}/${CURRENT}' 2>/dev/null || echo 'NO-CURRENT'; echo ---;
   ls '${PREFIX}/${VERSION}' 2>/dev/null | head -20 || true; echo ---;
-  cat '${PREFIX}/${VERSION}/iraf-install-files.json' 2>/dev/null | head -40 || echo 'NO-RECORD'"
+  if [ -f '${PREFIX}/${VERSION}/iraf-install-files.json' ]; then head -40 '${PREFIX}/${VERSION}/iraf-install-files.json'; else echo 'NO-RECORD'; fi"
 probe iraf_env "ls -la '${CONFIG_DIR}' 2>/dev/null || echo 'NO-CONFIG-DIR'; echo ---;
   sed -E 's/(TOKEN|SECRET|PASSWORD)=.*/\1=<redacted>/I' '${CONFIG_DIR}/${PROFILE}.env' 2>/dev/null || echo 'NO-ENV-FILE'"
 
@@ -122,14 +123,20 @@ probe units "systemctl status '${UNIT}' --no-pager 2>&1 | head -12; echo ---;
   ls -la /etc/systemd/system/'${UNIT}' 2>&1"
 probe journal "journalctl -u '${UNIT}' --no-pager -n 30 2>&1 | tail -30 || echo 'NO-JOURNAL'"
 probe ports "ss -lntp 2>/dev/null | head -20"
-probe processes "ps -eo pid,etime,cmd 2>/dev/null | grep -iE 'iraf' | grep -v grep | head -10 || echo 'NO-IRAF-PROCESS'"
+probe processes "OUT=\$(ps -eo pid,etime,cmd 2>/dev/null | grep -iE 'iraf' | grep -v grep); if [ -n \"\$OUT\" ]; then echo \"\$OUT\"; else echo 'NO-IRAF-PROCESS'; fi"
 probe logs "ls -la '${LOG_DIR}' 2>/dev/null || echo 'NO-LOG-DIR'; echo ---;
   tail -n 20 '${LOG_DIR}/control-provider-ready.log' 2>/dev/null || true"
 
 # ④ 可执行性自检：用渲染出的 env 跑 CLI，能列出技能就说明运行期环境装配成功
-probe cli_list_skills "set -a; . '${CONFIG_DIR}/${PROFILE}.env' 2>/dev/null; set +a;
-  PYTHONPATH='${PREFIX}/${CURRENT}/src:${PREFIX}/${CURRENT}/lib' \
-  '${PREFIX}/${CURRENT}/lib/bin/iraf-agentos' --list-skills 2>&1 | head -25 || echo 'CLI-NOT-RUNNABLE'"
+# 可执行性自检：交付单元的 ExecStart 走的是**模块形式**（`python -m iraf_adapters.…`，因为
+# PYTHONPATH=src:lib 的源码布局），所以这里也优先用模块形式；若存在 console script 则优先用它。
+probe cli_list_skills "if [ ! -f '${CONFIG_DIR}/${PROFILE}.env' ]; then echo 'CLI-NOT-RUNNABLE: env 文件不存在';
+  elif [ -x '${PREFIX}/${CURRENT}/lib/bin/iraf-agentos' ]; then set -a; . '${CONFIG_DIR}/${PROFILE}.env'; set +a;
+    PYTHONPATH='${PREFIX}/${CURRENT}/src:${PREFIX}/${CURRENT}/lib' \
+    '${PREFIX}/${CURRENT}/lib/bin/iraf-agentos' --list-skills 2>&1 | head -25;
+  else set -a; . '${CONFIG_DIR}/${PROFILE}.env'; set +a;
+    PYTHONPATH='${PREFIX}/${CURRENT}/src:${PREFIX}/${CURRENT}/lib' \
+    '${PYTHON_BIN}' -m iraf_adapters.agentos.cli --list-skills 2>&1 | head -25; fi"
 
 # ⑤ 冲突面：AgentOS 自己的东西（我们不可碰）
 probe agentos "ls -d /etc/agentos /opt/IntewellAgent 2>/dev/null; echo ---;
@@ -154,13 +161,26 @@ facts = {
     "executables": [
         {"name": "已装前缀（%s）" % prefix, "ok": "NO-PREFIX" not in text("iraf_tree")},
         {"name": "current 链接", "ok": "NO-CURRENT" not in text("iraf_tree")},
-        {"name": "安装记录", "ok": "NO-RECORD" not in text("iraf_tree")},
+        # 正向证据：记录里必须真的出现安装记录的 schema 串（"没看到 NO-RECORD"不算过）
+        {"name": "安装记录", "ok": '"schema_version": "iraf.install-record' in text("iraf_tree")},
         {"name": "env 文件（%s/%s.env）" % (config_dir, profile), "ok": "NO-ENV-FILE" not in text("iraf_env")},
+        # 把"部署期还没填的必填项"与"装坏了"分开判：留空的 IRAF_PROFILE / IRAF_BACKEND_CONFIG
+        # 是**待部署填写**（不是安装缺陷），但运行期一定起不来 ⇒ 单列一项，避免误判。
+        {"name": "env 必填项已填（IRAF_PROFILE / IRAF_BACKEND_CONFIG）",
+         "ok": any(line.startswith("IRAF_PROFILE=") and len(line) > len("IRAF_PROFILE=")
+                   for line in text("iraf_env").splitlines())
+               and any(line.startswith("IRAF_BACKEND_CONFIG=") and len(line) > len("IRAF_BACKEND_CONFIG=")
+                       for line in text("iraf_env").splitlines())},
         {"name": "单元文件（%s）" % unit, "ok": "No such file" not in text("units")},
         {"name": "单元 active", "ok": "active (running)" in text("units") or "active (exited)" in text("units")},
-        {"name": "CLI 可运行（--list-skills）", "ok": "CLI-NOT-RUNNABLE" not in text("cli_list_skills")
-                                                and bool(text("cli_list_skills").strip())},
-        {"name": "IRAF 进程存在", "ok": "NO-IRAF-PROCESS" not in text("processes")},
+        # 正向证据：有输出、且不含任何失败标记（否则"报错信息非空"会被误判成可运行 —— 实测踩到过）
+        {"name": "CLI 可运行（--list-skills）",
+         "ok": bool(text("cli_list_skills").strip())
+               and not any(marker in text("cli_list_skills") for marker in
+                           ("CLI-NOT-RUNNABLE", "No such file", "Traceback", "ModuleNotFoundError",
+                            "command not found", "用法错误"))},
+        {"name": "IRAF 进程存在", "ok": "NO-IRAF-PROCESS" not in text("processes")
+                                          and "iraf" in text("processes").lower()},
     ],
     "agentos_untouched": {"agentos_port": "NO-AGENTOS-PORT" not in text("agentos")},
     "note": "本文件只做**判读**：ok=true 表示该期望成立，不表示 IRAF 能力已验收（真机验收另有证据）",

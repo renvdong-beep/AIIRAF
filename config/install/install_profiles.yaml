@@ -41,6 +41,17 @@ defaults:
   python_bin: /usr/bin/python3
   # 单元里的运行用户；特殊值 @current@ = 安装时的调用者（单机开发形态无需 root）。
   run_user: "@current@"
+  # 运行期依赖：SDK wheel 的 METADATA **不声明**依赖（实测），因此运行期 import 需要的那几个包
+  # 必须在这里显式声明并由安装器装进 <version>/lib（否则 `from jsonschema import …` 直接失败）。
+  # 只列"组件真正 import 到"的包；仿真专用（mujoco/numpy/pillow/glfw）不在边缘角色里。
+  runtime_dependencies:
+    - pyyaml
+    - jsonschema
+    - grpcio
+    - protobuf
+  # proto 桩目录（运行期 `import iraf.v1.*` 需要；runtime 包内**不含**桩，实测）：
+  # 由 scripts/gen_proto_stubs.sh 生成，安装器会把它拷进 <version>/lib 并纳入安装记录。
+  python_stubs_dir: build/generated/python
   # venv = 单机/开发形态（快，需要网络或本地 wheel 缓存）；target = 交付形态（离线 wheelhouse，--target）
   install_method: venv
   # user = systemctl --user（无需 root，单机形态）；system = /etc/systemd/system（交付形态）
