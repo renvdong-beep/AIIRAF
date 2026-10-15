@@ -16,7 +16,7 @@
 用法（一般经 deploy/sdk/resolve_wheelhouse_deps.sh 调用）：
   /usr/bin/python3 deploy/sdk/lib_wheelhouse_deps.py \\
       --matrix config/sdk/package_matrix.yaml \\
-      --target aarch64-manylinux_2_28-cp310 \\
+      --target aarch64-manylinux_2_28-cp311 \\
       --output build/iraf-24h/21-dep-closure \\
       [--offline] [--max-depth 5] [--include-extra <name>]...
 """

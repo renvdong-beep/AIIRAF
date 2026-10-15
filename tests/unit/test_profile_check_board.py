@@ -133,7 +133,7 @@ class PositiveControlTests(BoardCheckTestBase):
     def test_matrix_target_is_cross_checked_and_reported(self):
         report = self.check(complete_board())
         self.assertEqual(len(report["matrix_targets"]), 1)
-        self.assertEqual(report["matrix_targets"][0]["id"], "aarch64-manylinux_2_28-cp310")
+        self.assertEqual(report["matrix_targets"][0]["id"], "aarch64-manylinux_2_28-cp311")
         self.assertEqual(report["matrix_targets"][0]["arch"], "aarch64")
 
 

@@ -11,8 +11,8 @@
 #
 # 用法：
 #   bash deploy/sdk/resolve_wheelhouse_deps.sh --help
-#   bash deploy/sdk/resolve_wheelhouse_deps.sh --target aarch64-manylinux_2_28-cp310
-#   bash deploy/sdk/resolve_wheelhouse_deps.sh --target aarch64-manylinux_2_28-cp310 --offline
+#   bash deploy/sdk/resolve_wheelhouse_deps.sh --target aarch64-manylinux_2_28-cp311
+#   bash deploy/sdk/resolve_wheelhouse_deps.sh --target aarch64-manylinux_2_28-cp311 --offline
 #
 # 退出码（与 deploy/sdk 其它脚本同一约定）：
 #   0 成功；1 参数/用法错误；2 预检失败（依赖/声明/目录缺失）；

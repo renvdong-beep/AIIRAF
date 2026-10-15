@@ -49,10 +49,19 @@ delivery:
     event_store_env: IRAF_EVENT_STORE
     event_store_default: /var/lib/iraf/iraf-events.db
 targets:
-  - id: aarch64-manylinux_2_28-cp310
+  # ── 单一构建目标（2026-10-15 合并，使用者口径 + 实机实测）────────────────────────────
+  # 合并依据：所有板卡当前共用同一基础 rootfs ⇒ 系统库一致
+  #   （实测：openEuler 24.03 (LTS-SP1) / Python 3.11.6 / glibc 2.38 / aarch64）
+  # ⇒ **一套 SDK + 一份 wheelhouse 覆盖所有板卡**，不再为机型复制构建目标（铁律 5.3 / 6.10）。
+  # 合并动作：原 `aarch64-manylinux_2_28-cp310`（当时 e300/firefly 的 python_tag 尚未实测）已并入本目标；
+  #   合并前的抓包与验收记录保留在 docs/progress/ 与 docs/debug/（历史证据不追改）。
+  # ⚠ `boards` 只表示"本目标覆盖哪些板卡"，**不等于**这些板卡已实测确认 cp311：
+  #   e300 / firefly_rk3588 的 BoardProfile.target.python_tag 仍是 unverified ⇒ 安装预检会用各自 BoardProfile
+  #   的声明值与目标端实测比对，不一致即拒绝（退出码 2，fail-closed）。板卡侧回填后本目标不需要改。
+  - id: aarch64-manylinux_2_28-cp311
     arch: aarch64
     platform_tag: manylinux_2_28_aarch64
-    python_tag: cp310
+    python_tag: cp311
     # 纯 Python 依赖：无 ABI 要求，可直接取 py3-none-any wheel。
     pure_python:
       - jsonschema
@@ -66,13 +75,11 @@ targets:
       - referencing
       - typing-extensions
       - zipp
-    # 二进制依赖：必须按 platform_tag 过滤（实测索引混杂 win_arm64/macosx 干扰项）。
-    # 清单必须覆盖**传递闭包**，否则目标端离线安装会缺依赖：
-    #   2026-09-21 由 deploy/sdk/resolve_wheelhouse_deps.sh 解析（候选清单人工确认后回填），
-    #   证据 build/iraf-24h/21-dep-closure{,-epath}/{candidates.json,summary.md}。
-    #   依赖来源：mujoco→absl-py/etils[epath]/glfw/numpy/pyopengl；jsonschema→attrs/
-    #   jsonschema-specifications/referencing/rpds-py；referencing→attrs/rpds-py/typing-extensions；
-    #   grpcio→typing-extensions；etils[epath]→fsspec/zipp（决策：纳入 epath extra，否则 import mujoco 会失败）。
+    # 二进制依赖：必须按 platform_tag + python_tag 过滤（实测索引混杂 win_arm64/macosx 干扰项）；
+    # 清单必须覆盖**传递闭包**（2026-09-21 由 deploy/sdk/resolve_wheelhouse_deps.sh 解析后人工确认回填）：
+    #   mujoco→absl-py/etils[epath]/glfw/numpy/pyopengl；jsonschema→attrs/jsonschema-specifications/
+    #   referencing/rpds-py；referencing→attrs/rpds-py/typing-extensions；grpcio→typing-extensions；
+    #   etils[epath]→fsspec/zipp（纳入 epath extra，否则 import mujoco 会失败）。
     wheels:
       - mujoco
       - numpy
@@ -91,73 +98,18 @@ targets:
       - rpds-py
       - typing-extensions
       - zipp
-    # 决策 2（2026-09-20 更新为 A）：先用 aliyun 镜像（实测可达，且实测含 aarch64 wheel：
-    # mujoco 492 / grpcio 953 / numpy 1088 / protobuf 212 / pyyaml 210 / pillow 1224）。
-    # 拿到内网私有源后只改本字段一行；脚本禁止写死源地址（设计 §11.2）。
+    # 决策 2（2026-09-20 定为 A；2026-10-15 合并后沿用）：先用 aliyun 镜像。
+    # 换内网私有源时只改本字段一行，并同步更新 index_url_declared_at（脚本禁止写死源地址）。
     index_url: https://mirrors.aliyun.com/pypi/simple/
-    index_url_declared_at: "2026-09-20"
+    index_url_declared_at: "2026-10-15"
     index_url_note: >-
-      决策 2 更新为 A：先用 aliyun 镜像；官方 PyPI 实测不可达，因此不得写死官方源。
-      换内网私有源时只替换 index_url 一行，并同步更新 index_url_declared_at。
+      沿用决策 2.A：先用 aliyun 镜像（实测含 aarch64 wheel 且可达）。官方 PyPI 实测不可达，不得写死。
+      2026-10-15 合并 cp310/cp311 两条目标为一条后，本字段保持唯一来源。
     boards:
       - e300
       - firefly_rk3588
-    # 抓取时必须拒绝的平台标签子串（实测 numpy 索引含 win_arm64、还有 macosx 条目）。
-    reject_platform_tags:
-      - win_arm64
-      - win32
-      - win_amd64
-      - macosx
-
-  # ── cp311 目标（2026-10-12 新增，依据**实机实测**） ──────────────────────────────
-  # 为什么加：实验室板卡（profiles/boards/intewell_aros_lab.yaml）实测系统解释器是
-  # **Python 3.11.6（cp311）**、glibc 2.38、aarch64；而此前只有 cp310 目标 ⇒ 离线 wheelhouse
-  # 与目标端解释器 ABI 不匹配，install 预检会（正确地）拒绝。这是"声明与实测不一致"的修法，
-  # 不是放宽预检。
-  # boards 只列**实测过**的板卡：e300 / firefly_rk3588 的 python_tag 仍是 unverified，
-  # 不得顺手写进来（铁律 3.2）。
-  - id: aarch64-manylinux_2_28-cp311
-    arch: aarch64
-    platform_tag: manylinux_2_28_aarch64
-    python_tag: cp311
-    # 纯 Python 依赖：无 ABI 要求，可直接取 py3-none-any wheel（与 cp310 目标同集）。
-    pure_python:
-      - jsonschema
-      - pyyaml
-      - absl-py
-      - attrs
-      - etils
-      - fsspec
-      - jsonschema-specifications
-      - pyopengl
-      - referencing
-      - typing-extensions
-      - zipp
-    # 二进制依赖：必须按 platform_tag + python_tag 过滤；清单覆盖传递闭包（见上一条目标的说明）。
-    wheels:
-      - mujoco
-      - numpy
-      - grpcio
-      - protobuf
-      - pyyaml
-      - pillow
-      - absl-py
-      - attrs
-      - etils
-      - fsspec
-      - glfw
-      - jsonschema-specifications
-      - pyopengl
-      - referencing
-      - rpds-py
-      - typing-extensions
-      - zipp
-    index_url: https://mirrors.aliyun.com/pypi/simple/
-    index_url_declared_at: "2026-10-12"
-    index_url_note: >-
-      cp311 目标沿用决策 2（aliyun 镜像，实测含 aarch64 wheel）；换内网私有源时只改本字段一行。
-    boards:
       - intewell_aros_lab
+    # 抓取时必须拒绝的平台标签子串（实测 numpy 索引含 win_arm64、还有 macosx 条目）。
     reject_platform_tags:
       - win_arm64
       - win32

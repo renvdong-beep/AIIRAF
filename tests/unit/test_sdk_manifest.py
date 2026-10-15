@@ -96,14 +96,11 @@ class DeclarationTests(unittest.TestCase):
     def test_matrix_passes_its_own_contract(self):
         matrix = lib_manifest.load_matrix(REPO_ROOT, MATRIX)
         self.assertEqual("iraf.sdk-matrix/v1", matrix["schema_version"])
-        # 两个构建目标：cp310（既有）+ cp311（2026-10-12 依实机实测新增）
+        # 2026-10-15 合并后只有一个构建目标（板卡共用同一 rootfs ⇒ 实测 cp311）
         ids = [t["id"] for t in matrix["targets"]]
-        self.assertIn("aarch64-manylinux_2_28-cp310", ids)
-        self.assertIn("aarch64-manylinux_2_28-cp311", ids)
-        # 多目标时必须显式指定 id（不指定即预检失败，避免静默抓错标签）
-        with self.assertRaises(lib_manifest.ManifestError):
-            lib_manifest.select_target(matrix, None)
-        target = lib_manifest.select_target(matrix, "aarch64-manylinux_2_28-cp310")
+        self.assertEqual(ids, ["aarch64-manylinux_2_28-cp311"])
+        target = lib_manifest.select_target(matrix, None)   # 唯一目标可不传 id
+        self.assertEqual(lib_manifest.select_target(matrix, "aarch64-manylinux_2_28-cp311")["id"], target["id"])
         self.assertEqual("aarch64", target["arch"])
         self.assertTrue(target["index_url"].startswith("http"))
 
@@ -324,7 +321,7 @@ class ManifestContractTests(Fixture):
         wheel = self.build_wheel(out)
         bundle = self.build_bundle(out)
         matrix = lib_manifest.load_matrix(REPO_ROOT, MATRIX)
-        target = lib_manifest.select_target(matrix, "aarch64-manylinux_2_28-cp310")
+        target = lib_manifest.select_target(matrix, "aarch64-manylinux_2_28-cp311")
         stubs = lib_manifest.stub_status(REPO_ROOT)
         probe = {"ok": False, "reason": "fixture"}
         artifacts = [
@@ -499,7 +496,7 @@ class ShellEntryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="iraf-sdk-dry-") as tmp:
             out = Path(tmp) / "out"
             # 矩阵声明了 2 个构建目标 ⇒ 必须显式 --target（否则预检失败，这是设计）
-            result = self.run_script("--dry-run", "--target", "aarch64-manylinux_2_28-cp310",
+            result = self.run_script("--dry-run", "--target", "aarch64-manylinux_2_28-cp311",
                                      "--out", str(out))
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertIn("dry-run 结束", result.stdout)
@@ -513,7 +510,7 @@ class ShellEntryTests(unittest.TestCase):
     def test_shell_verify_matches_lib_manifest(self):
         """入口脚本的退出码必须与 lib 契约一致（正向 0 / 篡改 4）。"""
         matrix = lib_manifest.load_matrix(REPO_ROOT, MATRIX)
-        target = lib_manifest.select_target(matrix, "aarch64-manylinux_2_28-cp310")
+        target = lib_manifest.select_target(matrix, "aarch64-manylinux_2_28-cp311")
         with tempfile.TemporaryDirectory(prefix="iraf-sdk-shell-") as tmp:
             root = Path(tmp)
             source = root / "src" / "iraf_sdk"
@@ -576,7 +573,7 @@ class PlanCommandTests(unittest.TestCase):
             buffer = io.StringIO()
             with contextlib.redirect_stdout(buffer):
                 code = lib_manifest.main(
-                    ["plan", "--repo-root", str(REPO_ROOT), "--target", "aarch64-manylinux_2_28-cp310", "--out", str(out)]
+                    ["plan", "--repo-root", str(REPO_ROOT), "--target", "aarch64-manylinux_2_28-cp311", "--out", str(out)]
                 )
             text = buffer.getvalue()
             self.assertEqual(ExitCode.OK, code)

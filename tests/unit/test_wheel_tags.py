@@ -40,7 +40,12 @@ SCRIPT = REPO_ROOT / "deploy" / "sdk" / "fetch_wheelhouse.sh"
 MATRIX = REPO_ROOT / "config" / "sdk" / "package_matrix.yaml"
 
 GOOD_MUJOCO = "mujoco-3.9.0-cp310-cp310-manylinux_2_28_aarch64.whl"
-TARGET_ID = "aarch64-manylinux_2_28-cp310"
+TARGET_ID = "aarch64-manylinux_2_28-cp311"      # 真实矩阵（2026-10-15 合并后唯一目标）
+# 真实矩阵是 cp311 ⇒ 走真实矩阵的 CLI 用例必须用 cp311 命名的夹具（cp310 夹具会被按标签正确拒绝）
+GOOD_MUJOCO_311 = "mujoco-3.9.0-cp311-cp311-manylinux_2_28_aarch64.whl"
+GOOD_MUJOCO_OLD_311 = "mujoco-3.5.0-cp311-cp311-manylinux_2_17_aarch64.whl"
+BAD_WIN_311 = "numpy-2.3.0-cp311-cp311-win_arm64.whl"
+BAD_MACOS_311 = "Pillow-10.0.0-cp311-cp311-macosx_11_0_arm64.whl"
 
 GOOD_MUJOCO_OLD = "mujoco-3.5.0-cp310-cp310-manylinux_2_17_aarch64.whl"
 BAD_WIN = "numpy-2.3.0-cp310-cp310-win_arm64.whl"
@@ -297,23 +302,21 @@ class TestMatrixDeclaration(unittest.TestCase):
 
     def test_真实矩阵可解析且与步骤_02_声明一致(self):
         document = cwt.load_matrix(MATRIX)
-        # 矩阵现声明**两个**构建目标（cp310 既有 + 2026-10-12 新增的 cp311 实机目标）⇒ 必须显式指定
-        spec = cwt.resolve_target(document, "aarch64-manylinux_2_28-cp310")
+        # 2026-10-15 合并后**只有一个**构建目标（板卡共用同一 rootfs ⇒ 实测 cp311）
+        raw = [dict(item) for item in document["targets"]]
+        self.assertEqual([item["id"] for item in raw], ["aarch64-manylinux_2_28-cp311"])
+        spec = cwt.resolve_target(document)
         self.assertEqual(spec.platform_tag, "manylinux_2_28_aarch64")
-        self.assertEqual(spec.python_tag, "cp310")
+        self.assertEqual(spec.python_tag, "cp311")
         self.assertTrue(spec.index_url.startswith("https://"))
         self.assertIn("win_arm64", spec.reject_platform_tags)
         self.assertIn("macosx", spec.reject_platform_tags)
         self.assertIn("mujoco", spec.wheels)
-        # 多目标时不给 id 必须失败（否则会静默抓错架构/Python 标签的包）
-        with self.assertRaises(cwt.DeclarationError):
-            cwt.resolve_target(document)
-        # 新增的 cp311 目标只覆盖**实测过**的板卡（铁律 3.2）
-        cp311 = cwt.resolve_target(document, "aarch64-manylinux_2_28-cp311")
-        self.assertEqual(cp311.python_tag, "cp311")
-        raw = [dict(item) for item in document["targets"] if item.get("id") == "aarch64-manylinux_2_28-cp311"]
-        self.assertEqual(len(raw), 1)
-        self.assertEqual(raw[0]["boards"], ["intewell_aros_lab"])
+        # boards 表示"本目标覆盖的板卡"（不等于已实测确认 cp311，安装预检仍按各 BoardProfile 比对）
+        self.assertEqual(sorted(raw[0]["boards"]),
+                         ["e300", "firefly_rk3588", "intewell_aros_lab"])
+        # 唯一目标时不传 id 也应可解析（合并前的"多目标必须显式指定"行为随目标合并一并消失）
+        self.assertEqual(cwt.resolve_target(document, "aarch64-manylinux_2_28-cp311").id, spec.id)
 
     def test_缺文件即预检失败(self):
         with self.assertRaises(cwt.DeclarationError):
@@ -544,21 +547,21 @@ class TestCliAndShellEntry(unittest.TestCase):
     def test_plan_退出码_0(self):
         result = self.run_py("--matrix", str(MATRIX), "--target", TARGET_ID, "plan")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout)["target"]["id"], "aarch64-manylinux_2_28-cp310")
+        self.assertEqual(json.loads(result.stdout)["target"]["id"], TARGET_ID)
 
     def test_classify_正负例退出码(self):
-        good = self.run_py("--matrix", str(MATRIX), "--target", TARGET_ID, "classify", GOOD_MUJOCO)
+        good = self.run_py("--matrix", str(MATRIX), "--target", TARGET_ID, "classify", GOOD_MUJOCO_311)
         self.assertEqual(good.returncode, 0, good.stderr)
-        bad = self.run_py("--matrix", str(MATRIX), "--target", TARGET_ID, "classify", GOOD_MUJOCO, BAD_WIN)
+        bad = self.run_py("--matrix", str(MATRIX), "--target", TARGET_ID, "classify", GOOD_MUJOCO_311, BAD_WIN_311)
         self.assertEqual(bad.returncode, 4, bad.stdout)
         self.assertIn("win_arm64", bad.stderr)
 
     def test_verify_子命令退出码(self):
-        for name in (GOOD_MUJOCO, GOOD_MUJOCO_OLD):
+        for name in (GOOD_MUJOCO_311, GOOD_MUJOCO_OLD_311):
             make_wheel(self.tmp / name, name)
         ok = self.run_py("--matrix", str(MATRIX), "--target", TARGET_ID, "verify", "--dir", str(self.tmp))
         self.assertEqual(ok.returncode, 0, ok.stderr)
-        make_wheel(self.tmp / BAD_MACOS, BAD_MACOS)
+        make_wheel(self.tmp / BAD_MACOS_311, BAD_MACOS_311)
         bad = self.run_py("--matrix", str(MATRIX), "--target", TARGET_ID, "verify", "--dir", str(self.tmp))
         self.assertEqual(bad.returncode, 4)
 
@@ -601,14 +604,15 @@ class TestCliAndShellEntry(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
 
     def test_shell_verify_混入错标签退出码_4(self):
-        for name in (GOOD_MUJOCO, BAD_WIN):
+        # 走真实矩阵（cp311）⇒ 夹具必须 cp311 命名；BAD_WIN_311 靠 win_arm64 标签被判违规
+        for name in (GOOD_MUJOCO_311, BAD_WIN_311):
             make_wheel(self.tmp / name, name)
         result = self.run_sh("--verify", "--target", TARGET_ID, "--dest", str(self.tmp))
         self.assertEqual(result.returncode, 4)
-        self.assertIn(BAD_WIN, result.stderr)
+        self.assertIn(BAD_WIN_311, result.stderr)
 
     def test_shell_verify_全对退出码_0(self):
-        make_wheel(self.tmp / GOOD_MUJOCO, GOOD_MUJOCO)
+        make_wheel(self.tmp / GOOD_MUJOCO_311, GOOD_MUJOCO_311)
         result = self.run_sh("--verify", "--target", TARGET_ID, "--dest", str(self.tmp))
         self.assertEqual(result.returncode, 0, result.stderr)
 

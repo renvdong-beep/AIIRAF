@@ -109,9 +109,11 @@ class PackageMatrixTests(unittest.TestCase):
         self.assertIsNotNone(first_error(self.validator, broken))
 
     def test_matrix_declares_platform_tag_and_python_tag(self):
+        # 2026-10-15 合并后唯一目标：板卡共用同一 rootfs ⇒ 实测 cp311（历史 cp310 记录在 docs/progress）
+        self.assertEqual([t["id"] for t in self.matrix["targets"]], ["aarch64-manylinux_2_28-cp311"])
         target = self.matrix["targets"][0]
         self.assertEqual(target["platform_tag"], "manylinux_2_28_aarch64")
-        self.assertEqual(target["python_tag"], "cp310")
+        self.assertEqual(target["python_tag"], "cp311")
         self.assertIn("win_arm64", target["reject_platform_tags"])
 
     def test_every_declared_board_has_a_profile_file(self):
