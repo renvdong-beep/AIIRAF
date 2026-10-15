@@ -127,11 +127,20 @@ class InstallProfileDeclarationTest(unittest.TestCase):
         self._write_declaration(data)
         self.assertIn("edge-motion：边缘形态必须是 aarch64", self._failed_names())
 
-    def test_edge_must_not_install_simulation_provider(self):
+    def test_real_machine_role_must_not_install_simulation_provider(self):
+        """真机档（simulation_only=false）不得装仿真 Provider（AGENTS 1.7：仿真不进真机路径）。"""
         data = self._declaration()
         self._profile(data, "edge-intel")["components"].append("adapters_sim")
         self._write_declaration(data)
-        self.assertIn("edge-intel：未安装仿真 Provider（adapters_sim）", self._failed_names())
+        self.assertIn("edge-intel：真机档未安装仿真 Provider（adapters_sim）", self._failed_names())
+
+    def test_simulation_role_must_install_simulation_provider(self):
+        """仿真档（simulation_only=true）必须装仿真 Provider —— 否则声明了仿真却没有仿真后端。"""
+        data = self._declaration()
+        profile = self._profile(data, "edge-intel-sim")
+        profile["components"] = [item for item in profile["components"] if item != "adapters_sim"]
+        self._write_declaration(data)
+        self.assertIn("edge-intel-sim：仿真档已安装仿真 Provider（adapters_sim）", self._failed_names())
 
     def test_component_must_be_registered(self):
         data = self._declaration()
