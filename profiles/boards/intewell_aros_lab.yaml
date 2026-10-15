@@ -96,6 +96,40 @@ spec:
     npu: unverified
     # 现场总线主站应在来宾域（RTOS/Motion），本机看不到 ⇒ 未实测
     master: unverified
+  # ── 板级指纹（2026-10-15 实测提取；用途：把实测与声明交叉校验，防装错板/拿错 profile）──
+  # 提取工具：python3 deploy/sdk/lib_fingerprint.py --collect-dir build/board/e300-lab
+  # ⚠ 指纹**不是**构型结论：构型名与 VM 数量/编号/角色映射只能来自签名 HyperProfile/Release manifest（铁律 6.10）。
+  #    这里的字段用于"这台机器与哪份声明一致"的防呆比对；未测到的写 unverified。
+  fingerprint:
+    # dmesg 里 virtio_blk_probe 出现的来宾编号（宿主 Linux + 2 来宾 = 3 域）
+    hyper_guests: ["vm1", "vm2"]
+    # 来宾根盘文件名（实测原文 blkfile=…）
+    guest_vdisks: ["/download/image/vdisk/rootfs_vm1.img", "/download/image/vdisk/rootfs_vm2.img"]
+    guest_net_names: ["vm-0-net0", "vm-0-net1", "vm-1-net0"]
+    cpu_cores: 4
+    # 内核命令行里的板级分配项（实测原文）
+    kernel_cmdline_tokens:
+      - "maxcpus=4"
+      - "smmu=off"
+      - "iommu.passthrough=1"
+      - "root=/dev/nvme0n1p2"
+    # 板级 NPU/媒体栈（/opt/musa）：NPU 型号不同会直接暴露，是最强指纹之一
+    # 用 {contains: …} 表达"这些标记必须出现"（子集语义）：后续机器上多出别的工具链（如 mtc-toolkit）
+    # 不该判失败；而拓扑/文件名类字段仍用纯列表 = 全等，少一项就说明不是同一构型。
+    npu_stack_tokens:
+      contains:
+        - "houmo-drv-xh2_v1.4.0"
+        - "m1000"
+        - "musa-5.1.0"
+        - "mt_vaapi"
+    # /etc/iaros-version 的组件版本（同构型应逐字一致）
+    iaros_components:
+      套件版本: "Intewell AROS-R1.2.1"
+      Hyper: "Intewell AROS-Hypervisor-V3.1.2-R1.2.1 (mainline_pkg: V3.1.2)"
+      RTOS: "Intewell AROS-RTOS-V3.1.1-R1.2.1 (mainline_pkg: V3.1.1)"
+    # 注意：Linux 组件版本声明为 AROS-Linux-V6.12.43 而实测 uname 为 6.6.10 ⇒ 故意**不写**在这里，
+    #       该差异已在上文 target.kernel 处留证，待研发确认后再回填（不得抹平）。
+
   # 空数组 = 尚未声明任何 IRAF 能力；install 预检必须视为失败（schema 语义 + 铁律 3）
   capabilities: []
   limits:
