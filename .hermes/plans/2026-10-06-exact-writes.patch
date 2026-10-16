@@ -1,0 +1,128 @@
+diff --git a/scripts/campaign_ctrl_origin.sh b/scripts/campaign_ctrl_origin.sh
+index d490b9b..7cc0cff 100644
+--- a/scripts/campaign_ctrl_origin.sh
++++ b/scripts/campaign_ctrl_origin.sh
+@@ -26,14 +26,17 @@ PER_ROUND_TIMEOUT_S="${PER_ROUND_TIMEOUT_S:-900}"
+ 
+ for i in $(seq 1 "$ROUNDS"); do
+   log="${OUTDIR}/calls-${TAG}-round${i}.log"
++  # ⚠ `rc` 必须显式取：原先写 `printf ... "$?"` 取到的是 `|| true` 的状态 ⇒ **每轮都假报 exit=0**，
++  # 真实失败会被掩盖（2026-10-06 实测发现）。
++  rc=0
+   timeout "$PER_ROUND_TIMEOUT_S" env \
+     IRAF_DEBUG_DOCK=1 IRAF_DEBUG_PLANT_SPAN=1 IRAF_DEBUG_CTRL_ALIGN=1 \
+     IRAF_DEBUG_CTRL_DETAIL=s03_pick IRAF_DEBUG_CTRL_CALLS=1 IRAF_DEBUG_CTRL_COMPONENTS=1 \
+-    IRAF_DEBUG_ARM_CTRL=1 \
++    IRAF_DEBUG_CTRL_EXACT=1 IRAF_DEBUG_ARM_CTRL=1 \
+     PYTHONPATH=src python3 scripts/scenario.py run \
+     --scene scenes/handoff_lab --scenario nominal --world joint --display none \
+-    > "$log" 2>&1 || true
+-  printf "[%2d/%d] exit=%s  %s  -> %s\n" "$i" "$ROUNDS" "$?" "$(date +%H:%M:%S)" "$log"
++    > "$log" 2>&1 || rc=$?
++  printf "[%2d/%d] exit=%s  %s  -> %s\n" "$i" "$ROUNDS" "$rc" "$(date +%H:%M:%S)" "$log"
+ done
+ 
+ echo "=== 判读①：分叉进在「状态」还是「目标相位」（分量指纹）==="
+diff --git a/scripts/probe_span_divergence.py b/scripts/probe_span_divergence.py
+index 89625cb..54ae54e 100644
+--- a/scripts/probe_span_divergence.py
++++ b/scripts/probe_span_divergence.py
+@@ -189,6 +189,17 @@ def main() -> int:
+                               " ⇒ 植物状态未变，差在 hold 调用的目标相位（q0/alpha）")
+                     else:
+                         print("      ⇒ 分量口径未能二选一（见上面各分量的首次不同拍）")
++                if len(pa[first]) >= 9:
++                    # 零舍入层（量测㉖）：位序 5..8 = `ctrl/desired/q/dq` 的 float64 原始字节摘要。
++                    # 意义：9 位取整会吞掉"亚分辨率"差异；这一层能回答"差异是否真在狗的输入里"。
++                    xnames = ("ctrl_x", "desired_x", "q_x", "dq_x")
++                    xfd = {nm: next((i for i in range(n) if pa[i][j] != pb[i][j]), None)
++                           for j, nm in enumerate(xnames, start=5)}
++                    print("      零舍入首次不同拍: " + "  ".join(
++                        "%s=%s" % (nm, xfd[nm]) for nm in xnames))
++                    if all(xfd[nm] is None for nm in xnames):
++                        print("      ⇒ 零舍入下 ctrl/desired/q/dq **完全相同** ⇒ 差异不在狗的输入里"
++                              " ⇒ 转向求解器调用次数/顺序这类**非状态输入**（例如额外 `mj_forward` 的时机）")
+     return 0
+ 
+ 
+diff --git a/src/iraf_adapters/mujoco/mujoco_backend.py b/src/iraf_adapters/mujoco/mujoco_backend.py
+index 39ded21..166aec1 100644
+--- a/src/iraf_adapters/mujoco/mujoco_backend.py
++++ b/src/iraf_adapters/mujoco/mujoco_backend.py
+@@ -1,11 +1,13 @@
+ """带连续步进、指标和受控故障注入的 MuJoCo 3 后端。"""
+ 
+ from pathlib import Path
++import hashlib
+ import json
+ import math
+ import os
+ import re
+ import subprocess
++import struct
+ import sys
+ import threading
+ import time
+@@ -35,10 +37,12 @@ _ARM_CTRL_PROBE = os.environ.get("IRAF_DEBUG_ARM_CTRL") == "1"
+ def _arm_ctrl_digest(pending):
+     """臂侧「一拍内全部通道取值」的摘要。
+ 
+-    **只用数值**（键取执行器序号、排序后取值）——含 `str` 的 tuple hash 会随 `PYTHONHASHSEED`
+-    变化，跨进程不可比；狗侧既有的 `ctrl`/`qpos` 摘要都只用数值，这里是同一口径。
++    **零舍入**（float64 原始字节）：取 9 位会把"亚分辨率"的取值差吞掉（量测㉕ 已证差异正是
++    低于取整分辨率）。按键（执行器序号）排序后拼原始字节再取 `blake2b`；
++    不用 `hash()` —— byte 级 hash 会随 `PYTHONHASHSEED` 变化、跨进程不可比。
+     """
+-    return hash(tuple(_v for _k, _v in sorted(pending.items()))) & 0xFFFFFFFF
++    buf = b"".join(struct.pack("<d", float(pending[_k])) for _k in sorted(pending))
++    return hashlib.blake2b(buf, digest_size=8).hexdigest()
+ 
+ 
+ #: 伺服前馈（重力静差补偿）的单关节上限，单位 rad。
+@@ -3931,7 +3935,7 @@ class MujocoBackend:
+                 _log.append((self._arm_ctrl_step, _arm_ctrl_digest(self._arm_ctrl_pending)))
+                 self._arm_ctrl_pending = {}
+                 self._arm_ctrl_step = _step
+-            self._arm_ctrl_pending[int(self._actuators[channel])] = round(float(value), 9)
++            self._arm_ctrl_pending[int(self._actuators[channel])] = float(value)
+ 
+     def _flush_arm_ctrl_pending(self):
+         """把**当前拍**尚未落账的臂侧摘要收尾（run 末由场景层调用一次）。
+diff --git a/src/iraf_adapters/unitree/unitree_go2.py b/src/iraf_adapters/unitree/unitree_go2.py
+index e0ebd42..8ee05a3 100644
+--- a/src/iraf_adapters/unitree/unitree_go2.py
++++ b/src/iraf_adapters/unitree/unitree_go2.py
+@@ -25,6 +25,7 @@
+ 
+ from pathlib import Path
+ 
++import hashlib
+ import math
+ import os
+ import yaml
+@@ -227,6 +228,11 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
+         # 只记 `ctrl` 的取值摘要无法回答"取值不同是因为 (q,dq) 先变了、还是目标相位变了"。
+         # 打开后每拍多记 desired/q/dq 三个摘要（仍是内存累计、run 末一行）。
+         self._ctrl_comp_probe = os.environ.get("IRAF_DEBUG_CTRL_COMPONENTS") == "1"
++        # **零舍入**逐写留证（2026-10-06 §11.88 量测㉖；`IRAF_DEBUG_CTRL_EXACT=1`，缺省关）：
++        # 分量摘要此前取 9 位 ⇒ "低于 1e-9 的取值差"被吞掉；而实测差异正是**低于取整分辨率**
++        # 的种子被放大。打开后每拍额外带 `ctrl/desired/q/dq` 四个 **float64 原始字节**摘要
++        # （`blake2b`，不用 `hash()`——byte 级 hash 随 `PYTHONHASHSEED` 变）。
++        self._ctrl_exact_probe = os.environ.get("IRAF_DEBUG_CTRL_EXACT") == "1"
+         # hold 调用**起点**留证（同日；`IRAF_DEBUG_CTRL_CALLS=1`，缺省关）：记录每次
+         # `_run_control` 调用开始时的植物步号与仿真钟。非步态路径的 `q0`/`start` 正是取自
+         # 这一刻 ⇒ 若"同一植物步、同一状态却算出不同控制量"，调用起点不同是唯一自洽出口。
+@@ -3000,6 +3006,13 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
+                     _item = _item + tuple(
+                         hash(tuple(np.round(np.asarray(_vec, dtype=float), 9).tolist())) & 0xFFFFFFFF
+                         for _vec in (desired, q, dq))
++                if self._ctrl_exact_probe:
++                    # 零舍入逐写摘要（量测㉖）：9 位取整会吞掉亚分辨率差异 ⇒ 改为 float64 原始字节。
++                    _item = _item + tuple(
++                        hashlib.blake2b(
++                            np.asarray(_vec, dtype=float).astype("<f8", copy=False).tobytes(),
++                            digest_size=8).hexdigest()
++                        for _vec in (ctrl, desired, q, dq))
+                 self._ctrl_writes.append(_item)
+             for _ in range(self.substeps):
+                 # 时间只能由植物 owner 推进（共享植物下越权即 PlantOwnershipError）

@@ -1,0 +1,169 @@
+diff --git a/scripts/probe_span_divergence.py b/scripts/probe_span_divergence.py
+index 54ae54e..3625eed 100644
+--- a/scripts/probe_span_divergence.py
++++ b/scripts/probe_span_divergence.py
+@@ -144,6 +144,17 @@ def main() -> int:
+             for sub, n, sid, va, vb in hits:
+                 print("  [%s] %s 首个不同 = 第 %d 步（%s）：常态=%s 备选=%s"
+                       % (key, sub, n, sid, va, vb))
++        # 操作序列摘要（量测㉗）：边界层 + 逐写层各给"首次不同"。
++        for key in ("op_before", "op_after"):
++            for i, sid in enumerate(ids):
++                va = ref.get(sid, {}).get(key)
++                vb = cur.get(sid, {}).get(key)
++                if va is None or vb is None or list(va) == list(vb):
++                    continue
++                print("  [%s] 首个不同 = 第 %d 步（%s）：常态=%s 备选=%s" % (key, i + 1, sid, va, vb))
++                break
++            else:
++                print("  [%s] 在全部步骤边界上相同" % key)
+ 
+         sid = args.detail
+         a, b = ref.get(sid, {}), cur.get(sid, {})
+@@ -200,6 +211,13 @@ def main() -> int:
+                     if all(xfd[nm] is None for nm in xnames):
+                         print("      ⇒ 零舍入下 ctrl/desired/q/dq **完全相同** ⇒ 差异不在狗的输入里"
+                               " ⇒ 转向求解器调用次数/顺序这类**非状态输入**（例如额外 `mj_forward` 的时机）")
++                if len(pa[first]) >= 10:
++                    # 操作序列摘要（量测㉗）：位序 9 = `(操作次数, 操作序列摘要)`。
++                    # 这是"非状态输入"的直接观测：若此处首次不同，就说明**操作序列**在那一刻起了分歧。
++                    ofd = next((i for i in range(n) if list(pa[i][9]) != list(pb[i][9])), None)
++                    print("      操作序列摘要首次不同拍 = %s（常态=%s 备选=%s）" % (
++                        ofd, (pa[ofd][9] if ofd is not None else None),
++                        (pb[ofd][9] if ofd is not None else None)))
+     return 0
+ 
+ 
+diff --git a/scripts/scenario.py b/scripts/scenario.py
+index 5fd4f5d..3d6a388 100644
+--- a/scripts/scenario.py
++++ b/scripts/scenario.py
+@@ -1791,6 +1791,8 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
+                      "hid_before": _hidden_state_digests(_span_plant),
+                      # 零舍入完整输入集（量测㉕）：回答"14750 那一刻差异是否已经存在、在哪一层"。
+                      "x_before": _exact_state_digests(_span_plant),
++                     # 操作序列摘要（量测㉗）：把"到此为止谁在什么顺序上做了什么"也变成可观测量。
++                     "op_before": _span_plant.op_digest(),
+                      # 狗的控制写入计数（§11.88 量测⑯）：配合 IRAF_DEBUG_CTRL_ALIGN=1，
+                      # 逐步给出"狗的控制序列指纹" —— 二分"分叉在 s03 内"到底来自**狗的控制**还是别处
+                      # （停靠段已验证 ctrl 序列逐位相同，但**上游步骤从未验过**）。
+@@ -1821,6 +1823,7 @@ def execute_steps(plan, faults, runtimes, registry, scenario_name, scene_id, res
+                 _span["dq_after"] = _qvel_element_digests(_span_plant)
+                 _span["hid_after"] = _hidden_state_digests(_span_plant)
+                 _span["x_after"] = _exact_state_digests(_span_plant)
++                _span["op_after"] = _span_plant.op_digest()
+                 # 本步内"新鲜度决策"计数增量（§11.88 量测⑲）：`freshness.decide(age_ms=…)` 按**墙钟**
+                 # 判新鲜度 ⇒ 逐步增量若在异常轮不同，即坐实"控制量取值随挂钟变"。
+                 for _name in ("_mpc_unavailable", "_mpc_holds", "_mpc_releases", "_mpc_skips"):
+diff --git a/src/iraf_adapters/mujoco/mujoco_backend.py b/src/iraf_adapters/mujoco/mujoco_backend.py
+index 166aec1..d6f8e32 100644
+--- a/src/iraf_adapters/mujoco/mujoco_backend.py
++++ b/src/iraf_adapters/mujoco/mujoco_backend.py
+@@ -3916,6 +3916,8 @@ class MujocoBackend:
+     def _write_ctrl(self, channel, value):
+         self._assert_owned(channel)
+         self.data.ctrl[self._actuators[channel]] = float(value)
++        # 臂侧控制写入也是"改变仿真的操作"（量测㉗；tag=2 区分发起方）
++        self.plant.op_event("ctrl", 2)
+         if _ARM_CTRL_PROBE:
+             # 臂侧控制写入留证（量测㉒）：**逐拍**记账，同一拍的多通道写入合并成该拍的取值摘要。
+             # 两个必须这么做的理由：
+diff --git a/src/iraf_adapters/mujoco/plant.py b/src/iraf_adapters/mujoco/plant.py
+index 18bce4b..762ea26 100644
+--- a/src/iraf_adapters/mujoco/plant.py
++++ b/src/iraf_adapters/mujoco/plant.py
+@@ -13,6 +13,7 @@
+ 本模块**不含任何数字默认值**：超时一律由调用方给出（缺声明即失败）。
+ """
+ 
++import hashlib
+ import threading
+ import time
+ 
+@@ -58,6 +59,15 @@ class MujocoPlant:
+         self.label = str(label) if label else self.owner_name
+         self._lock = threading.RLock()
+         self._step_index = 0
++        # ---- 操作序列滚动摘要（2026-10-06 §11.88 量测㉗）----
++        # 为什么需要：零舍入下"14750 的完整输入逐位相同、却仍分叉" ⇒ 完备性已证输入清单无遗漏
++        # ⇒ 唯一剩下的类别是**操作序列**（谁在什么顺序上做了什么、各做了多少次）。
++        # 本摘要把每次改变仿真的操作滚进 blake2b ⇒ "操作序列"也成为可逐拍比对的可观测量。
++        # 线程安全：`_op_lock` 是**独立小锁**；调用方通常已持植物锁 ⇒ 锁序为"植物锁 → op 锁"单向，
++        # 绝不反向取锁，不引入新的死锁环。
++        self._op_lock = threading.Lock()
++        self._op_hash = hashlib.blake2b(digest_size=8)
++        self._op_seq = 0
+         # ---- 需求闸门（2026-10-05 §11.87）----
+         # 为什么需要：owner 的**自由推进线程**（植物驻留）在 guest 等待期间并发 `mj_step` ⇒
+         # guest 请求 `count` 步、实际推进 `count + 挂钟决定的超出量`（§11.56 实测 17×）；
+@@ -205,6 +215,7 @@ class MujocoPlant:
+             mujoco.mj_step(self.model, self.data)
+             self._step_index += 1
+             index = self._step_index
++            self.op_event("step")
+         if self._gate_enabled:
+             # ⚠ 只在**到达某个 guest 的目标**时唤醒：每步都 notify_all 会让每步都发生一次
+             # 线程切换（实测整轮慢到跑不完）⇒ 这里按目标判断，等待方绝大多数步都不被唤醒。
+@@ -213,6 +224,21 @@ class MujocoPlant:
+                     self._gate_cond.notify_all()
+         return index
+ 
++    def op_event(self, kind, tag=0):
++        """把一次**改变仿真的操作**滚进操作序列摘要（量测㉗）。
++
++        调用点（改变仿真的操作）：`step_once`（"step"）、狗的 PD 重力前馈（"ff"）、两侧的 ctrl 写入（"ctrl"）。
++        参数 `tag` 用于区分同一类操作的发起方（例如狗=1 / 臂=2）。
++        """
++        with self._op_lock:
++            self._op_seq += 1
++            self._op_hash.update(b"%d|%s|%d;" % (self._op_seq, str(kind).encode("ascii"), int(tag)))
++
++    def op_digest(self):
++        """当前操作序列的 `(次数, 摘要)`：可逐拍采样、跨进程可比（blake2b，不受 PYTHONHASHSEED 影响）。"""
++        with self._op_lock:
++            return (self._op_seq, self._op_hash.copy().hexdigest())
++
+     def advance(self, count, caller):
+         count = int(count)
+         if count < 1:
+diff --git a/src/iraf_adapters/unitree/unitree_go2.py b/src/iraf_adapters/unitree/unitree_go2.py
+index 8ee05a3..293930a 100644
+--- a/src/iraf_adapters/unitree/unitree_go2.py
++++ b/src/iraf_adapters/unitree/unitree_go2.py
+@@ -2931,11 +2931,12 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
+                 # `gravity_bias_torque` 内部会 `mj_forward`（写派生量）⇒ 必须持植物锁；
+                 # 这就是崩溃栈顶那一帧（与对侧的 mj_forward/mj_step 并发）。
+                 with self._lock:
+-                    tau_ff = (
+-                        gravity_bias_torque(self.model, self.data, self.mujoco, self.dof_adr)
+-                        if self.gravity_feedforward
+-                        else np.zeros_like(q)
+-                    )
++                    if self.gravity_feedforward:
++                        tau_ff = gravity_bias_torque(self.model, self.data, self.mujoco, self.dof_adr)
++                        # 前馈内部会 `mj_forward`（一次求解器调用）⇒ 属于"操作序列"，必须进账（量测㉗）。
++                        self.plant.op_event("ff")
++                    else:
++                        tau_ff = np.zeros_like(q)
+                 ctrl, saturated = pd_torque(
+                     q, dq, desired, self.kp, self.kd, tau_ff, self.torque_lower, self.torque_upper
+                 )
+@@ -2990,6 +2991,8 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
+                     ctrl = np.clip(ctrl, self.torque_lower, self.torque_upper)
+             saturated_total += int(np.count_nonzero(saturated))
+             self.data.ctrl[self.actuator_ids] = ctrl
++            # 控制写入也是"改变仿真的操作"（量测㉗）
++            self.plant.op_event("ctrl", 1)
+             if self._ctrl_align_probe:
+                 # 这次控制量落在哪个植物步号上 + **控制量取值的摘要**（内存累计，段末一次性落盘）。
+                 # 为什么两步都要：闸门之后"步数"与"写入对齐"都已证明逐轮相同（§11.88 量测⑨），
+@@ -3013,6 +3016,9 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
+                             np.asarray(_vec, dtype=float).astype("<f8", copy=False).tobytes(),
+                             digest_size=8).hexdigest()
+                         for _vec in (ctrl, desired, q, dq))
++                    # 操作序列摘要（量测㉗）：把"此刻为止的操作序列（次数+顺序）"也挂在每次写上
++                    # ⇒ 判读时能看到"第一次操作序列不同"发生在哪一拍（5 步粒度）。
++                    _item = _item + (self.plant.op_digest(),)
+                 self._ctrl_writes.append(_item)
+             for _ in range(self.substeps):
+                 # 时间只能由植物 owner 推进（共享植物下越权即 PlantOwnershipError）

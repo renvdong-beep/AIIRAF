@@ -27,5 +27,8 @@ screenshot*.png
 # 泛化/重构过程中的后端快照：原实现由 git 历史取回，不留在包目录。
 *.pre-generalization
 
-# Hermes Agent 工作区状态（计划、会话缓存等），不入库。
-.hermes/
+# Hermes Agent 工作区状态（会话缓存、本机配置等），不入库。
+# ⚠ 例外：`.hermes/plans/` 是我方计划与进度快照的唯一留档处，必须入库
+#（2026-10-16 修正记录债：此前 36 份计划零版本控制，`git check-ignore` 可复核）。
+.hermes/*
+!.hermes/plans/
