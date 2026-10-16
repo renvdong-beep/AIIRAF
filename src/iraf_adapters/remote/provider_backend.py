@@ -186,6 +186,15 @@ class RemoteProviderBackend:
             resp = stub.Invoke(call, timeout=self._timeout_s, metadata=md)
             if not resp.accepted:
                 err = resp.error
+                if err.code == "IRAF-SAFETY-QUARANTINED":
+                    # 远端被控对象已隔离（铁律 1.6/1.9）：抛 core 定义的异常，
+                    # 由 SkillRuntime 捕获后在**本侧**也隔离该资源（跨机安全事件不做单向传导）。
+                    from iraf_core.safety import SafetyEventReported
+                    details = dict(err.details or {})
+                    raise SafetyEventReported(
+                        details.get("resource") or self._resource_id or "",
+                        details.get("reason") or err.message_zh or "远端报告安全事件",
+                        details.get("kind") or "SAFETY_EVENT")
                 raise RemoteProviderError(err.code or "IRAF-PROVIDER-REJECTED",
                                           err.message_zh or "远端 Provider 拒绝（无消息）",
                                           retryable=bool(err.retryable))

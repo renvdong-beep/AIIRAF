@@ -69,6 +69,21 @@ _POSITIONAL = {
 _NO_LEASE = {"step", "runtime_inventory", "read_state"}
 
 
+def safety_state_from_inventory(inventory) -> Dict[str, Any]:
+    """从运行时清单判定被控对象的 safety 状态（**纯函数**，语义只此一处）。
+
+    - `safety.estop == true` 或 `safety.quarantined == true` ⇒ 已隔离；
+    - 清单里**没有** `safety` 段 ⇒ 不臆造隔离（真隔离必须由被控对象给出，不靠我们猜）；
+    - 判据是**状态驱动**（读被控对象状态），不是"猜异常类型"。
+    """
+    safety = dict((inventory or {}).get("safety") or {})
+    estop = bool(safety.get("estop"))
+    quarantined = bool(safety.get("quarantined")) or estop
+    return {"quarantined": quarantined,
+            "kind": str(safety.get("kind") or ("ESTOP" if estop else "SAFETY_EVENT")),
+            "reason": str(safety.get("reason") or ("被控对象急停已触发" if estop else ""))}
+
+
 class CapabilityRejected(RuntimeError):
     """带显式错误码的拒绝（服务端**先拒绝、再执行**，不做"尽力而为"）。"""
 
@@ -96,6 +111,7 @@ class ExecutionRegistry:
         self._leases: Dict[str, Any] = {}          # execution_id -> Lease
         self._last_token: Dict[str, int] = {}      # resource -> 已见最大 fencing token
         self._terminal: Dict[str, str] = {}        # execution_id -> 终态名
+        self._quarantined: Dict[str, Dict[str, str]] = {}   # resource -> {kind, reason}（锁存）
         self._idempotent: Dict[str, Any] = {}      # idempotency_key -> 结果摘要
         self._cancel: Dict[str, threading.Event] = {}
 
@@ -112,6 +128,19 @@ class ExecutionRegistry:
             return None
         with self._lock:
             return self._idempotent.get(idempotency_key)
+
+    def quarantine(self, resource: str, kind: str = "SAFETY_EVENT", reason: str = "") -> None:
+        """锁存隔离：一旦被控对象报告安全事件，**授权复位前**不再放行（铁律 1.9）。
+
+        锁存是刻意的 —— 不因为"下一次读到的状态是好的"就自动解除。
+        """
+        with self._lock:
+            self._quarantined[str(resource)] = {"kind": str(kind or "SAFETY_EVENT"),
+                                                "reason": str(reason or "")}
+
+    def quarantined(self, resource: str):
+        with self._lock:
+            return self._quarantined.get(str(resource))
 
     def mark(self, execution_id: str, state: str) -> None:
         with self._lock:
@@ -243,6 +272,22 @@ def build_servicer_class(provider_pb2, provider_pb2_grpc, skill_pb2):
             return skill_pb2.IrafError(code=code, message_zh=str(exc),
                                        retryable=bool(getattr(exc, "retryable", False)))
 
+        def _safety_state(self) -> Dict[str, Any]:
+            """被控对象的 safety 状态 —— 跨机安全事件的**唯一来源**（状态驱动，不靠猜异常类型）。
+
+            读不到清单时按"已隔离"处理（fail-closed）：宁可拒绝，也不在状态不明时放行物理动作。
+            """
+            getter = getattr(self._backend, "runtime_inventory", None)
+            if not callable(getter):
+                return {"quarantined": True, "kind": "INVENTORY_UNAVAILABLE",
+                        "reason": "被控对象未提供运行时清单，状态不明"}
+            try:
+                inventory = getter() or {}
+            except Exception as exc:  # noqa: BLE001 状态读不到 = 不放行
+                return {"quarantined": True, "kind": "INVENTORY_UNAVAILABLE",
+                        "reason": "读取运行时清单失败：%s: %s" % (type(exc).__name__, exc)}
+            return safety_state_from_inventory(inventory)
+
         def _capability_call(self, capability, inputs: Dict[str, Any], lease):
             method_name = CAPABILITY_METHODS.get(capability)
             if method_name is None:
@@ -304,6 +349,25 @@ def build_servicer_class(provider_pb2, provider_pb2_grpc, skill_pb2):
                     fencing_token=0, occurred_at=_now_ts())
             capability = str(request.capability or "")
             inputs = MessageToDict(request.inputs) if request.HasField("inputs") else {}
+            # 跨机安全事件传导（铁律 1.6/1.9）：被控对象一旦进入安全隔离，服务端拒绝后续调用，
+            # 并如实回给调用方 —— 调用方据此在**本侧**也隔离该资源，避免"远端已隔离、板上还在调度"。
+            safety_resource = str(envelope.resource_id or "").strip() or self._resources
+            live = self._safety_state()
+            if live.get("quarantined"):
+                self._registry.quarantine(safety_resource, live.get("kind", ""), live.get("reason", ""))
+            latched = self._registry.quarantined(safety_resource)
+            if latched:
+                return provider_pb2.CapabilityResult(
+                    capability=capability, accepted=False, simulation=True,
+                    provider=self._provider_id, occurred_at=_now_ts(),
+                    error=skill_pb2.IrafError(
+                        code="IRAF-SAFETY-QUARANTINED",
+                        message_zh="被控对象处于安全隔离（%s）：%s"
+                                   % (latched.get("kind", ""), latched.get("reason", "")),
+                        retryable=False,
+                        details={"resource": safety_resource,
+                                 "kind": latched.get("kind", ""),
+                                 "reason": latched.get("reason", "")}))
             envelope = request.lease
             idem = str(envelope.idempotency_key or "")
             cached = self._registry.cached(idem)
