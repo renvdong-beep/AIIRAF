@@ -112,6 +112,7 @@ class ExecutionRegistry:
         self._last_token: Dict[str, int] = {}      # resource -> 已见最大 fencing token
         self._terminal: Dict[str, str] = {}        # execution_id -> 终态名
         self._quarantined: Dict[str, Dict[str, str]] = {}   # resource -> {kind, reason}（锁存）
+        self._by_correlation: Dict[str, str] = {}           # correlation_id -> execution_id
         self._idempotent: Dict[str, Any] = {}      # idempotency_key -> 结果摘要
         self._cancel: Dict[str, threading.Event] = {}
 
@@ -128,6 +129,23 @@ class ExecutionRegistry:
             return None
         with self._lock:
             return self._idempotent.get(idempotency_key)
+
+    def link_correlation(self, correlation_id: str, execution_id: str) -> None:
+        """记录 correlation → execution_id：调用方在**执行中**只知道 correlation_id，
+        取消请求只能带它（execution_id 是服务端生成、要等调用返回才拿到）。"""
+        if correlation_id:
+            with self._lock:
+                self._by_correlation[str(correlation_id)] = str(execution_id)
+
+    def resolve_execution_id(self, identifier: str):
+        """把 Cancel 收到标识解析成 execution_id（支持 execution_id 或 correlation_id）。"""
+        identifier = str(identifier or "")
+        if not identifier:
+            return None
+        with self._lock:
+            if identifier in self._terminal or identifier in self._leases:
+                return identifier
+            return self._by_correlation.get(identifier)
 
     def quarantine(self, resource: str, kind: str = "SAFETY_EVENT", reason: str = "") -> None:
         """锁存隔离：一旦被控对象报告安全事件，**授权复位前**不再放行（铁律 1.9）。
@@ -160,6 +178,9 @@ class ExecutionRegistry:
 
         execution_id = str(envelope.execution_id or "").strip() or ("exec-" + uuid.uuid4().hex)
         resource = str(envelope.resource_id or "").strip() or self._resource
+        with self._lock:
+            if envelope.correlation_id:
+                self._by_correlation[str(envelope.correlation_id)] = execution_id
         token = int(envelope.fencing_token or 0)
 
         with self._lock:
@@ -349,6 +370,7 @@ def build_servicer_class(provider_pb2, provider_pb2_grpc, skill_pb2):
                     fencing_token=0, occurred_at=_now_ts())
             capability = str(request.capability or "")
             inputs = MessageToDict(request.inputs) if request.HasField("inputs") else {}
+            envelope = request.lease
             # 跨机安全事件传导（铁律 1.6/1.9）：被控对象一旦进入安全隔离，服务端拒绝后续调用，
             # 并如实回给调用方 —— 调用方据此在**本侧**也隔离该资源，避免"远端已隔离、板上还在调度"。
             safety_resource = str(envelope.resource_id or "").strip() or self._resources
@@ -368,7 +390,6 @@ def build_servicer_class(provider_pb2, provider_pb2_grpc, skill_pb2):
                         details={"resource": safety_resource,
                                  "kind": latched.get("kind", ""),
                                  "reason": latched.get("reason", "")}))
-            envelope = request.lease
             idem = str(envelope.idempotency_key or "")
             cached = self._registry.cached(idem)
             if cached is not None:
@@ -415,6 +436,9 @@ def build_servicer_class(provider_pb2, provider_pb2_grpc, skill_pb2):
             except CapabilityRejected as exc:
                 context.abort(_grpc.StatusCode.UNAUTHENTICATED, str(exc))
             execution_id = str(request.execution_id or "")
+            resolved = self._registry.resolve_execution_id(execution_id)
+            if resolved:
+                execution_id = resolved
             event = self._registry.cancel_event(execution_id)
             if execution_id in self._registry._terminal:
                 return skill_pb2.CancelExecutionResponse(accepted=False, state=skill_pb2.SKILL_STATE_CANCELLED)

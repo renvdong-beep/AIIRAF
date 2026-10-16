@@ -60,6 +60,7 @@ class RemoteProviderBackend:
         self._resource_id = resource_id
         self._subject = subject
         self._provider_hint = provider_hint
+        self._last_correlation = ""
 
     # ---------- 装配契约 ----------
     @classmethod
@@ -128,6 +129,31 @@ class RemoteProviderBackend:
         finally:
             channel.close()
 
+    def last_correlation_id(self) -> str:
+        """最近一次跨机调用的 correlation_id（执行中取消时用它作为句柄）。"""
+        return self._last_correlation
+
+    def cancel(self, execution_id: str = "", reason: str = "cancel requested") -> Dict[str, Any]:
+        """请求远端取消。**诚实语义**：能力一旦进入 Provider 就没有中途取消点，
+        服务端只接受请求并标记（不假装已经停住）；终态execution 的取消会被拒。"""
+        import grpc as _grpc
+        from iraf.v1 import skill_pb2
+        identifier = str(execution_id or self._last_correlation or "")
+        if not identifier:
+            raise RemoteProviderError("IRAF-INPUT-INVALID", "取消需要 execution_id 或至少一次调用过")
+        stub, channel = self._open()
+        try:
+            md = (("authorization", "Bearer " + self._token),)
+            try:
+                resp = stub.Cancel(skill_pb2.CancelExecutionRequest(execution_id=identifier, reason=reason),
+                                   timeout=min(self._timeout_s, 10.0), metadata=md)
+            except _grpc.RpcError as exc:
+                raise RemoteProviderError("IRAF-TRANSPORT-FAILED",
+                                          "跨机取消失败（%s）：%s" % (self.endpoint, exc)) from exc
+            return {"accepted": bool(resp.accepted), "state": int(resp.state), "identifier": identifier}
+        finally:
+            channel.close()
+
     # ---------- 能力方法（与 RobotBackend 契约同名同义） ----------
     def move_joint(self, positions, duration_ms, lease) -> None:
         self._invoke("move_joint", {"positions": positions, "duration_ms": int(duration_ms)}, lease)
@@ -170,6 +196,7 @@ class RemoteProviderBackend:
         from iraf.v1 import provider_pb2
 
         correlation_id = "rpc-" + uuid.uuid4().hex
+        self._last_correlation = correlation_id
         envelope = provider_pb2.LeaseEnvelope(
             correlation_id=correlation_id,
             idempotency_key=correlation_id,          # 单次调用即一次逻辑动作

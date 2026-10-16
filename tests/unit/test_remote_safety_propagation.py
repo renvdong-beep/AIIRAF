@@ -132,5 +132,95 @@ class SafetyEventPropagationTest(unittest.TestCase):
         self.assertEqual(backend.calls, 1, "隔离后不得再驱动 Provider")
 
 
+# ---------------- ④ servicer 级（Invoke 完整路径） ----------------
+# 为什么必须有这一层：③ 只覆盖 runtime 侧；servicer 的 Invoke 曾经因为
+# `envelope` 在赋值前被使用而整条调用报 NameError（实测踩到），单测当时没能拦下。
+
+try:  # 桩是生成物：没跑过 gen_proto_stubs 的环境跳过这一层
+    from google.protobuf.json_format import ParseDict
+    from google.protobuf.timestamp_pb2 import Timestamp
+
+    from iraf.v1 import provider_pb2, provider_pb2_grpc, skill_pb2
+    _STUBS = True
+except ImportError:  # pragma: no cover
+    _STUBS = False
+
+
+class _FakeBackend:
+    def __init__(self, estop=False):
+        self._estop = estop
+        self.calls = 0
+
+    def runtime_inventory(self):
+        return {"safety": {"estop": self._estop}, "mode": "simulation"}
+
+    def move_joint(self, positions, duration_ms, lease):
+        self.calls += 1
+        return {"ok": True}
+
+
+class _FakeContext:
+    def invocation_metadata(self):
+        return (("authorization", "Bearer tok"),)
+
+    def abort(self, code, message):
+        raise RuntimeError("aborted: %s" % message)
+
+
+def _call(capability="move_joint", correlation="c-1", fencing=1):
+    call = provider_pb2.CapabilityCall(capability=capability)
+    ParseDict({"positions": {"j1": 0.1}, "duration_ms": 100}, call.inputs)
+    stamp = Timestamp()
+    stamp.GetCurrentTime()
+    stamp.seconds += 60
+    call.lease.correlation_id = correlation
+    call.lease.idempotency_key = correlation
+    call.lease.resource_id = RESOURCE
+    call.lease.fencing_token = fencing
+    call.lease.deadline.CopyFrom(stamp)
+    return call
+
+
+@unittest.skipUnless(_STUBS, "需要 proto 桩（先跑 scripts/gen_proto_stubs.sh）")
+class ServicerInvokeTest(unittest.TestCase):
+    def build(self, estop=False):
+        import types
+
+        from iraf_adapters.remote.provider_service import build_servicer_class
+
+        backend = _FakeBackend(estop)
+        runtime = types.SimpleNamespace(
+            backend=backend,
+            authority=ControlAuthorityManager(),
+            profile=types.SimpleNamespace(capabilities={"move_joint"}),
+        )
+        servicer_cls = build_servicer_class(provider_pb2, provider_pb2_grpc, skill_pb2)
+        return servicer_cls(runtime, "tok", subject="board-runtime", display_state={}), backend
+
+    def test_invoke_ok_when_healthy(self):
+        servicer, backend = self.build(estop=False)
+        resp = servicer.Invoke(_call(), _FakeContext())
+        self.assertTrue(resp.accepted, resp.error.message_zh)
+        self.assertEqual(backend.calls, 1)
+
+    def test_invoke_refused_when_estop_latched(self):
+        """被控对象急停时：服务端必须拒绝，并回 IRAF-SAFETY-QUARANTINED（含 resource/kind/reason）。"""
+        servicer, backend = self.build(estop=True)
+        resp = servicer.Invoke(_call(), _FakeContext())
+        self.assertFalse(resp.accepted)
+        self.assertEqual(resp.error.code, "IRAF-SAFETY-QUARANTINED")
+        self.assertEqual(dict(resp.error.details).get("resource"), RESOURCE)
+        self.assertEqual(backend.calls, 0, "隔离时不得驱动被控对象")
+
+    def test_quarantine_latches_even_after_estop_clears(self):
+        """锁存语义：急停解除后**也不自动放行**（须显式复位，铁律 1.9）。"""
+        servicer, backend = self.build(estop=True)
+        self.assertFalse(servicer.Invoke(_call(), _FakeContext()).accepted)
+        backend._estop = False
+        resp = servicer.Invoke(_call(correlation="c-2", fencing=2), _FakeContext())
+        self.assertFalse(resp.accepted, "锁存后即使状态恢复正常也不得放行")
+        self.assertEqual(backend.calls, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
