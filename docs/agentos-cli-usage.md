@@ -212,3 +212,55 @@ $ echo '{"text":"煮一杯咖啡并递给我","deadline_seconds":60}' | python3 
 - `docs/iraf-agentos-hyper-compatibility.md` —— AgentOS 兼容契约与四个公共服务
 - `docs/deploy-topology-and-domain-split.md` —— 控制域 / 智能域拓扑与跨域铁律
 - `docs/agentos-robot-application-framework-design.md` —— 三域职责与 TaskFlow/Skill 设计
+
+---
+
+## 8. 语义 → 抓取显示（`scripts/agentos_view.py`，2026-10-16 新增）
+
+**它解决什么**：`iraf-agentos` 是**无显示**的语义执行入口，`scripts/view_mujoco.py` 是**程序化**的显示入口；
+"用一句 AgentOS 语义触发抓取并在 MuJoCo 里看见"需要把两者接起来。本入口就是这条薄桥（不旁路任何一层）：
+
+```
+自然语言 ─► IntentProvider（受约束解码到 Skill 契约）─► 校验+打印解析结果
+          ─► scripts/view_mujoco.py（SkillRuntime → Policy/Authority → Provider(MuJoCo)，窗口先开、边抓边看）
+```
+
+```bash
+export PYTHONPATH=src
+export IRAF_PROFILE=profiles/piper_mujoco.yaml
+export IRAF_SAFETY_POLICY=profiles/safety/simulation_lab.yaml
+export IRAF_SKILL_ROOT=skills
+export IRAF_BACKEND_ENTRYPOINT=iraf_adapters.mujoco.mujoco_backend:MujocoBackend
+export IRAF_BACKEND_CONFIG="$(PYTHONPATH=src python3 scripts/emit_backend_config.py \
+    --scene build/models/piper-pick-scene.xml --compact)"
+export IRAF_EVENT_STORE=/tmp/iraf-agentos-view.db
+export IRAF_RUNTIME_SUBJECT=agentos-demo
+
+# 意图模型（两键齐全才启用；缺了会显式失败，不做无校验直通）
+export IRAF_AGENTOS_MODEL_URL=http://127.0.0.1:8077/v1     # 真端点换成你们的 OpenAI 兼容端点
+export IRAF_AGENTOS_MODEL=stub-intent                      # 真模型名
+
+python3 scripts/agentos_view.py --text "启动piper机械臂进行抓取仿真"
+```
+
+**本机实测（2026-10-16，Piper）**
+```
+PARSED_SKILL   visual_pick
+PARSED_PARAMS  {'target_id': 'box_01'}
+PARSED_TARGET  box_01
+INTENT_PROVIDER openai-compatible-intent/stub-intent
+SKILL_MAPPING  解析=visual_pick → 显示通道执行=display_pick（同一 Backend 闭环；display_pick 仅放宽时长上限）
+DISPLAY_CHANNEL scripts/view_mujoco.py --baseline config/piper_simulation_baseline.yaml --live \
+                --skill display_pick --target-id box_01 --pick-duration-ms 3000 --seconds 25
+VIEWER_WINDOW_OPENED True   VIEWER_FRAMES 2284   VIEWER_OK   exit=0
+```
+抓取**进行中**窗口即存在（`WM_CLASS="MuJoCo"`，1280x720），即"边抓边看"。
+
+**规则与边界**
+- 解析出的 skill 必须属于**可显示集合**（`display_pick`/`visual_pick`/`pick_object`），否则**显式失败**（退出码 3）；不做"兜底猜一个"。
+- 显示通道统一用 `display_pick`：它与 `visual_pick` 走**同一条** Backend 闭环，只把时长上限放宽（见 `skills/display_pick/skill.yaml` 自述）。
+- 解析出的 `target_id`（若有）透传给显示通道。
+- **离线桩** `scripts/dev_stub_intent_model.py`：OpenAI 兼容、只做最小受约束解码（关键词→skill、只填语义可知参数），
+  日志/报告里必须标明"桩，不是真 LLM"；换成真模型**只改上面两个环境变量**，代码与流程不变。
+- 仿真结论一律 `simulation=true`；本入口不驱动电机/关节、不写判据、不绕过 Policy。
+

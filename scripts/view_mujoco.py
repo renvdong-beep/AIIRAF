@@ -98,6 +98,11 @@ def main(argv=None):
         help="基线配置路径（决定场景 / Profile / 视觉来源，见配置的 build 段）",
     )
     parser.add_argument("--target-id", default=None, help="抓取目标 ID")
+    parser.add_argument(
+        "--skill",
+        default=None,
+        help="覆盖基线 viewer.live_skill（供语义解析结果驱动显示通道；缺省仍按基线声明）",
+    )
     parser.add_argument("--correlation-id", default="viewer-pick")
     parser.add_argument(
         "--live",
@@ -122,7 +127,9 @@ def main(argv=None):
     live_skill = ""
     live_policy = ""
     if args.live:
-        live_skill = str(viewer_cfg.get("live_skill") or "")
+        live_skill = str(args.skill or viewer_cfg.get("live_skill") or "")
+        if args.skill:
+            print("VIEWER_SKILL_OVERRIDE", args.skill, flush=True)
         live_policy = str(viewer_cfg.get("live_safety_policy") or "")
         if not live_skill or not live_policy:
             parser.error(
