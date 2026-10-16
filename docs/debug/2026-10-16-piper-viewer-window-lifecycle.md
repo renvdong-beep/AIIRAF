@@ -114,3 +114,30 @@ VIEWER_OK        exit=0
 ⇒ **"边抓边看"成立**（窗口先开、抓取期间实时镜像；realtime 时全长 ≈92 秒，可按需用 `--pick-duration-ms` 缩短）。
 
 **回归**：静态路径行为不变（`--seconds 120`：3.79 秒出窗、持窗后正常关闭、exit 0）。
+
+## 7. 判读纪律：`/tmp` 里的旧日志会骗人，用**时间戳定界**（2026-10-16 11:32）
+
+现象：修复提交后，一条**后台**诊断进程的完成通知才回来，日志 `/tmp/piper-live-diag.log` 里赫然是
+`VIEWER_WINDOW_OPENED False / VIEWER_FRAMES 0 / exit=3`，看着像"改完又复发"。**是误报**，定界证据：
+
+| 事实 | 值 |
+|---|---|
+| 失败日志最后写入时间（`stat -c %y`） | 11:26:07 |
+| 修复提交 7314c5f 的时间 | 11:27:54（晚 1 分 47 秒） |
+
+⇒ 那次跑的是**"已加判据、尚未透传 display_mode"的中间态工作区**，`VIEWER_DEGRADED exit=3` 正是它如实暴露根因；
+它是"修前复现"，不是"修后复发"。
+
+**同一命令用已提交代码重跑（新证据，`/tmp/piper-live-rerun.log`）**
+```bash
+DISPLAY=:0 XAUTHORITY=/run/user/1000/gdm/Xauthority MUJOCO_GL=glfw LIBGL_ALWAYS_SOFTWARE=1 \
+  PYTHONPATH=src python3 scripts/view_mujoco.py --baseline config/piper_simulation_baseline.yaml \
+  --live --pick-duration-ms 2000 --seconds 20
+```
+```
+DISPLAY_MODE interactive_viewer ｜ VIEWER_WINDOW_OPENED True ｜ VIEWER_FRAMES 1678 ｜ VIEWER_OK
+exit=0 ｜ 墙钟 45 s
+```
+
+**结论**：live 显示路径在已提交代码上稳定为 True/千帧级；见到 `VIEWER_DEGRADED` 先比对日志时间与
+`git log --format='%ad' --date=format:'%m-%d %H:%M:%S' -1`，不要凭 /tmp 文件存在就判复发。
