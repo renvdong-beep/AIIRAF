@@ -83,7 +83,18 @@
 - x86 服务端**不做策略判定**（策略在板上）；但**拒绝过期 fencing token 与终态执行的控制请求**（铁律 2.12）。
 - 网络故障只允许显式失败 / 安全停机，**禁止伪造成功**（铁律 1.5）。
 
-## 7. 进度快照（2026-10-16，main 领先 origin/main 31 笔）
+## 7. 进度快照（2026-10-16，main 领先 origin/main 41 笔）
+
+> **追加（同日，用户交办 5 项已全部完成）**
+> ① 跨机安全事件传播 `222c3c7`/`08b7c86`/`2104ffa`（core 定义 `SafetyEventReported`、runtime 捕获后隔离本侧资源、
+>    服务端状态判定 + 隔离锁存 + Invoke 前置拒绝、客户端转 core 异常；11 例用例）
+> ② IDL 破坏性变更检查 `99c3c7b`（`scripts/idl_compat_check.py`，15 例；真实仓库 HEAD→0 项、对比 948c3fa→6 项兼容新增）
+> ③ 铁律改 v1 仿真范围 `9ca8b21`/`4a7c1e4`（AGENTS.md §0.1 + 铁律 2.9/§4/6.8 + 设计文档同步；诚实性条款保留）
+> ④ 跨机断链/取消实测 `bd39ea6`/`cc555ab`（断链：退出码 1 + `IRAF-TRANSPORT-FAILED` + 中文诊断、无 traceback 穿透；
+>    取消：执行中 `accepted=true,state=7`、抓取仍完成 `grasped=True` 墙钟 10.1 s、终态后 `accepted=false`）
+> ⑤ 记录债 `1351f16`（`.hermes/plans/` 入库，36 份）
+> 最终全量基线：`FAILED=1`（仅已知环境差异 `test_target_verify_evidence`）、`ERROR=2`（既有 sys.path 问题），无本轮引入的失败。
+> 本轮共逼出 4 个真问题（含我自己的遗漏：新增 `correlation_id` 读取破坏既有替身用例，`887f093` 修）。
 
 | 阶段 | 状态 | 证据 / 产物 |
 |---|---|---|
