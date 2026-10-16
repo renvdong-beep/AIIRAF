@@ -42,6 +42,7 @@ BOARD_USER="${IRAF_BOARD_USER:-root}"
 SSH_PORT="${IRAF_BOARD_PORT:-22}"
 REMOTE_DIR="${IRAF_BOARD_REMOTE_DIR:-/root/iraf-deploy}"
 PROFILE=""
+ENV_SETS=()
 SDK_WHEEL=""
 RUNTIME_BUNDLE=""
 WHEELHOUSE=""
@@ -72,6 +73,7 @@ usage() {
   --wheelhouse <dir>      离线 wheelhouse（edge-* 必填）
   --apply                 真部署（默认只演练、不写任何远端文件）
   --allow-unverified      放行"板卡声明未实测"（探索用；不构成验收证据）
+  --env-set KEY=VALUE     装配单模板的部署期取值（可多次，如 --env-set PROVIDER_ENDPOINT=host:50052）
   --remote-dir <dir>      远端落地目录（默认 /root/iraf-deploy；也可用 IRAF_BOARD_REMOTE_DIR）
   --rehearsal             目标端以**沙箱演练**方式安装（放宽目标端事实检查）；必须配 --remote-root 且非 /
                           用途：替身主机/本地管线上端到端自测。**不构成板卡证据**
@@ -102,6 +104,10 @@ while [ "$#" -gt 0 ]; do
     --runtime-bundle) RUNTIME_BUNDLE="$2"; shift ;;
     --wheelhouse) WHEELHOUSE="$2"; shift ;;
     --remote-dir) REMOTE_DIR="$2"; shift ;;
+    --env-set)
+      [ "$#" -ge 2 ] || { err "--env-set 缺少取值（KEY=VALUE）"; exit 1; }
+      case "$2" in *"="*) ENV_SETS+=("$2") ;; *) err "--env-set 需要 KEY=VALUE 形式：$2"; exit 1 ;; esac
+      shift ;;
     *) err "无法识别的参数：$1（用 --help 查看用法）"; exit 1 ;;
   esac
   shift
@@ -169,6 +175,10 @@ INSTALL_CMD="bash ${REMOTE_SDK_DIR}/install-iraf.sh --profile ${PROFILE} --sdk-w
 [ -n "${RUNTIME_REMOTE}" ] && INSTALL_CMD="${INSTALL_CMD} --runtime-bundle ${RUNTIME_REMOTE}"
 [ -n "${WHEELHOUSE}" ] && INSTALL_CMD="${INSTALL_CMD} --wheelhouse ${REMOTE_DIR}/wheelhouse"
 [ "${ALLOW_UNVERIFIED}" = "1" ] && INSTALL_CMD="${INSTALL_CMD} --allow-unverified"
+# 装配单模板的部署期取值（如 PROVIDER_ENDPOINT）；缺必需占位符时目标端会显式失败
+for _kv in "${ENV_SETS[@]:-}"; do
+  [ -n "${_kv}" ] && INSTALL_CMD="${INSTALL_CMD} --env-set ${_kv}"
+done
 [ "${REHEARSAL}" = "1" ] && INSTALL_CMD="${INSTALL_CMD} --rehearsal --root ${REMOTE_ROOT}"
 RESIDUE_CMD="bash ${REMOTE_SDK_DIR}/verify_residue.sh --profile ${PROFILE} --json"
 UNINSTALL_CMD="bash ${REMOTE_SDK_DIR}/uninstall-iraf.sh --profile ${PROFILE}"
