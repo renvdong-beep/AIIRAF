@@ -140,8 +140,9 @@ class Diagnosis:
 
 
 # ---------------------------------------------------------------------------
-# 错误码表：28 个码 = IDL §5 表中的 9 个（其中 7 个实现已落地）+ API 目录 1 个
-# + 实现已抛出但表格未收录的 18 个（含步骤 16 四足适配器新增的 9 个）。
+# 错误码表：35 个码 = IDL §5 表中的 9 个（其中 7 个实现已落地）+ API 目录 1 个
+# + 实现已抛出但表格未收录的 18 个（含步骤 16 四足适配器新增的 9 个）
+# + 跨机 Capability Provider 新增的 7 个（2026-10-16，provider.proto）。
 # 顺序与 IDL §5 表一致，便于人工比对。
 # ---------------------------------------------------------------------------
 ERROR_SPECS: Tuple[ErrorSpec, ...] = (
@@ -511,6 +512,91 @@ ERROR_SPECS: Tuple[ErrorSpec, ...] = (
         retry_policy_zh="否；须受控复位",
         provenance=PROVENANCE_CODE_ONLY,
         emitter=("src/iraf_adapters/unitree/quadruped.py:130",),
+    ),
+    # --- 跨机 Capability Provider（2026-10-16，provider.proto）-----------------
+    ErrorSpec(
+        code="IRAF-CAPABILITY-UNKNOWN",
+        summary_zh="能力未在契约词表中登记（factory.CAPABILITY_METHODS）",
+        suggestion_zh=(
+            "核对能力名拼写与词表：跨机 Provider 只接受已登记的能力；新增能力必须先改 "
+            "api/proto 与 src/iraf_adapters/factory.py 的 CAPABILITY_METHODS。原地重试无效。"
+        ),
+        retryable=False,
+        retry_policy_zh="否；须先改契约",
+        provenance=PROVENANCE_CODE_ONLY,
+        emitter=("src/iraf_adapters/remote/provider_service.py:44",),
+    ),
+    ErrorSpec(
+        code="IRAF-DEADLINE-MISSING",
+        summary_zh="跨机能力调用缺少 deadline",
+        suggestion_zh=(
+            "调用方必须给出 deadline（铁律 2.3：禁止无超时的等待）。"
+            "补上 LeaseEnvelope.deadline 后再发；这不是仿真侧的偶发问题。"
+        ),
+        retryable=False,
+        retry_policy_zh="否；须补 deadline",
+        provenance=PROVENANCE_CODE_ONLY,
+        emitter=("src/iraf_adapters/remote/provider_service.py:45",),
+    ),
+    ErrorSpec(
+        code="IRAF-EXECUTION-TERMINAL",
+        summary_zh="终态执行再发控制请求被拒（铁律 2.12）",
+        suggestion_zh=(
+            "该 execution 已进入终态，不允许再驱动执行器：改用新的 execution_id 重新提交任务；"
+            "若确需在终态后读取状态，请用监控类能力（不产生物理动作）。"
+        ),
+        retryable=False,
+        retry_policy_zh="否；须新建执行",
+        provenance=PROVENANCE_CODE_ONLY,
+        emitter=("src/iraf_adapters/remote/provider_service.py:48",),
+    ),
+    ErrorSpec(
+        code="IRAF-FENCING-TOKEN-REGRESSION",
+        summary_zh="fencing token 回退：旧控制源的请求被拒",
+        suggestion_zh=(
+            "同一资源的 fencing token 必须单调递增；收到更小的 token 说明存在旧控制源或控制权漂移，"
+            "须先确认 ControlAuthority 归属再重发。"
+        ),
+        retryable=False,
+        retry_policy_zh="否；须恢复控制权归属",
+        provenance=PROVENANCE_CODE_ONLY,
+        emitter=("src/iraf_adapters/remote/provider_service.py:47",),
+    ),
+    ErrorSpec(
+        code="IRAF-PROVIDER-ERROR",
+        summary_zh="远端 Capability Provider 执行期异常",
+        suggestion_zh=(
+            "读 message_zh 与仿真侧日志定位（场景装配、模型文件、视觉证据等）；"
+            "属执行期失败，是否重试由业务判断，不自动重试。"
+        ),
+        retryable=False,
+        retry_policy_zh="否；按上游失败原因判定",
+        provenance=PROVENANCE_CODE_ONLY,
+        emitter=("src/iraf_adapters/remote/provider_service.py:242",),
+    ),
+    ErrorSpec(
+        code="IRAF-PROVIDER-NOT-IMPLEMENTED",
+        summary_zh="Provider 未实现该能力，拒绝伪造成功",
+        suggestion_zh=(
+            "对照 RobotProfile.capabilities 与 Backend 的实际方法集：声明了却无实现属装配期缺陷，"
+            "应在 factory.verify_backend_contract 阶段就暴露，而非运行期。"
+        ),
+        retryable=False,
+        retry_policy_zh="否；须补实现或修正能力声明",
+        provenance=PROVENANCE_CODE_ONLY,
+        emitter=("src/iraf_adapters/remote/provider_service.py:51",),
+    ),
+    ErrorSpec(
+        code="IRAF-PROVIDER-REJECTED",
+        summary_zh="远端 Provider 拒绝且未给出具体错误码（兜底码）",
+        suggestion_zh=(
+            "远端未填 error.code 时由客户端兜底；请同时查看仿真侧日志，"
+            "并考虑在服务端补齐显式错误码（兜底码本身说明契约实现不完整）。"
+        ),
+        retryable=False,
+        retry_policy_zh="否；先补服务端错误码",
+        provenance=PROVENANCE_CODE_ONLY,
+        emitter=("src/iraf_adapters/remote/provider_backend.py:174",),
     ),
 )
 
