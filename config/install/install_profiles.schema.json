@@ -505,6 +505,11 @@
           "type": "string",
           "minLength": 1
         },
+        "env_template": {
+          "description": "运行装配单模板路径（占位符化；由部署期值渲染到 config_dir）",
+          "type": "string",
+          "minLength": 1
+        },
         "services": {
           "type": "array",
           "items": {

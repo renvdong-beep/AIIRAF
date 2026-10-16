@@ -194,6 +194,8 @@ profiles:
     # 设计见 .hermes/plans/2026-10-16-agentos-semantic-mcp-bridge.md；
     # verification 仍为 unverified —— 真机验收前不得声明已验证（AGENTS 4）。
     backend_entrypoint: iraf_adapters.remote.provider_backend:RemoteProviderBackend
+    # 运行装配单模板（占位符化：端点/机型 Profile/目录都由部署期值填充，见 deploy/sdk/env/）
+    env_template: deploy/sdk/env/edge-intel.env.tmpl
     services:
       - name: iraf-runtime-grpc
         template: deploy/sdk/units/iraf-runtime-grpc.service.tmpl

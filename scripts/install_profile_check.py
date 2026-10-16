@@ -197,6 +197,25 @@ def check_semantics(declaration: dict, repo_root: Path) -> tuple:
         add("%s：禁用组件在受控枚举内" % pid, not [i for i in forbidden if i not in components_enum],
             "未登记=%s" % [i for i in forbidden if i not in components_enum])
 
+        # 运行装配单模板（2026-10-16）：声明引用了它，就必须存在、占位符齐备、
+        # 且不含开发机痕迹或写死的 IP —— 否则部署期只能靠人记住该改哪里（本类任务最常见的静默失效）。
+        template = str(profile.get("env_template") or "")
+        if template:
+            path = repo_root / template
+            add("%s：装配单模板存在" % pid, path.is_file(), "缺失=%s" % template)
+            if path.is_file():
+                text = path.read_text(encoding="utf-8")
+                required = ("@VERSION_DIR@", "@DATA_DIR@", "@PROVIDER_ENDPOINT@", "@PROFILE@")
+                missing = [token for token in required if token not in text]
+                add("%s：装配单模板占位符齐备" % pid, not missing, "缺失占位符=%s" % missing)
+                machine = [probe for probe in ("/home/", "/Users/", "coretek") if probe in text]
+                add("%s：装配单模板不含开发机痕迹" % pid, not machine,
+                    "命中=%s（模板只允许占位符）" % machine)
+                import re as _re
+                ips = _re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", text)
+                add("%s：装配单模板不含写死的 IP" % pid, not ips,
+                    "命中=%s（地址会变，必须由部署期填入）" % ips)
+
         target = profile["target"]
         if pid in X86_FORM_IDS:
             ok = (target["arch"] == "x86_64" and target["os"] == "ubuntu"
