@@ -41,9 +41,10 @@ class _Envelope:
     """LeaseEnvelope 的最小替身（只提供 ExecutionRegistry 真正读的字段）。"""
 
     def __init__(self, *, execution_id="", resource_id=RESOURCE, fencing_token=0,
-                 idempotency_key="", deadline_s=None):
+                 idempotency_key="", deadline_s=None, correlation_id=""):
         self.execution_id = execution_id
         self.resource_id = resource_id
+        self.correlation_id = correlation_id
         self.fencing_token = fencing_token
         self.idempotency_key = idempotency_key
         self.deadline = _Stamp(deadline_s) if deadline_s is not None else _Stamp(0)
