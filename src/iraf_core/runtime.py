@@ -10,7 +10,7 @@ import uuid
 from .authority import LeaseConflict
 from .core import TaskStatus
 from .policy import PolicyGateway, PolicyRejected
-from .safety import SafetyQuarantine, QuarantineError
+from .safety import QuarantineError, SafetyEventReported, SafetyQuarantine
 from .taskflow import TERMINAL, TaskFlow
 
 @dataclass
@@ -133,6 +133,13 @@ class SkillRuntime:
             return result
         except QuarantineError as exc:
             self._transition(flow, control, TaskStatus.FAILED, str(exc))
+            return self._result(flow, correlation, "IRAF-SAFETY-QUARANTINED", str(exc))
+        except SafetyEventReported as exc:
+            # Provider/适配层报告的安全事件（跨机时来自远端）：**本侧也必须隔离**，
+            # 否则"远端已隔离、板上继续调度"就是静默不一致（铁律 1.6/1.9）。
+            # 顺序要求：本分支必须在 except Exception 之前，否则会被通用分支吞掉。
+            self.safety.quarantine(exc.resource or resource, exc.reason, kind=exc.kind)
+            self._transition(flow, control, TaskStatus.SAFETY_STOP, str(exc))
             return self._result(flow, correlation, "IRAF-SAFETY-QUARANTINED", str(exc))
         except Exception as exc:
             if control.cancel_event.is_set():

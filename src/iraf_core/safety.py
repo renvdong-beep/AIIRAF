@@ -22,6 +22,22 @@ class RecoveryRejected(ValueError):
     pass
 
 
+class SafetyEventReported(RuntimeError):
+    """由 **Provider / 适配层**上报的安全事件（跨机场景下来自远端仿真或控制域）。
+
+    为什么契约放在 core（铁律 2.5：core 不得依赖适配层）：
+    适配层（如远端 Capability Provider 客户端）抛出本异常，
+    `SkillRuntime` 捕获后调 `handle_safety_event()` 把**本侧**资源一并隔离 ——
+    否则就会出现"远端已经隔离、板上还在继续调度"的静默不一致（铁律 1.6/1.9）。
+    """
+
+    def __init__(self, resource, reason, kind="SAFETY_EVENT"):
+        self.resource = str(resource or "")
+        self.reason = str(reason or "")
+        self.kind = str(kind or "SAFETY_EVENT")
+        super().__init__("资源 %s 报告安全事件[%s]：%s" % (self.resource, self.kind, self.reason))
+
+
 @dataclass(frozen=True)
 class SafetyEvent:
     event_id: str
