@@ -103,8 +103,16 @@ class RemoteProviderBackend:
         try:
             from iraf.v1 import provider_pb2
             md = (("authorization", "Bearer " + self._token),)
-            resp = stub.Health(provider_pb2.ProviderHealthRequest(),
-                               timeout=min(self._timeout_s, 10.0), metadata=md)
+            import grpc as _grpc
+            try:
+                resp = stub.Health(provider_pb2.ProviderHealthRequest(),
+                                   timeout=min(self._timeout_s, 10.0), metadata=md)
+            except _grpc.RpcError as exc:
+                raise RemoteProviderError(
+                    "IRAF-TRANSPORT-FAILED",
+                    "远端 Capability Provider 不可达（%s）：%s。"
+                    "排查：服务端是否在跑（看 PROVIDER_LISTEN 日志）、端口/防火墙/网段是否通。"
+                    % (self.endpoint, exc)) from exc
             return {
                 "ready": bool(resp.ready),
                 "simulation": bool(resp.simulation),
@@ -183,7 +191,14 @@ class RemoteProviderBackend:
         stub, channel = self._open()
         try:
             md = (("authorization", "Bearer " + self._token),)
-            resp = stub.Invoke(call, timeout=self._timeout_s, metadata=md)
+            import grpc as _grpc
+            try:
+                resp = stub.Invoke(call, timeout=self._timeout_s, metadata=md)
+            except _grpc.RpcError as exc:
+                raise RemoteProviderError(
+                    "IRAF-TRANSPORT-FAILED",
+                    "跨机能力调用失败（%s）：%s。任务**未执行**，不得当作成功。"
+                    % (self.endpoint, exc)) from exc
             if not resp.accepted:
                 err = resp.error
                 if err.code == "IRAF-SAFETY-QUARANTINED":

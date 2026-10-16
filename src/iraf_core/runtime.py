@@ -90,7 +90,16 @@ class SkillRuntime:
         if skill is None:
             self._transition(flow, control, TaskStatus.FAILED, "Skill not registered or version mismatch")
             return self._result(flow, correlation, "IRAF-SKILL-PROVIDER-UNAVAILABLE", "Skill not registered or version mismatch")
-        inventory = self.backend.runtime_inventory() if hasattr(self.backend, "runtime_inventory") else {}
+        # Provider 不可达 / 清单取不到时必须**显式失败**并给出可操作原因，
+        # 而不是让适配层异常（如 gRPC UNAVAILABLE）穿透调用方变成 traceback（铁律 1.5 / 5.6）。
+        # 语义：状态不明 ⇒ 不放行任何物理动作（fail-closed）。
+        try:
+            inventory = self.backend.runtime_inventory() if hasattr(self.backend, "runtime_inventory") else {}
+        except Exception as exc:  # noqa: BLE001 显式转换，不吞错
+            reason = ("被控对象状态不可用（Provider 不可达或清单读取失败）：%s: %s"
+                      % (type(exc).__name__, exc))
+            self._transition(flow, control, TaskStatus.FAILED, reason)
+            return self._result(flow, correlation, "IRAF-TRANSPORT-FAILED", reason)
         try:
             decision = self.policy.validate(request, context, skill, self.profile, self.safety_policy, inventory)
         except PolicyRejected as exc:
