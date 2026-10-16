@@ -835,6 +835,7 @@ def run_interactive_live(
     render_hz=60.0,
     pre_roll_frames=30,
     orientation=None,
+    display_mode=None,
 ):
     """在窗口打开的状态下执行抓取，使完整过程可见（臂侧薄包装）。
 
@@ -866,5 +867,11 @@ def run_interactive_live(
         pre_roll_frames=pre_roll_frames,
         on_finished=session.hold,
         timeout_s=max(180.0, float(duration_ms) / 1000.0 * 14),
+        # 必须透传调用方**已经**判定的显示模式：实测踩到——内层再探测一次结论不同，
+        # 于是静默走离屏分支（抓取照跑、窗口从未创建），而外层日志还打着 interactive_viewer。
+        display_mode=display_mode,
     )
-    return report["holder"], bool(report["window_opened"])
+    # 回传完整 report：调用方需要 window_opened / frames 来判"窗口是否真的在渲染"。
+    # 原来只回 (holder, held)，导致"窗口瞬关、帧数 0"也会被上层当成成功（实测踩到，见
+    # docs/debug/2026-10-16-piper-viewer-window-lifecycle.md §3）。
+    return report["holder"], bool(report["window_opened"]), report

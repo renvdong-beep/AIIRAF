@@ -248,7 +248,7 @@ def main(argv=None):
             # 全程可见路径：渲染基于 SnapshotMirror 副本，抓取线程并发执行。
             print("VIEWER_LIVE_SKILL", live_skill, flush=True)
             print("VIEWER_LIVE_POLICY", live_policy, flush=True)
-            holder, held = viewer_runner.run_interactive_live(
+            holder, held, live_report = viewer_runner.run_interactive_live(
                 session,
                 target_id,
                 position,
@@ -257,6 +257,7 @@ def main(argv=None):
                 camera,
                 seconds=args.seconds,
                 skill=live_skill,
+                display_mode=display_mode,
             )
         else:
             holder, held = viewer_runner.run_interactive(
@@ -308,6 +309,20 @@ def main(argv=None):
     if holder["error"]:
         print("VIEWER_SKILL_ERROR", holder["error"], flush=True)
         return 1
+    # 显示通路判据（修"静默成功"）：窗口必须真的开过、且真的渲染过帧；否则显式失败，
+    # 不得只打 VIEWER_OK 让上层以为"看见了"。诊断字段同时打到 stdout 便于排障。
+    if args.live:
+        opened = bool(live_report.get("window_opened"))
+        frames = int(live_report.get("frames") or 0)
+        print("VIEWER_WINDOW_OPENED", opened, flush=True)
+        print("VIEWER_FRAMES", frames, flush=True)
+        if live_report.get("stepping_note"):
+            print("VIEWER_STEPPING_NOTE", live_report["stepping_note"], flush=True)
+        if not opened or frames == 0:
+            print("VIEWER_DEGRADED 窗口未真正建立或未渲染任何帧"
+                  "（window_opened=%s frames=%d）：显示会话不可用，不得当作「已看到过程」"
+                  % (opened, frames), file=sys.stderr, flush=True)
+            return 3
     print("VIEWER_OK", flush=True)
     return 0
 

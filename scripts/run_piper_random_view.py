@@ -344,7 +344,7 @@ def main(argv=None):
             # 显示编排委托给机器人无关的适配器契约：
             # 窗口先开、抓取后启，渲染基于 SnapshotMirror 副本，
             # 因此完整阶段过程可见。换机器人时本脚本无需改动。
-            holder, _held = viewer_runner.run_interactive_live(
+            holder, _held, _live_report = viewer_runner.run_interactive_live(
                 session,
                 target_id,
                 position,

@@ -80,3 +80,37 @@ python3 scripts/view_mujoco.py --baseline config/piper_simulation_baseline.yaml 
 
 > 备注：仿真结论一律 `simulation=true`；本记录只证"本机 x86 桌面能看见 MuJoCo 渲染与抓取末态"，
 > 不构成任何真机/板卡能力证据（铁律 1.7）。
+
+## 6. 修复（2026-10-16 当日）：live 路径"窗口从未创建却报成功"的根因与改法
+
+**根因（实测定位）**：`scripts/view_mujoco.py` 自己探测到 `display_mode=interactive_viewer` 并据此选择 live 路径，
+但 `viewer_runner.run_interactive_live()` **没有把该结论透传** 给 `run_request_live()`；
+后者内部又 `mode = display_mode or resolve_display_mode()` **二次探测**，那次探测判成"非交互"，
+于是**静默走离屏分支**（`if mode != DISPLAY_INTERACTIVE:`）：抓取线程照常执行（realtime ≈92 秒）、
+窗口**从未尝试创建**、报告里 `window_opened=False / frames=0`，而外层仍打印 `VIEWER_OK` + exit 0。
+诊断证据（修前一轮，`/tmp/piper-live-diag.log`）：
+```
+VIEWER_WINDOW_OPENED False
+VIEWER_FRAMES 0
+VIEWER_DEGRADED 窗口未真正建立或未渲染任何帧（window_opened=False frames=0）…   ← 新增的显式失败（exit=3）
+```
+⇒ "92 秒看不到窗口"与"窗口瞬关"是**同一件事**：窗口根本没建；先前误判为"开了又关"。
+
+**改法（两处，最小改动）**
+1. `run_interactive_live(..., display_mode=None)` 透传给 `run_request_live(..., display_mode=display_mode)`
+   —— 候选结论只探测一次，不允许内外不一致；
+2. `run_interactive_live` 回传**完整 report**（原来只回 `(holder, held)`，把 `window_opened`/`frames` 丢了）；
+   `view_mujoco.py` 据此打印 `VIEWER_WINDOW_OPENED` / `VIEWER_FRAMES` / `VIEWER_STEPPING_NOTE`，
+   并在 `window_opened=False` 或 `frames==0` 时判 **`VIEWER_DEGRADED` + 退出码 3**（替掉假绿 `VIEWER_OK`）。
+
+**修复后实测（`--live --pick-duration-ms 3000 --seconds 25`，日志 `/tmp/piper-live-fix.log`）**
+```
+VIEWER_WINDOW_OPENED True
+VIEWER_FRAMES 2291
+VIEWER_OK        exit=0
+```
+抓取**进行中**窗口即存在：`WM_CLASS="MuJoCo"`，1280x720 @ (5,355)；
+中途截图（`/tmp/mujoco_live_mid.png`）均值亮度 **54.5**、唯一色 **3593**、中央区唯一色 **2826** ⇒ 真实渲染。
+⇒ **"边抓边看"成立**（窗口先开、抓取期间实时镜像；realtime 时全长 ≈92 秒，可按需用 `--pick-duration-ms` 缩短）。
+
+**回归**：静态路径行为不变（`--seconds 120`：3.79 秒出窗、持窗后正常关闭、exit 0）。
