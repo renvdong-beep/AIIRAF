@@ -38,6 +38,7 @@ PROTO_FILES=(
   "${PROTO_ROOT}/iraf/v1/skill.proto"
   "${PROTO_ROOT}/iraf/v1/runtime.proto"
   "${PROTO_ROOT}/iraf/v1/events.proto"
+  "${PROTO_ROOT}/iraf/v1/provider.proto"
 )
 for item in "${PROTO_FILES[@]}"; do
   [ -f "${item}" ] || { err "proto 契约不存在：${item}（契约是唯一事实来源，缺一不可）"; exit 1; }
@@ -64,6 +65,8 @@ GENERATED=(
   "iraf/v1/runtime_pb2_grpc.py"
   "iraf/v1/events_pb2.py"
   "iraf/v1/events_pb2_grpc.py"
+  "iraf/v1/provider_pb2.py"
+  "iraf/v1/provider_pb2_grpc.py"
 )
 for item in "${GENERATED[@]}"; do
   [ -f "${OUT_DIR}/${item}" ] || { err "生成物缺失：${item}"; exit 2; }
@@ -75,11 +78,14 @@ if ! PYTHONPATH="${OUT_DIR}" "${PYTHON}" - <<'PYCHECK'
 import iraf.v1.runtime_pb2_grpc as rg
 import iraf.v1.events_pb2_grpc as eg
 import iraf.v1.skill_pb2 as sk
+import iraf.v1.provider_pb2_grpc as pg
 names = [n for n in dir(rg) if n.endswith("Stub")]
 services = [n for n in dir(eg) if n.endswith("Stub")]
 assert "SkillRuntimeServiceStub" in names, names
 assert "EventServiceStub" in services, services
 assert sk.SkillState.SKILL_STATE_RUNNING == 3, sk.SkillState.SKILL_STATE_RUNNING
+providers = [n for n in dir(pg) if n.endswith("Stub")]
+assert "CapabilityProviderServiceStub" in providers, providers
 print("[gen-proto] import 自检通过：%s | %s" % (names, services))
 PYCHECK
 then
