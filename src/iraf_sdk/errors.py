@@ -140,7 +140,7 @@ class Diagnosis:
 
 
 # ---------------------------------------------------------------------------
-# 错误码表：35 个码 = IDL §5 表中的 9 个（其中 7 个实现已落地）+ API 目录 1 个
+# 错误码表：36 个码 = IDL §5 表中的 9 个（其中 7 个实现已落地）+ API 目录 1 个
 # + 实现已抛出但表格未收录的 18 个（含步骤 16 四足适配器新增的 9 个）
 # + 跨机 Capability Provider 新增的 7 个（2026-10-16，provider.proto）。
 # 顺序与 IDL §5 表一致，便于人工比对。
@@ -585,6 +585,19 @@ ERROR_SPECS: Tuple[ErrorSpec, ...] = (
         retry_policy_zh="否；须补实现或修正能力声明",
         provenance=PROVENANCE_CODE_ONLY,
         emitter=("src/iraf_adapters/remote/provider_service.py:51",),
+    ),
+    ErrorSpec(
+        code="IRAF-PROVIDER-INVENTORY-UNAVAILABLE",
+        summary_zh="远端 Provider 未提供运行时清单，拒绝用本地假清单放行",
+        suggestion_zh=(
+            "运行时清单（safety.estop / manipulation.target_visible / mode）是策略前置条件的求值依据，"
+            "必须来自被控对象。请检查远端 Provider 是否实现了 runtime_inventory 且 Health 能返回它；"
+            "**不要**在客户端补一份本地清单绕过 —— 那等于用猜的状态放行物理动作。"
+        ),
+        retryable=False,
+        retry_policy_zh="否；须先修远端清单",
+        provenance=PROVENANCE_CODE_ONLY,
+        emitter=("src/iraf_adapters/remote/provider_backend.py:90",),
     ),
     ErrorSpec(
         code="IRAF-PROVIDER-REJECTED",
