@@ -266,12 +266,20 @@ def build_servicer_class(provider_pb2, provider_pb2_grpc, skill_pb2):
         # ---------- RPC ----------
         def Health(self, request, context):
             import grpc as _grpc
+            from google.protobuf.json_format import ParseDict
             try:
                 self._auth(context, ("task.read",))
             except CapabilityRejected as exc:
                 context.abort(_grpc.StatusCode.UNAUTHENTICATED, str(exc))
             disp = self._display_state or {}
-            return provider_pb2.ProviderHealthResponse(
+            inventory = {}
+            try:
+                getter = getattr(self._backend, "runtime_inventory", None)
+                if callable(getter):
+                    inventory = getter() or {}
+            except Exception as exc:  # noqa: BLE001 如实上报清单不可用，不假装有清单
+                inventory = {"inventory_error": "%s: %s" % (type(exc).__name__, exc)}
+            resp = provider_pb2.ProviderHealthResponse(
                 ready=True,
                 simulation=True,                      # x86 侧一律仿真（铁律 1.7）
                 backend=self._provider_id,
@@ -281,6 +289,9 @@ def build_servicer_class(provider_pb2, provider_pb2_grpc, skill_pb2):
                 window_opened=bool(disp.get("window_opened")),
                 detail=str(disp.get("detail") or ""),
             )
+            if inventory:
+                ParseDict(inventory, resp.inventory)
+            return resp
 
         def Invoke(self, request, context):
             from google.protobuf.json_format import MessageToDict, ParseDict

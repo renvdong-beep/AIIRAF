@@ -52,6 +52,10 @@ message ProviderHealthResponse {
   string display_mode = 7;                       // interactive_viewer | offscreen_frames | unavailable
   bool window_opened = 8;                        // 显示通道是否真的建了窗口（禁止假绿）
   string detail = 9;
+  // 运行时清单（`backend.runtime_inventory()` 的原样结构，如 safety.estop / manipulation.target_visible / mode）。
+  // **必须跨机取回**：策略前置条件就是拿它求值的（`iraf_core/runtime.py:93`），
+  // 板上若用本地假清单，就等于绕过前置条件判定。
+  google.protobuf.Struct inventory = 10;
 }
 service CapabilityProviderService {
   rpc Health(ProviderHealthRequest) returns (ProviderHealthResponse);

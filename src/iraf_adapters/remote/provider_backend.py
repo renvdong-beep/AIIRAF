@@ -76,16 +76,29 @@ class RemoteProviderBackend:
 
     # ---------- 运行时清单（可发现性） ----------
     def runtime_inventory(self) -> Dict[str, Any]:
-        return {
-            "backend": "remote-provider",
-            "endpoint": self.endpoint,
-            "provider": self._provider_hint,
-            "simulation": True,          # 跨机 Provider 是仿真域；不得表述为真机能力
-            "note": "能力在网络另一端的仿真 Provider 上执行；显示在那边",
-        }
+        """运行时清单**跨机取回**（不是本地静态说明）。
+
+        为什么必须跨机：`iraf_core/runtime.py:93` 拿这份清单去求值 skill 的 preconditions
+        （如 `safety.estop == false`、`manipulation.target_visible == true`）。
+        板上若用本地假清单，就等于用"猜的状态"给物理动作放行 —— 那是静默绕过前置条件。
+        取不到就显式失败，不放行。
+        """
+        health = self.health()
+        inventory = dict(health.get("inventory") or {})
+        if not inventory:
+            raise RemoteProviderError(
+                "IRAF-PROVIDER-INVENTORY-UNAVAILABLE",
+                "远端 Provider 未提供运行时清单；拒绝用本地假清单放行物理动作")
+        inventory.setdefault("mode", "simulation")
+        inventory["backend"] = "remote-provider"
+        inventory["endpoint"] = self.endpoint
+        inventory["provider"] = self._provider_hint
+        inventory["simulation"] = True   # 跨机 Provider 是仿真域；不得表述为真机能力
+        return inventory
 
     def health(self) -> Dict[str, Any]:
         """探活（只读）。返回远端 Provider 的能力清单与显示事实。"""
+        from google.protobuf.json_format import MessageToDict
         stub, channel = self._open()
         try:
             from iraf.v1 import provider_pb2
@@ -101,6 +114,8 @@ class RemoteProviderBackend:
                 "window_opened": bool(resp.window_opened),
                 "fencing_token": int(resp.fencing_token),
                 "detail": resp.detail,
+                "inventory": (MessageToDict(resp.inventory)
+                              if resp.HasField("inventory") else {}),
             }
         finally:
             channel.close()
