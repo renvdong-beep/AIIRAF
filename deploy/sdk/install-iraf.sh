@@ -74,7 +74,7 @@ while [ "$#" -gt 0 ]; do
     -h|--help) usage; exit 0 ;;
     -n|--dry-run) DRY_RUN="1"; PASSTHROUGH+=("$1") ;;
     --allow-unverified|--rehearsal|--json) PASSTHROUGH+=("$1") ;;
-    --profile|--root|--sdk-wheel|--runtime-bundle|--wheelhouse|--python|--run-user|--repo-root|--stubs-dir)
+    --profile|--root|--sdk-wheel|--runtime-bundle|--wheelhouse|--python|--run-user|--repo-root|--stubs-dir|--env-set)
       [ "$#" -ge 2 ] || { err "$1 缺少取值"; exit 1; }
       PASSTHROUGH+=("$1" "$2"); shift ;;
     *) err "无法识别的参数：$1（用 --help 查看用法）"; exit 1 ;;

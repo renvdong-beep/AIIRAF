@@ -300,7 +300,9 @@ class InstallActionTest(unittest.TestCase):
 
     def _install(self, **overrides):
         kwargs = dict(sdk_wheel=self.wheel, wheelhouse=self.art / "wheelhouse",
-                      allow_unverified=True, rehearsal=True)
+                      allow_unverified=True, rehearsal=True,
+                      # edge-intel 的装配单模板要求部署期给值（就像真实部署那样）
+                      env_values={"PROVIDER_ENDPOINT": "PROBE-HOST:50052"})
         kwargs.update(overrides)
         return lib.apply_install(self.effective, self.root, **kwargs)
 
@@ -339,7 +341,8 @@ class InstallActionTest(unittest.TestCase):
     def test_rehearsal_refuses_real_root(self):
         with self.assertRaises(lib.InstallError) as ctx:
             lib.apply_install(self.effective, Path("/"), sdk_wheel=self.wheel,
-                              allow_unverified=True, rehearsal=True, dry_run=True)
+                              allow_unverified=True, rehearsal=True, dry_run=True,
+                              env_values={"PROVIDER_ENDPOINT": "PROBE-HOST:50052"})
         self.assertEqual(ctx.exception.code, lib.EXIT_USAGE)
         self.assertIn("真实根", str(ctx.exception))
 
@@ -537,13 +540,19 @@ class InstallActionTest(unittest.TestCase):
         record = lib.read_record(self.effective, self._version_dir())
         paths = [item["path"] for item in record["files"]]
         self.assertIn("models/demo-pick-scene.xml", paths)
-        # env 里的 IRAF_BACKEND_CONFIG 被填上且是合法 JSON，model_path 指向版本目录内的场景
+        # env 里的 IRAF_BACKEND_CONFIG 必须是合法 JSON。
+        # ⚠ 语义变更（2026-10-16）：edge-intel 现在声明了 env_template ⇒ 它是**远端 Provider 档**
+        #（板上跑 TaskFlow/Skill/Policy，能力由 x86 仿真 Provider 执行；板上不装仿真），
+        # 所以它的 BACKEND_CONFIG 是"跨机端点"形态，而**不是**场景配置；
+        # "场景 → BACKEND_CONFIG" 的覆盖属于仿真档角色（single-ubuntu2204）。
         env_text = Path(plan["env_file"]).read_text(encoding="utf-8")
         line = [l for l in env_text.splitlines() if l.startswith("IRAF_BACKEND_CONFIG=")][0]
         config = json.loads(line.split("=", 1)[1])
-        self.assertEqual(config["target_id"] if "target_id" in config else config["manipulation"]["targets"].popitem()[0],
-                         "box_01")
-        self.assertIn(str(self._version_dir() / "models"), config["model_path"])
+        self.assertIn("endpoint", config, "edge-intel 的 BACKEND_CONFIG 必须是跨机形态")
+        self.assertEqual(config.get("token_env"), "IRAF_PROVIDER_TOKEN")
+        self.assertNotIn("manipulation", config, "板上不装仿真：不得把场景配置写进边缘档 env")
+        # 边缘档不装仿真 ⇒ env 里不应出现 model_path（场景不进这块板的运行配置）
+        self.assertNotIn("model_path", config)
 
     def test_sim_scene_missing_report_is_rejected(self):
         """声明了场景但缺同名 .json 旁挂报告 ⇒ 安装失败（不许产出半套配置）。"""

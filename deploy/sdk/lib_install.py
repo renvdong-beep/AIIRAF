@@ -140,7 +140,7 @@ def effective_layout(repo_root: Path, profile_id: str) -> dict:
     effective["target_glibc_min"] = target.get("glibc_min")
     for key in ("min_free_mb", "python_bin", "run_user", "robot_profile", "safety_policy",
                 "backend_config", "runtime_subject", "runtime_dependencies", "python_stubs_dir",
-                "sim_scene"):
+                "sim_scene", "env_template"):
         # **角色级优先**：仿真档声明仿真机型/仿真策略，真机档留空待运控域 —— 不能让真机档继承仿真档的
         # safety_policy（那会把 simulation_only=true 的策略带到真机路径上）。
         if key in profile:
@@ -589,7 +589,11 @@ ENV_FILE_HEADER = """# IRAF 运行期环境（由 install-iraf.sh 按 config/ins
 
 #: 渲染占位符时使用的 token → 取值函数（机器相关的值一律来自声明的生效值）
 UNIT_TOKENS = ("PROFILE", "VERSION", "PREFIX", "CURRENT_LINK", "PYTHON_BIN", "CONFIG_DIR",
-               "LOG_DIR", "DATA_DIR", "RUN_USER", "ENV_FILE")
+               "LOG_DIR", "DATA_DIR", "RUN_USER", "ENV_FILE",
+               # 装配单模板（声明的 env_template，如 edge-intel）额外允许的占位符：
+               # 路径/身份来自声明生效值，部署期值（如 @PROVIDER_ENDPOINT@）必须由 --env-set 显式给。
+               "SAFETY_POLICY", "VERSION_DIR", "RUNTIME_SUBJECT",
+               "PROVIDER_ENDPOINT", "INTENT_MODEL_URL", "INTENT_MODEL_NAME")
 
 
 def _unit_tokens(effective: dict, root: Path, *, python_bin: str, run_user: str) -> dict:
@@ -616,12 +620,38 @@ def render_template(template: Path, tokens: dict) -> str:
         text = text.replace("@%s@" % key, str(value))
     leftovers = sorted(set(re.findall(r"@([A-Z_]+)@", text)))
     if leftovers:
-        raise InstallError("模板 %s 含未知占位符 %s（已知：%s）"
-                           % (template, leftovers, list(UNIT_TOKENS)), EXIT_DECLARATION)
+        raise InstallError(
+            "模板 %s 含未知占位符 %s（渲染后仍残留）：要么没登记进 UNIT_TOKENS，要么部署期没给取值"
+            "（后者用 --env-set KEY=VALUE 补上；注释里的 @大写占位符@ 也算）。已登记 token：%s"
+            % (template, leftovers, list(UNIT_TOKENS)), EXIT_DECLARATION)
     return text
 
 
-def render_env_file(effective: dict, root: Path, tokens: dict) -> str:
+def render_env_file(effective: dict, root: Path, tokens: dict, *,
+                    repo_root=None, env_values=None) -> str:
+    """渲染运行装配单。
+
+    两种来源（**同一事实只允许出现一处**）：
+      · 角色声明了 `env_template` ⇒ 用模板渲染（占位符化，适合不同角色的装配形态差异，
+        如 edge-intel 的远端 Provider 配置）；部署期值只能由 `env_values` 显式传入，
+        缺必需占位符时 `render_template` 会显式失败（不写半个文件、不猜默认值）。
+      · 未声明 ⇒ 沿用程序化生成（single-ubuntu2204 / sim-x86 走这条）。
+    """
+    template_rel = str(effective.get("env_template") or "").strip()
+    if template_rel:
+        if repo_root is None:
+            raise InstallError("角色 %s 声明了 env_template 但未提供 repo_root，无法定位模板 %s"
+                               % (effective.get("id"), template_rel), EXIT_DECLARATION)
+        merged = dict(tokens)
+        merged.update({
+            "PROFILE": str(effective.get("robot_profile") or ""),
+            "SAFETY_POLICY": str(effective.get("safety_policy") or ""),
+            "VERSION_DIR": "%s/%s" % (tokens["PREFIX"], tokens["CURRENT_LINK"]),
+            "RUNTIME_SUBJECT": str(effective.get("runtime_subject") or "iraf-runtime"),
+        })
+        merged.update({str(k).strip().upper(): str(v) for k, v in dict(env_values or {}).items()})
+        return render_template(Path(repo_root) / template_rel, merged)
+
     lines = [ENV_FILE_HEADER % {"profile": effective["id"], "version": effective["version"],
                                 "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}]
     prefix_current = "%s/%s" % (tokens["PREFIX"], tokens["CURRENT_LINK"])
@@ -769,7 +799,8 @@ def precheck(effective: dict, root: Path, *, allow_unverified: bool, wheelhouse:
 def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundle: Path | None = None,
                   wheelhouse: Path | None = None, python_exe: str | None = None,
                   allow_unverified: bool = False, dry_run: bool = False,
-                  run_user: str | None = None, rehearsal: bool = False) -> dict:
+                  run_user: str | None = None, rehearsal: bool = False,
+                  env_values: dict | None = None) -> dict:
     """按声明安装；**任何一步失败即回滚本次创建的内容**（只回滚本次，不碰既有安装）。"""
     import getpass
     import tarfile
@@ -967,7 +998,9 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
 
         env_path = config_dir / ("%s.env" % effective["id"])
         _mkdir(config_dir)
-        env_path.write_text(render_env_file(effective, root, tokens), encoding="utf-8")
+        env_path.write_text(render_env_file(effective, root, tokens,
+                                            repo_root=effective.get("_repo_root"),
+                                            env_values=env_values), encoding="utf-8")
         created_files.append(env_path)
         plan["env_file"] = str(env_path)
 
@@ -1122,6 +1155,9 @@ def main(argv=None) -> int:
                        help="覆盖声明的 python_stubs_dir（演练或非常规交付用；默认按声明）")
     p_ins.add_argument("--rehearsal", action="store_true",
                        help="沙箱演练：放宽目标端事实检查（架构/OS/Python 标签/glibc）；必须配 --root 沙箱")
+    p_ins.add_argument("--env-set", action="append", default=[], metavar="KEY=VALUE",
+                       help="装配单模板的部署期取值（可多次，如 --env-set PROVIDER_ENDPOINT=host:50052）；"
+                            "缺必需占位符即失败，不猜默认值")
     p_ins.add_argument("--dry-run", action="store_true", help="只跑预检并打印计划，不写任何文件")
     p_ins.add_argument("--json", action="store_true")
 
@@ -1150,11 +1186,18 @@ def main(argv=None) -> int:
         if args.command == "install":
             if args.stubs_dir is not None:
                 effective["python_stubs_dir"] = str(args.stubs_dir)
+            env_values = {}
+            for item in (args.env_set or []):
+                if "=" not in item:
+                    print("[install][错误] --env-set 需要 KEY=VALUE 形式，实际：%r" % item, file=sys.stderr)
+                    return EXIT_USAGE
+                key, _, value = item.partition("=")
+                env_values[key.strip().upper()] = value.strip()
             plan = apply_install(effective, args.root, sdk_wheel=args.sdk_wheel,
                                  runtime_bundle=args.runtime_bundle, wheelhouse=args.wheelhouse,
                                  python_exe=args.python_exe, allow_unverified=args.allow_unverified,
                                  dry_run=args.dry_run, run_user=args.run_user,
-                                 rehearsal=args.rehearsal)
+                                 rehearsal=args.rehearsal, env_values=env_values)
             if args.json:
                 _print_json(plan)
             elif args.dry_run:
