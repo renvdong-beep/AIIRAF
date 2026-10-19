@@ -52,8 +52,21 @@ S3  aarch64 两域   edge-intel + edge-motion（分机 → 各自默认路径；
 - 文档：`docs/install-shapes.md`（三档的适用场景、命令、验收判据、失败退码）。
 - 判据：三档 dry-run 全绿；文档里的每条命令都保证真跑过（AGENTS 6.4：未实现的不得写成可用）。
 
-## 硬约束（不改）
+## 进度（2026-10-19）
 
+| 批次 | 内容 | 提交 | 状态 |
+|---|---|---|---|
+| 1 | 仿真依赖声明 + `--target` 按板卡声明推断 | 227e69d、7e4d563 | 完成 |
+| 2 | 单元资源限额 CPUQuota/MemoryMax（6.11） | a7d9700 | 完成 |
+| 3 | `--values` 取值文件 + 缺值定位到模板行号 | 86b1dfe | 完成 |
+| 4 | `install_shape.sh` 四档入口 + `docs/install-shapes.md` | （见 git log） | 完成 |
+
+仍未验证（见 docs/install-shapes.md 的"已验证/未验证"表）：
+- `install_shape.sh --apply` 未跑过（真装走的是 board_deploy.sh 手工路径）；
+- `x86-all` 档未在本机跑（会与现有开发 venv/systemd --user 冲突，须单独安排）；
+- `motion-split` 未跑（没有第二块可达的运控域机器）。
+
+## 硬约束（不改）
 1. 仿真只装 x86（AGENTS §0.1）：任何 aarch64 角色 `<forbidden_components: [adapters_sim]>` 保持。
 2. 两域同机不得合并安全边界（6.11）：独立单元 + 独立路径（G2 已做）+ 独立限额（批次 2）。
 3. 未实测即 `unverified`；`--allow-unverified` 只能用于探索，不得当验收证据。
