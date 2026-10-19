@@ -130,6 +130,11 @@ command -v sshpass >/dev/null 2>&1 || { err "找不到 sshpass"; exit 1; }
 
 # 本地预检：角色的生效布局 + 制品存在性（**目标端事实**由远端 install-iraf.sh 再查一遍）
 LAYOUT="$("${PYTHON}" "${SCRIPT_DIR}/lib_install.py" layout --profile "${PROFILE}")" || exit 2
+# 目标端解释器：**必须用声明里的 python_bin**（2026-10-19 修，实测踩到）：
+# 板上系统 python3 可能是 3.8.10，而本角色的运行时与 wheelhouse 是 cp310 ⇒ 用 python3 装
+# pyyaml 会报 `No matching distribution found`（"from versions: none"），看起来像 wheelhouse 坏了。
+REMOTE_PYTHON="$("${PYTHON}" -c "import json,sys;print(json.loads(sys.argv[1]).get('python_bin') or 'python3')" "${LAYOUT}")"
+[ "${REMOTE_PYTHON}" = "unverified" ] && REMOTE_PYTHON="python3"
 need_wheelhouse="$("${PYTHON}" -c "import json,sys;print(json.loads(sys.argv[1])['dependency_source']['kind'])" "${LAYOUT}")"
 if [ "${UNINSTALL}" != "1" ]; then   # 卸载不需要制品，跳过制品预检
 [ -f "${SDK_WHEEL}" ] || { err "SDK wheel 不存在：${SDK_WHEEL}"; exit 2; }
@@ -171,7 +176,7 @@ log "制品：wheel=$(basename "${SDK_WHEEL}")"$'\n'"      runtime=$(basename "$
 
 SDK_WHEEL_REMOTE="${REMOTE_DIR}/artifacts/$(basename "${SDK_WHEEL}")"
 RUNTIME_REMOTE="${RUNTIME_BUNDLE:+${REMOTE_DIR}/artifacts/$(basename "${RUNTIME_BUNDLE}")}"
-INSTALL_CMD="bash ${REMOTE_SDK_DIR}/install-iraf.sh --profile ${PROFILE} --sdk-wheel ${SDK_WHEEL_REMOTE}"
+INSTALL_CMD="PYTHON=${REMOTE_PYTHON} bash ${REMOTE_SDK_DIR}/install-iraf.sh --profile ${PROFILE} --sdk-wheel ${SDK_WHEEL_REMOTE}"
 [ -n "${RUNTIME_REMOTE}" ] && INSTALL_CMD="${INSTALL_CMD} --runtime-bundle ${RUNTIME_REMOTE}"
 [ -n "${WHEELHOUSE}" ] && INSTALL_CMD="${INSTALL_CMD} --wheelhouse ${REMOTE_DIR}/wheelhouse"
 [ "${ALLOW_UNVERIFIED}" = "1" ] && INSTALL_CMD="${INSTALL_CMD} --allow-unverified"
@@ -180,8 +185,8 @@ for _kv in "${ENV_SETS[@]:-}"; do
   [ -n "${_kv}" ] && INSTALL_CMD="${INSTALL_CMD} --env-set ${_kv}"
 done
 [ "${REHEARSAL}" = "1" ] && INSTALL_CMD="${INSTALL_CMD} --rehearsal --root ${REMOTE_ROOT}"
-RESIDUE_CMD="bash ${REMOTE_SDK_DIR}/verify_residue.sh --profile ${PROFILE} --json"
-UNINSTALL_CMD="bash ${REMOTE_SDK_DIR}/uninstall-iraf.sh --profile ${PROFILE}"
+RESIDUE_CMD="PYTHON=${REMOTE_PYTHON} bash ${REMOTE_SDK_DIR}/verify_residue.sh --profile ${PROFILE} --json"
+UNINSTALL_CMD="PYTHON=${REMOTE_PYTHON} bash ${REMOTE_SDK_DIR}/uninstall-iraf.sh --profile ${PROFILE}"
 FORCE_CLEAN_ARG=""; [ "${FORCE_CLEAN}" = "1" ] && FORCE_CLEAN_ARG=" --force-clean"
 [ -n "${REMOTE_ROOT}" ] && { RESIDUE_CMD="${RESIDUE_CMD} --root ${REMOTE_ROOT}"; UNINSTALL_CMD="${UNINSTALL_CMD} --root ${REMOTE_ROOT}"; }
 
@@ -268,6 +273,12 @@ copy "${SCRIPT_DIR}/install-iraf.sh" "${SCRIPT_DIR}/lib_install.py" "${SCRIPT_DI
      "${SCRIPT_DIR}/uninstall-iraf.sh" "${SCRIPT_DIR}/rehearse_install_chain.sh" \
      "${TARGET}:${REMOTE_SDK_DIR}/" || { err "脚本传输失败"; exit 3; }
 copy "${SCRIPT_DIR}/units/"*.tmpl "${TARGET}:${REMOTE_SDK_DIR}/units/" || { err "单元模板传输失败"; exit 3; }
+# 运行装配单模板（2026-10-19 补）：edge-intel / edge-linux-standalone 的 env_template 指向
+# deploy/sdk/env/*.tmpl。原先只推 units/，目标端渲染时报"模板不存在"，安装回滚 —— 实测踩到。
+if compgen -G "${SCRIPT_DIR}/env/*.tmpl" >/dev/null; then
+  remote "mkdir -p ${REMOTE_SDK_DIR}/env" || { err "远端 env 模板目录创建失败"; exit 3; }
+  copy "${SCRIPT_DIR}/env/"*.tmpl "${TARGET}:${REMOTE_SDK_DIR}/env/" || { err "装配单模板传输失败"; exit 3; }
+fi
 copy "${REPO_ROOT}/scripts/install_profile_check.py" "${TARGET}:${REMOTE_DIR}/scripts/" || { err "校验器传输失败"; exit 3; }
 copy "${REPO_ROOT}/config/install/"* "${TARGET}:${REMOTE_DIR}/config/install/" || { err "声明文件传输失败"; exit 3; }
 copy "${REPO_ROOT}/pyproject.toml" "${TARGET}:${REMOTE_DIR}/" || { err "pyproject 传输失败"; exit 3; }
@@ -314,15 +325,15 @@ log "④ 远端安装（目标端自行预检；失败会回滚）"
 # 卸载时随 <remote>/pylib 一起删掉（与"干净清除"的边界一致）。
 log "④a 目标端安装器依赖（--no-index --target <remote>/pylib；不写系统 site-packages）"
 set +e
-remote "python3 -m pip install --disable-pip-version-check --no-index --find-links ${REMOTE_DIR}/wheelhouse --target ${REMOTE_DIR}/pylib pyyaml jsonschema >/dev/null 2>&1 || pip3 install --disable-pip-version-check --no-index --find-links ${REMOTE_DIR}/wheelhouse --target ${REMOTE_DIR}/pylib pyyaml jsonschema" 2>&1 | tee "${REPO_ROOT}/build/board/${IRAF_BOARD_NAME:-board}/deploy-tooling-deps.log" | tail -3
+remote "${REMOTE_PYTHON} -m pip install --disable-pip-version-check --no-index --find-links ${REMOTE_DIR}/wheelhouse --target ${REMOTE_DIR}/pylib pyyaml jsonschema >/dev/null 2>&1" 2>&1 | tee "${REPO_ROOT}/build/board/${IRAF_BOARD_NAME:-board}/deploy-tooling-deps.log" | tail -3
 rc_tooling=${PIPESTATUS[0]}
 set -e
 if [ "${rc_tooling}" -ne 0 ]; then
   err "目标端安装器依赖安装失败（退出码 ${rc_tooling}）：见 build/board/.../deploy-tooling-deps.log"
   exit 3
 fi
-remote "PYTHONPATH=${REMOTE_DIR}/pylib python3 -c 'import yaml, jsonschema; print(\"tooling-deps-ok\")'" \
-  || { err "目标端 PYTHONPATH 自检失败：yaml/jsonschema 不可导入"; exit 3; }
+remote "PYTHONPATH=${REMOTE_DIR}/pylib ${REMOTE_PYTHON} -c 'import yaml, jsonschema; print(\"tooling-deps-ok\")'" \
+  || { err "目标端 PYTHONPATH 自检失败：yaml/jsonschema 不可导入（解释器=${REMOTE_PYTHON}）"; exit 3; }
 log "  ✓ 目标端安装器依赖就绪（pylib + PYTHONPATH 自检通过）"
 
 set +e
