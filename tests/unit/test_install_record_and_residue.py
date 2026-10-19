@@ -547,7 +547,13 @@ class InstallActionTest(unittest.TestCase):
         # "场景 → BACKEND_CONFIG" 的覆盖属于仿真档角色（single-ubuntu2204）。
         env_text = Path(plan["env_file"]).read_text(encoding="utf-8")
         line = [l for l in env_text.splitlines() if l.startswith("IRAF_BACKEND_CONFIG=")][0]
-        config = json.loads(line.split("=", 1)[1])
+        raw_value = line.split("=", 1)[1]
+        # 2026-10-19：env 模板要求 JSON 值用**单引号**包住 —— 该文件既被 shell source 也被
+        # systemd EnvironmentFile= 解析，两者都会剥掉双引号，裸 JSON 会变成 {endpoint:…} 非法值
+        # （板卡实测 JSONDecodeError）。这里既断言引号在，又按解析后的值校验内容。
+        self.assertTrue(raw_value.startswith("'") and raw_value.endswith("'"),
+                        "IRAF_BACKEND_CONFIG 的 JSON 必须被单引号包住（否则 shell/systemd 会剥引号）")
+        config = json.loads(raw_value[1:-1])
         self.assertIn("endpoint", config, "edge-intel 的 BACKEND_CONFIG 必须是跨机形态")
         self.assertEqual(config.get("token_env"), "IRAF_PROVIDER_TOKEN")
         self.assertNotIn("manipulation", config, "板上不装仿真：不得把场景配置写进边缘档 env")

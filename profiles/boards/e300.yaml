@@ -4,7 +4,7 @@
 # 依据：docs/iraf-multiplatform-sdk-design.md §6、AGENTS.md 铁律 3.2（BoardProfile 必须声明
 # OS、架构、能力、适配器、镜像摘要和测试证据；未知值必须写 unverified，不能猜测）。
 #
-# 2026-10-19 实测回填（板 10.203.247.130，只读侦察；命令与原文见
+# 2026-10-19 实测回填（E300 板，只读侦察；命令与原文见
 # docs/debug/2026-10-19-board-130-e300-recon.md）：
 #   /etc/iaros-version: SUITE_VERSION=R1.2.1 / VM_TYPE=P / SUBPRODUCT=Linux / COMPONENT_VERSION=6.12.43
 #   /etc/back.os-release: openEuler 24.03 (LTS-SP1)；systemd 255 (v255-34.oe2403sp1)
@@ -13,7 +13,7 @@
 #   ldd --version: glibc 2.38
 #   /opt/ros: humble（ROS 2 Humble）
 #   容器：无 docker / 无 podman（dnf 仅有 docker-engine 2:18.09.0、docker-compose 1.22.0(v1)、podman 4.9.4）
-#   free -m: 3979 MB；df /: 16G，用 5.0G，可用 11G
+#   free -m: 3979 MB；df /: 16G，用 5.0G，可用 11G（地址不入库，见铁律 6.10）
 #   AgentOS：未安装（无 intewell-agent-cli、无 /etc/agentos、无 agentos 容器）
 #
 # 仍保持 unverified 的项与理由：
@@ -46,7 +46,10 @@ spec:
     arch: aarch64
     kernel: "6.12.43-rt"
     python_tag: cp311
-    platform_tag: manylinux_2_28_aarch64
+    # platform_tag 仍 unverified：仓库规则要求"在板上装过 wheel 后由 pip 标签实测回填"。
+    # 本次两角色装机吃的 wheelhouse 全是 manylinux_2_28_aarch64 且安装成功，但尚未把
+    # `pip debug` 的标签清单落成证据文件 ⇒ 按铁律 3.2 保持 unverified（不拿推断当实测）。
+    platform_tag: unverified
     glibc_min: "2.38"
   runtime:
     # 实测无 docker / 无 podman ⇒ oci 为"已确认不存在"，这是实测断言而非猜测。

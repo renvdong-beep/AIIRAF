@@ -569,7 +569,9 @@ class BoardProfileContractTest(unittest.TestCase):
         self.assertEqual(result["exit_code"], 2, "未实测的板卡声明必须返回 2")
         summary = lbb.board_gate_summary(result)
         self.assertFalse(summary["verified"])
-        self.assertGreaterEqual(len(summary["unverified_fields"]), 15)
+        # 2026-10-19：E300 已实测回填 os/kernel/python_tag/glibc/runtime/limits ⇒ 待办降到 8 条。
+        # 这里只断言"仍有未验证项且被如实列出"，具体条数由 test_profile_check_board 精确管。
+        self.assertGreaterEqual(len(summary["unverified_fields"]), 8)
         self.assertTrue(summary["reasons"])
         self.assertNotIn("board_path", summary, "摘要里不得带本机绝对路径（产物门禁）")
 

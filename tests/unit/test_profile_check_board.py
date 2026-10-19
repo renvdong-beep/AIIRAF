@@ -33,22 +33,16 @@ BOARDS_DIR = REPO_ROOT / "profiles" / "boards"
 E300_PATH = BOARDS_DIR / "e300.yaml"
 FIREFLY_PATH = BOARDS_DIR / "firefly_rk3588.yaml"
 
-#: e300.yaml 当前（板卡未实测）应当被拒的字段全集（路径以 spec 为根）。
+#: e300.yaml 当前应当被拒的字段全集（路径以 spec 为根）。
+#: 2026-10-19：E300 板已实测回填 os/kernel/python_tag/glibc/runtime/limits ⇒ 这些字段不再是
+#: unverified（"采集到了就写"，否则等于逼人撒谎）；platform_tag 按仓库规则仍须 unverified
+#: （未把板上 pip 标签清单落成证据）。agentos_bridge/npu/master 因未采集保持 unverified。
 E300_EXPECTED_UNVERIFIED = [
     "status",
-    "target.os",
-    "target.kernel",
-    "target.python_tag",
     "target.platform_tag",
-    "target.glibc_min",
-    "runtime.oci",
-    "runtime.ros2",
-    "runtime.systemd",
     "adapters.agentos_bridge",
     "adapters.npu",
     "adapters.master",
-    "limits.ram_mb",
-    "limits.disk_mb",
     "image.ref",
     "image.digest",
     "capabilities",
@@ -164,7 +158,7 @@ class UnverifiedRejectionTests(BoardCheckTestBase):
         report = profile_check.check_board(E300_PATH)
         self.assertEqual(sorted(report["unverified_fields"]), sorted(E300_EXPECTED_UNVERIFIED))
         self.assertEqual(sorted(report["pending_fields"]), sorted(E300_EXPECTED_PENDING))
-        self.assertEqual(len(report["reasons"]), 19)
+        self.assertEqual(len(report["reasons"]), 10)
 
     def test_allow_unverified_passes_but_reports_verified_false(self):
         report = profile_check.check_board(E300_PATH, allow_unverified=True)
@@ -301,7 +295,8 @@ class CliContractTests(unittest.TestCase):
         self.assertFalse(report["verified"])
         self.assertEqual(report["field_scope"], "spec")
         self.assertIn("BOARD_PROFILE_CHECK_REJECTED_UNVERIFIED", completed.stderr)
-        self.assertIn("target.python_tag", completed.stderr)
+        # 2026-10-19：python_tag 已实测回填为 cp311 ⇒ 拒绝理由改由 platform_tag 等仍未知项给出。
+        self.assertIn("target.platform_tag", completed.stderr)
 
     def test_board_allowed_with_exit_code_0_and_verified_false(self):
         completed = self.run_cli("--board", "profiles/boards/e300.yaml", "--allow-unverified")
