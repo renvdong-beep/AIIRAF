@@ -65,6 +65,8 @@ kind: BoardProfile
 metadata:
   name: intewell_aros_lab
   version: 0.1.0
+  # 部署形态：本 profile 描述的是 Hyper 构型下的域（域划分/VM 事实来自签名 HyperProfile）。
+  deployment_form: hyper
   # ⚠ 待签名 HyperProfile/Release manifest 到位后回填正式构型名，并只从该清单读取 VM 数量/编号/角色映射。
   hyper_models:
     - unverified

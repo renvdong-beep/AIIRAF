@@ -337,7 +337,7 @@
           "required": [
             "name",
             "version",
-            "hyper_models"
+            "deployment_form"
           ],
           "properties": {
             "name": {
@@ -348,17 +348,67 @@
               "type": "string",
               "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
             },
+            "deployment_form": {
+              "enum": [
+                "hyper",
+                "standalone"
+              ],
+              "description": "部署形态（2026-10-19 新增）。hyper = 该 rootfs 跑在 Hypervisor 上，域划分/VM 事实只能来自签名 HyperProfile（铁律 6.10/6.11）；standalone = 单系统，一台 Linux 就是全部，**不存在** VM、域划分与 VM 级隔离。加这个字段的原因：原契约要求 hyper_models 至少一项，导致\"非 Hyper 板卡\"在声明层无法被诚实表达（只能编一个构型名，违反铁律 6.10）。"
+            },
             "hyper_models": {
               "type": "array",
-              "minItems": 1,
+              "minItems": 0,
               "uniqueItems": true,
               "items": {
                 "type": "string",
                 "minLength": 1
               },
-              "description": "本 profile 覆盖的正式 Hyper 构型名（铁律 6.10）。VM 数量、编号、IP、OS 与角色映射只能从签名 HyperProfile/Release manifest 读取，禁止在本文件硬编码。"
+              "description": "本 profile 覆盖的正式 Hyper 构型名（铁律 6.10）。VM 数量、编号、IP、OS 与角色映射只能从签名 HyperProfile/Release manifest 读取，禁止在本文件硬编码。standalone 形态必须为空数组（见 allOf）。"
             }
-          }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "deployment_form": {
+                    "const": "hyper"
+                  }
+                },
+                "required": [
+                  "deployment_form"
+                ]
+              },
+              "then": {
+                "required": [
+                  "hyper_models"
+                ],
+                "properties": {
+                  "hyper_models": {
+                    "minItems": 1
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "deployment_form": {
+                    "const": "standalone"
+                  }
+                },
+                "required": [
+                  "deployment_form"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "hyper_models": {
+                    "maxItems": 0
+                  }
+                }
+              }
+            }
+          ]
         },
         "spec": {
           "type": "object",

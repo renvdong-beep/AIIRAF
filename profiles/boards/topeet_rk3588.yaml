@@ -1,0 +1,88 @@
+# BoardProfile: topeet RK3588 边缘板（**非 Hyper 单系统**，2026-10-19 只读采集）
+#
+# 契约：config/sdk/package_matrix.schema.json 的 definitions.board_profile
+#       （必须整体提取后单独校验；2026-10-19 起多一个必填字段 metadata.deployment_form）。
+# 证据：build/board/rk3588-topeet/{collect.json, probe-status.tsv, raw/*.txt}（22 个探针全部 rc=0）
+#       采集脚本：scripts/board_collect.sh（只读；凭据从环境变量来；输出已脱敏）
+#       校验：PYTHONPATH=src python3 scripts/profile_check.py --board profiles/boards/topeet_rk3588.yaml
+#
+# ── 这台机器是什么（逐条有 raw 证据） ─────────────────────────────────────────
+# 身份       raw/identity.txt       Linux 5.10.198 #10 SMP … aarch64
+#                                  systemd-detect-virt = **none** ⇒ 运行在物理机上，不是来宾
+#            raw/ios_release.txt    Ubuntu 20.04.6 LTS（focal）
+# 无 Hyper   raw/domains.txt        只有 shm（没有任何 virtio 来宾域）
+#            raw/manifests.txt      空（无 HyperProfile / Release manifest）
+#            raw/iaros_version.txt  unverified（无 /etc/iaros-version）
+#            ⇒ **deployment_form: standalone**：一台 Linux 就是全部，不存在 VM 与域划分。
+#              因此本 profile **不能**用于任何 depends on VM 划分的验收（铁律 6.10/6.11）。
+# 运行时     raw/runtime.txt        /usr/bin/python3 = 3.8.10（pip 20.0.2）
+#                                   /usr/local/bin/python3.10 = 3.10.12（pip 23.0.1）← AgentOS 与 IRAF 都用它
+#                                   glibc 2.31；systemd 245；node v20.18.1；docker/containerd 均在
+# 资源       raw/resources.txt      8 核 / MemTotal 15949 MB（swap 0）/ 根 = /dev/mmcblk0p6 58G（余 9.3G，84%）
+#                                   ⚠ 磁盘余量偏紧：安装预检 min_free_mb=1024 能过，但不宜在这台机上堆镜像层
+# ROS2       raw/ros2.txt           /opt/ros/foxy 在场（**不是**认证基线 Humble）
+# AgentOS    raw/agentos_runtime.txt python -m agentos.api_server / 2×container_worker / mem_manager /
+#                                    /usr/local/bin/python3.10 -m agentos.host_worker
+#                                   /usr/local/bin/intewell-agent-cli dashboard --host 0.0.0.0 --port 9119
+#            raw/agentos_files.txt  /etc/agentos、/etc/intewell 存在；/root/.intewell 属 root（普通用户不可读）
+# IRAF 现状  raw/iraf_presence.txt  无 console scripts、无 systemd 单元 ⇒ 全新安装
+# 端口       raw/listen_ports.txt   50051 与 8765（IRAF 声明端口）均**未监听** ⇒ 无冲突
+#                                   （0.0.0.0:9119 dashboard / 0.0.0.0:8084 relay / 127.0.0.1:5432 等为 AgentOS 占用）
+# 平台健康   raw/health.txt + raw/load.txt  load 0.75/0.46/0.40（8 核）、CPU 96.6% 空闲、1 个僵尸
+#                                   ⇒ 平台空闲，装/卸期间不受高负载干扰
+# 出网       实测 curl https://mirrors.aliyun.com/pypi/simple/grpcio/ → HTTP 200，connect 0.060 s
+#            （交付形态仍走离线 wheelhouse，见 config/sdk/package_matrix.yaml 的 cp310 目标）
+#
+# ⚠ 认证档位：Ubuntu 20.04 **不在** AGENTS 6.7 的 22.04/Humble 认证基线 ⇒ 本板一切结论只能是
+#   "实验档 / 未认证"；status 保持 unverified（未取得目标端验收证据，铁律 4）。
+apiVersion: iraf.intewell.io/v1
+kind: BoardProfile
+metadata:
+  name: topeet_rk3588
+  version: 0.1.0
+  # 部署形态：单系统（无 Hypervisor）。hyper_models 必须为空数组（schema 的 allOf 会强制）。
+  deployment_form: standalone
+  hyper_models: []
+spec:
+  status: unverified
+  target:
+    os: "Ubuntu 20.04.6 LTS"
+    arch: aarch64
+    kernel: "5.10.198"
+    # IRAF 运行面用 /usr/local/bin/python3.10（3.10.12）⇒ cp310。系统 python3 是 3.8.10，装不了 cp310 轮。
+    python_tag: cp310
+    # 尚未在板上装过 aarch64 wheel ⇒ 不凭 glibc 2.31 反推 platform_tag（与 intewell_aros_lab 同口径）
+    platform_tag: unverified
+    glibc_min: "2.31"
+  runtime:
+    # docker/containerd 均在，docker socket 存在（普通用户探到 "permission denied" 即说明 daemon 在跑）
+    oci: available
+    # /opt/ros/foxy 在场（foxy ≠ 认证基线 Humble，记事实不改判）
+    ros2: available
+    systemd: available
+  adapters:
+    # AgentOS 常驻：host_worker（python3.10）+ api_server + container_worker + dashboard:9119
+    agentos_bridge: available
+    # /dev/dri 与 video* 节点在场，但未跑过任何推理 ⇒ 工具链在场 ≠ 能力可用
+    npu: unverified
+    # 单系统上没有现场总线主站声明，未实测
+    master: unverified
+  # ── 板级指纹（用途：防装错板/拿错 profile，**不是**构型结论）──
+  fingerprint:
+    # 单系统：没有来宾域（全等语义 ⇒ 空列表）
+    hyper_guests: []
+    cpu_cores: 8
+    kernel_cmdline_tokens:
+      - "root=/dev/mmcblk0p6"
+      - "storagemedia=emmc"
+  # 空数组 = 尚未声明任何 IRAF 能力；install 预检必须视为失败（schema 语义 + 铁律 3）
+  capabilities: []
+  limits:
+    ram_mb: 15949
+    disk_mb: 59392
+  image:
+    ref: unverified
+    digest: unverified
+  evidence:
+    owner: pending
+    acceptance_report: pending

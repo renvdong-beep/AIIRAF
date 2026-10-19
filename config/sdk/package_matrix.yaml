@@ -115,3 +115,52 @@ targets:
       - win32
       - win_amd64
       - macosx
+
+  # ── 第二条构建目标：cp310（2026-10-19 新增）────────────────────────────────────────
+  # 起因：拿到一块**非 Hyper** 的边缘 aarch64 板（RK3588 / Ubuntu 20.04.6），其可用解释器是
+  #   /usr/local/bin/python3.10 = 3.10.12（实测，见 build/board/rk3588-topeet/），ABI 标签 cp310，
+  #   与上面唯一的 cp311 目标不匹配 ⇒ 用 cp311 的 wheelhouse 会被 pip 与预检正确拒绝。
+  # 这不是"为某块板做特例"：凡是 python_tag 实测为 cp310 的边缘 aarch64 板都走本目标
+  #   （判据仍是"实测 python_tag + glibc + arch"，见 references/build-target-consolidation.md）。
+  # 与 cp311 的差异只有三类：
+  #   ① python_tag/platform_tag 的 cp 部分；
+  #   ② **不列仿真轮**（mujoco/glfw/pyopengl/pillow）—— 使用者口径：仿真只在 x86，板卡不装仿真；
+  #   ③ wheels 清单按边缘运行面真实 import 闭包裁剪：iraf_core(numpy/yaml/jsonschema) +
+  #      adapters_remote|grpc(grpcio/protobuf) + jsonschema→referencing→rpds-py。
+  - id: aarch64-manylinux_2_28-cp310
+    arch: aarch64
+    platform_tag: manylinux_2_28_aarch64
+    python_tag: cp310
+    pure_python:
+      - jsonschema
+      - pyyaml
+      - attrs
+      - jsonschema-specifications
+      - referencing
+      - typing-extensions
+    wheels:
+      - numpy
+      - grpcio
+      - protobuf
+      - pyyaml
+      - jsonschema
+      - attrs
+      - jsonschema-specifications
+      - referencing
+      - rpds-py
+      - typing-extensions
+    # 与 cp311 目标同一源（换源只改这一行 + declared_at）。
+    index_url: https://mirrors.aliyun.com/pypi/simple/
+    index_url_declared_at: "2026-10-19"
+    index_url_note: >-
+      沿用决策 2.A：先用 aliyun 镜像。本目标只服务边缘运行面（不装仿真），镜像需同时提供
+      cp310 的 aarch64 轮（numpy/grpcio/protobuf/rpds-py）。
+    # `boards` 只表示"本目标覆盖哪些板卡"；topeet_rk3588 的 python_tag 已实测为 cp310，
+    #   其余板卡的 cp 标签仍以各自 BoardProfile 的实测回填为准。
+    boards:
+      - topeet_rk3588
+    reject_platform_tags:
+      - win_arm64
+      - win32
+      - win_amd64
+      - macosx

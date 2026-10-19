@@ -552,6 +552,11 @@
             "minLength": 1
           },
           "description": "角色级运行期依赖覆盖（例如仿真档要 mujoco/numpy/pillow）。"
+        },
+        "python_bin": {
+          "type": "string",
+          "pattern": "^/",
+          "description": "角色级解释器覆盖（2026-10-19 新增）。解释器是**目标端事实**：同一套声明要覆盖系统 python 版本各异的边缘机时必须能按角色覆盖 defaults，否则只能继承一个错的解释器（实测：某边缘机系统 python3 是 3.8.10，SDK 的 cp310 轮装不上，必须指向 /usr/local/bin/python3.10）。"
         }
       }
     }

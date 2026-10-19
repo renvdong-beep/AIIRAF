@@ -282,6 +282,81 @@ profiles:
       ports: []
       processes: ["iraf-control-provider"]
 
+  # ── 第三种边缘形态：**单系统（无 Hypervisor）** aarch64 边缘机（2026-10-19 新增）─────────────
+  # 为什么它不是一个"机型特例"：edge-intel / edge-motion 描述的是 **Hyper VM 内的域角色**，
+  #   而这一条描述的是**没有 Hypervisor 的整机**（一台 Linux 就是全部）——差别在**部署形态**，
+  #   不在机型。任何非 Hyper 的 aarch64 边缘机都走本角色，机型差异仍只在 profiles/ 与 config/。
+  # 为什么必须单列而不是复用 edge-intel：edge-intel 的 target/dependency_source 绑在
+  #   `aarch64-manylinux_2_28-cp311` 上，而本机实测解释器是 3.10.12（cp310）⇒ 复用会让预检
+  #   正确地 fail-closed。target 里的取值全部是**实测回填**（不是猜的），证据见
+  #   build/board/rk3588-topeet/（22 探针）。
+  # 认证档位：Ubuntu 20.04 **不在** AGENTS 6.7 的 22.04/Humble 认证基线 ⇒ verification=unverified，
+  #   一切结论只能表述为"实验档 / 未认证"，不得写"受支持"。
+  - id: edge-linux-standalone
+    label: 边缘 aarch64 单系统（无 Hypervisor，实验档）
+    purpose: edge_runtime
+    target:
+      # 以下为实测值：uname 5.10.198 / Ubuntu 20.04.6 / glibc 2.31 / python3.10.12。
+      # ⚠ 换板必须重新采集回填（scripts/board_collect.sh），不得沿用。
+      os: ubuntu
+      os_version: "20.04"
+      arch: aarch64
+      kernel: "5.10.198"
+      python_tag: cp310
+      platform_tag: manylinux_2_28_aarch64
+      glibc_min: "2.31"
+    verification: unverified
+    simulation_only: false
+    prefix: /opt/iraf-sdk
+    config_dir: /etc/iraf
+    log_dir: /var/log/iraf
+    data_dir: /var/lib/iraf
+    systemd_scope: system
+    # 目标端解释器必须是板上真有的那一个（系统 python3 是 3.8.10，装不了本 SDK 声明的 cp310 轮）。
+    python_bin: /usr/local/bin/python3.10
+    install_method: target
+    dependency_source:
+      kind: wheelhouse
+      index_url: https://mirrors.aliyun.com/pypi/simple/
+      wheelhouse_root: build/wheelhouse
+      target_id: aarch64-manylinux_2_28-cp310
+    # 与 edge-intel 同一套运行面：板卡只跑 TaskFlow/Skill/Policy，Provider 在 x86 仿真侧。
+    components:
+      - sdk_core
+      - core
+      - skills
+      - profiles
+      - config
+      - adapters_grpc
+      - adapters_agentos
+      - adapters_remote
+    forbidden_components: [adapters_sim]
+    backend_entrypoint: iraf_adapters.remote.provider_backend:RemoteProviderBackend
+    env_template: deploy/sdk/env/edge-intel.env.tmpl
+    services:
+      - name: iraf-runtime-grpc
+        template: deploy/sdk/units/iraf-runtime-grpc.service.tmpl
+        scope: system
+        ports: [50051]
+        optional: false
+    cross_domain:
+      role: upstream
+      peers: ["sim-x86"]
+      transport: grpc
+      deadline_ms: 30000
+      authenticated: true
+    safety_boundary:
+      # 单系统上没有第二个域可合并；但"不得合并"的语义仍然成立（没有第二个域就不存在合并）。
+      merge_allowed: false
+      independent_process: true
+      independent_limits: true
+      independent_device_ownership: true
+    residue:
+      scan_roots: ["{prefix}", "{config_dir}"]
+      units: ["iraf-runtime-grpc.service"]
+      ports: [50051]
+      processes: ["iraf-runtime-grpc", "iraf-agentos"]
+
 # 允许的组件 id（受控枚举；schema 亦校验）。新增组件必须同时改本表与 schema。
 # 说明：组件是“装什么”的最小粒度，不含版本（版本来自 sdk.version_ref）。
 components_enum:
