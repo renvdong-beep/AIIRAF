@@ -169,16 +169,51 @@ cd /root && nohup intewell-agent-cli dashboard > /tmp/239-dashboard.log 2>&1 &
 - 不带 token → 401 `{"error":"dashboard_session_token_invalid"}`
 - 关掉启动它的 shell 后复测 `GET /` 仍 200，进程存活（pid 919605）
 
-远程访问：**用 ssh 隧道，不要绑 0.0.0.0**
+注：以上四条是 **loopback 阶段**的实测。改为 `0.0.0.0` + basic 鉴权后，页面不再内嵌
+`__INTEWELL_SESSION_TOKEN__`（`__INTEWELL_AUTH_REQUIRED__` 变 true），改为 cookie 会话，见下。
 
-```bash
-ssh -N -L 9119:127.0.0.1:9119 topeet@10.203.247.239
-# 本机浏览器打开 http://127.0.0.1:9119
+远程访问：已改为直连（按需求），并配了 basic 登录
+
+初版是 loopback 绑定 + ssh 隧道。因为需要直接从工位访问 `http://10.203.247.239:9119/`，
+改为绑 `0.0.0.0`。**前提是必须先配鉴权**：本版 `--insecure` 已是 NO-OP
+（`main.py:12031` 注释与 `dashboard --help` 均明示，2026-06 起非 loopback 绑定强制需要
+auth provider，`start_server` 无 provider 时 fail-closed）。
+
+配置（`/root/.intewell/config.yaml`）：
+
+```yaml
+dashboard:
+  basic_auth:
+    username: admin
+    password: Iraf-239-Dash
+    secret: <64 hex>     # 会话签名密钥，缺失则重启后会话失效
 ```
 
-已实测：经隧道 `GET /` → 200。理由：`--host 0.0.0.0` 需要 `--insecure`，而页面自身
-`__INTEWELL_AUTH_REQUIRED__=false` 且把 token 内嵌在 HTML 里 ⇒ 绑 0.0.0.0 等于把完整
-agent 控制面（可改配置、可发指令）裸放在局域网，任何能连 9119 的人都能直接操作。
+启动：
+
+```bash
+cd /root && nohup intewell-agent-cli dashboard --host 0.0.0.0 --port 9119 --no-open \
+  > /tmp/239-dashboard.log 2>&1 &
+```
+
+验收（实测，均从工位机器直接打 IP，不经隧道）：
+- `ss -ltn` → `LISTEN 0.0.0.0:9119`（此前是 `127.0.0.1:9119`）
+- `GET http://10.203.247.239:9119/` → 302 → `/login?next=%2F` → 200 登录页
+- `POST /auth/password-login`，body 需含 `provider: basic`
+  → `{"ok":true,"next":"/"}` + 200 + Set-Cookie
+- 带该 cookie `GET /` → 200，`<title>Intewell Agent - Dashboard</title>`
+- 错密码 → 401 `{"detail":"Invalid credentials"}`
+- 防火墙：`iptables -S INPUT` 首条 `-P INPUT ACCEPT`，ufw 未启用 ⇒ 9119 无过滤
+
+保留 tunnel 方式作备选：`ssh -N -L 9119:127.0.0.1:9119 topeet@10.203.247.239`
+（仅在改回 `--host 127.0.0.1` 时才有意义）。
+
+安全口径（必须写进交付说明，不许淡化）：
+- basic 登录的意义是"不要裸奔"，不是"企业级鉴权"：明文口令存在 `/root/.intewell/config.yaml`
+  （600，root only），provider 用 stdlib scrypt 存哈希、会话为 HMAC 签名 token；
+- 端口暴露范围 = 该 LAN 内任何能连 10.203.247.239 的主机。**要更强控制就退回
+  loopback + 隧道，或用 self_hosted / nous provider 走 OAuth**（`plugins/dashboard_auth/` 下有
+  basic / self_hosted / nous / drain 四个 provider 可选）。
 
 坑位：
 - `intewell-agent-cli dashboard --status` 报 `No intewell dashboard processes running.`
