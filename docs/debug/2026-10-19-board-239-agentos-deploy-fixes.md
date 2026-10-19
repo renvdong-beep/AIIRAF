@@ -222,3 +222,71 @@ cd /root && nohup intewell-agent-cli dashboard --host 0.0.0.0 --port 9119 --no-o
 - headless 板上它会尝试拉起 chromium，日志刷 `gpu_init.cc: Passthrough is not supported, GL is egl`、
   `Failed to connect to the bus`、`Failed to query video capabilities` —— 只是噪音，不影响 web 服务。
 - 无 systemd 单元 ⇒ **重启板卡后 9119 不会自启**，需重跑上面的启动命令。
+
+## 9. dashboard 内嵌 chat 报 "Chat unavailable" —— Node.js 缺失 + 厂商缺 package.json（已修）
+
+现象（在浏览器 /chat 里）：`Chat unavailable: Embedded chat requires Node.js and the TUI
+frontend. Install Node.js (>= 18) and ensure ui-tui/ is built, or use the API / CLI chat mode instead.`
+
+代码路径：`web_server.py:16473` 收到 `SystemExit(1)` 后打这句；抛异常的是
+`main.py:1759 _make_tui_argv()` —— 它先 `_ensure_tui_node()`，再 `shutil.which("node")`，
+找不到就 `sys.exit(1)`。
+
+事实 1：**不需要 npm 构建**。pip 包自带预置 TUI 包：
+`/usr/local/lib/python3.10/site-packages/intewell_cli/tui_dist/entry.js`（3,500,180 字节）。
+
+事实 2：板上根本没有 node（`node -v` / `npm -v` 均无），而 Ubuntu 20.04 仓库的
+`nodejs` 候选只有 **10.19.0**（远低于要求的 18）。所以不能 `apt install nodejs`。
+
+处理 1（装 Node，不动 apt 源）：
+
+```bash
+cd /tmp && curl -fL -o node18.tar.xz \
+  https://nodejs.org/dist/v18.20.4/node-v18.20.4-linux-arm64.tar.xz
+mkdir -p /usr/local/lib/nodejs && tar -xJf node18.tar.xz -C /usr/local/lib/nodejs
+ln -sf /usr/local/lib/nodejs/node-v18.20.4-linux-arm64/bin/node /usr/local/bin/node
+ln -sf /usr/local/lib/nodejs/node-v18.20.4-linux-arm64/bin/npm  /usr/local/bin/npm
+ln -sf /usr/local/lib/nodejs/node-v18.20.4-linux-arm64/bin/npx  /usr/local/bin/npx
+```
+
+实测：`node -v` → `v18.20.4`，`npm -v` → `10.7.0`，`which node` → `/usr/local/bin/node`。
+
+事实 3（厂商**第二个**打包缺陷）：`tui_dist/` 里只有 `entry.js`，**没有 `package.json`**，
+而 entry.js 第一行就是 ESM 语法（`import { createRequire as __cr } from 'node:module'`）⇒
+node 18 按 CommonJS 解析，直接报：
+
+```
+Warning: To load an ES module, set "type": "module" in the package.json or use the .mjs extension.
+/usr/local/.../tui_dist/entry.js:1
+import { createRequire as __cr } from 'node:module'; ...
+```
+
+处理 2：
+
+```bash
+printf '{"type":"module","private":true}\n' \
+  > /usr/local/lib/python3.10/site-packages/intewell_cli/tui_dist/package.json
+```
+
+实测：`node --expose-gc .../tui_dist/entry.js < /dev/null` → 输出 `intewell-tui: no TTY`，
+`tui_exit=0`（无 TTY 环境下正常拒绝，说明 bundle 已正确加载）。
+
+代码路径复验（正是之前 `sys.exit(1)` 的那条分支）：
+
+```
+_make_tui_argv(Path('/root/.intewell/tui'), False)
+→ ARGV_OK
+  ['/usr/local/bin/node', '--expose-gc', '/usr/local/lib/python3.10/site-packages/intewell_cli/tui_dist/entry.js']
+  CWD /usr/local/lib/python3.10/site-packages/intewell_cli/tui_dist
+```
+
+重启 dashboard 后复测：`LISTEN 0.0.0.0:9119`、`GET /` → 302、`POST /auth/password-login`
+→ `{"ok":true}` 200、带 cookie `GET /` → 200。
+
+坑位：
+- **pip 升级会覆盖 `tui_dist/package.json`** ⇒ 升级后 /chat 会重现同一句 ES module 报错，需重新补这个文件。
+- 这条报错里的 "ensure ui-tui/ is built" 具有误导性：本安装是预置 bundle 路径，**不需要** `npm install`
+  或 `npm run build`；不要照它去装 node_modules（会白拉几十兆依赖）。
+- 未验证：浏览器 /chat 里**真正发一轮对话**（需人在页面上操作）。我验到的是 node 可执行 +
+  `_make_tui_argv` 返回 argv + bundle 能加载，即报错的那条分支已消除。
+- 磁盘：装 node 后可用空间 9.6G → 9.5G。
