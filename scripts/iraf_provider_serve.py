@@ -61,6 +61,69 @@ def _parse_window_px(raw):
         return None
 
 
+def self_check(args) -> int:
+    """只验证装配，不监听端口（2026-10-19：板卡不在场时用来判断执行端是否健康）。
+
+    与真实启动走**同一套**装配函数（build_runtime_from_env），所以它能拦住
+    "profile/策略/backend 装配不上"这类问题；区别只是不建 gRPC server。
+    退出码：0 全绿 / 2 有硬失败（缺 token / 缺 grpcio / 缺桩 / 装配失败）。
+    """
+    problems = []
+
+    def report(ok, label, detail=""):
+        print("  [%s] %s%s" % ("OK" if ok else "FAIL", label, (" —— " + detail) if detail else ""))
+        if not ok:
+            problems.append(label)
+
+    print("[self-check] 解释器：%s（Python %s）" % (sys.executable, sys.version.split()[0]))
+    subjects = str(os.environ.get("IRAF_RUNTIME_SUBJECT") or args.subject or "")
+    print("  [OK] subject=%s" % subjects)
+
+    token = os.environ.get("IRAF_PROVIDER_TOKEN") or ""
+    report(bool(token), "IRAF_PROVIDER_TOKEN 已设置", "长度 %d" % len(token) if token else "缺（服务会 fail-closed）")
+
+    try:
+        import grpc  # noqa: F401
+        report(True, "grpcio", getattr(grpc, "__version__", "?"))
+    except Exception as exc:  # noqa: BLE001
+        report(False, "grpcio", str(exc))
+
+    try:
+        from iraf.v1 import provider_pb2, provider_pb2_grpc, skill_pb2  # noqa: F401
+        report(True, "proto 桩（iraf.v1）")
+    except Exception as exc:  # noqa: BLE001
+        report(False, "proto 桩（iraf.v1）", str(exc))
+
+    runtime = None
+    try:
+        from iraf_adapters.bootstrap import build_runtime_from_env
+        runtime = build_runtime_from_env()
+        report(True, "运行时装配（profile / 安全策略 / skill root / backend）")
+    except Exception as exc:  # noqa: BLE001
+        report(False, "运行时装配", str(exc)[:220])
+
+    if runtime is not None:
+        try:
+            declared = getattr(runtime.profile, "capabilities", None) or {}
+            names = sorted(declared.keys()) if isinstance(declared, dict) else sorted(declared)
+            report(bool(names), "profile 声明的能力", ",".join(names) or "空")
+        except Exception as exc:  # noqa: BLE001
+            report(False, "profile 声明的能力", str(exc)[:160])
+        try:
+            inventory = runtime.backend.runtime_inventory()
+            report(isinstance(inventory, dict) and bool(inventory),
+                   "backend 运行时清单（策略前置条件的取值来源）",
+                   "顶层键=%s" % sorted(inventory.keys())[:8] if isinstance(inventory, dict) else str(type(inventory)))
+        except Exception as exc:  # noqa: BLE001
+            report(False, "backend 运行时清单", str(exc)[:200])
+
+    if problems:
+        print("[self-check] 结论：%d 项失败（%s）" % (len(problems), "；".join(problems)))
+        return EXIT_NOTOKEN
+    print("[self-check] 结论：全绿 —— 该执行端可对外提供能力（尚未监听端口）")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="远端 Capability Provider 服务端（x86 仿真侧）")
     parser.add_argument("--host", default=os.environ.get("IRAF_PROVIDER_HOST", "0.0.0.0"))
@@ -69,7 +132,13 @@ def main(argv=None) -> int:
     parser.add_argument("--no-window", action="store_true",
                         help="不起窗口（无显示设备时用；Health 会如实报 window_opened=false）")
     parser.add_argument("--subject", default=os.environ.get("IRAF_RUNTIME_SUBJECT", "board-runtime"))
+    parser.add_argument("--self-check", action="store_true",
+                        help="只验证装配（解释器/依赖/桩/运行时/能力清单），不监听端口；"
+                             "退出码 0 全绿 / 2 有硬失败。板卡不在场时用它判断执行端是否健康")
     args = parser.parse_args(argv)
+
+    if args.self_check:
+        return self_check(args)
 
     token = os.environ.get("IRAF_PROVIDER_TOKEN") or ""
     if not token:
