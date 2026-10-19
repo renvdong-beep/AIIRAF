@@ -146,6 +146,18 @@ class InstallProfileDeclarationTest(unittest.TestCase):
         self.assertIn("single-ubuntu2204：仿真依赖只允许部署在 x86 主机（板卡不装仿真）",
                       self._failed_names())
 
+    def test_simulation_role_must_declare_sim_dependencies(self):
+        """仿真角色必须自带仿真依赖（2026-10-19 板卡装机暴露的缺口 G4）。
+
+        defaults 里刻意不含 mujoco/numpy（避免被边缘角色继承），所以仿真角色一旦不写
+        runtime_dependencies，装完才会在 `import mujoco` 处失败 —— 必须在声明层就拦住。
+        """
+        data = self._declaration()
+        self._profile(data, "single-ubuntu2204")["runtime_dependencies"] = ["pyyaml", "jsonschema"]
+        self._write_declaration(data)
+        self.assertIn("single-ubuntu2204：仿真角色必须声明仿真依赖（mujoco/numpy）",
+                      self._failed_names())
+
     def test_component_must_be_registered(self):
         data = self._declaration()
         self._profile(data, "sim-x86")["components"].append("bogus_component")

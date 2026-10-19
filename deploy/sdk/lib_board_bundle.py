@@ -438,11 +438,13 @@ def build_board_bundle(options: dict) -> tuple[Path, dict, dict]:
     board_rel = relpath_posix(board_path, repo_root)
 
     matrix = load_matrix(repo_root, matrix_path)
-    target = select_target(matrix, options.get("target"))
+    # 先读板卡声明，再选构建目标：多目标矩阵下允许按 BoardProfile 的
+    # (python_tag, platform_tag) 唯一推断，省掉手工 --target（推断不唯一仍 fail-closed）。
+    board = read_board_profile(board_path)
+    target = select_target(matrix, options.get("target"), board_profile=board)
     delivery = load_delivery(matrix)
     version = read_declared_version(repo_root, matrix["sdk"]["version_ref"])
     sdk_name = matrix["sdk"]["name"]
-    board = read_board_profile(board_path)
     board_meta = board.get("metadata") or {}
     board_spec = board.get("spec") or {}
     board_name = str(board_meta.get("name") or "")
@@ -1819,10 +1821,16 @@ def cmd_plan(options: dict) -> int:
     repo_root = Path(options["repo_root"]).resolve()
     matrix_path = _abspath(repo_root, options.get("matrix") or MATRIX_REL)
     matrix = load_matrix(repo_root, matrix_path)
-    target = select_target(matrix, options.get("target"))
+    # --dry-run 也允许按板卡声明推断构建目标（与真实组装走同一条 select_target 逻辑）。
+    board_rel = options.get("board") or "<--board 未给出>"
+    board_profile = None
+    if options.get("board"):
+        candidate = _abspath(repo_root, options["board"])
+        if candidate.is_file():
+            board_profile = read_board_profile(candidate)
+    target = select_target(matrix, options.get("target"), board_profile=board_profile)
     delivery = load_delivery(matrix)
     version = read_declared_version(repo_root, matrix["sdk"]["version_ref"])
-    board_rel = options.get("board") or "<--board 未给出>"
     name = bundle_name(delivery, board="<board>", version=version, arch=target["arch"])
     info("板级 bundle 组装计划（--dry-run：不写任何文件）")
     info(f"  构建目标  : {target['id']}（arch={target['arch']} python_tag={target['python_tag']}）")

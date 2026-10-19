@@ -21,6 +21,7 @@
 """
 
 import contextlib
+import copy
 import gzip
 import hashlib
 import io
@@ -106,6 +107,39 @@ class DeclarationTests(unittest.TestCase):
         self.assertEqual(lib_manifest.select_target(matrix, "aarch64-manylinux_2_28-cp311")["id"], target["id"])
         self.assertEqual("aarch64", target["arch"])
         self.assertTrue(target["index_url"].startswith("http"))
+
+    # ---------- 构建目标推断（2026-10-19：省掉手工 --target）----------
+    def _board(self, name: str) -> dict:
+        sys.path.insert(0, str(REPO_ROOT / "deploy/sdk"))
+        try:
+            import lib_board_bundle
+        finally:
+            sys.path.pop(0)
+        return lib_board_bundle.read_board_profile(REPO_ROOT / f"profiles/boards/{name}.yaml")
+
+    def test_target_inferred_from_measured_board_profile(self):
+        """BoardProfile 已回填 python_tag/platform_tag ⇒ 不必再给 --target。"""
+        matrix = lib_manifest.load_matrix(REPO_ROOT, MATRIX)
+        self.assertEqual(
+            lib_manifest.select_target(matrix, None, board_profile=self._board("e300"))["id"],
+            "aarch64-manylinux_2_28-cp311")
+
+    def test_target_inference_fails_closed_when_tags_unverified(self):
+        """声明仍是 unverified 时不得瞎猜，且要指路（回填或显式给 --target）。"""
+        matrix = lib_manifest.load_matrix(REPO_ROOT, MATRIX)
+        with self.assertRaises(lib_manifest.ManifestError) as ctx:
+            lib_manifest.select_target(matrix, None, board_profile=self._board("firefly_rk3588"))
+        self.assertIn("unverified", str(ctx.exception))
+
+    def test_target_inference_rejects_ambiguity(self):
+        """两条目标标签一致 ⇒ 必须显式 --target（不取第一个）。"""
+        matrix = lib_manifest.load_matrix(REPO_ROOT, MATRIX)
+        dup = copy.deepcopy(matrix)
+        dup["targets"][1]["python_tag"] = dup["targets"][0]["python_tag"]
+        dup["targets"][1]["platform_tag"] = dup["targets"][0]["platform_tag"]
+        with self.assertRaises(lib_manifest.ManifestError) as ctx:
+            lib_manifest.select_target(dup, None, board_profile=self._board("e300"))
+        self.assertIn("歧义", str(ctx.exception))
 
     def test_matrix_does_not_duplicate_the_version_literal(self):
         """版本唯一来源：矩阵只允许写 version_ref，不得出现版本号字面量。"""

@@ -251,6 +251,14 @@ def check_semantics(declaration: dict, repo_root: Path) -> tuple:
             add("%s：仿真依赖只允许部署在 x86 主机（板卡不装仿真）" % pid,
                 str(target.get("arch")) == "x86_64",
                 "components 含 adapters_sim，但 arch=%s" % target.get("arch"))
+            # 2026-10-19 板卡装机暴露：defaults 的 runtime_dependencies 刻意不含仿真包，
+            # 若仿真角色也不声明，装完 `import mujoco` 才失败。这里按**生效值**判。
+            effective_deps = list(profile.get("runtime_dependencies")
+                                  or defaults.get("runtime_dependencies") or [])
+            missing_deps = [dep for dep in ("mujoco", "numpy") if dep not in effective_deps]
+            add("%s：仿真角色必须声明仿真依赖（mujoco/numpy）" % pid, not missing_deps,
+                "runtime_dependencies 缺=%s（生效值来自%s）"
+                % (missing_deps, "角色级" if "runtime_dependencies" in profile else "defaults"))
 
         # 仿真/真机边界（AGENTS 1.7）：按**档位**判，而不是按"是不是边缘"判。
         #  · 真机档（simulation_only: false）：不得装仿真 Provider —— 仿真不得进真机路径

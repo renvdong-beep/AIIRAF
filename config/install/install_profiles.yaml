@@ -97,6 +97,16 @@ profiles:
       - adapters_http
       - adapters_grpc
       - adapters_agentos
+    # 仿真档的运行期依赖：**角色级**覆盖 defaults（defaults 里刻意不含仿真包，避免被边缘角色继承）。
+    # 依据：src/iraf_adapters/mujoco/*.py 实测 import 到 mujoco 与 numpy；
+    # mujoco 的 wheel 自带 glfw/absl-py/etils/pyopengl，无需在此重复声明。
+    runtime_dependencies:
+      - pyyaml
+      - jsonschema
+      - grpcio
+      - protobuf
+      - mujoco
+      - numpy
     backend_entrypoint: iraf_adapters.mujoco.mujoco_backend:MujocoBackend
     services:
       - name: iraf-runtime-http
@@ -136,6 +146,12 @@ profiles:
       - scenarios
       - config
       - adapters_sim
+    # 仿真侧的运行期依赖（角色级）：mujoco 与 numpy 由 src/iraf_adapters/mujoco/* 实测 import。
+    runtime_dependencies:
+      - pyyaml
+      - jsonschema
+      - mujoco
+      - numpy
     # 不起常驻服务：仿真侧由上层按需拉起（scenario.py / view_mujoco.py / iraf-agentos 的本地后端）。
     backend_entrypoint: iraf_adapters.mujoco.mujoco_backend:MujocoBackend
     services: []

@@ -199,8 +199,14 @@ def load_matrix(repo_root: Path, matrix_path: Path) -> dict:
     return data
 
 
-def select_target(matrix: dict, target_id: str | None) -> dict:
-    """选择构建目标；多目标时必须显式声明，不做隐式默认。"""
+def select_target(matrix: dict, target_id: str | None,
+                  board_profile: dict | None = None) -> dict:
+    """选择构建目标。
+
+    优先级：显式 ``--target`` → 按 BoardProfile 的 (python_tag, platform_tag) **唯一**推断 →
+    矩阵只有一个目标时取它。推断出现 0 个或多个命中一律 fail-closed，并打印候选，
+    绝不"猜一个最像的"（装错 ABI 的 wheel 在目标端才会炸，代价远高于让操作者补一个参数）。
+    """
     targets = matrix.get("targets") or []
     if target_id:
         for target in targets:
@@ -208,6 +214,36 @@ def select_target(matrix: dict, target_id: str | None) -> dict:
                 return target
         raise ManifestError(
             f"矩阵中没有声明构建目标 {target_id}；已声明：{[t.get('id') for t in targets]}",
+            ExitCode.PRECHECK,
+        )
+    if len(targets) > 1 and board_profile is not None:
+        spec_target = ((board_profile.get("spec") or {}).get("target") or {})
+        want_python = str(spec_target.get("python_tag") or "")
+        want_platform = str(spec_target.get("platform_tag") or "")
+        if want_python and want_python != "unverified" and want_platform and want_platform != "unverified":
+            hits = [t for t in targets
+                    if str(t.get("python_tag")) == want_python
+                    and str(t.get("platform_tag")) == want_platform]
+            if len(hits) == 1:
+                return hits[0]
+            if not hits:
+                raise ManifestError(
+                    "按板卡声明推断不出构建目标：BoardProfile 声明 "
+                    f"python_tag={want_python} platform_tag={want_platform}，"
+                    f"矩阵里没有匹配项（已声明：{[(t.get('id'), t.get('python_tag'), t.get('platform_tag')) for t in targets]}）。"
+                    "请补 --target，或先回填板卡声明的 target 字段（AGENTS 3.2）。",
+                    ExitCode.PRECHECK,
+                )
+            raise ManifestError(
+                "按板卡声明推断构建目标有歧义（命中 %d 个：%s）⇒ 必须显式 --target。"
+                % (len(hits), [t.get("id") for t in hits]),
+                ExitCode.PRECHECK,
+            )
+        raise ManifestError(
+            "无法按板卡声明推断构建目标：BoardProfile.target 里 "
+            f"python_tag={want_python or '<缺失>'} / platform_tag={want_platform or '<缺失>'} "
+            "仍是 unverified。两条路：① 在板上实测后回填这两个字段（推荐，之后就不用再给 --target）；"
+            f"② 本次显式 --target（矩阵已声明：{[t.get('id') for t in targets]}）。",
             ExitCode.PRECHECK,
         )
     if len(targets) == 1:
