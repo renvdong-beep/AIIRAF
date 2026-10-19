@@ -145,3 +145,45 @@ df / 58G 46G 9.6G 83%
 3. host-worker 由 supervisor 拉起，**没有 systemd 单元 ⇒ 重启板卡后不会自启**。
 4. 磁盘：第一档 root 部分（journal 3.44 GiB + sunlogin 47.1 MiB）未执行，
    脚本 `/home/topeet/cleanup_scripts/clean_board_239_root.sh`；第二档 2.32 GiB 未动。
+
+## 8. dashboard web 端（9119）—— 已启动并验证
+
+9119 是 `intewell-agent-cli dashboard`（`intewell_cli/main.py:2800` 默认
+`AGENTOS_DASHBOARD_URL=http://127.0.0.1:9119`），**默认只绑 loopback**。
+
+启动（必须 root，配置在 `/root/.intewell/`）：
+
+```bash
+cd /root && nohup intewell-agent-cli dashboard > /tmp/239-dashboard.log 2>&1 &
+```
+
+验收（实测）：
+- `ss -ltn` → `LISTEN 127.0.0.1:9119`
+- 日志 → `INTEWELL_DASHBOARD_READY port=9119`
+- `GET /` → 200，`<title>Intewell Agent - Dashboard</title>`，SPA 资源
+  `/assets/index-VRId_EjD.js`
+- 页面内嵌 `window.__INTEWELL_SESSION_TOKEN__="…"`（43 字符）、
+  `__INTEWELL_AUTH_REQUIRED__=false` ⇒ 浏览器加载即完成鉴权，无需手填 token
+- 带 `X-Intewell-Session-Token` 请求 `GET /api/config` → 200，
+  返回 `{"model":"deepseek-flash","toolsets":["intewell-cli"],…}`（读到的正是第 4 节写的配置）
+- 不带 token → 401 `{"error":"dashboard_session_token_invalid"}`
+- 关掉启动它的 shell 后复测 `GET /` 仍 200，进程存活（pid 919605）
+
+远程访问：**用 ssh 隧道，不要绑 0.0.0.0**
+
+```bash
+ssh -N -L 9119:127.0.0.1:9119 topeet@10.203.247.239
+# 本机浏览器打开 http://127.0.0.1:9119
+```
+
+已实测：经隧道 `GET /` → 200。理由：`--host 0.0.0.0` 需要 `--insecure`，而页面自身
+`__INTEWELL_AUTH_REQUIRED__=false` 且把 token 内嵌在 HTML 里 ⇒ 绑 0.0.0.0 等于把完整
+agent 控制面（可改配置、可发指令）裸放在局域网，任何能连 9119 的人都能直接操作。
+
+坑位：
+- `intewell-agent-cli dashboard --status` 报 `No intewell dashboard processes running.`
+  但进程确实在跑（pid 919605，ss 有 9119）。⇒ `--stop` 对它无效，停止只能
+  `pkill -f "intewell-agent-cli dashboard"`，并自行确认 9119 已释放。
+- headless 板上它会尝试拉起 chromium，日志刷 `gpu_init.cc: Passthrough is not supported, GL is egl`、
+  `Failed to connect to the bus`、`Failed to query video capabilities` —— 只是噪音，不影响 web 服务。
+- 无 systemd 单元 ⇒ **重启板卡后 9119 不会自启**，需重跑上面的启动命令。
