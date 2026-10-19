@@ -27,7 +27,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_PATH = REPO_ROOT / "config" / "sdk" / "package_matrix.schema.json"
 MATRIX_PATH = REPO_ROOT / "config" / "sdk" / "package_matrix.yaml"
 BOARDS_DIR = REPO_ROOT / "profiles" / "boards"
-BOARD_NAMES = ("e300", "firefly_rk3588")
+BOARD_NAMES = ("e300", "firefly_rk3588", "topeet_rk3588")
 OFFICIAL_PYPI_MARKER = "pypi.org"
 
 
@@ -109,12 +109,38 @@ class PackageMatrixTests(unittest.TestCase):
         self.assertIsNotNone(first_error(self.validator, broken))
 
     def test_matrix_declares_platform_tag_and_python_tag(self):
-        # 2026-10-15 合并后唯一目标：板卡共用同一 rootfs ⇒ 实测 cp311（历史 cp310 记录在 docs/progress）
-        self.assertEqual([t["id"] for t in self.matrix["targets"]], ["aarch64-manylinux_2_28-cp311"])
-        target = self.matrix["targets"][0]
-        self.assertEqual(target["platform_tag"], "manylinux_2_28_aarch64")
-        self.assertEqual(target["python_tag"], "cp311")
-        self.assertIn("win_arm64", target["reject_platform_tags"])
+        # 2026-10-19：两条构建目标并存（不再是"唯一目标"）。
+        #   cp311 = Hyper 边缘板（openEuler / python 3.11 实测）
+        #   cp310 = 非 Hyper 单系统板（RK3588 / python 3.10.12 实测）
+        # 两者必须有相同的 platform_tag 与 reject 规则，只差 python_tag —— 若哪天有人改歪了，这里会红。
+        ids = [t["id"] for t in self.matrix["targets"]]
+        self.assertEqual(ids, ["aarch64-manylinux_2_28-cp311", "aarch64-manylinux_2_28-cp310"])
+        for target, want_py in zip(self.matrix["targets"], ("cp311", "cp310")):
+            with self.subTest(target=target["id"]):
+                self.assertEqual(target["platform_tag"], "manylinux_2_28_aarch64")
+                self.assertEqual(target["python_tag"], want_py)
+                self.assertEqual(target["arch"], "aarch64")
+                self.assertIn("win_arm64", target["reject_platform_tags"])
+
+    def test_standalone_board_must_not_declare_hyper_models(self):
+        """standalone（无 Hypervisor）声明了 Hyper 构型名 ⇒ 必须被 schema 拒绝（铁律 6.10）。"""
+        broken = copy.deepcopy(self.profile_of("topeet_rk3588"))
+        broken["metadata"]["hyper_models"] = ["MQ50-E300-3VM-LPR"]
+        self.assertIsNotNone(first_error(board_profile_validator(), broken))
+
+    def test_hyper_board_must_declare_at_least_one_model(self):
+        """hyper 形态没有构型名 ⇒ 必须被拒绝（不得用"空数组"冒充已采集）。"""
+        broken = copy.deepcopy(self.profile_of("e300"))
+        broken["metadata"]["hyper_models"] = []
+        self.assertIsNotNone(first_error(board_profile_validator(), broken))
+
+    def test_deployment_form_is_required(self):
+        broken = copy.deepcopy(self.profile_of("e300"))
+        broken["metadata"].pop("deployment_form")
+        self.assertIsNotNone(first_error(board_profile_validator(), broken))
+
+    def profile_of(self, name):
+        return load_yaml(BOARDS_DIR / f"{name}.yaml")
 
     def test_every_declared_board_has_a_profile_file(self):
         for target in self.matrix["targets"]:
@@ -148,31 +174,31 @@ class BoardProfileTests(unittest.TestCase):
                 self.assertEqual(spec["capabilities"], [])
 
     def test_board_profiles_keep_unknown_fields_unverified(self):
-        """未实测字段一律 unverified；禁止 pending/tbd/unknown 等模糊占位。"""
-        raw_unverified_min = 6
+        """实测回填与"未实测"必须分得清（2026-10-19 收紧口径）：
+
+        · 禁止 pending/tbd/unknown 之类**模糊占位**（铁律 3.2）；
+        · 未验收前下列字段必须保持 unverified：`target.platform_tag`（没在板上装过 wheel 就不能反推）、
+          `image.ref/digest`、`evidence.*`（已在 test_board_profiles_are_unverified_before_acceptance 里管）；
+        · 其余字段（os/kernel/python_tag/glibc_min/runtime/adapters/limits）**允许实测回填** ——
+          原先把它们一律钉死 unverified，等于禁止"采集到了就写"，反而逼人撒谎；
+        · 兜底：每个 profile 至少保留 1 个 unverified 字段，防止"全填满"假装已验收。
+        """
+        placeholders = {"pending", "tbd", "unknown", "todo", ""}
         for name, profile in self.profiles.items():
             with self.subTest(board=name):
                 spec = profile["spec"]
-                for field, value in spec["target"].items():
-                    if field == "arch":
-                        continue
-                    self.assertEqual(value, "unverified", f"{name}.spec.target.{field} 未实测即须 unverified")
-                for field, value in spec["limits"].items():
-                    self.assertEqual(value, "unverified", f"{name}.spec.limits.{field} 未实测即须 unverified")
-                for section in ("runtime", "adapters"):
-                    for field, value in spec[section].items():
-                        self.assertEqual(
-                            value,
-                            "unverified",
-                            f"{name}.spec.{section}.{field} 未实测即须 unverified（unavailable 也需实测证据）",
-                        )
+                values = []
+                for section in ("target", "limits", "runtime", "adapters"):
+                    values.extend(spec[section].values())
+                for value in values:
+                    self.assertNotIn(str(value).strip().lower(), placeholders,
+                                     f"{name} 出现模糊占位 {value!r}（只能写实测值或 unverified）")
+                self.assertEqual(spec["target"]["platform_tag"], "unverified",
+                                 f"{name}.spec.target.platform_tag 未装过 wheel 即须 unverified")
+                self.assertEqual(spec["image"]["ref"], "unverified")
                 self.assertEqual(spec["image"]["digest"], "unverified")
-                lines = (BOARDS_DIR / f"{name}.yaml").read_text(encoding="utf-8").count("unverified")
-                self.assertGreaterEqual(
-                    lines,
-                    raw_unverified_min,
-                    f"{name} 的 unverified 字段行数 {lines} < {raw_unverified_min}",
-                )
+                self.assertTrue(any(str(v) == "unverified" for v in values),
+                                f"{name} 一个 unverified 都没有 ⇒ 看起来像已验收，禁止")
 
     def test_board_profile_carries_no_hyper_vm_details(self):
         """铁律 6.10：VM 数量/编号/IP/OS/角色映射只从签名 HyperProfile 读取，禁止硬编码在本文件。"""

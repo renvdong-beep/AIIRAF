@@ -96,10 +96,13 @@ class DeclarationTests(unittest.TestCase):
     def test_matrix_passes_its_own_contract(self):
         matrix = lib_manifest.load_matrix(REPO_ROOT, MATRIX)
         self.assertEqual("iraf.sdk-matrix/v1", matrix["schema_version"])
-        # 2026-10-15 合并后只有一个构建目标（板卡共用同一 rootfs ⇒ 实测 cp311）
+        # 2026-10-19：两条构建目标并存（cp311 Hyper 板 / cp310 非 Hyper 单系统板）
         ids = [t["id"] for t in matrix["targets"]]
-        self.assertEqual(ids, ["aarch64-manylinux_2_28-cp311"])
-        target = lib_manifest.select_target(matrix, None)   # 唯一目标可不传 id
+        self.assertEqual(ids, ["aarch64-manylinux_2_28-cp311", "aarch64-manylinux_2_28-cp310"])
+        # 多目标下必须显式给 id（"默认第一个"是静默装错 ABI 的入口）
+        with self.assertRaises(Exception):
+            lib_manifest.select_target(matrix, None)
+        target = lib_manifest.select_target(matrix, "aarch64-manylinux_2_28-cp311")
         self.assertEqual(lib_manifest.select_target(matrix, "aarch64-manylinux_2_28-cp311")["id"], target["id"])
         self.assertEqual("aarch64", target["arch"])
         self.assertTrue(target["index_url"].startswith("http"))

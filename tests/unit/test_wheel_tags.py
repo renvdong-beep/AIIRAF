@@ -302,10 +302,11 @@ class TestMatrixDeclaration(unittest.TestCase):
 
     def test_真实矩阵可解析且与步骤_02_声明一致(self):
         document = cwt.load_matrix(MATRIX)
-        # 2026-10-15 合并后**只有一个**构建目标（板卡共用同一 rootfs ⇒ 实测 cp311）
+        # 2026-10-19：两条构建目标并存 —— cp311（Hyper 边缘板）/ cp310（非 Hyper 单系统板）。
         raw = [dict(item) for item in document["targets"]]
-        self.assertEqual([item["id"] for item in raw], ["aarch64-manylinux_2_28-cp311"])
-        spec = cwt.resolve_target(document)
+        self.assertEqual([item["id"] for item in raw],
+                         ["aarch64-manylinux_2_28-cp311", "aarch64-manylinux_2_28-cp310"])
+        spec = cwt.resolve_target(document, "aarch64-manylinux_2_28-cp311")
         self.assertEqual(spec.platform_tag, "manylinux_2_28_aarch64")
         self.assertEqual(spec.python_tag, "cp311")
         self.assertTrue(spec.index_url.startswith("https://"))
@@ -315,8 +316,19 @@ class TestMatrixDeclaration(unittest.TestCase):
         # boards 表示"本目标覆盖的板卡"（不等于已实测确认 cp311，安装预检仍按各 BoardProfile 比对）
         self.assertEqual(sorted(raw[0]["boards"]),
                          ["e300", "firefly_rk3588", "intewell_aros_lab"])
-        # 唯一目标时不传 id 也应可解析（合并前的"多目标必须显式指定"行为随目标合并一并消失）
         self.assertEqual(cwt.resolve_target(document, "aarch64-manylinux_2_28-cp311").id, spec.id)
+        # ── 第二条目标（2026-10-19 新增 cp310，服务非 Hyper 单系统板）──
+        edge = cwt.resolve_target(document, "aarch64-manylinux_2_28-cp310")
+        self.assertEqual(edge.python_tag, "cp310")
+        self.assertEqual(edge.platform_tag, "manylinux_2_28_aarch64")
+        self.assertEqual(sorted(raw[1]["boards"]), ["topeet_rk3588"])
+        # 板卡不装仿真（AGENTS §0.1）⇒ 边缘目标不得把仿真轮列进抓取清单
+        for sim in ("mujoco", "glfw", "pyopengl", "pillow"):
+            self.assertNotIn(sim, edge.wheels, f"cp310 目标不应抓仿真轮 {sim}")
+        # 多目标下不给 id 必须显式失败（真实矩阵也适用这条，别指望"默认第一个"）
+        with self.assertRaises(cwt.DeclarationError) as ctx:
+            cwt.resolve_target(document)
+        self.assertIn("--target", str(ctx.exception))
 
     def test_缺文件即预检失败(self):
         with self.assertRaises(cwt.DeclarationError):

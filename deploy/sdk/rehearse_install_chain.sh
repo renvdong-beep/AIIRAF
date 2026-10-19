@@ -76,7 +76,11 @@ rm -rf "${SANDBOX}" "${ART}"
 mkdir -p "${SANDBOX}" "${ART}/wheelhouse"
 
 # 自造最小 SDK wheel + 离线 wheelhouse 清单（**不含真实依赖**，只用于验证安装链路本身）
-WHEEL="$("${PYTHON}" - "${ART}/wheelhouse" <<'PY'
+# 构建目标 id **从声明取**（2026-10-19 修）：原先写死 cp311 ⇒ 换上 cp310 角色时安装预检
+# 正确地拒绝（wheelhouse 构建目标不一致），但现象看起来像"安装坏了"。演练件必须跟着声明走。
+LAYOUT_EARLY="$("${PYTHON}" "${SCRIPT_DIR}/lib_install.py" layout --profile "${PROFILE}")"
+REHEARSAL_TARGET_ID="$(printf '%s' "${LAYOUT_EARLY}" | "${PYTHON}" -c 'import json,sys;print(json.load(sys.stdin)["dependency_source"]["target_id"])')"
+WHEEL="$("${PYTHON}" - "${ART}/wheelhouse" "${REHEARSAL_TARGET_ID}" <<'PY'
 import sys, zipfile
 from pathlib import Path
 
@@ -91,7 +95,7 @@ with zipfile.ZipFile(whl, "w") as zf:
                 "Wheel-Version: 1.0\nGenerator: rehearsal\nRoot-Is-Purelib: true\nTag: py3-none-any\n")
     zf.writestr("iraf_sdk-0.2.0.dist-info/RECORD", "")
 # 清单必须写明**构建目标**：安装预检会比对声明里的 dependency_source.target_id
-TARGET_ID = "aarch64-manylinux_2_28-cp311"
+TARGET_ID = sys.argv[2]
 for dep in ("pyyaml", "jsonschema", "grpcio", "protobuf"):
     with zipfile.ZipFile(dest / ("%s-1.0.0-py3-none-any.whl" % dep), "w") as zf:
         zf.writestr("%s/__init__.py" % dep, "__version__ = '1.0.0'\n")
@@ -140,7 +144,10 @@ VERSION="$("${PYTHON}" -c "import json,sys;print(json.loads(sys.argv[1])['versio
 PREFIX="$("${PYTHON}" -c "import json,sys;print(json.loads(sys.argv[1])['prefix'])" "${LAYOUT}")"
 CONFIG_DIR="$("${PYTHON}" -c "import json,sys;print(json.loads(sys.argv[1])['config_dir'])" "${LAYOUT}")"
 UNIT_DIR="${SANDBOX}/etc/systemd/system"
-UNIT="${UNIT_DIR}/iraf-control-provider.service"
+# 单元名从声明的 residue.units 取（2026-10-19 修）：原先写死 iraf-control-provider.service
+# ⇒ 换角色（如 edge-linux-standalone）时"产物齐备"全是假红，看起来像安装坏了。
+UNIT_NAME="$("${PYTHON}" -c "import json,sys;print(json.loads(sys.argv[1])['residue_units'][0])" "${LAYOUT}")"
+UNIT="${UNIT_DIR}/${UNIT_NAME}"
 VERSION_DIR="${SANDBOX}${PREFIX}/${VERSION}"
 ENV_FILE="${SANDBOX}${CONFIG_DIR}/${PROFILE}.env"
 log "  角色=${PROFILE} 版本=${VERSION} 前缀=${PREFIX}"
@@ -148,6 +155,15 @@ log "  角色=${PROFILE} 版本=${VERSION} 前缀=${PREFIX}"
 INSTALL_ARGS=(--profile "${PROFILE}" --root "${SANDBOX}" --sdk-wheel "${WHEEL}"
               --runtime-bundle "${RUNTIME}" --wheelhouse "${ART}/wheelhouse"
               --stubs-dir "${STUBS}" --allow-unverified --rehearsal)
+# 运行装配单（env_template）的部署期取值（2026-10-19 加）：模板要求 @PROVIDER_ENDPOINT@ /
+# @PROFILE@ / @SAFETY_POLICY@ / @RUNTIME_SUBJECT@ 必须显式给值（缺即显式失败，不猜默认值）。
+# 演练用沙箱值，形如 127.0.0.1:<非服务端口>；**不指向任何真实 Provider**。
+if [ -n "$("${PYTHON}" -c "import json,sys;print(json.loads(sys.argv[1]).get('env_template') or '')" "${LAYOUT_EARLY}")" ]; then
+  INSTALL_ARGS+=(--env-set "PROVIDER_ENDPOINT=127.0.0.1:50099"
+                 --env-set "PROFILE=profiles/piper_mujoco.yaml"
+                 --env-set "SAFETY_POLICY=profiles/safety/simulation_lab.yaml"
+                 --env-set "RUNTIME_SUBJECT=sandbox-rehearsal")
+fi
 
 step "1) 安装演练 --dry-run（期望：退出码 0 且不写任何文件）"
 set +e

@@ -723,6 +723,11 @@ def precheck(effective: dict, root: Path, *, allow_unverified: bool, wheelhouse:
             "声明最低=%s 实测=%s%s" % (target["glibc_min"], measured, "（演练放宽）" if rehearsal else ""),
             relaxed=rehearsal)
 
+    add("%s：解释器存在" % effective["id"],
+        rehearsal or bool(python_exe and Path(python_exe).exists()),
+        "python_bin=%s%s" % (python_exe, "（演练放宽：改用当前解释器）" if rehearsal else ""),
+        relaxed=rehearsal)
+
     if str(target["os"]) not in ("unverified", "None") and target["os"]:
         os_release = under_root(root, "/etc/os-release")
         text = os_release.read_text(encoding="utf-8", errors="replace") if os_release.is_file() else ""
@@ -812,6 +817,14 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
                            "（两者都只用于探索，不构成验收证据）", EXIT_USAGE)
 
     python_exe = python_exe or str(effective.get("python_bin") or sys.executable)
+    # 解释器是**目标端事实**：声明里的 python_bin（如 /usr/local/bin/python3.10）在开发机上不存在，
+    # 跨架构演练必须能跑 ⇒ 只在 --rehearsal 下回退到当前解释器，并在报告里标 relaxed。
+    # 真实安装**绝不回退**：静默换解释器等于装到错误 ABI 上（铁律 3.2 的静默失效）。
+    if not Path(python_exe).exists():
+        if not rehearsal:
+            raise InstallError("声明/指定的解释器不存在：%s（目标端事实；若为跨架构演练请加 --rehearsal）"
+                               % python_exe, EXIT_DECLARATION)
+        python_exe = sys.executable
     run_user = run_user or ("<current>" if str(effective.get("run_user")) == "@current@"
                             else str(effective.get("run_user") or "root"))
     if run_user == "<current>":

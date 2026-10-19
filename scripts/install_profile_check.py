@@ -51,7 +51,12 @@ RUNTIME_ENV = Path("deploy/iraf-runtime.env")
 #: 边缘角色含"真机档 edge-intel / edge-motion"与"仿真档 edge-intel-sim"（默认仿真、场景由 AgentOS 语义触发）；
 #: 形态 B 的仿真侧同样是 x86 Ubuntu 22.04，边缘两角色必须是 aarch64。
 X86_FORM_IDS = ("single-ubuntu2204", "sim-x86")
-EDGE_FORM_IDS = ("edge-intel", "edge-motion")
+# 边缘形态（arch 必须 aarch64）。2026-10-19 新增单系统形态 edge-linux-standalone：
+# 它同样是"边缘"，只是没有 Hypervisor（一台 Linux 就是全部）⇒ 与 Hyper 域角色共享
+# "必须 aarch64 / 安全边界不得合并"这两条检查。
+EDGE_FORM_IDS = ("edge-intel", "edge-motion", "edge-linux-standalone")
+# 正式交付必须齐备的角色；其余已登记形态（如 edge-linux-standalone）为可选/实验档。
+REQUIRED_ROLE_IDS = ("single-ubuntu2204", "sim-x86", "edge-intel", "edge-motion")
 REQUIRED_UBUNTU_VERSION = "22.04"
 
 #: 交付单元模板**必须**包含的占位符：机器相关的路径/解释器一律由安装器按声明渲染，
@@ -105,7 +110,8 @@ def resolve(profile: dict, defaults: dict) -> dict:
     """
     effective = {}
     for key in ("prefix", "config_dir", "log_dir", "data_dir", "install_method",
-                "systemd_scope", "dependency_source"):
+                "systemd_scope", "dependency_source", "python_bin", "run_user",
+                "runtime_dependencies"):
         effective[key] = profile.get(key, defaults.get(key))
     context = {
         "prefix": expand(str(effective["prefix"])),
@@ -180,10 +186,16 @@ def check_semantics(declaration: dict, repo_root: Path) -> tuple:
         checks.append({"name": name, "passed": bool(ok), "detail": detail})
 
     ids = [str(item["id"]) for item in profiles]
-    expected_ids = set(X86_FORM_IDS) | set(EDGE_FORM_IDS)
+    known_ids = set(X86_FORM_IDS) | set(EDGE_FORM_IDS)
     add("角色 id 唯一", len(ids) == len(set(ids)), "profiles=%s" % ids)
-    add("四种正式角色齐备", set(ids) == expected_ids,
-        "缺少=%s 多余=%s" % (sorted(expected_ids - set(ids)), sorted(set(ids) - expected_ids)))
+    # 双向拆成两条（2026-10-19）：新增已登记的附加形态（edge-linux-standalone）不应让
+    # "缺角色"和"多出未登记角色"共用一条断言 —— 否则加一个合法形态就必须放宽成子集，
+    # 连带把"写错 id"也放过了。
+    add("四种必需角色齐备", set(REQUIRED_ROLE_IDS) <= set(ids),
+        "缺少=%s" % sorted(set(REQUIRED_ROLE_IDS) - set(ids)))
+    add("角色 id 在受控枚举内", set(ids) <= known_ids,
+        "多余=%s（新增形态必须同时登记 X86_FORM_IDS/EDGE_FORM_IDS 与 REQUIRED_ROLE_IDS 语义）"
+        % sorted(set(ids) - known_ids))
 
     port_owner = {}
     for profile in profiles:
