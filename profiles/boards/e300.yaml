@@ -1,23 +1,37 @@
-# BoardProfile: E300（Intewell Hyper 边缘构型）—— 未签字验收前 status 只能是 unverified。
+# BoardProfile: E300（Intewell Hyper 边缘构型）
 #
 # 契约：config/sdk/package_matrix.schema.json 的 definitions.board_profile。
 # 依据：docs/iraf-multiplatform-sdk-design.md §6、AGENTS.md 铁律 3.2（BoardProfile 必须声明
 # OS、架构、能力、适配器、镜像摘要和测试证据；未知值必须写 unverified，不能猜测）。
 #
-# 与设计 §6 示例的两处取值差异（结构不变，取值按铁律收紧，已记入 build/iraf-24h/02/）：
-#   - 设计示例写 runtime.oci/ros2 = unavailable；本文件写 unverified。
-#     原因：unavailable 是“已确认不存在”的断言，需要实测证据；边缘板卡当前不在场（见 plans/iraf-24h/00-执行规则.md §0），
-#     未实测的未知只能写 unverified，否则等于用猜测值放行降级路径。
-#     回填条件：板卡到位后实测 VM 镜像是否自带容器运行时/ROS 2，再改为 available 或 unavailable 并附证据。
-#   - 设计示例写 adapters.master = unavailable；理由与处理同上。
+# 2026-10-19 实测回填（板 10.203.247.130，只读侦察；命令与原文见
+# docs/debug/2026-10-19-board-130-e300-recon.md）：
+#   /etc/iaros-version: SUITE_VERSION=R1.2.1 / VM_TYPE=P / SUBPRODUCT=Linux / COMPONENT_VERSION=6.12.43
+#   /etc/back.os-release: openEuler 24.03 (LTS-SP1)；systemd 255 (v255-34.oe2403sp1)
+#   uname -a: 6.12.43-rt #11 SMP PREEMPT_RT aarch64
+#   python3 -V: 3.11.6 / sysconfig.get_platform(): linux-aarch64 / pip 23.3.1
+#   ldd --version: glibc 2.38
+#   /opt/ros: humble（ROS 2 Humble）
+#   容器：无 docker / 无 podman（dnf 仅有 docker-engine 2:18.09.0、docker-compose 1.22.0(v1)、podman 4.9.4）
+#   free -m: 3979 MB；df /: 16G，用 5.0G，可用 11G
+#   AgentOS：未安装（无 intewell-agent-cli、无 /etc/agentos、无 agentos 容器）
 #
-# 本战役范围：目标端验收全部 DEFERRED（板卡不在），不得用 dry-run/mock 冒充真机证据。
+# 仍保持 unverified 的项与理由：
+#   adapters.agentos_bridge —— 板上 AgentOS 未安装，宿主桥接能力无法实测
+#   adapters.npu / adapters.master —— 未采集到 NPU 工具链与现场总线主站证据
+#   image.ref / image.digest —— 未取得 VM 镜像摘要
+#   capabilities —— 运控域能力清单未定义；空数组是**诚实值**，预检会据此拒绝（fail-closed）
+#   spec.status / verification —— 未验收，只能是 unverified（铁律 3.2 / 4）
+#
+# ⚠ 签名清单缺失：板上未找到 HyperProfile / Release manifest ⇒ VM 数量、编号、IP、OS 与
+#   角色映射一律不得写入本文件（铁律 6.10）。hyper_models 保留既有两种正式构型名，
+#   但**本块板具体是哪一种尚未确认**（无签名证据）。
 apiVersion: iraf.intewell.io/v1
 kind: BoardProfile
 metadata:
   name: e300
-  version: 0.1.0
-  # 部署形态：本 profile 描述的是 Hyper 构型下的域（域划分/VM 事实来自签名 HyperProfile）。
+  version: 0.2.0
+  # 部署形态：Hyper 构型（/proc/cmdline 有 root=/dev/vda + isolcpus=2,3，跑在来宾里）
   deployment_form: hyper
   # 本 profile 覆盖的正式 Hyper 构型名（铁律 6.10）。VM 数量、编号、IP、OS 与角色映射
   # 只能从签名 HyperProfile/Release manifest 读取，禁止在本文件硬编码。
@@ -27,16 +41,18 @@ metadata:
 spec:
   status: unverified
   target:
-    os: unverified
+    # 契约里 target 只有 6 个字段（无 os_version）：版本并入 os 字符串，避免多一个非法属性。
+    os: "openEuler 24.03 (LTS-SP1)"
     arch: aarch64
-    kernel: unverified
-    python_tag: unverified
-    platform_tag: unverified
-    glibc_min: unverified
+    kernel: "6.12.43-rt"
+    python_tag: cp311
+    platform_tag: manylinux_2_28_aarch64
+    glibc_min: "2.38"
   runtime:
-    oci: unverified
-    ros2: unverified
-    systemd: unverified
+    # 实测无 docker / 无 podman ⇒ oci 为"已确认不存在"，这是实测断言而非猜测。
+    oci: unavailable
+    ros2: available
+    systemd: available
   adapters:
     agentos_bridge: unverified
     npu: unverified
@@ -44,8 +60,8 @@ spec:
   # 空数组 = 尚未声明任何能力；预检（install.sh 第 2 步）必须视为失败，不得默认放行。
   capabilities: []
   limits:
-    ram_mb: unverified
-    disk_mb: unverified
+    ram_mb: 3979
+    disk_mb: 11400
   image:
     ref: unverified
     digest: unverified

@@ -233,10 +233,16 @@ profiles:
       glibc_min: unverified
     verification: unverified
     simulation_only: false
-    prefix: /opt/iraf-sdk
-    config_dir: /etc/iraf
-    log_dir: /var/log/iraf
-    data_dir: /var/lib/iraf
+    # ── 同机复核部署的路径隔离（2026-10-19 使用者口径：运控域部分也装在智控域）──────────
+    # 为什么必须隔离：安装器把安装记录写成 <prefix>/<version>/<file_record>，而 file_record 取自
+    # effective["file_record"]、**不含角色 id**（deploy/sdk/lib_install.py:181/207）。两角色共用
+    # /opt/iraf-sdk 时会互相覆盖同一个记录文件，卸载将删错文件。
+    # 单元本身已天然独立（iraf-runtime-grpc vs iraf-control-provider），满足 AGENTS 6.11 的"独立进程"。
+    # ⚠ 未闭合项：独立资源限额（CPUQuota/MemoryMax）**尚未**写进单元模板 ⇒ 不得声称 6.11 全款已满足。
+    prefix: /opt/iraf-sdk-motion
+    config_dir: /etc/iraf-motion
+    log_dir: /var/log/iraf-motion
+    data_dir: /var/lib/iraf-motion
     systemd_scope: system
     install_method: target
     dependency_source:
