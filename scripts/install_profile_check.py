@@ -240,6 +240,15 @@ def check_semantics(declaration: dict, repo_root: Path) -> tuple:
             boundary = profile.get("safety_boundary") or {}
             add("%s：已声明安全边界不合并（铁律 6.11）" % pid, boundary.get("merge_allowed") is False,
                 "safety_boundary=%s" % (boundary or "<缺失>"))
+            # 6.11 的"独立资源限额"必须落到 systemd 单元里，否则只是声明文字。
+            # 只对 system scope 的单元强制（user scope 是开发档，限额无意义）。
+            for svc in profile.get("services") or []:
+                if str(svc.get("scope")) != "system":
+                    continue
+                missing_limits = [key for key in ("cpu_quota", "memory_max") if not svc.get(key)]
+                add("%s：单元 %s 已声明资源限额（CPUQuota/MemoryMax）" % (pid, svc.get("name")),
+                    not missing_limits,
+                    "services[].%s 缺失=%s" % (svc.get("name"), missing_limits))
             notes.append("%s：target.os=%s / kernel=%s / python_tag=%s ⇒ 未采集前必须回填签名 "
                          "HyperProfile/Release manifest（AGENTS 6.10），否则安装只能 --allow-unverified"
                          % (pid, target["os"], target.get("kernel", "unverified"),

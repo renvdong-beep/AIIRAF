@@ -590,6 +590,8 @@ ENV_FILE_HEADER = """# IRAF 运行期环境（由 install-iraf.sh 按 config/ins
 #: 渲染占位符时使用的 token → 取值函数（机器相关的值一律来自声明的生效值）
 UNIT_TOKENS = ("PROFILE", "VERSION", "PREFIX", "CURRENT_LINK", "PYTHON_BIN", "CONFIG_DIR",
                "LOG_DIR", "DATA_DIR", "RUN_USER", "ENV_FILE",
+               # 独立资源限额（AGENTS 6.11）：按 services[] 条目取值，未声明则由渲染器整行删除。
+               "CPU_QUOTA", "MEMORY_MAX",
                # 装配单模板（声明的 env_template，如 edge-intel）额外允许的占位符：
                # 路径/身份来自声明生效值，部署期值（如 @PROVIDER_ENDPOINT@）必须由 --env-set 显式给。
                "SAFETY_POLICY", "VERSION_DIR", "RUNTIME_SUBJECT",
@@ -1022,7 +1024,17 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
         rendered_units = []
         for item in effective["services"]:
             template = Path(str(effective["_repo_root"])) / str(item["template"])
-            content = render_template(template, tokens)
+            svc_tokens = dict(tokens)
+            svc_tokens["CPU_QUOTA"] = str(item.get("cpu_quota") or "")
+            svc_tokens["MEMORY_MAX"] = str(item.get("memory_max") or "")
+            content = render_template(template, svc_tokens)
+            # 未声明限额的角色（x86 开发档）⇒ 整行删除。不能留着 "CPUQuota=" 空值：
+            # systemd 对空值要么报错要么静默忽略，两者都会让"限额是否存在"变得不可判定。
+            for token, directive in (("CPU_QUOTA", "CPUQuota"), ("MEMORY_MAX", "MemoryMax")):
+                if not svc_tokens[token]:
+                    kept = [line for line in content.splitlines()
+                            if not line.startswith(directive + "=")]
+                    content = "\n".join(kept) + "\n"
             _mkdir(unit_dir)
             unit_path = unit_dir / ("%s.service" % item["name"])
             if unit_path.exists():

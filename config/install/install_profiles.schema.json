@@ -305,6 +305,16 @@
         },
         "optional": {
           "type": "boolean"
+        },
+        "cpu_quota": {
+          "type": "string",
+          "pattern": "^[0-9]{1,3}%$",
+          "description": "systemd CPUQuota（如 150% = 1.5 核）。同机多角色部署时用于落实 AGENTS 6.11 的独立资源限额。"
+        },
+        "memory_max": {
+          "type": "string",
+          "pattern": "^[0-9]+[KMG]$",
+          "description": "systemd MemoryMax（如 512M）。缺省表示不限额；edge-* 角色必须声明。"
         }
       }
     },

@@ -158,6 +158,15 @@ class InstallProfileDeclarationTest(unittest.TestCase):
         self.assertIn("single-ubuntu2204：仿真角色必须声明仿真依赖（mujoco/numpy）",
                       self._failed_names())
 
+    def test_edge_service_must_declare_resource_limits(self):
+        """AGENTS 6.11：同机多角色不得共享同一份资源额度 ⇒ edge 的 system 单元必须声明限额。"""
+        data = self._declaration()
+        svc = self._profile(data, "edge-motion")["services"][0]
+        svc.pop("memory_max", None)
+        self._write_declaration(data)
+        self.assertIn("edge-motion：单元 iraf-control-provider 已声明资源限额（CPUQuota/MemoryMax）",
+                      self._failed_names())
+
     def test_component_must_be_registered(self):
         data = self._declaration()
         self._profile(data, "sim-x86")["components"].append("bogus_component")

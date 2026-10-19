@@ -514,6 +514,16 @@ class InstallActionTest(unittest.TestCase):
         self.assertIn("兜底清理", output)
         self.assertFalse(unit_dir.joinpath("%s.service" % self.effective["services"][0]["name"]).exists())
 
+    def test_edge_unit_carries_resource_limits(self):
+        """AGENTS 6.11：限额必须真的落进渲染出的单元文件，而不只是写在声明里。"""
+        plan = self._install()
+        self.assertTrue(plan["ok"])
+        unit = [u for u in plan["units"] if u.endswith("iraf-runtime-grpc.service")][0]
+        text = Path(unit).read_text(encoding="utf-8")
+        self.assertIn("CPUQuota=150%", text)
+        self.assertIn("MemoryMax=1G", text)
+        self.assertNotIn("@CPU_QUOTA@", text)
+
     def test_sim_scene_is_copied_and_backend_config_generated(self):
         """仿真档：声明的场景（XML + 旁挂报告）复制进版本目录，并在**目标端**生成 IRAF_BACKEND_CONFIG。
 

@@ -23,6 +23,9 @@ Environment=PYTHONPATH=@PREFIX@/@CURRENT_LINK@/src:@PREFIX@/@CURRENT_LINK@/lib
 EnvironmentFile=-@CONFIG_DIR@/@PROFILE@.env
 ExecStartPre=/bin/mkdir -p @LOG_DIR@ @DATA_DIR@
 ExecStart=/bin/sh -c 'echo "$(date -Is) iraf-control-provider ready profile=@PROFILE@ version=@VERSION@ python=@PYTHON_BIN@ simulation=false note=readiness-placeholder" >> @LOG_DIR@/control-provider-ready.log'
+# 独立资源限额（AGENTS 6.11）：与智能域同机时两域各自记账，互不侵占。
+CPUQuota=@CPU_QUOTA@
+MemoryMax=@MEMORY_MAX@
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

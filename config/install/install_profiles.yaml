@@ -218,6 +218,10 @@ profiles:
         scope: system
         ports: [50051]
         optional: false
+        # 独立资源限额（AGENTS 6.11）：与运控域同机部署时不得共享同一份 CPU/内存额度。
+        # 取值依据 E300 实测（2 核 / 3979 MB）：智能域 1.5 核 / 1G，留足 TaskFlow+Policy 余量。
+        cpu_quota: "150%"
+        memory_max: "1G"
     cross_domain:
       role: upstream
       peers: ["edge-motion"]
@@ -287,6 +291,9 @@ profiles:
         scope: system
         ports: []
         optional: false
+        # 独立资源限额（AGENTS 6.11）：运控域额度较小且固定，避免与智能域互相饿死。
+        cpu_quota: "100%"
+        memory_max: "512M"
     cross_domain:
       role: downstream
       peers: ["edge-intel"]
@@ -361,6 +368,10 @@ profiles:
         scope: system
         ports: [50051]
         optional: false
+        # 单系统板上只有一个角色，但限额照旧声明：# 理由与 edge-intel 相同（6.11 要求
+        # "独立资源限额"是单元属性，不因当前是否同机而改变判据）。
+        cpu_quota: "150%"
+        memory_max: "1G"
     cross_domain:
       role: upstream
       peers: ["sim-x86"]

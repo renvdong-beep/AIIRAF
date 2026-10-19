@@ -21,6 +21,10 @@ ExecStartPre=/bin/mkdir -p @LOG_DIR@ @DATA_DIR@
 ExecStart=@PYTHON_BIN@ -m iraf_adapters.grpc.server
 Restart=on-failure
 RestartSec=3
+# 独立资源限额（AGENTS 6.11）：值与声明里的 services[].cpu_quota / memory_max 一致；
+# 渲染器在角色未声明限额时会把这两行整行删除（x86 开发档），边缘角色必须声明。
+CPUQuota=@CPU_QUOTA@
+MemoryMax=@MEMORY_MAX@
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
