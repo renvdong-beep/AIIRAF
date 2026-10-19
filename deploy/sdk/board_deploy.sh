@@ -71,7 +71,7 @@ usage() {
 选项：
   -h, --help              显示本帮助并退出
   --runtime-bundle <tgz>  runtime 包（build_sdk.sh 产物）
-  --wheelhouse <dir>      离线 wheelhouse（edge-* 必填）
+  --wheelhouse <dir>      离线 wheelhouse（edge-* 安装/演练必填；--uninstall 时不需要）
   --apply                 真部署（默认只演练、不写任何远端文件）
   --allow-unverified      放行"板卡声明未实测"（探索用；不构成验收证据）
   --env-set KEY=VALUE     装配单模板的部署期取值（可多次，如 --env-set PROVIDER_ENDPOINT=host:50052）
@@ -148,7 +148,9 @@ if [ "${UNINSTALL}" != "1" ]; then   # 卸载不需要制品，跳过制品预�
 if [ -n "${RUNTIME_BUNDLE}" ]; then
   [ -f "${RUNTIME_BUNDLE}" ] || { err "runtime 包不存在：${RUNTIME_BUNDLE}"; exit 2; }
 fi
-if [ "${need_wheelhouse}" = "wheelhouse" ]; then
+# 卸载路径**不需要** wheelhouse：它只按安装记录删文件（脚本/声明/验收器足够），
+# 强制要求只会让操作者白推一次离线包（实测 edge-motion 卸载时被这一步拖到超时）。
+if [ "${need_wheelhouse}" = "wheelhouse" ] && [ "${UNINSTALL}" != "1" ]; then
   [ -n "${WHEELHOUSE}" ] || { err "该角色的依赖来源是 wheelhouse ⇒ 必须给 --wheelhouse"; exit 2; }
   [ -d "${WHEELHOUSE}" ] || { err "wheelhouse 目录不存在：${WHEELHOUSE}"; exit 2; }
   if ! bash "${SCRIPT_DIR}/fetch_wheelhouse.sh" --verify --target \
