@@ -652,7 +652,23 @@ def render_env_file(effective: dict, root: Path, tokens: dict, *,
             "RUNTIME_SUBJECT": str(effective.get("runtime_subject") or "iraf-runtime"),
         })
         merged.update({str(k).strip().upper(): str(v) for k, v in dict(env_values or {}).items()})
-        return render_template(Path(repo_root) / template_rel, merged)
+        template_path = Path(repo_root) / template_rel
+        try:
+            return render_template(template_path, merged)
+        except InstallError as exc:
+            # 把"缺哪个部署期取值"变成可操作信息：字段名 + 模板行号（部署时不必翻模板）。
+            text = template_path.read_text(encoding="utf-8")
+            leftovers = sorted(set(re.findall(r"@([A-Z_]+)@", text)) - set(merged))
+            if not leftovers:
+                raise
+            lines = text.splitlines()
+            detail = []
+            for token in leftovers:
+                where = [str(index + 1) for index, line in enumerate(lines) if "@%s@" % token in line]
+                detail.append("%s（模板第 %s 行）" % (token, ",".join(where) or "?"))
+            raise InstallError(
+                "装配单模板缺部署期取值：%s。用 --env-set %s=… 或 --values <YAML> 提供"
+                % ("；".join(detail), leftovers[0]), EXIT_DECLARATION) from exc
 
     lines = [ENV_FILE_HEADER % {"profile": effective["id"], "version": effective["version"],
                                 "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}]

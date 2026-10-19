@@ -49,6 +49,7 @@ WHEELHOUSE=""
 APPLY="0"
 ALLOW_UNVERIFIED="0"
 REHEARSAL="0"
+VALUES_FILE=""
 REMOTE_ROOT=""
 UNINSTALL="0"
 PURGE="0"
@@ -74,6 +75,9 @@ usage() {
   --apply                 真部署（默认只演练、不写任何远端文件）
   --allow-unverified      放行"板卡声明未实测"（探索用；不构成验收证据）
   --env-set KEY=VALUE     装配单模板的部署期取值（可多次，如 --env-set PROVIDER_ENDPOINT=host:50052）
+  --values <file>         装配单部署期取值的 YAML（KEY: VALUE；与 --env-set 合并）。
+                          示例见 config/install/deploy_values/*.example.yaml；文件内残留 "<...>"
+                          占位符一律拒绝；地址类取值不入库，用 --env-set 给。
   --remote-dir <dir>      远端落地目录（默认 /root/iraf-deploy；也可用 IRAF_BOARD_REMOTE_DIR）
   --rehearsal             目标端以**沙箱演练**方式安装（放宽目标端事实检查）；必须配 --remote-root 且非 /
                           用途：替身主机/本地管线上端到端自测。**不构成板卡证据**
@@ -108,6 +112,9 @@ while [ "$#" -gt 0 ]; do
       [ "$#" -ge 2 ] || { err "--env-set 缺少取值（KEY=VALUE）"; exit 1; }
       case "$2" in *"="*) ENV_SETS+=("$2") ;; *) err "--env-set 需要 KEY=VALUE 形式：$2"; exit 1 ;; esac
       shift ;;
+    --values)
+      [ "$#" -ge 2 ] || { err "--values 缺少取值（YAML 文件路径）"; exit 1; }
+      VALUES_FILE="$2"; shift ;;
     *) err "无法识别的参数：$1（用 --help 查看用法）"; exit 1 ;;
   esac
   shift
@@ -180,6 +187,36 @@ INSTALL_CMD="PYTHON=${REMOTE_PYTHON} bash ${REMOTE_SDK_DIR}/install-iraf.sh --pr
 [ -n "${RUNTIME_REMOTE}" ] && INSTALL_CMD="${INSTALL_CMD} --runtime-bundle ${RUNTIME_REMOTE}"
 [ -n "${WHEELHOUSE}" ] && INSTALL_CMD="${INSTALL_CMD} --wheelhouse ${REMOTE_DIR}/wheelhouse"
 [ "${ALLOW_UNVERIFIED}" = "1" ] && INSTALL_CMD="${INSTALL_CMD} --allow-unverified"
+if [ -n "${VALUES_FILE}" ]; then
+  [ -f "${VALUES_FILE}" ] || { err "--values 文件不存在：${VALUES_FILE}"; exit 1; }
+  _pairs="$("${PYTHON}" - "${VALUES_FILE}" <<'PY'
+import sys
+try:
+    import yaml
+except ImportError:
+    sys.stderr.write("解析 --values 需要 PyYAML（python3 -m pip install pyyaml）\n")
+    raise SystemExit(2)
+path = sys.argv[1]
+data = yaml.safe_load(open(path, encoding="utf-8")) or {}
+values = data.get("values") if isinstance(data, dict) and "values" in data else data
+if not isinstance(values, dict):
+    sys.stderr.write("--values 文件必须是 {KEY: VALUE} 映射（或顶层 values: 映射）：%s\n" % path)
+    raise SystemExit(2)
+placeholders = [k for k, v in sorted(values.items())
+                if isinstance(v, str) and ("<" in v or ">" in v)]
+if placeholders:
+    sys.stderr.write("--values 里仍是占位符：%s（请填真实值；地址类取值建议部署时用 --env-set 给）\n"
+                     % ", ".join(placeholders))
+    raise SystemExit(3)
+for key, value in sorted(values.items()):
+    sys.stdout.write("%s=%s\n" % (str(key).strip().upper(), value))
+PY
+)" || { err "--values 解析失败：${VALUES_FILE}"; exit 1; }
+  while IFS= read -r _line; do
+    [ -n "${_line}" ] && ENV_SETS+=("${_line}")
+  done <<< "${_pairs}"
+  log "取值文件 $(basename "${VALUES_FILE}")：载入 ${#ENV_SETS[@]} 项部署期取值"
+fi
 # 装配单模板的部署期取值（如 PROVIDER_ENDPOINT）；缺必需占位符时目标端会显式失败
 for _kv in "${ENV_SETS[@]:-}"; do
   [ -n "${_kv}" ] && INSTALL_CMD="${INSTALL_CMD} --env-set ${_kv}"

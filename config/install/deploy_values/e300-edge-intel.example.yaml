@@ -1,0 +1,22 @@
+# 部署期取值示例 —— E300 智控域（edge-intel）
+#
+# 用法：
+#   bash deploy/sdk/board_deploy.sh --profile edge-intel \
+#        --sdk-wheel build/sdk/iraf_sdk-<ver>-py3-none-any.whl \
+#        --runtime-bundle build/sdk/iraf-runtime-<ver>-aarch64.tar.gz \
+#        --wheelhouse build/wheelhouse/aarch64-manylinux_2_28-cp311 \
+#        --values config/install/deploy_values/e300-edge-intel.yaml \
+#        --env-set PROVIDER_ENDPOINT=<x86-host>:50052 \
+#        --allow-unverified --apply
+#
+# 为什么 PROVIDER_ENDPOINT 不在本文件里：地址会变（板卡/主机 IP 实测变过一次），
+# 按铁律 6.10 不入库；部署时用 --env-set 给。本文件只放与地址无关的取值。
+#
+# 复制成 e300-edge-intel.yaml 再改（*.yaml 已被 .gitignore 忽略时不建议入库带真实地址的文件）。
+values:
+  # 机器人机型 Profile：这台算力设备实际驱动的机器人（未定义时不得瞎填，AGENTS 6.3）
+  PROFILE: profiles/piper_mujoco.yaml
+  # 安全策略：板卡未签字前只能是仿真档（simulation_only=true）
+  SAFETY_POLICY: profiles/safety/simulation_lab.yaml
+  # 调用方身份标识（审计用；真实身份来自受信 transport）
+  RUNTIME_SUBJECT: board-e300-intel

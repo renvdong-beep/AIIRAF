@@ -524,6 +524,14 @@ class InstallActionTest(unittest.TestCase):
         self.assertIn("MemoryMax=1G", text)
         self.assertNotIn("@CPU_QUOTA@", text)
 
+    def test_missing_deploy_value_names_field_and_template_line(self):
+        """缺部署期取值时必须报"字段名 + 模板行号"，而不是让部署方去翻模板。"""
+        with self.assertRaises(lib.InstallError) as ctx:
+            self._install(env_values={})  # 故意不给 PROVIDER_ENDPOINT
+        message = str(ctx.exception)
+        self.assertIn("PROVIDER_ENDPOINT", message)
+        self.assertIn("模板第", message)
+
     def test_sim_scene_is_copied_and_backend_config_generated(self):
         """仿真档：声明的场景（XML + 旁挂报告）复制进版本目录，并在**目标端**生成 IRAF_BACKEND_CONFIG。
 
