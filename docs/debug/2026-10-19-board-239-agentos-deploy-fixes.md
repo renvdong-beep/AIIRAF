@@ -250,6 +250,7 @@ ln -sf /usr/local/lib/nodejs/node-v18.20.4-linux-arm64/bin/npx  /usr/local/bin/n
 ```
 
 实测：`node -v` → `v18.20.4`，`npm -v` → `10.7.0`，`which node` → `/usr/local/bin/node`。
+**注意：Node 18 不够，见第 10 节（最终用的是 Node 20.18.1）。**
 
 事实 3（厂商**第二个**打包缺陷）：`tui_dist/` 里只有 `entry.js`，**没有 `package.json`**，
 而 entry.js 第一行就是 ESM 语法（`import { createRequire as __cr } from 'node:module'`）⇒
@@ -290,3 +291,123 @@ _make_tui_argv(Path('/root/.intewell/tui'), False)
 - 未验证：浏览器 /chat 里**真正发一轮对话**（需人在页面上操作）。我验到的是 node 可执行 +
   `_make_tui_argv` 返回 argv + bundle 能加载，即报错的那条分支已消除。
 - 磁盘：装 node 后可用空间 9.6G → 9.5G。
+
+## 10. /chat "session ended"（node:internal/errors:496）—— 实为两层：Node 版本 + Python 解释器
+
+补完 Node 18 与 package.json 后，浏览器点 /chat 显示
+`node:internal/errors:496  ErrorCaptureStackTrace(err)  session ended`。服务端日志里没有堆栈
+（输出直接进 WS），必须用真 PTY 复现才能拿到：
+
+```bash
+cd /root && timeout 25 script -q -c \
+  "TERM=xterm-256color /usr/local/bin/node --expose-gc \
+   /usr/local/lib/python3.10/site-packages/intewell_cli/tui_dist/entry.js" \
+  /tmp/tui-tty.log < /dev/null > /dev/null 2>&1
+cat -v /tmp/tui-tty.log | head -30
+```
+
+### 10.1 第一层：Node 18 不够，`import.meta.dirname` 需要 Node ≥ 20.11
+
+堆栈：
+```
+TypeError [ERR_INVALID_ARG_TYPE]: The "paths[0]" argument must be of type string. Received undefined
+    at resolve (node:path:1097:7)
+    at GatewayClient.start (…/tui_dist/entry.js:84551:59)
+```
+对应 bundle 源码：
+```js
+start() {
+  const root2 = process.env.INTEWELL_PYTHON_SRC_ROOT ?? resolve(import.meta.dirname, "../../");
+```
+`import.meta.dirname` 是 **Node 20.11+ 才有的 API**，Node 18 下为 `undefined` ⇒
+`path.resolve(undefined, "../../")` 抛 ERR_INVALID_ARG_TYPE。
+（报错文案写的 "Node.js (>= 18)" 与 bundle 实际需求不一致，属文案缺陷。）
+
+处理：装 Node **20.18.1** arm64，并把 node/npm/npx 软链指向它：
+
+```bash
+cd /tmp && curl -fL -o node20.tar.xz \
+  https://nodejs.org/dist/v20.18.1/node-v20.18.1-linux-arm64.tar.xz
+tar -xJf node20.tar.xz -C /usr/local/lib/nodejs
+ln -sf /usr/local/lib/nodejs/node-v20.18.1-linux-arm64/bin/node /usr/local/bin/node
+ln -sf /usr/local/lib/nodejs/node-v20.18.1-linux-arm64/bin/npm  /usr/local/bin/npm
+ln -sf /usr/local/lib/nodejs/node-v20.18.1-linux-arm64/bin/npx  /usr/local/bin/npx
+```
+
+实测 `node -v` → `v20.18.1`；此层错误消失，Ink 界面能渲染出来。
+
+### 10.2 第二层：TUI spawn 的 Python 网关退到系统 python3（3.8）
+
+界面起来后不断刷 `error: gateway exited (1)`。TUI 的崩溃日志在
+`/root/.intewell/logs/tui_gateway_crash.log`，实测每 2.2 秒一次：
+```
+[lifecycle] spawned gateway child pid=929336 … python=python3 cwd=/usr/local/lib/python3.10/site-packages
+[lifecycle] child exit pid=929336 … exitCode=1
+```
+`python=python3` 就是根因：板上 `/usr/bin/python3` 是 **3.8**，而 `tui_gateway` 装在
+`/usr/local/lib/python3.10/site-packages` 且用了 3.10 语法。
+
+`entry.js` 里 `resolvePython()` 的优先级（原文）：
+```js
+process.env.INTEWELL_PYTHON || process.env.PYTHON
+  → $VIRTUAL_ENV/bin/python
+  → <root>/.venv/bin/python、<root>/venv/bin/python
+  → 兜底 "python3"
+```
+
+对照实测：
+- `PYTHONPATH=… /usr/local/bin/python3.10 -m tui_gateway.entry` → 打印 `{"type":"gateway.ready",…}`，正常
+- `PYTHONPATH=… python3 -m tui_gateway.entry` → `File "/usr/lib/python3.8/runpy.py"` 直接 traceback
+
+处理：启动 dashboard 时显式给解释器（子进程继承该环境变量）：
+
+```bash
+cd /root && INTEWELL_PYTHON=/usr/local/bin/python3.10 \
+  nohup intewell-agent-cli dashboard --host 0.0.0.0 --port 9119 --no-open \
+  > /tmp/239-dashboard.log 2>&1 &
+```
+
+验收（真 PTY 复跑同一命令）：
+```
+spawned gateway child pid=930205 … python=/usr/local/bin/python3.10 cwd=/usr/local/lib/python3.10/site-packages
+child_exit_count = 0
+输出中 "gateway exited" 出现次数 = 0
+script 退出码 = 124（被 timeout 杀掉 ⇒ 进程一直活着）
+```
+重启 dashboard 后 `LISTEN 0.0.0.0:9119`、`GET /` → 302 正常。
+
+### 10.3 启动参数清单（三条缺一不可）
+
+```
+Node ≥ 20.11（实测 20.18.1）
+tui_dist/package.json = {"type":"module"}
+INTEWELL_PYTHON=/usr/local/bin/python3.10
+```
+
+建议做成 systemd 单元避免每次手敲（**尚未创建，需确认后执行**）：
+
+```ini
+[Unit]
+Description=Intewell Agent dashboard (9119)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root
+Environment=INTEWELL_PYTHON=/usr/local/bin/python3.10
+Environment=TERM=xterm-256color
+ExecStart=/usr/local/bin/intewell-agent-cli dashboard --host 0.0.0.0 --port 9119 --no-open
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+坑位：
+- `/root/.intewell/logs/tui_gateway_crash.log` 是查这类"session ended"的唯一有效证据源，
+  服务端 stdout 看不到（child stdout 被 TUI 吞掉）。
+- 卸载 Node 18 时不要 `rm -rf /usr/local/lib/nodejs`：路径里现在同时有 v18 与 v20 两棵树，
+  只把软链指向 v20 即可；将来要清 v18 再单独删目录。
+- 未验证：浏览器里真实发一轮对话（需人在页面操作）。我验到的是 PTY 层完整链路
+  （node TUI ↔ python3.10 gateway 存活、无 child exit）。
