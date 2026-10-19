@@ -234,7 +234,9 @@ if [ "${UNINSTALL}" = "1" ]; then
   copy "${SCRIPT_DIR}/lib_install.py" "${SCRIPT_DIR}/uninstall-iraf.sh" "${SCRIPT_DIR}/verify_residue.sh" \
        "${TARGET}:${REMOTE_SDK_DIR}/" || { err "脚本传输失败"; exit 3; }
   copy "${REPO_ROOT}/scripts/install_profile_check.py" "${TARGET}:${REMOTE_DIR}/scripts/" || { err "校验器传输失败"; exit 3; }
-  copy "${REPO_ROOT}/config/install/"* "${TARGET}:${REMOTE_DIR}/config/install/" || { err "声明传输失败"; exit 3; }
+  # 必须 -r：config/install 下除声明文件外还有目录（如 deploy_values/），非递归 scp 会报
+  # "not a regular file" 并让整轮部署在传输阶段失败（2026-10-19 实测）。
+  copy -r "${REPO_ROOT}/config/install/"* "${TARGET}:${REMOTE_DIR}/config/install/" || { err "声明传输失败"; exit 3; }
   copy "${REPO_ROOT}/pyproject.toml" "${TARGET}:${REMOTE_DIR}/" || { err "pyproject 传输失败"; exit 3; }
 # proto 桩：声明里的 python_stubs_dir 是**仓库相对路径**（build/generated/python），
 # 目标端 repo 根 = REMOTE_DIR，所以必须推到同样的相对位置，安装器才能按声明找到并拷进 lib/
@@ -317,7 +319,7 @@ if compgen -G "${SCRIPT_DIR}/env/*.tmpl" >/dev/null; then
   copy "${SCRIPT_DIR}/env/"*.tmpl "${TARGET}:${REMOTE_SDK_DIR}/env/" || { err "装配单模板传输失败"; exit 3; }
 fi
 copy "${REPO_ROOT}/scripts/install_profile_check.py" "${TARGET}:${REMOTE_DIR}/scripts/" || { err "校验器传输失败"; exit 3; }
-copy "${REPO_ROOT}/config/install/"* "${TARGET}:${REMOTE_DIR}/config/install/" || { err "声明文件传输失败"; exit 3; }
+copy -r "${REPO_ROOT}/config/install/"* "${TARGET}:${REMOTE_DIR}/config/install/" || { err "声明文件传输失败"; exit 3; }
 copy "${REPO_ROOT}/pyproject.toml" "${TARGET}:${REMOTE_DIR}/" || { err "pyproject 传输失败"; exit 3; }
 STUBS_DIR="$("${PYTHON}" -c "import json,sys;print(json.loads(sys.argv[1])['python_stubs_dir'])" "${LAYOUT}")"
 [ -d "${REPO_ROOT}/${STUBS_DIR}" ] || { err "声明的 proto 桩目录不存在：${REPO_ROOT}/${STUBS_DIR}（先跑 scripts/gen_proto_stubs.sh）"; exit 2; }
