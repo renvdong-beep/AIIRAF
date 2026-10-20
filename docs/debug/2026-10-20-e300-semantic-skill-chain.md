@@ -97,20 +97,48 @@ resolved_skill: stop      status: SUCCEEDED      error_code: ""      退出码 0
 （AST 解析，不需要 grpc）。**注意：provider 是 x86 上的常驻进程，改完必须重启它才生效**——
 本轮就因此多失败了一次（板上装了新代码但旧 Provider 仍在跑）。
 
-### 5.2 pick_object 仍然不过（两层原因，数字分开记录）
+### 5.2 已闭合：pick_object 的残差根因是**缺省时长**，不是标定
 
-- 重启 Provider 前（模型给 `world_absolute` 位姿）：
-  `distance=0.014450m`，delta=[0.004229, 5.4e-06, 0.013817]，臂确实动了（qpos 非零）。
-- 重启 Provider 后（模型给 `live_target_body`，由后端解析目标位姿）：
-  `distance=0.163883m`，delta=[-0.050630, -1.06e-06, 0.155866]，
-  且 **qpos 全为 0.0** ⇒ 这一跑臂根本没动。两层要分开查：
-  ① 为什么 live_target_body 路径下没有产生关节运动（控制段/执行段问题）；
-  ② 位姿残差本身的标定问题（与 §11.67 同族，判别实验 align_max_attempts 3→6）。
-  **不得**用放宽 tolerance 的方式让它变绿。
+板上 `抓取 box_01` 之前报 `末端未到达目标抓取位姿 distance=0.014450m tolerance=0.005000m`。
+打开 `IRAF_DEBUG_PICK=1` 抓到相位账本：
+
+```
+PICK_INPUTS {"duration_ms": 1000, "phase_ms_each": 200, ...}
+PICK_TRACE  HOME_HOLD  center_distance_m=0.163883  (起点)
+PICK_TRACE  APPROACH   center_distance_m=0.071105
+PICK_TRACE  DESCEND    center_distance_m=0.014450   ← 门禁读数，仍 > 0.005
+```
+
+根因：`src/iraf_skills/common/manipulation.py` 里 `duration_ms` 缺省 **1000 ms**，
+而 backend 按 5 段切分（`phase_ms = duration_ms // 5`）⇒ 每段只有 **200 ms**；
+而 `mujoco_backend` 相位注释里的标定值是**每段 1600 ms（总 8000 ms）**。
+即"代码默认值比标定值短 8 倍"，臂根本没有收敛时间。**不是标定残差，也不是容差问题。**
+
+修法（commit 8854a1a）：新增 `PICK_NOMINAL_DURATION_MS = 8000`、`PLACE_NOMINAL_DURATION_MS = 6400`
+（分别对应 5 段 / 4 段 × 1600 ms），把缺省值改为标定值；**判据 tolerance 未动**。
+
+修后实测（关闭 debug，干净复跑，板上 `--text "抓取 box_01"`）：
+
+```
+status: SUCCEEDED      resolved_skill: pick_object      simulation: true
+execution_id: 1e8171e9-160e-5c00-a307-e7767bb2b2e1
+policy: 1.0.0  decision: 8abded60-f884-468e-b2b6-76befad0cb8f
+accepted: true         confirmation: "constraint"       target_id: box_01
+pose_source: live_target_body
+grasp_alignment.center_distance_m = 9.387527253937005e-06   ← 9.39 µm（容差 5 mm）
+bilateral_contact = true    force_ok = true
+lift_delta_m = 0.092124     lift_peak_delta_m = 0.080084     lift_attitude_max_deg = 21.470857
+regrasp.applied = true      regrasp.force_imbalance_ratio = 1.0155
+```
+
+即残差从 **14.45 mm → 9.39 µm**，`grasped/lifted` 均为 true，终态 SUCCEEDED。
+
+补充：此前还出现过一次 `distance=0.163883m` 且 `qpos` 全 0 的异常，是在同一"相位过短"条件下
+发生的首调异常；改缺省时长后 1 次 debug 复跑 + 1 次干净复跑**都 SUCCEEDED**，未再复现
+（样本仅 2 次，若再出现需单独追）。
 
 ### 5.3 其余未闭合
-1. `pick_object` 残差 14.45 mm（Z 向 13.82 mm）> 5 mm 容差 ⇒ 抓取本身未成功；
-   下一步按 §11.67 的判别实验：`align_max_attempts 3→6`，**不放宽 residual 判据**。
+1. ~~pick_object 残差~~ —— **已闭合**，见 5.2（根因是缺省时长，不是标定容差）。
 2. 智控域默认路由是临时命令，未持久化（重启会再次 `Network is unreachable`）。
 3. 运控域 edge-motion 仍是桩；真机入口未定义，不能声称运控能力可用。
 4. 语义层目前在**板上 IRAF CLI 内部**用 LLM 解析（`IRAF_AGENTOS_*`），板上 AgentOS 仍未安装；
