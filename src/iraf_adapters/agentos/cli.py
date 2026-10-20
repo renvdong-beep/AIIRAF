@@ -146,11 +146,17 @@ def build_intent_provider(environ=None):
         timeout = float(env.get("IRAF_AGENTOS_TIMEOUT_SECONDS", "10"))
     except ValueError:
         timeout = 10.0
+    try:
+        # 推理型模型会把 max_tokens 花在思考上（实测 256 直接 content 为空）
+        max_tokens = int(env.get("IRAF_AGENTOS_MAX_TOKENS", "1024"))
+    except ValueError:
+        max_tokens = 1024
     return OpenAICompatibleIntentProvider(
         IntentProviderConfig(endpoint, model, str(env.get("IRAF_AGENTOS_TOKEN") or ""),
                              timeout, verify,
                              # 网关不支持 json_schema 时按 auto 降级（2026-10-19 E300 实测）
-                             str(env.get("IRAF_AGENTOS_RESPONSE_FORMAT") or "auto"))
+                             str(env.get("IRAF_AGENTOS_RESPONSE_FORMAT") or "auto"),
+                             max_tokens)
     )
 
 

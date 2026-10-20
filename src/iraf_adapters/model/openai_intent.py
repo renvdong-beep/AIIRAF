@@ -27,6 +27,9 @@ class IntentProviderConfig:
     verify_tls: bool = True
     # auto = 依次尝试 json_schema → json_object → none（默认）；也可强制某一档，便于复现问题
     response_format_mode: str = "auto"
+    # 2026-10-19 板上实测：写死 256 会被推理型模型吃光（finish_reason=length、
+    # completion_tokens=256、content 为空 ⇒ "模型未返回严格 JSON 意图"）。默认 1024，可部署期覆盖。
+    max_tokens: int = 1024
 
 
 class OpenAICompatibleIntentProvider:
@@ -36,6 +39,8 @@ class OpenAICompatibleIntentProvider:
     def __init__(self, config):
         self.config = config
         self.model_id = config.model
+        # 最近一次调用的诊断信息（finish_reason / completion_tokens），用于报错定位
+        self._last_meta = {}
 
     def parse(self, text, skill_contracts):
         if not isinstance(text, str) or not text.strip():
@@ -53,7 +58,16 @@ class OpenAICompatibleIntentProvider:
         try:
             intent = json.loads(content.strip())
         except ValueError:
-            intent = _extract_json_object(content)
+            try:
+                intent = _extract_json_object(content)
+            except IntentProviderError as exc:
+                # 带上 finish_reason/max_tokens：否则"模型未返回严格 JSON"无法判断是
+                # 截断、拒答还是网关返回空（2026-10-19 板卡上就是这样卡了一轮）。
+                raise IntentProviderError(
+                    "%s（finish_reason=%s, completion_tokens=%s, content_len=%d, max_tokens=%d）"
+                    % (exc, self._last_meta.get("finish_reason"),
+                       self._last_meta.get("completion_tokens"),
+                       len(content or ""), int(self.config.max_tokens or 1024))) from exc
         errors = sorted(Draft202012Validator(response_schema).iter_errors(intent), key=lambda e: list(e.path))
         if errors:
             raise IntentProviderError("模型意图不符合 Skill schema: " + errors[0].message)
@@ -73,7 +87,7 @@ class OpenAICompatibleIntentProvider:
         body = {"model": self.config.model,
                 "messages": [{"role": "system", "content": system},
                              {"role": "user", "content": text}],
-                "temperature": 0, "max_tokens": 256,
+                "temperature": 0, "max_tokens": int(self.config.max_tokens or 1024),
                 "chat_template_kwargs": {"enable_thinking": False}}
         if mode == "json_schema":
             body["response_format"] = {"type": "json_schema",
@@ -115,7 +129,10 @@ class OpenAICompatibleIntentProvider:
             except (URLError, TimeoutError, ValueError) as exc:
                 raise IntentProviderError("意图 Provider 调用失败: " + str(exc)) from exc
             try:
-                return raw["choices"][0]["message"]["content"]
+                choice = raw["choices"][0]
+                self._last_meta = {"finish_reason": choice.get("finish_reason"),
+                                   "completion_tokens": (raw.get("usage") or {}).get("completion_tokens")}
+                return choice["message"]["content"]
             except (KeyError, IndexError, TypeError) as exc:
                 raise IntentProviderError("模型响应缺少 choices[0].message.content") from exc
         raise IntentProviderError("意图 Provider 调用失败（所有 response_format 档位均被拒绝）：%s"

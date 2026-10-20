@@ -106,6 +106,35 @@ class IntentProviderTest(unittest.TestCase):
             provider.parse("随便", CONTRACTS)
         self.assertIn("schema", str(ctx.exception).lower())
 
+    def test_truncated_response_names_finish_reason(self):
+        """被 max_tokens 截断时，报错必须带 finish_reason 与 content_len（可定位，不靠猜）。"""
+        provider = make_provider("none")
+        provider._post = lambda body: {
+            "choices": [{"finish_reason": "length", "message": {"content": ""}}],
+            "usage": {"completion_tokens": 256},
+        }
+        with self.assertRaises(IntentProviderError) as ctx:
+            provider.parse("抓取 box_01", CONTRACTS)
+        message = str(ctx.exception)
+        self.assertIn("finish_reason=length", message)
+        self.assertIn("content_len=0", message)
+
+    def test_max_tokens_is_configurable(self):
+        """默认 1024；配置值必须真的进请求体（256 的教训）。"""
+        seen = {}
+        provider = OpenAICompatibleIntentProvider(
+            IntentProviderConfig("http://gw.invalid/v1", "m", "k", 5.0, True, "none", 1536))
+
+        def fake_post(body):
+            seen["max_tokens"] = body.get("max_tokens")
+            return ok_response(json.dumps({"skill": "pick_object",
+                                           "parameters": {"target_id": "box_01",
+                                                          "grasp_pose": {"frame_id": "w"}}}))
+
+        provider._post = fake_post
+        provider.parse("抓取 box_01", CONTRACTS)
+        self.assertEqual(seen["max_tokens"], 1536)
+
     def test_unknown_joint_is_rejected(self):
         contracts = {"move_joint": {
             "inputSchema": {"type": "object", "required": ["positions"],
