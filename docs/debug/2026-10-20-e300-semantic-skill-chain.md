@@ -210,3 +210,22 @@ ip route; ping -c2 10.203.246.1; ping -c2 10.203.247.121
 MCP 只在**"板上有 AgentOS，要让它的 LLM 把 IRAF 当工具调"**时才需要：用
 `intewell-agent-cli mcp add <name> --url|--command …` 把 IRAF 暴露成 MCP 工具
 （内部只调 IRAF 公开入口，不得旁路 Policy）。当前板上没装 AgentOS ⇒ MCP 无对象。
+
+## 7. 四个常见问题的定点回答（含历史沿革）
+
+1. **运控域无默认网关怎么办**：见 §6.1 的命令块。要点：网关必须与接口同子网，
+   所以先 `ipv4.addresses=10.203.247.158/23` 再 `ipv4.gateway=10.203.246.1`；
+   /24 下直接加会 `Nexthop has invalid gateway`。当前不需要它出网段（它是被调用方）。
+2. **演示怎么手动启动**：见 §6.3 的入口表。四类入口分别是
+   板上语义（`iraf_adapters.agentos.cli`）、x86 执行端（`scripts/iraf_provider_serve.py`）、
+   本机纯显示（`scripts/view_mujoco.py`）、本机语义+显示（`scripts/agentos_view.py`）、
+   录屏（`scripts/record_demo.sh`）。
+3. **之前版本的演示场景也是 view_mujoco.py 吗**：是。沿革（`git log --follow`）：
+   - 2026-09-11 `a62e6c9 feat: add Ubuntu MuJoCo viewer launcher` ⇒ `scripts/view_mujoco.py` 成为
+     MuJoCo 演示的显示入口（此前没有 viewer 入口）；
+   - `scripts/view_piper_mujoco.py` 只是**兼容转发**入口（文件头已标 deprecated，内部 import
+     `view_mujoco` 并转发参数）；
+   - 2026-10-16 新增 `scripts/agentos_view.py` 作为"语义 → 显示"的薄桥，其显示通道**仍然是**
+     `scripts/view_mujoco.py`，没有另起一套。
+4. **IRAF 需要 MCP 吗**：不需要，见 §6.4。MCP 只在"板上有 AgentOS、要把 IRAF 当工具调"时才引入；
+   当前板上无 AgentOS，语义在 IRAF CLI 内部完成，能力走 gRPC `CapabilityProviderService`。
