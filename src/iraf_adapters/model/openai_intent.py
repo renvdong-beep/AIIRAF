@@ -121,6 +121,16 @@ class OpenAICompatibleIntentProvider:
         raise IntentProviderError("意图 Provider 调用失败（所有 response_format 档位均被拒绝）：%s"
                                   % last_error)
 
+    @staticmethod
+    def _validate_profile_semantics(intent, contracts):
+        contract = contracts.get(intent.get("skill"), {})
+        joints = set(contract.get("robotJoints") or ())
+        positions = (intent.get("parameters") or {}).get("positions")
+        if joints and isinstance(positions, dict):
+            unknown = set(positions) - joints
+            if unknown:
+                raise IntentProviderError("模型意图包含未声明关节: " + str(sorted(unknown)))
+
 
 def _extract_json_object(text):
     """从可能带 Markdown 围栏/前后缀的回复里抠出第一个完整 JSON 对象。
@@ -138,13 +148,3 @@ def _extract_json_object(text):
         return json.loads(text[start:end + 1])
     except ValueError as exc:
         raise IntentProviderError("模型返回的 JSON 无法解析: %s" % exc) from exc
-
-    @staticmethod
-    def _validate_profile_semantics(intent, contracts):
-        contract = contracts.get(intent.get("skill"), {})
-        joints = set(contract.get("robotJoints") or ())
-        positions = (intent.get("parameters") or {}).get("positions")
-        if joints and isinstance(positions, dict):
-            unknown = set(positions) - joints
-            if unknown:
-                raise IntentProviderError("模型意图包含未声明关节: " + str(sorted(unknown)))
