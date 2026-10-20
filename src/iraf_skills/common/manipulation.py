@@ -4,6 +4,14 @@ import math
 
 from .motion import SkillRejected
 
+#: 抓取/放置的**标定总时长**（缺省值）。依据：`mujoco_backend.pick_object` 按 5 段切分
+#: (`phase_ms = duration_ms // 5`)，其相位注释里标定每段 1600 ms ⇒ 总长 8000 ms。
+#: 2026-10-19 板上实测：原先缺省 1000 ms（每段仅 200 ms）时 DESCEND 后残差 14.45 mm
+#: （tolerance 5 mm）——**不是标定问题，是默认值比标定值短 8 倍**。改缺省值，别放宽判据。
+PICK_NOMINAL_DURATION_MS = 8000
+#: 放置按 4 段切分 (`duration_ms // 4`) ⇒ 同一每段标定 1600 ms ⇒ 总长 6400 ms。
+PLACE_NOMINAL_DURATION_MS = 6400
+
 
 class PickObjectProvider:
     """只接受 Backend 以真实仿真状态确认的抓取结果。"""
@@ -26,7 +34,7 @@ class PickObjectProvider:
         result = self.backend.pick_object(
             target_id=target_id,
             grasp_pose=pose,
-            duration_ms=int(inputs.get("duration_ms", 1000)),
+            duration_ms=int(inputs.get("duration_ms", PICK_NOMINAL_DURATION_MS)),
             lease=lease,
         )
         if not isinstance(result, dict):
@@ -181,7 +189,7 @@ class PlaceObjectProvider:
         result = self.backend.place_object(
             place_target_id=place_target_id,
             payload_id=payload_id,
-            duration_ms=int(inputs.get("duration_ms", 1000)),
+            duration_ms=int(inputs.get("duration_ms", PLACE_NOMINAL_DURATION_MS)),
             lease=lease,
         )
         if not isinstance(result, dict):
