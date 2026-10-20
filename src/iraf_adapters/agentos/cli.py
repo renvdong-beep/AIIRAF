@@ -301,7 +301,9 @@ def build_parser():
                         help="任务截止时间（相对现在，秒；缺省 120）")
     parser.add_argument("--resource-id", help="资源 id（可选；缺省取 Runtime 的 resource_id）")
     parser.add_argument("--list-skills", action="store_true", help="只列出可用 Skill 后退出")
-    parser.add_argument("--version", action="version", version="iraf-agentos 0.2.0")
+    from iraf_sdk import __version__ as _iraf_version
+
+    parser.add_argument("--version", action="version", version="iraf-agentos %s" % _iraf_version)
     return parser
 
 

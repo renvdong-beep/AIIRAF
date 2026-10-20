@@ -40,6 +40,7 @@ sys.path.insert(0, str(REPO_ROOT / "deploy" / "sdk"))
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 import lib_manifest  # noqa: E402
+DECLARED_VERSION = lib_manifest.read_declared_version(REPO_ROOT, "pyproject.toml#project.version")
 from lib_manifest import ExitCode, ManifestError  # noqa: E402
 
 import iraf_sdk  # noqa: E402
@@ -73,7 +74,10 @@ class Fixture(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def build_wheel(self, out: Path, version: str = "0.2.0", dist_name: str = "iraf-sdk"):
+    def build_wheel(self, out: Path, version: str = None, dist_name: str = "iraf-sdk"):
+        # 版本单一来源：缺省取 pyproject 的声明值，避免测试里再写一份版本号
+        version = version or lib_manifest.read_declared_version(
+            REPO_ROOT, "pyproject.toml#project.version")
         return lib_manifest.build_wheel(
             self.root,
             out,
@@ -84,7 +88,9 @@ class Fixture(unittest.TestCase):
             requires_python=">=3.9",
         )
 
-    def build_bundle(self, out: Path, version: str = "0.2.0"):
+    def build_bundle(self, out: Path, version: str = None):
+        version = version or lib_manifest.read_declared_version(
+            REPO_ROOT, "pyproject.toml#project.version")
         return lib_manifest.build_runtime_bundle(
             self.root, out, name="iraf-runtime", version=version, arch="aarch64"
         )
@@ -155,7 +161,7 @@ class DeclarationTests(unittest.TestCase):
     def test_declared_version_matches_sdk_module(self):
         matrix = lib_manifest.load_matrix(REPO_ROOT, MATRIX)
         version = lib_manifest.read_declared_version(REPO_ROOT, matrix["sdk"]["version_ref"])
-        self.assertEqual("0.2.0", version)
+        self.assertEqual(lib_manifest.read_declared_version(REPO_ROOT, "pyproject.toml#project.version"), version)
         self.assertEqual(version, iraf_sdk.__version__)
 
     def test_version_ref_parser_reads_only_the_named_section(self):
@@ -214,9 +220,9 @@ class WheelTests(Fixture):
     def test_wheel_structure_is_pep427_and_zero_dependency(self):
         built = self.build_wheel(self.root / "out")
         path = built["path"]
-        self.assertEqual("iraf_sdk-0.2.0-py3-none-any.whl", path.name)
+        self.assertEqual("iraf_sdk-%s-py3-none-any.whl" % DECLARED_VERSION, path.name)
         self.assertEqual([], lib_manifest.validate_wheel(
-            path, dist_name="iraf-sdk", version="0.2.0", package="iraf_sdk",
+            path, dist_name="iraf-sdk", version=DECLARED_VERSION, package="iraf_sdk",
             required_members=built["required_members"],
         ))
         with zipfile.ZipFile(path) as handle:
@@ -224,11 +230,11 @@ class WheelTests(Fixture):
             self.assertIn("iraf_sdk/__init__.py", names)
             self.assertIn("iraf_sdk/errors.py", names)
             self.assertIn("iraf_sdk/run.py", names)
-            metadata = handle.read("iraf_sdk-0.2.0.dist-info/METADATA").decode()
+            metadata = handle.read("iraf_sdk-%s.dist-info/METADATA" % DECLARED_VERSION).decode()
             self.assertIn("Name: iraf-sdk", metadata)
-            self.assertIn("Version: 0.2.0", metadata)
+            self.assertIn("Version: %s" % DECLARED_VERSION, metadata)
             self.assertNotIn("Requires-Dist", metadata)
-            record = handle.read("iraf_sdk-0.2.0.dist-info/RECORD").decode()
+            record = handle.read("iraf_sdk-%s.dist-info/RECORD" % DECLARED_VERSION).decode()
             for name in names:
                 if name.endswith("RECORD"):
                     continue
@@ -246,31 +252,32 @@ class WheelTests(Fixture):
         with zipfile.ZipFile(path, "w") as handle:
             handle.writestr("iraf_sdk-0.0.0.dist-info/METADATA", "Name: UNKNOWN\nVersion: 0.0.0\n")
         violations = lib_manifest.validate_wheel(
-            path, dist_name="iraf-sdk", version="0.2.0", package="iraf_sdk"
+            path, dist_name="iraf-sdk", version=DECLARED_VERSION, package="iraf_sdk"
         )
         self.assertTrue(any("文件名与声明不符" in item for item in violations), violations)
         self.assertTrue(any("缺少必需成员" in item for item in violations), violations)
 
     def test_rejects_wrong_version(self):
-        path = self.build_wheel(self.root / "out", version="0.2.0")["path"]
+        # 故意的"错误版本"：不能等于声明版本，否则这条负向用例就失去意义
+        path = self.build_wheel(self.root / "out", version="0.0.1-wrong")["path"]
         violations = lib_manifest.validate_wheel(
-            path, dist_name="iraf-sdk", version="0.3.0", package="iraf_sdk"
+            path, dist_name="iraf-sdk", version=DECLARED_VERSION, package="iraf_sdk"
         )
         self.assertTrue(any("文件名与声明不符" in item for item in violations), violations)
 
     def test_rejects_platform_specific_name(self):
         built = self.build_wheel(self.root / "out")
-        moved = built["path"].with_name("iraf_sdk-0.2.0-cp310-manylinux_2_28_aarch64.whl")
+        moved = built["path"].with_name("iraf_sdk-%s-cp310-manylinux_2_28_aarch64.whl" % DECLARED_VERSION)
         built["path"].rename(moved)
         violations = lib_manifest.validate_wheel(
-            moved, dist_name="iraf-sdk", version="0.2.0", package="iraf_sdk"
+            moved, dist_name="iraf-sdk", version=DECLARED_VERSION, package="iraf_sdk"
         )
         self.assertTrue(any("py3-none-any" in item for item in violations), violations)
 
     def test_rejects_missing_required_member(self):
         built = self.build_wheel(self.root / "out")
         violations = lib_manifest.validate_wheel(
-            built["path"], dist_name="iraf-sdk", version="0.2.0", package="iraf_sdk",
+            built["path"], dist_name="iraf-sdk", version=DECLARED_VERSION, package="iraf_sdk",
             required_members=["iraf_sdk/not_there.py"],
         )
         self.assertTrue(any("缺少必需成员" in item for item in violations), violations)
@@ -285,7 +292,7 @@ class WheelTests(Fixture):
                     data = data + b"Requires-Dist: mujoco>=3.2\n"
                 handle.writestr(name, data)
         violations = lib_manifest.validate_wheel(
-            path, dist_name="iraf-sdk", version="0.2.0", package="iraf_sdk"
+            path, dist_name="iraf-sdk", version=DECLARED_VERSION, package="iraf_sdk"
         )
         self.assertTrue(any("第三方依赖" in item for item in violations), violations)
 
@@ -295,14 +302,14 @@ class WheelTests(Fixture):
         with zipfile.ZipFile(path, "a") as handle:
             handle.writestr("iraf_sdk/_native.so", b"\x7fELF")
         violations = lib_manifest.validate_wheel(
-            path, dist_name="iraf-sdk", version="0.2.0", package="iraf_sdk"
+            path, dist_name="iraf-sdk", version=DECLARED_VERSION, package="iraf_sdk"
         )
         self.assertTrue(any("二进制扩展" in item for item in violations), violations)
 
     def test_missing_package_dir_is_build_failure(self):
         with self.assertRaises(ManifestError) as ctx:
             lib_manifest.build_wheel(
-                self.root / "empty", self.root / "out", dist_name="iraf-sdk", version="0.2.0",
+                self.root / "empty", self.root / "out", dist_name="iraf-sdk", version=DECLARED_VERSION,
                 package="iraf_sdk", summary="x", requires_python=">=3.9",
             )
         self.assertEqual(ExitCode.BUILD, ctx.exception.exit_code)
@@ -345,7 +352,7 @@ class BundleTests(Fixture):
         (self.root / "skills").rmdir()
         with self.assertRaises(ManifestError) as ctx:
             lib_manifest.build_runtime_bundle(
-                self.root, self.root / "out", name="iraf-runtime", version="0.2.0", arch="aarch64"
+                self.root, self.root / "out", name="iraf-runtime", version=DECLARED_VERSION, arch="aarch64"
             )
         self.assertEqual(ExitCode.PRECHECK, ctx.exception.exit_code)
 
@@ -371,7 +378,7 @@ class ManifestContractTests(Fixture):
         ]
         # 版本/IDL 用真实仓库的声明值（fixture 只是产物来源）
         return lib_manifest.build_manifest(
-            matrix=matrix, target=target, version="0.2.0", repo_root=REPO_ROOT,
+            matrix=matrix, target=target, version=DECLARED_VERSION, repo_root=REPO_ROOT,
             artifacts=artifacts, bundle_excluded=bundle["excluded"],
             idl_digest_value=lib_manifest.idl_digest(REPO_ROOT),
             stubs=stubs, stub_probe=probe,
@@ -557,11 +564,11 @@ class ShellEntryTests(unittest.TestCase):
                 (root / name).mkdir(exist_ok=True)
             out = root / "out"
             wheel = lib_manifest.build_wheel(
-                root, out, dist_name=matrix["sdk"]["name"], version="0.2.0",
+                root, out, dist_name=matrix["sdk"]["name"], version=DECLARED_VERSION,
                 package="iraf_sdk", summary="t", requires_python=">=3.9",
             )
             bundle = lib_manifest.build_runtime_bundle(
-                root, out, name="iraf-runtime", version="0.2.0", arch=target["arch"]
+                root, out, name="iraf-runtime", version=DECLARED_VERSION, arch=target["arch"]
             )
             artifacts = [
                 {"kind": "wheel", "path": lib_manifest.relpath_posix(wheel["path"], root),
@@ -572,7 +579,7 @@ class ShellEntryTests(unittest.TestCase):
                  "size_bytes": bundle["path"].stat().st_size, "files": bundle["files"]},
             ]
             manifest = lib_manifest.build_manifest(
-                matrix=matrix, target=target, version="0.2.0", repo_root=REPO_ROOT,
+                matrix=matrix, target=target, version=DECLARED_VERSION, repo_root=REPO_ROOT,
                 artifacts=artifacts, bundle_excluded=bundle["excluded"],
                 idl_digest_value=lib_manifest.idl_digest(REPO_ROOT),
                 stubs=lib_manifest.stub_status(REPO_ROOT),
@@ -614,8 +621,8 @@ class PlanCommandTests(unittest.TestCase):
                 )
             text = buffer.getvalue()
             self.assertEqual(ExitCode.OK, code)
-            self.assertIn("iraf_sdk-0.2.0-py3-none-any.whl", text)
-            self.assertIn("iraf-runtime-0.2.0-aarch64.tar.gz", text)
+            self.assertIn("iraf_sdk-%s-py3-none-any.whl" % DECLARED_VERSION, text)
+            self.assertIn("iraf-runtime-%s-aarch64.tar.gz" % DECLARED_VERSION, text)
             self.assertIn("verified=false", text)
             self.assertFalse(out.exists())
 

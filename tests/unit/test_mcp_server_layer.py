@@ -11,7 +11,8 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-SERVER = REPO / "scripts/iraf_mcp_server.py"
+SERVER = REPO / "src/iraf_adapters/mcp/server.py"
+FORWARDER = REPO / "scripts/iraf_mcp_server.py"
 
 #: 允许的 MCP 工具名（任务级）
 ALLOWED = {"iraf_submit_task", "iraf_get_task"}
@@ -42,6 +43,13 @@ class McpLayerTest(unittest.TestCase):
         names = tool_names()
         self.assertFalse(names & FORBIDDEN,
                          "出现了技能级工具（会绕过 Skill Manager）：%s" % sorted(names & FORBIDDEN))
+
+    def test_forwarder_defines_no_tools(self):
+        """兼容入口不得自己定义工具（否则又会出现两套实现/两套层次）。"""
+        tree = ast.parse(FORWARDER.read_text(encoding="utf-8"))
+        defs = [n.name for n in tree.body
+                if isinstance(n, ast.FunctionDef) and n.name.startswith("iraf_")]
+        self.assertEqual(defs, [], "scripts/iraf_mcp_server.py 不应再定义工具：%s" % defs)
 
 
 if __name__ == "__main__":

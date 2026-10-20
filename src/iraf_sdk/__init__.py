@@ -48,7 +48,34 @@ from .client import (
     status_from_state,
 )
 
-__version__ = "0.2.0"
+# 版本单一来源（铁律 5.3）：真实值只在 pyproject.toml 的 project.version。
+# 这里从**已安装元数据**读取，避免再复制一份版本号字面量（原先三处硬编码，
+# 2026-10-20 固化时合并）。源码树未安装时给 dev 标记，不冒充发布版本。
+try:
+    from importlib.metadata import PackageNotFoundError as _PNF, version as _pkg_version
+
+    try:
+        __version__ = _pkg_version("intewell-iraf")
+    except _PNF:
+        # 直接从源码树运行（未 pip install）时，回到唯一来源 pyproject.toml 读，
+        # 而不是复制一个版本号字面量（否则又会与 pyproject 分叉）。
+        __version__ = "0.0.0+dev"
+        try:
+            import re as _re
+            from pathlib import Path as _Path
+
+            for _parent in _Path(__file__).resolve().parents:
+                _pyproject = _parent / "pyproject.toml"
+                if _pyproject.is_file():
+                    _match = _re.search(r'(?m)^version\s*=\s*"([^"]+)"',
+                                        _pyproject.read_text(encoding="utf-8"))
+                    if _match:
+                        __version__ = _match.group(1)
+                    break
+        except Exception:  # noqa: BLE001 - 版本兜底失败不应阻断导入
+            pass
+except ImportError:  # pragma: no cover - Python < 3.8 不在支持范围
+    __version__ = "0.0.0+dev"
 
 __all__ = [
     "__version__",

@@ -34,7 +34,9 @@ _spec.loader.exec_module(lib)  # type: ignore[union-attr]
 
 PROFILE = "edge-intel"          # 绝对前缀（/opt/iraf-sdk），适合沙箱
 KEEP_PROFILE = "edge-motion"
-VERSION = "0.2.0"
+import re as _re  # noqa: E402
+_m = _re.search(r'(?m)^version\s*=\s*"([^"]+)"', (REPO / "pyproject.toml").read_text(encoding="utf-8"))
+VERSION = _m.group(1) if _m else "0.0.0"  # 版本单一来源：pyproject.toml
 
 
 class InstallLayoutTest(unittest.TestCase):
@@ -307,7 +309,7 @@ class InstallActionTest(unittest.TestCase):
         return lib.apply_install(self.effective, self.root, **kwargs)
 
     def _version_dir(self) -> Path:
-        return Path(str(self.root) + str(self.effective["prefix"])) / "0.2.0"
+        return Path(str(self.root) + str(self.effective["prefix"])) / VERSION
 
     def _run(self, *args):
         """跑命令行入口，返回 (退出码, stdout+stderr 合并)。"""
