@@ -271,3 +271,31 @@ intewell-agent-cli mcp add iraf-task --command /usr/bin/python3 \
 **可用的验证路径**：dashboard（`http://10.203.247.147:9119/sessions`，admin/123）的会话是多轮的，
 `tui_gateway/ws.py` 明确调用 `start_background_mcp_discovery`，因此**第一轮之后**工具会被采纳：
 先发一句闲聊，再让它"调用 iraf-task 的 iraf_submit_task 提交：抓取 box_01"。
+
+### 8.1 任务级 MCP 接口的直连验证（不经过 AgentOS，2026-10-20）
+
+用 MCP 客户端直连我们的 server（`scripts/probe_mcp_client.py`，板上副本 /opt/iraf-extras/）：
+
+```
+TOOLS ['iraf_submit_task', 'iraf_get_task']
+status= SUCCEEDED | error_code= | skill= pick_object |
+execution_id= 550ff284-e817-5527-8dca-02ae446b1623
+查回 status= SUCCEEDED | execution_id= 550ff284-e817-5527-8dca-02ae446b1623
+```
+
+⇒ 「任务级工具 → IRAF TaskFlow → Skill Manager 选技能 → Policy → 跨机 Provider」这条链在
+**MCP 这层**是成立的；`iraf_get_task` 读的是事件库（`SqliteExecutionStore.get`），不是缓存。
+
+**可复跑的前提（重要）**：MuJoCo 场景是**有状态**的。上一次成功抓取会把 box_01 从原位带走，
+同一 Provider 实例再抓必然 `末端未到达目标抓取位姿 distance≈0.374m`（实测数字）。复跑演示前要
+**重启 Provider 换干净场景**：
+```
+P=$(pgrep -f "[i]raf_provider_serve" | head -1); kill "$P"
+bash /home/coretek/scripts/x86_provider_50052.sh --headless
+```
+
+### 8.2 仍未打通：AgentOS 会话装载 MCP 工具
+
+见 §8 的"卡点"。结论：接口层已验证，卡点在 AgentOS 的
+`background_mcp=True`（后台发现 + 下一轮刷新），`-z` 单轮会话结构上看不到工具；
+dashboard 会话是多轮，等待使用者在界面复验。
