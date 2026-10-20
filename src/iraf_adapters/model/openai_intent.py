@@ -53,7 +53,13 @@ class OpenAICompatibleIntentProvider:
         for name in allowed:
             variants.append({"type": "object", "properties": {"skill": {"const": name}, "parameters": contracts[name]["inputSchema"]}, "required": ["skill", "parameters"], "additionalProperties": False})
         response_schema = {"oneOf": variants}
-        system = "你是机器人意图解析器。根据 Skill 契约和示例选择一个 Skill，并生成严格符合 schema 的 parameters。禁止解释、Markdown、电机命令或未声明动作。对于 positions 对象，只能使用 inputSchema.properties 中列出的真实关节名，禁止把字段名 positions 当成关节名。Skill契约：" + json.dumps(contracts, ensure_ascii=False, separators=(",", ":"))
+        system = ("你是机器人意图解析器。根据 Skill 契约和示例选择一个 Skill，并生成严格符合 schema 的 parameters。禁止解释、Markdown、电机命令或未声明动作。对于 positions 对象，只能使用 inputSchema.properties 中列出的真实关节名，禁止把字段名 positions 当成关节名。Skill契约：" + json.dumps(contracts, ensure_ascii=False, separators=(",", ":"))
+                  # 2026-10-19 板上实测：网关不支持 json_schema 时会降级到 json_object/none，
+                  # 模型便自己发明顶层键（返回 {"type": "move_joint", ...}）⇒ 被 schema 校验拒绝。
+                  # 这里显式给出顶层形状与可选技能名，**不放松校验**，只是把要求说清楚。
+                  + "\n输出要求：只输出一个 JSON 对象，顶层**只能**有两个字段："
+                    '{"skill": "<技能名>", "parameters": { ... }}；不要使用 type/action/name 等别名。'
+                    "skill 必须取以下之一：" + ", ".join(sorted(contracts)) + "。")
         content = self._chat(system, text, response_schema)
         try:
             intent = json.loads(content.strip())

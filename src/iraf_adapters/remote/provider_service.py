@@ -60,6 +60,9 @@ _POSITIONAL = {
     "calibrate_grasp": (),
     "calibrate_camera_to_base": ("inputs",),
     "stand": (),
+    # 2026-10-19 板上实测：skills/stop 的技能名是 stop，而本表只登记了 emergency_stop
+    # ⇒ 语义解析出 stop 后被打成 IRAF-CAPABILITY-UNKNOWN。零参数能力用空元组登记。
+    "stop": (),
     "locomote": ("velocity", "duration_ms"),
     "dock_for_handoff": (),
     "read_state": (),
