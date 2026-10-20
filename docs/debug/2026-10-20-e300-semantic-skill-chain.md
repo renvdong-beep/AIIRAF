@@ -229,3 +229,45 @@ MCP 只在**"板上有 AgentOS，要让它的 LLM 把 IRAF 当工具调"**时才
      `scripts/view_mujoco.py`，没有另起一套。
 4. **IRAF 需要 MCP 吗**：不需要，见 §6.4。MCP 只在"板上有 AgentOS、要把 IRAF 当工具调"时才引入；
    当前板上无 AgentOS，语义在 IRAF CLI 内部完成，能力走 gRPC `CapabilityProviderService`。
+
+## 8. AgentOS 绑定：任务级 MCP（2026-10-20 晚，按使用者纠正重做）
+
+**纠正**：AgentOS 的 skills 与 IRAF Skill Manager 管的机器人 Skill **不是一个概念**，
+不得互相注册。第一版 MCP server 暴露了 `iraf_list_skills` / `iraf_execute_skill`
+（等于允许 AgentOS 绕过 Skill Manager 直连 skill.execute），已废弃并删除注册。
+
+现在（正确层次）`scripts/iraf_mcp_server.py` 只暴露两个**任务级**工具：
+
+| 工具 | 作用 |
+|---|---|
+| `iraf_submit_task(text, deadline_seconds=120)` | 提交一句任务语义 → IRAF TaskFlow；**技能选择/参数校验/策略判定都由 IRAF Skill Manager 做** |
+| `iraf_get_task(execution_id)` | 读 `IRAF_EVENT_STORE`（`SqliteExecutionStore.get`）返回权威执行事实 |
+
+回归门禁：`tests/unit/test_mcp_server_layer.py` 用 AST 断言"只允许任务级工具名"，
+一旦有人加回技能级工具名即失败。本地 2 例通过。
+
+板上登记（智控域 .147）：
+```
+intewell-agent-cli mcp remove iraf
+intewell-agent-cli mcp add iraf-task --command /usr/bin/python3 \
+  --env IRAF_PROVIDER_TOKEN=… IRAF_ENV_FILE=/etc/iraf/edge-intel.env \
+        PYTHONPATH=/opt/iraf-sdk/current/lib:/opt/iraf-sdk/current/src \
+        IRAF_AGENTOS_MODEL_URL=http://192.168.100.89:3000/v1 IRAF_AGENTOS_MODEL=deepseek-flash \
+  --args /opt/iraf-extras/iraf_mcp_server.py
+```
+模型网关 key 放 `/etc/iraf/agentos.key`（600），server 自己读，不写进 config.yaml。
+
+**卡点（AgentOS 侧，不是我们接口的问题）**：`-z` 一次性会话里看不到 MCP 工具。
+证据链：
+- `intewell-agent-cli mcp test iraf-task` → ✓ Connected (893ms)、2 tools discovered；
+- `mcp list` → iraf-task `✓ enabled`；`~/.intewell/logs/mcp-stderr.log` 里 server 被启动多次；
+- `-z "...列出含 iraf 的工具..." -t all --yolo` → 模型回"没有"；
+- 代码：`agentos/capabilities.py::assemble_capabilities(background_mcp=True)` 把 MCP 发现放在**后台线程**，
+  工具靠 `agent/turn_context.py` 在**下一轮**刷新才被采纳；`-z` 只有一轮 ⇒ 永远看不到；
+- 把 `mcp_discovery_timeout` 从 1.5 调到 20 也不生效（该参数用于 tui_gateway 的等待，不是 one-shot）。
+- 交互式 REPL 另有一个坑：登录 shell 注入了 `INTEWELL_AGENT_HOME`（指向另一套安装）⇒
+  CLI 报 "It looks like Intewell isn't configured yet"；`env -u` 也未能绕过，需单独定位。
+
+**可用的验证路径**：dashboard（`http://10.203.247.147:9119/sessions`，admin/123）的会话是多轮的，
+`tui_gateway/ws.py` 明确调用 `start_background_mcp_discovery`，因此**第一轮之后**工具会被采纳：
+先发一句闲聊，再让它"调用 iraf-task 的 iraf_submit_task 提交：抓取 box_01"。
