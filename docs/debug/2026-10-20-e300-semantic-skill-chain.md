@@ -138,10 +138,75 @@ regrasp.applied = true      regrasp.force_imbalance_ratio = 1.0155
 （样本仅 2 次，若再出现需单独追）。
 
 ### 5.3 其余未闭合
+
 1. ~~pick_object 残差~~ —— **已闭合**，见 5.2（根因是缺省时长，不是标定容差）。
-2. 智控域默认路由是临时命令，未持久化（重启会再次 `Network is unreachable`）。
+2. ~~智控域默认路由是临时命令~~ —— **已持久化**（见 §6）；运控域仍无默认网关（按需再加，见 §6.2）。
 3. 运控域 edge-motion 仍是桩；真机入口未定义，不能声称运控能力可用。
 4. 语义层目前在**板上 IRAF CLI 内部**用 LLM 解析（`IRAF_AGENTOS_*`），板上 AgentOS 仍未安装；
    与"AgentOS 发语义"的最终形态还差一层绑定（MCP/子进程，见技能阶段 4）。
 5. `visual_pick` 也会被模型选中（"抓取 box_01" 曾被解析成 visual_pick）——
    意图歧义属模型行为，若要固定技能需在提示词/契约层收敛，勿用放宽校验解决。
+
+## 6. 最终状态（网络 + 双域，2026-10-20 收尾）
+
+### 6.1 地址与持久化
+
+```
+智控域  10.203.247.147   edge-intel     br0: 10.203.247.147/23  gw 10.203.246.1
+运控域  10.203.247.158   edge-motion    eth0: 10.203.247.158/24  （无默认网关）
+x86    10.203.247.121   Capability Provider :50052
+```
+
+- **运控域换过地址**：原先 10.203.247.149 在办公网上**被另一台设备占用**
+  （我这侧 ARP 看到 6a:cc:09:c2:e0:ea，而桥内真实运控域是 fe:fe:00:01:00:00）⇒
+  外部访问被抢答，表现为"宿主/串口侧通、办公网侧不通、且时通时不通"。改到 .158（实测空闲）后正常。
+- **智控域网络已持久化**（原来是手敲的临时 `ip addr/route`）：
+  `nmcli con mod br0 connection.autoconnect yes`
+  实读：`autoconnect=yes / ipv4.method=manual / addresses=10.203.247.147/23 / gateway=10.203.246.1`，
+  `ip route` 显示 `default via 10.203.246.1 dev br0 proto static metric 425`。
+- **运控域**：`nmcli con mod eth0 connection.autoconnect yes`（原来 no，重启不会自己起）。
+  **仍无默认网关**（/24 掩码；运控域是被调用方，不需要出网段）。
+  将来若它要主动访问 x86 或模型网关，需先改 /23 再加网关：
+
+```
+nmcli con mod eth0 ipv4.addresses 10.203.247.158/23 ipv4.gateway 10.203.246.1
+nmcli con up eth0
+ip route; ping -c2 10.203.246.1; ping -c2 10.203.247.121
+```
+
+  ⚠ 在 /24 掩码下执行 `ip route add default via 10.203.246.1` 必然失败
+  （`Nexthop has invalid gateway`）——网关必须与接口处于同一子网。
+
+### 6.2 两域最终装机状态
+
+```
+智控域 .147  edge-intel   /opt/iraf-sdk/0.2.0          unit CPUQuota=150% MemoryMax=1G  disabled
+                          --list-skills → 13 技能
+                          语义实跑 SUCCEEDED ×3：stop / move_joint / pick_object
+                          pick: center_distance=9.39e-06 m, lifted=true, lift_delta=0.092124 m
+运控域 .158  edge-motion  /opt/iraf-sdk-motion/0.2.0   unit CPUQuota=100% MemoryMax=512M disabled
+                          仍是 readiness 桩（真机控制入口未定义，铁律 6.8）
+```
+
+复装流程都是"受控卸载 → 重装"：卸载逐条打印删除项并保留 `/var/lib|log/iraf*`，
+卸载后六路残留核验 = 0；安装 exit 0，自检 `iraf_sdk-ok+stubs`。
+
+### 6.3 演示入口（手动启动 / 脚本）
+
+| 用途 | 入口 | 说明 |
+|---|---|---|
+| 板上语义（无显示） | `python3 -m iraf_adapters.agentos.cli --text "抓取 box_01"` | 需 `cd /opt/iraf-sdk/current`（相对路径 profile）+ env 文件 + 两个 token |
+| x86 跨机执行端 | `bash /home/coretek/scripts/x86_provider_50052.sh [--headless]` | 听 0.0.0.0:50052；`--self-check` 只验装配 |
+| 本机纯显示 | `python3 scripts/view_mujoco.py` | 开 MuJoCo 窗口跑一次抓取（无 LLM） |
+| 本机语义 + 显示 | `python3 scripts/agentos_view.py --text "抓取 box_01"` | LLM 解析 → display_pick → 开窗边抓边看 |
+| 录屏 | `bash scripts/record_demo.sh [输出] [秒数] [--whole-screen]` | 抓 MuJoCo 窗口或整屏 |
+
+### 6.4 MCP 的定位（回答"IRAF 需要 MCP 吗"）
+
+**不需要**。当前两条通道已覆盖：
+- 语义 → 任务：`iraf_adapters.agentos.cli`（板上 CLI，内部调 LLM 做受约束意图解析）
+- 能力 → 执行：`CapabilityProviderService`（gRPC，跨机到 x86 仿真 Provider）
+
+MCP 只在**"板上有 AgentOS，要让它的 LLM 把 IRAF 当工具调"**时才需要：用
+`intewell-agent-cli mcp add <name> --url|--command …` 把 IRAF 暴露成 MCP 工具
+（内部只调 IRAF 公开入口，不得旁路 Policy）。当前板上没装 AgentOS ⇒ MCP 无对象。
