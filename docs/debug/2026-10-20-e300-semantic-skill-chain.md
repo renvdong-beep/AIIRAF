@@ -80,6 +80,35 @@ simulation: true
 
 ## 5. 未闭合
 
+### 5.1 已拿到 SUCCEEDED 的闭环证据（2026-10-20 复测）
+
+板上 CLI，`--text "停止机器人"`：
+```
+execution_id: 838347b7-dbf1-5606-9be6-096a5c2a2e64
+resolved_skill: stop      status: SUCCEEDED      error_code: ""      退出码 0
+```
+更早一次 `--text "把 joint1 移动到 0.1 弧度"` 也拿到过 `status: SUCCEEDED` / `resolved_skill: move_joint` / 退出码 0。
+⇒ 「自然语言 → Skill → 板上策略 → 跨机 Provider 执行」在这条链上是通的，且终态如实。
+
+同一轮修掉的第四个缺陷：`stop` 被执行层拒绝
+`IRAF-CAPABILITY-UNKNOWN 能力 'stop' 未登记参数形状` —— 根因是
+`provider_service._POSITIONAL` 只登记了 `emergency_stop`，没有技能名 `stop`。
+已补 `"stop": ()`，并加 `tests/unit/test_capability_registry.py` 做"技能目录 ↔ 能力表"静态对账
+（AST 解析，不需要 grpc）。**注意：provider 是 x86 上的常驻进程，改完必须重启它才生效**——
+本轮就因此多失败了一次（板上装了新代码但旧 Provider 仍在跑）。
+
+### 5.2 pick_object 仍然不过（两层原因，数字分开记录）
+
+- 重启 Provider 前（模型给 `world_absolute` 位姿）：
+  `distance=0.014450m`，delta=[0.004229, 5.4e-06, 0.013817]，臂确实动了（qpos 非零）。
+- 重启 Provider 后（模型给 `live_target_body`，由后端解析目标位姿）：
+  `distance=0.163883m`，delta=[-0.050630, -1.06e-06, 0.155866]，
+  且 **qpos 全为 0.0** ⇒ 这一跑臂根本没动。两层要分开查：
+  ① 为什么 live_target_body 路径下没有产生关节运动（控制段/执行段问题）；
+  ② 位姿残差本身的标定问题（与 §11.67 同族，判别实验 align_max_attempts 3→6）。
+  **不得**用放宽 tolerance 的方式让它变绿。
+
+### 5.3 其余未闭合
 1. `pick_object` 残差 14.45 mm（Z 向 13.82 mm）> 5 mm 容差 ⇒ 抓取本身未成功；
    下一步按 §11.67 的判别实验：`align_max_attempts 3→6`，**不放宽 residual 判据**。
 2. 智控域默认路由是临时命令，未持久化（重启会再次 `Network is unreachable`）。
