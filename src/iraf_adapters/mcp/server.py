@@ -58,6 +58,22 @@ for _extra in (str(VERSION_DIR / "lib"), str(VERSION_DIR / "src")):
     if _extra not in sys.path:
         sys.path.insert(0, _extra)
 
+
+def _enter_version_dir() -> None:
+    """把工作目录切到 <version dir>（装配单里的 profiles/、skills/ 都是**相对**路径）。
+
+    实机踩到（2026-10-21，E300 智控域）：AgentOS 以 stdio 启动本 server 时 cwd 不是版本目录，
+    `profiles/piper_mujoco.yaml` 解析失败 ⇒ `iraf_submit_task` 返回
+    `[Errno 2] No such file or directory: 'profiles/piper_mujoco.yaml'`。
+    systemd 单元用 `WorkingDirectory=<version dir>` 表达同一事实；这里复现它，避免
+    "同一条装配单在单元里成立、在 MCP 里不成立"的静默分叉。
+    """
+    if VERSION_DIR.is_dir():
+        os.chdir(VERSION_DIR)
+
+
+_enter_version_dir()
+
 from mcp.server.fastmcp import FastMCP  # noqa: E402
 
 app = FastMCP("iraf-task")

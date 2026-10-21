@@ -51,6 +51,28 @@ class McpLayerTest(unittest.TestCase):
                 if isinstance(n, ast.FunctionDef) and n.name.startswith("iraf_")]
         self.assertEqual(defs, [], "scripts/iraf_mcp_server.py 不应再定义工具：%s" % defs)
 
+    def test_chdir_to_version_dir(self):
+        """启动时必须把 cwd 切到 <version dir>：装配单里的 profiles/、skills/ 是相对路径。
+
+        实机踩到（2026-10-21）：AgentOS 以 stdio 启动本 server 时 cwd 不是版本目录，
+        `profiles/piper_mujoco.yaml` 打不开 ⇒ iraf_submit_task 直接失败。
+        systemd 单元用 WorkingDirectory=<version dir> 表达同一事实，MCP 入口必须复现它。
+        """
+        tree = ast.parse(SERVER.read_text(encoding="utf-8"))
+        helpers = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+        self.assertIn("_enter_version_dir", helpers,
+                      "缺少 _enter_version_dir：MCP 入口未对齐单元的工作目录语义")
+        helper = helpers["_enter_version_dir"]
+        self.assertTrue(
+            any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                and n.func.attr == "chdir" for n in ast.walk(helper)),
+            "_enter_version_dir 里没有 os.chdir 调用")
+        called = [n for n in tree.body
+                  if isinstance(n, ast.Expr) and isinstance(n.value, ast.Call)
+                  and isinstance(n.value.func, ast.Name)
+                  and n.value.func.id == "_enter_version_dir"]
+        self.assertTrue(called, "模块顶层没有调用 _enter_version_dir（import 时不会切目录）")
+
 
 if __name__ == "__main__":
     unittest.main()
