@@ -17,7 +17,8 @@ FORWARDER = REPO / "scripts/iraf_mcp_server.py"
 #: 允许的 MCP 工具名（**任务级**：提交 / 查询 / 机器人开发模式开关）
 #: iraf_robot_mode 不是"技能级"工具：它只读装配事实并置一个会话级模式标记，
 #: 不选技能、不执行动作（2026-10-21 使用者口径：语义歧义用显式模式收进机器人任务域）。
-ALLOWED = {"iraf_submit_task", "iraf_get_task", "iraf_robot_mode"}
+ALLOWED = {"iraf_submit_task", "iraf_get_task", "iraf_robot_mode",
+           "iraf_enter_robot_mode", "iraf_exit_robot_mode"}
 #: 明确禁止的（技能级 / 能力级直连）
 FORBIDDEN = {"iraf_execute_skill", "iraf_list_skills", "iraf_run_skill"}
 

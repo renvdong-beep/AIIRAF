@@ -103,15 +103,34 @@ def _bridge():
 
 
 @app.tool()
+def iraf_enter_robot_mode() -> str:
+    """进入「机器人开发模式」（用户说"开始机器人开发模式"时必须调用本工具）。
+
+    零参数、名字即语义：模型不需要在 enum 里选 action，听到这句中文就调它。
+    等价于 iraf_robot_mode(action="enter")。返回 mode / 机器人 Skill 清单 / profile /
+    安全策略 / 后端端点 / simulation 标记。
+    """
+    return iraf_robot_mode(action="enter")
+
+
+@app.tool()
+def iraf_exit_robot_mode() -> str:
+    """退出「机器人开发模式」（用户说"结束/退出机器人开发模式"时调用）。等价于 action="exit"。"""
+    return iraf_robot_mode(action="exit")
+
+
+@app.tool()
 def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800) -> str:
     """机器人开发模式的开关与状态（语义触发：用户说"开始机器人开发模式"时调用）。
 
     action: enter = 打开（后续任务默认按机器人任务域处理）；exit = 关闭；status = 只看状态。
+    中文触发短语：开始/进入机器人开发模式 → enter；结束/退出机器人开发模式 → exit；
+                 机器人环境怎么样 / 有哪些机器人技能 → status。
     返回 mode / active / remaining_s / 机器人 Skill 清单 / profile / 安全策略 / 后端端点 /
     simulation 标记 / hint。**只读装配事实，不执行任何动作、不触发机器人运动。**
 
     什么时候用：这句话有歧义（"抓取/放置"既可能是平台动作也可能是机器人任务）时，先进入
-    本模式，平台就知道后续请求要交给 IRAF 的 Skill Manager，而不是自己编。
+    本模式，平台就知道后续请求要交给 IRAF 的 Skill Manager，而不是自己编或先做全链路自检。
     """
     from iraf_adapters.mcp import mode as mode_mod
 
@@ -171,6 +190,17 @@ def _robot_facts() -> dict:
         except Exception as exc:
             facts["simulation_error"] = str(exc)[:200]
     return facts
+
+
+@app.prompt()
+def robot_dev_mode() -> str:
+    """机器人开发模式（宿主可把它当 /命令 用）：进入模式 + 按任务提交，不要自编结果。"""
+    return (
+        "你在 IRAF 机器人开发模式下工作。请立刻调用 iraf_enter_robot_mode() 进入模式，"
+        "然后用户给出的动作类需求一律作为**任务**调用 iraf_submit_task(text=...)，"
+        "由 IRAF 的 Skill Manager 选技能；不要在平台侧自己执行或编造 status/execution_id，"
+        "需要核对时用 iraf_get_task(execution_id)。"
+    )
 
 
 @app.tool()
