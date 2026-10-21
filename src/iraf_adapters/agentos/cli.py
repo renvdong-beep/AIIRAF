@@ -170,6 +170,9 @@ def classify_result(result):
         return EXIT_OK, "succeeded"
     if code == "IRAF-INTENT-PARSE-FAILED":
         return EXIT_INTENT_PARSE_FAILED, "intent_parse_failed"
+    if code == "IRAF-NOT-ROBOT-TASK":
+        # 过滤：这句话不是机器人任务。退出码沿用"意图层拒绝"这一类，便于脚本判读。
+        return EXIT_INTENT_PARSE_FAILED, "not_robot_task"
     if code.startswith("IRAF-UNAUTHENTICATED") or code.startswith("IRAF-POLICY-DENIED"):
         return EXIT_EXECUTION_FAILED, "denied"
     return EXIT_EXECUTION_FAILED, "failed"
@@ -217,8 +220,16 @@ REPL_BANNER = """IRAF × AgentOS 交互式 CLI（输入自然语言，或 :help 
 提示：一切经 TaskFlow → SkillRuntime → PolicyGateway → Capability Provider；不会旁路驱动。"""
 
 
-def _repl(bridge, dispatcher, context, *, as_json=False):
+def _repl(bridge, dispatcher, context, *, as_json=False, robot_mode=False):
     print(REPL_BANNER, flush=True)
+    if robot_mode:
+        # 机器人开发模式：不靠模型"想起来调工具"，而是**每一句都进 TaskFlow**，
+        # 由 IRAF 的 Skill Manager 判定是不是机器人任务（不是就 IRAF-NOT-ROBOT-TASK）。
+        from iraf_adapters.mcp import mode as mode_mod
+
+        mode_mod.state().enter()
+        print("机器人开发模式：已开启（每一句都提交给 IRAF TaskFlow；:q 结束）")
+        print(_describe_contracts(dispatcher), flush=True)
     while True:
         try:
             raw = input("iraf> ").strip()
@@ -301,6 +312,11 @@ def build_parser():
                         help="任务截止时间（相对现在，秒；缺省 120）")
     parser.add_argument("--resource-id", help="资源 id（可选；缺省取 Runtime 的 resource_id）")
     parser.add_argument("--list-skills", action="store_true", help="只列出可用 Skill 后退出")
+    parser.add_argument("--robot-mode", action="store_true",
+                        help="机器人开发模式：REPL 里每一句都直接提交给 TaskFlow。"
+                             "IRAF 自己判断是不是机器人任务（非机器人任务返回 "
+                             "IRAF-NOT-ROBOT-TASK 并在 reason 里列可用技能），"
+                             "平台不需要理解机器人语义，只负责把话转过来。")
     from iraf_sdk import __version__ as _iraf_version
 
     parser.add_argument("--version", action="version", version="iraf-agentos %s" % _iraf_version)
@@ -356,7 +372,8 @@ def main(argv=None):
         print(render_result(result, as_json=args.json_pretty))
         code, _kind = classify_result(result)
         return code
-    return _repl(bridge, dispatcher, context, as_json=args.json_pretty)
+    return _repl(bridge, dispatcher, context, as_json=args.json_pretty,
+                 robot_mode=args.robot_mode)
 
 
 if __name__ == "__main__":

@@ -18,6 +18,19 @@ class IntentProviderError(RuntimeError):
     pass
 
 
+class IntentNoMatch(IntentProviderError):
+    """这句话**不是机器人任务**（模型判定与所有 Skill 契约都不匹配）。
+
+    单独成类而不是复用 IntentProviderError：调用方需要能把"过滤掉了"与"解析坏了"分开。
+    平台把整段对话都转发给 IRAF 时（机器人开发模式），这就是过滤器输出的那个信号。
+    """
+
+    def __init__(self, reason, matches=()):
+        self.reason = reason or "与已声明的机器人技能都不匹配"
+        self.matches = list(matches)
+        super().__init__("IRAF-NOT-ROBOT-TASK: " + self.reason)
+
+
 @dataclass(frozen=True)
 class IntentProviderConfig:
     endpoint: str
@@ -52,6 +65,11 @@ class OpenAICompatibleIntentProvider:
         variants = []
         for name in allowed:
             variants.append({"type": "object", "properties": {"skill": {"const": name}, "parameters": contracts[name]["inputSchema"]}, "required": ["skill", "parameters"], "additionalProperties": False})
+        # 「不是机器人任务」也要能**干净地**表达出来（否则模型只能拒答/回非 JSON，
+        # 我们就被迫把"过滤"报成"解析失败"）。skill 为空串 = 不匹配任何技能。
+        variants.append({"type": "object",
+                         "properties": {"skill": {"const": ""}, "reason": {"type": "string"}},
+                         "required": ["skill", "reason"], "additionalProperties": False})
         response_schema = {"oneOf": variants}
         system = ("你是机器人意图解析器。根据 Skill 契约和示例选择一个 Skill，并生成严格符合 schema 的 parameters。禁止解释、Markdown、电机命令或未声明动作。对于 positions 对象，只能使用 inputSchema.properties 中列出的真实关节名，禁止把字段名 positions 当成关节名。Skill契约：" + json.dumps(contracts, ensure_ascii=False, separators=(",", ":"))
                   # 2026-10-19 板上实测：网关不支持 json_schema 时会降级到 json_object/none，
@@ -59,7 +77,11 @@ class OpenAICompatibleIntentProvider:
                   # 这里显式给出顶层形状与可选技能名，**不放松校验**，只是把要求说清楚。
                   + "\n输出要求：只输出一个 JSON 对象，顶层**只能**有两个字段："
                     '{"skill": "<技能名>", "parameters": { ... }}；不要使用 type/action/name 等别名。'
-                    "skill 必须取以下之一：" + ", ".join(sorted(contracts)) + "。")
+                    "skill 必须取以下之一：" + ", ".join(sorted(contracts)) + "。"
+                    # 机器人开发模式下，平台会把**整段对话**转发过来；与机器人无关的话必须能被
+                    # 干净地判掉（这是"过滤"的实现点），而不是让模型拒答或输出非 JSON。
+                    + "\n如果这句话**不是机器人任务**（与上面任何 Skill 都无关，例如闲聊、天气、软件问答），"
+                      '输出 {"skill": "", "reason": "<一句话原因>"}，不要硬套某个技能。')
         content = self._chat(system, text, response_schema)
         try:
             intent = json.loads(content.strip())
@@ -77,6 +99,8 @@ class OpenAICompatibleIntentProvider:
         errors = sorted(Draft202012Validator(response_schema).iter_errors(intent), key=lambda e: list(e.path))
         if errors:
             raise IntentProviderError("模型意图不符合 Skill schema: " + errors[0].message)
+        if not intent.get("skill"):
+            raise IntentNoMatch(intent.get("reason") or "", matches=allowed)
         self._validate_profile_semantics(intent, contracts)
         return intent
 

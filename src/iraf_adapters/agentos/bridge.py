@@ -3,7 +3,7 @@ import copy
 import hashlib
 import json
 
-from ..model.openai_intent import IntentProviderError
+from ..model.openai_intent import IntentNoMatch, IntentProviderError
 
 
 class AgentOSBridge:
@@ -36,6 +36,17 @@ class AgentOSBridge:
             if not request.get("request_id") or not request.get("idempotency_key") or not correlation_id:
                 raise IntentProviderError("request_id、correlation_id 和 idempotency_key 必填")
             intent = self.provider.parse(request.get("text", ""), self._intent_contracts())
+        except IntentNoMatch as exc:
+            # 过滤（不是故障）：这句话与任何机器人技能都不匹配。给调用方一个**可判读**的码，
+            # 不要混进"解析失败"——机器人开发模式下平台会把整段对话都转发过来。
+            skills = ", ".join(exc.matches)
+            return self.dispatcher.record_pre_dispatch_failure(
+                request,
+                context,
+                "IRAF-NOT-ROBOT-TASK",
+                "%s（可用技能：%s）" % (exc.reason, skills),
+                metadata,
+            )
         except IntentProviderError as exc:
             return self.dispatcher.record_pre_dispatch_failure(
                 request,
