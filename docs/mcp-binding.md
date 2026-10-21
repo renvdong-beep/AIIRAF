@@ -58,6 +58,11 @@ intewell-agent-cli mcp add iraf-task --command /usr/bin/python3 \
 
 ## 4. 验证（三级，逐级加证据）
 
+0. **跨机（HTTP）**：`IRAF_MCP_TRANSPORT=http` + `IRAF_MCP_ALLOWED_HOSTS` 起服务，
+   开发机用 `scripts/probe_mcp_http.py --url http://<板>:8765/mcp` 直连。
+   实测 2026-10-21：`SUCCEEDED` / `1f2e486c-96d1-552b-afec-ac6d7e3f2332`（读回同一条）。
+   道路与语音接入方式见 `docs/voice-to-task-path.md`。
+
 1. **接口级（不经过平台）**：`scripts/probe_mcp_client.py` 直连 server，断言
    `TOOLS == ['iraf_submit_task','iraf_get_task']`、`status=SUCCEEDED`、`iraf_get_task` 读回同一
    `execution_id`。板上实测 2026-10-20：`550ff284-e817-5527-8dca-02ae446b1623` / SUCCEEDED。
@@ -65,15 +70,25 @@ intewell-agent-cli mcp add iraf-task --command /usr/bin/python3 \
 3. **可复跑前提**：MuJoCo 场景**有状态** —— 成功抓取会把目标带走，同一 Provider 实例再抓必然
    `末端未到达目标抓取位姿 distance≈0.374m`（实测）。演示前重启 Provider 换干净场景。
 
-## 5. 已知限制（2026-10-20 实测，未闭合）
+## 5. 已知限制（2026-10-20 实测；2026-10-21 在 AgentOS 1.0.0 上复核，见
+`docs/debug/2026-10-21-agentos-1.0.0-mcp-binding.md`）
 
 - AgentOS **CLI `-z`（单轮）看不到 MCP 工具**：`agentos/capabilities.py` 用
   `assemble_capabilities(background_mcp=True)` 在后台线程发现 MCP，工具要靠
   `agent/turn_context.py` 在**下一轮**才被采纳；单轮结构上不可能可见。
   调大 `mcp_discovery_timeout`（1.5s → 20s）无效（该参数属于 tui_gateway 的等待）。
+  **1.0.0 仍是这个行为**（实测 `-z` 答「无」）。
+- **`intewell-agent-cli acp` 天生没有 MCP 工具**（1.0.0 新增实测）：`main.py` 把 ACP 归入
+  “自己后面会做”的入口，但 `acp_adapter/` 并未调用 `start_background_mcp_discovery`，
+  所以多轮也调不出 `iraf_submit_task`（模型原话：工具集里没有这个工具）。
 - 多轮会话（dashboard / `tui_gateway`）会调 `start_background_mcp_discovery`，**第一轮之后**可用。
+  ⚠ 它是**进程启动时**发现一次：`mcp add` 之后若 dashboard 未重启，进程里仍是旧配置。
 - 交互式 REPL / `--cli` 在登录 shell 下会撞到 `INTEWELL_AGENT_HOME`（指向另一套安装），
-  CLI 报 "It looks like Intewell isn't configured yet"；需单独定位。
+  CLI 报 "It looks like Intewell isn't configured yet"；**1.0.0 重装后另有原因**：
+  `/root/.intewell/.env` 不存在（无 provider）⇒ 交互通道直接进 setup 引导。
+  补 `OPENAI_BASE_URL` + `OPENAI_API_KEY`（复用 `/etc/iraf/agentos.key`）后恢复。
+- dashboard 只认表单登录（`/auth/password-login` + cookie）；`/api/auth/ws-ticket` 需要登录态，
+  Basic 认证 401 ⇒ 程序化复验需要可登录的 admin 口令（或人工在页面上发两轮）。
 
 ## 6. 回归门禁
 
