@@ -15,12 +15,36 @@ Skill Manager 直接 `skill.execute`，把契约校验、策略判定和证据�
 
 ## 2. 正确形状：只暴露任务级入口
 
-`src/iraf_adapters/mcp/server.py`（stdio，`python3 -m iraf_adapters.mcp.server`）只提供两个工具：
+`src/iraf_adapters/mcp/server.py`（stdio，`python3 -m iraf_adapters.mcp.server`；也支持
+`IRAF_MCP_TRANSPORT=http` 的 streamable-http）提供三个**任务级**工具：
 
 | 工具 | 入参 | 行为 |
 |---|---|---|
-| `iraf_submit_task` | `text`（自然语言任务语义），`deadline_seconds=120` | 交给 IRAF TaskFlow；**技能选择、参数校验、策略判定全在 IRAF 内部** |
+| `iraf_robot_mode` | `action=enter|status|exit`、`ttl_seconds=1800` | 机器人开发模式：只读装配事实（技能清单/profile/策略/端点/simulation）+ 置一个会话级模式标记。**不选技能、不执行动作** |
+| `iraf_submit_task` | `text`（自然语言任务语义），`deadline_seconds=120` | 交给 IRAF TaskFlow；**技能选择、参数校验、策略判定全在 IRAF 内部**；返回里带 `robot_mode` |
 | `iraf_get_task` | `execution_id` | 读 `IRAF_EVENT_STORE`（`SqliteExecutionStore.get`）返回权威执行事实 |
+
+#### 为什么加 `iraf_robot_mode`（语义触发，2026-10-21 使用者口径）
+
+平台自己的 skill 与 IRAF 的机器人 Skill 是两套概念；一句话有歧义（"抓取/放置"既可能是
+平台动作也可能是机器人任务）时，平台模型容易走偏。解决办法**不改别人的容器或框架**，
+只在 IRAF 自己的北向上加一个显式模式：
+
+```
+用户："开始机器人开发模式"
+   → 平台调用 iraf_robot_mode(action="enter")
+   → 返回 mode=robot_dev + 13 个机器人 Skill 清单 + profile/策略/端点/simulation
+   → 之后同一会话的 iraf_submit_task 回传 robot_mode=robot_dev
+用户："结束机器人开发模式" → iraf_robot_mode(action="exit") → mode=idle
+```
+
+实测（板上 0.3.5，HTTP 跨机）：`TOOLS ['iraf_robot_mode','iraf_submit_task','iraf_get_task']`；
+`status` → `mode=idle | skills=13 | simulation=True`；`enter` → `mode=robot_dev, remaining_s=599`；
+`submit` → `SUCCEEDED | skill=pick_object | robot_mode=robot_dev |
+execution_id=c73aadf7-fb53-5e35-8afa-a9d529d623a4`；`exit` → `mode=idle`。
+
+边界：模式是**语义收口**，不是安全边界——安全上限仍只来自签名的 RobotProfile 与
+SafetyPolicy，`iraf_robot_mode` 既不放大权限也不跳过 PolicyGateway。
 
 数据流：
 
@@ -94,6 +118,25 @@ intewell-agent-cli mcp add iraf-task --command /usr/bin/python3 \
 
 `tests/unit/test_mcp_server_layer.py`（AST 静态检查，不需要安装 `mcp`）断言：
 
-- 只允许 `iraf_submit_task` / `iraf_get_task` 两个工具名；
+- 只允许 `iraf_submit_task` / `iraf_get_task` / `iraf_robot_mode` 三个**任务级**工具名；
 - 禁止出现 `iraf_execute_skill` / `iraf_list_skills` / `iraf_run_skill` 等技能级工具；
 - `scripts/iraf_mcp_server.py`（兼容转发入口）不得再定义工具，避免两套实现。
+
+## 7. 对接原则：只从 IRAF 侧对接（2026-10-21 使用者口径）
+
+> 「我们不应该修改其他人的容器或者框架，我们只能从 iraf 的本身去对接。」
+
+因此：
+
+- **不改** AgentOS 的容器镜像、worker 配置、包目录或源码补丁。曾试过的若干改动
+  （worker 容器里 pip 装 `mcp`、写 `/home/agentos/.intewell/config.yaml`、
+  补 `tui_dist/package.json`、给 ACP 打补丁）**已全部回滚**，只作为"厂商需补齐"的证据保留。
+- **只加** IRAF 自己的东西：`iraf_robot_mode`（语义收口）、HTTP 传输（跨机可达）、
+  契约收窄（`frame_id const world`）。这些都不依赖平台内部实现。
+- 平台侧需要满足的最小条件（属厂商/集成方职责，不由我们代改）：
+  1. 宿主或 worker 镜像里要有 MCP 客户端（`mcp>=1.26,<2`）；实测 worker 镜像缺这个包；
+  2. 会话进程要能读到 `mcp_servers` 配置（worker 的 home 与宿主是两套）；
+  3. 多轮会话必须有 MCP 发现（1.0.0 的 dashboard 有、ACP 没有）。
+
+任一条不满足时的兜底（不碰对方）：`iraf_robot_mode` + `iraf_submit_task` 仍可通过
+IRAF 自带 CLI（`deploy/sdk/board_text_task.sh`）或 HTTP MCP（`:8765`）直接使用。

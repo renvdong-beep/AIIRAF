@@ -103,6 +103,77 @@ def _bridge():
 
 
 @app.tool()
+def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800) -> str:
+    """机器人开发模式的开关与状态（语义触发：用户说"开始机器人开发模式"时调用）。
+
+    action: enter = 打开（后续任务默认按机器人任务域处理）；exit = 关闭；status = 只看状态。
+    返回 mode / active / remaining_s / 机器人 Skill 清单 / profile / 安全策略 / 后端端点 /
+    simulation 标记 / hint。**只读装配事实，不执行任何动作、不触发机器人运动。**
+
+    什么时候用：这句话有歧义（"抓取/放置"既可能是平台动作也可能是机器人任务）时，先进入
+    本模式，平台就知道后续请求要交给 IRAF 的 Skill Manager，而不是自己编。
+    """
+    from iraf_adapters.mcp import mode as mode_mod
+
+    act = (action or "status").strip().lower()
+    st = mode_mod.state()
+    if act == "enter":
+        granted = st.enter(int(ttl_seconds))
+        extra = {"entered": True, "ttl_s": granted}
+    elif act == "exit":
+        extra = {"entered": False, "was_active": st.exit()}
+    elif act == "status":
+        extra = {}
+    else:
+        return json.dumps({"status": "FAILED", "error_code": "IRAF-INPUT-INVALID",
+                           "reason": "action 只接受 enter / exit / status：%s" % action},
+                          ensure_ascii=False)
+    payload: dict = {"status": "SUCCEEDED"}
+    payload.update(extra)
+    payload.update(st.snapshot())
+    payload.update(_robot_facts())
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _robot_facts() -> dict:
+    """把装配单里的事实读出来（只读；失败就给 unverified，不猜）。"""
+    import os as _os
+    from pathlib import Path as _Path
+
+    facts = {"skills": [], "profile": None, "safety_policy": None,
+             "provider_endpoint": None, "simulation": None, "event_store": None}
+    skill_root = _os.environ.get("IRAF_SKILL_ROOT") or ""
+    if skill_root:
+        try:
+            from iraf_core.registry import SkillRegistry
+
+            registry = SkillRegistry().load_directory(skill_root)
+            facts["skills"] = list(registry.names())
+        except Exception as exc:
+            facts["skills_error"] = str(exc)[:200]
+    facts["profile"] = _os.environ.get("IRAF_PROFILE")
+    facts["safety_policy"] = _os.environ.get("IRAF_SAFETY_POLICY")
+    facts["event_store"] = _os.environ.get("IRAF_EVENT_STORE")
+    try:
+        raw = _os.environ.get("IRAF_BACKEND_CONFIG") or "{}"
+        cfg = json.loads(raw)
+        facts["provider_endpoint"] = cfg.get("endpoint")
+    except Exception:
+        pass
+    policy_path = _os.environ.get("IRAF_SAFETY_POLICY") or ""
+    if policy_path and _Path(policy_path).is_file():
+        try:
+            from iraf_core.profile import load_safety_policy
+
+            policy = load_safety_policy(policy_path)
+            facts["simulation"] = bool(policy.simulation_only)
+            facts["allowed_skills"] = sorted(policy.allowed_skills)
+        except Exception as exc:
+            facts["simulation_error"] = str(exc)[:200]
+    return facts
+
+
+@app.tool()
 def iraf_submit_task(text: str, deadline_seconds: int = 120) -> str:
     """提交一条**任务**给 IRAF（自然语言语义）。技能选择由 IRAF Skill Manager 完成。
 
@@ -119,6 +190,12 @@ def iraf_submit_task(text: str, deadline_seconds: int = 120) -> str:
         return json.dumps({"status": "FAILED", "error_code": "IRAF-INPUT-INVALID",
                            "reason": str(exc)}, ensure_ascii=False)
     result = bridge.execute_intent(request, context)
+    # 把模式一并回传：平台据此知道"现在处理的是机器人任务域"，也便于审计
+    # （不在模式里时给一句 hint，但不阻断执行——模式是提示性约定，不是安全边界）。
+    from iraf_adapters.mcp import mode as mode_mod
+
+    if isinstance(result, dict):
+        result.setdefault("robot_mode", mode_mod.state().name())
     return json.dumps(result, ensure_ascii=False)
 
 

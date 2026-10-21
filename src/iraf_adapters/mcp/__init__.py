@@ -7,12 +7,22 @@
 
 层次纪律（2026-10-20 使用者纠正后固化）：
   · AgentOS 的 skills 与 IRAF Skill Manager 管理的机器人 Skill **不是一个概念**，不得互相注册；
-  · 因此本适配器只提供任务级工具（submit/get），**禁止**提供"逐个技能"的工具
+  · 因此本适配器只提供任务级工具（submit / get / robot_mode），**禁止**提供"逐个技能"的工具
     （那等于允许平台绕过 Skill Manager 直连 skill.execute）；
   · 回归门禁见 `tests/unit/test_mcp_server_layer.py`。
 
-运行方式：`python3 -m iraf_adapters.mcp.server`（stdio）。
-"""
-from .server import app, main  # noqa: F401
+运行方式：`python3 -m iraf_adapters.mcp.server`（stdio；`IRAF_MCP_TRANSPORT=http` 时 streamable-http）。
 
+注意：本 `__init__` **不 eager import server**。server 需要第三方 `mcp` 包，而 `mode` 是纯
+逻辑模块（要被单测直接导入）；eager import 会让 `from iraf_adapters.mcp import mode` 在没有
+`mcp` 的环境里直接炸（2026-10-21 实测）。需要 app/main 时用惰性属性取。
+"""
 __all__ = ["app", "main"]
+
+
+def __getattr__(name):  # PEP 562：只在真正用到 app/main 时才导入 server
+    if name in __all__:
+        from . import server as _server
+
+        return getattr(_server, name)
+    raise AttributeError("module %r has no attribute %r" % (__name__, name))
