@@ -15,14 +15,17 @@ from pathlib import Path
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-SERVER = os.environ.get("IRAF_MCP_SERVER") or "/opt/iraf-extras/iraf_mcp_server.py"
+# server 启动方式与板上登记一致：`python3 -m iraf_adapters.mcp.server`（随包交付的实现）。
+# 兼容旧登记：IRAF_MCP_SERVER=<脚本路径> 时改用该路径启动（只做转发，不应再定义工具）。
+SERVER = os.environ.get("IRAF_MCP_SERVER") or ""
+ARGS = [SERVER] if SERVER else ["-m", "iraf_adapters.mcp.server"]
 PYTHON = sys.executable
 
 
 async def main(text: str) -> int:
     params = StdioServerParameters(
         command=PYTHON,
-        args=[SERVER],
+        args=ARGS,
         env={
             **os.environ,
             "IRAF_PROVIDER_TOKEN": os.environ.get("IRAF_PROVIDER_TOKEN", "iraf-e300-probe-2026"),
