@@ -139,6 +139,43 @@ def iraf_get_task(execution_id: str) -> str:
 
 
 def main() -> int:
+    """按 IRAF_MCP_TRANSPORT 选择传输：stdio（宿主拉起）或 streamable-http（跨机/语音宿主）。
+
+    为什么需要 http：stdio 只能由**本机**宿主作为子进程拉起。语音/语义前端常常不在板上
+    （智控域没有 /dev/snd，实测 microphones=0），要跨机连就必须有网络传输。
+    端点取值放装配单（`deploy/sdk/env/edge-intel.env.tmpl`），这里只读，不写默认 IP/端口。
+    """
+    transport = (os.environ.get("IRAF_MCP_TRANSPORT") or "stdio").strip().lower()
+    if transport in ("http", "streamable-http", "streamable_http"):
+        host = (os.environ.get("IRAF_MCP_HOST") or "127.0.0.1").strip()
+        port = int(os.environ.get("IRAF_MCP_PORT") or "8765")
+        path = (os.environ.get("IRAF_MCP_PATH") or "/mcp").strip()
+        print(f"[iraf-mcp] transport=streamable-http host={host} port={port} path={path}",
+              file=sys.stderr, flush=True)
+        app.settings.host = host
+        app.settings.port = port
+        app.settings.streamable_http_path = path
+        # MCP SDK 默认开 DNS rebinding 防护：只接受 loopback 的 Host，跨机访问会被
+        # 直接判 421 Misdirected Request（实测）。允许的主机名只能由装配单/环境给，
+        # 代码里不猜板卡 IP（AGENTS 5.3）。
+        allowed = (os.environ.get("IRAF_MCP_ALLOWED_HOSTS") or "").strip()
+        hosts = [h.strip() for h in allowed.split(",") if h.strip()] or [
+            f"127.0.0.1:{port}", f"localhost:{port}"]
+        try:
+            from mcp.server.transport_security import TransportSecuritySettings
+
+            app.settings.transport_security = TransportSecuritySettings(
+                allowed_hosts=hosts)
+            print(f"[iraf-mcp] allowed_hosts={hosts}", file=sys.stderr, flush=True)
+        except Exception as exc:  # 老版本 SDK 没有这项：显式提示，不静默
+            print(f"[iraf-mcp][警告] 无法设置 allowed_hosts（{exc}）；跨机访问可能被 421 拒绝",
+                  file=sys.stderr, flush=True)
+        app.run(transport="streamable-http")
+        return 0
+    if transport not in ("stdio", ""):
+        print(f"[iraf-mcp][错误] 不认识的 IRAF_MCP_TRANSPORT={transport}"
+              "（允许 stdio / http）", file=sys.stderr, flush=True)
+        return 2
     app.run()
     return 0
 
