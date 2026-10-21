@@ -140,3 +140,56 @@ intewell-agent-cli mcp add iraf-task --command /usr/bin/python3 \
 
 任一条不满足时的兜底（不碰对方）：`iraf_robot_mode` + `iraf_submit_task` 仍可通过
 IRAF 自带 CLI（`deploy/sdk/board_text_task.sh`）或 HTTP MCP（`:8765`）直接使用。
+
+## 8. 机器人开发模式的落地规格（A + C，2026-10-21 定）
+
+**分工**：判断权在平台（项目/代码/文件/构建/对话这些事务仍由 AgentOS 处理），
+判定权在 IRAF（这句话算不算机器人任务、该用哪个技能）。要的是 **robot-first 优先**，
+不是把每句话都硬塞给 IRAF。
+
+### 8.1 IRAF 侧提供什么（已实现，0.3.8）
+
+| 入口 | 返回 | 用途 |
+|---|---|---|
+| `iraf_enter_robot_mode()` | `mode=robot_dev`、`skills`（13 个）、`intents`（每技能意图示例）、`routing_policy`（分派守则）、`profile`、`safety_policy`、`provider_endpoint`、`simulation` | 进入模式并一次性拿到**路由表**，平台据此判断"该不该交给 IRAF" |
+| `iraf_submit_task(text)` | `status / resolved_skill / execution_id / robot_mode` | 交给 TaskFlow → Skill Manager → Policy → Provider |
+| 无关请求 | `error_code=IRAF-NOT-ROBOT-TASK`（reason 里列可用技能） | **过滤信号**：平台据此回退到自己的处理 |
+| `iraf_get_task(id)` | 事件库里的权威执行事实 | 核对结果，不采信模型自述 |
+
+`routing_policy` 是**建议性文本**，不是开关；真正过滤发生在 IRAF 意图层（判不出来就
+`IRAF-NOT-ROBOT-TASK`），所以它不会放宽任何安全边界。
+
+### 8.2 平台侧要加的那一条规则（可直接粘贴进会话配置 / skill 文本）
+
+> 当用户说「开始机器人开发模式」或「进入机器人开发模式」时，调用
+> `mcp__iraf_task__iraf_enter_robot_mode`。
+>
+> 该模式生效期间：
+> 1. 凡**可能涉及机器人本体或物理动作**的请求（移动、抓取、放置、标定、视觉、停止/急停），
+>    **必须先调用** `mcp__iraf_task__iraf_submit_task(text=<用户原话>)`，
+>    由 IRAF 的 Skill Manager 选技能并执行；不要先在平台侧自行解释或执行。
+> 2. 若返回 `error_code=IRAF-NOT-ROBOT-TASK`，说明该请求与机器人无关，
+>    按你自己的工具与流程处理（**不要**把它当成机器人失败，也不要包装成成功）。
+> 3. 平台自身事务（项目、代码、文件、构建、对话）由你判断处理，**不要**交给 IRAF。
+> 4. 需要核对执行事实时调用 `mcp__iraf_task__iraf_get_task(execution_id)`，不要采信模型自述。
+> 5. 用户说「结束机器人开发模式」时调用 `mcp__iraf_task__iraf_exit_robot_mode`。
+
+宿主若支持 MCP prompt，可直接取 `robot_routing_policy` 的内容注入，等价于上面的守则。
+
+### 8.3 三条验收用例（缺一不可）
+
+| 输入 | 期望 |
+|---|---|
+| `抓取 box_01` | IRAF `SUCCEEDED` + `execution_id`；`iraf_get_task` 回查同一 id；`robot_mode=robot_dev` |
+| `今天天气怎么样` | 先交给 IRAF → `IRAF-NOT-ROBOT-TASK`（reason 列技能）→ 平台回退自己回答；**不产生机器人动作** |
+| `看下当前目录有哪些文件` | 平台自己处理，**不调用** IRAF（不得被误吞） |
+
+判绿要同时给两样证据：事件库里那条 execution 的 `status`，以及平台侧"没有产生机器人动作"的记录。
+口径仍 `simulation=true`，不构成真机能力证据。
+
+### 8.4 传输与常驻
+
+- 同机宿主（AgentOS 在本机拉起）：用 **stdio**，不需要端口。
+- `IRAF_MCP_TRANSPORT=http`（`:8765`）只用于**跨机宿主**（例如语音前端在有麦的机器上）
+  或从开发机做跨机验收；当前**无鉴权**，按需拉起、用完即停，上线前必须加 token/mTLS。
+- 平台侧前置条件仍见 §7（MCP 客户端、能读 `mcp_servers`、多轮会话有 MCP 发现）。
