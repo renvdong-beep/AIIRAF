@@ -65,6 +65,13 @@ class RobotModeTest(unittest.TestCase):
         self.state.enter(120)
         self.assertEqual(self.state.remaining_s(), 120)
 
+    def test_routing_policy_is_robot_first_not_blind_forward(self):
+        """分派规则必须表达"优先交给 IRAF + 其余由平台自己处理"，不是无脑转发。"""
+        policy = self.state.snapshot()["routing_policy"]
+        self.assertIn("优先调用 iraf_submit_task", policy)
+        self.assertIn("IRAF-NOT-ROBOT-TASK", policy)
+        self.assertIn("平台自身", policy)
+
 
 if __name__ == "__main__":
     unittest.main()

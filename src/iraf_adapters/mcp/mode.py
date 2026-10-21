@@ -26,6 +26,18 @@ HINT_ENTER = ("机器人开发模式已开启：后续所有动作类请求都�
 HINT_IDLE = ("当前不在机器人开发模式：如要开发/调试机器人应用，先调用 "
              "iraf_robot_mode(action=\"enter\")，再提交任务。")
 
+#: 机器人开发模式的**分派规则**（给平台读的，不是给用户看的）。
+#: 关键：这是 "robot-first"（优先交给 IRAF），不是"无脑转发"——平台仍要自己判断
+#: 项目与事务类请求；IRAF 只接管机器人语义，并对其余请求给出显式 IRAF-NOT-ROBOT-TASK。
+ROUTING_POLICY = (
+    "① 凡可能涉及机器人本体/物理动作的请求（移动、抓取、放置、标定、视觉、停止/急停），"
+    "优先调用 iraf_submit_task，由 IRAF Skill Manager 选技能并执行；不要先在平台侧自己解释或执行。"
+    "② 若 iraf_submit_task 返回 IRAF-NOT-ROBOT-TASK，说明 IRAF 判定该请求与机器人无关 ⇒ "
+    "平台按自己的工具与流程处理；不要硬塞给 IRAF，也不要把失败包装成成功。"
+    "③ 平台自身的项目/文件/构建/代码/对话类事务仍由平台判断与处理，IRAF 不接管。"
+    "④ 需要核对事实用 iraf_get_task(execution_id) 读事件库，不采信模型自述。"
+)
+
 
 class RobotModeState:
     """一个进程内的模式状态：idle ⇄ robot_dev，带 TTL，可显式退出。"""
@@ -75,6 +87,7 @@ class RobotModeState:
             "active": self.active(),
             "remaining_s": self.remaining_s(),
             "hint": HINT_ENTER if self.active() else HINT_IDLE,
+            "routing_policy": ROUTING_POLICY,
         }
 
 

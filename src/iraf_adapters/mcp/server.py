@@ -168,6 +168,13 @@ def _robot_facts() -> dict:
 
             registry = SkillRegistry().load_directory(skill_root)
             facts["skills"] = list(registry.names())
+            # 把每个技能的意图示例一并给出：平台拿到这张"路由表"才能判断"这句话该不该交给
+            # IRAF"，而不是靠猜或干脆自己做（2026-10-21 使用者口径：机器人开发模式下优先走
+            # IRAF，但 AgentOS 仍要自己判断项目与事务的处理）。
+            intents = {}
+            for name, contract in registry.intent_contracts().items():
+                intents[name] = list(contract.get("examples") or [])
+            facts["intents"] = intents
         except Exception as exc:
             facts["skills_error"] = str(exc)[:200]
     facts["profile"] = _os.environ.get("IRAF_PROFILE")
@@ -190,6 +197,15 @@ def _robot_facts() -> dict:
         except Exception as exc:
             facts["simulation_error"] = str(exc)[:200]
     return facts
+
+
+@app.prompt()
+def robot_routing_policy() -> str:
+    """机器人开发模式的分派规则（robot-first）：平台何时交给 IRAF、何时自己处理。"""
+    from iraf_adapters.mcp.mode import ROUTING_POLICY
+
+    return ("机器人开发模式的分派规则（robot-first，不是无脑转发）：\n" + ROUTING_POLICY +
+            "\n技能清单与意图示例见 iraf_enter_robot_mode() 的返回（skills / intents）。")
 
 
 @app.prompt()
