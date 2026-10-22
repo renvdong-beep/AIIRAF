@@ -193,3 +193,36 @@ IRAF 自带 CLI（`deploy/sdk/board_text_task.sh`）或 HTTP MCP（`:8765`）直
 - `IRAF_MCP_TRANSPORT=http`（`:8765`）只用于**跨机宿主**（例如语音前端在有麦的机器上）
   或从开发机做跨机验收；当前**无鉴权**，按需拉起、用完即停，上线前必须加 token/mTLS。
 - 平台侧前置条件仍见 §7（MCP 客户端、能读 `mcp_servers`、多轮会话有 MCP 发现）。
+
+## 9. 让平台"主动用我们的"，而不是自己重新实现（2026-10-22）
+
+实机证据（板上会话 `20261022_015831_e9`）：AgentOS 在机器人任务里 **0 次**调用
+`mcp__iraf_task__*`，却用 `host_command` 读了我们十几个源文件、自己跑脚本，还就地修改了一个
+平台 skill `iraf-mcp-task-submit`（内容是"用 shell 拉起我们的 stdio MCP"，且写着板上已不存在的
+`/opt/iraf-extras/*`）。它没有"不会用"，而是**被一条旁路 skill 指挥着绕开主路**。
+
+### 9.1 IRAF 侧抓手（0.3.9 已实现，纯我方）
+
+| 抓手 | 内容 |
+|---|---|
+| 工具描述硬约束 | `iraf_submit_task` 明写"机器人动作的**唯一受支持入口**"，禁止 `execute_code`/`terminal`/`host_command` 自行驱动，禁止改源码迁就一次失败 |
+| 返回里给下一步 | 每次 submit 都带 `next_steps`：成功→怎么核验；`distance≈0.374m`→场景状态、先复位 Provider、别改代码；`IRAF-NOT-ROBOT-TASK`→交给平台 |
+| 资源里给案例 | `iraf://examples/pick_box_01`、`iraf://examples/filtered_request`、`iraf://skills/catalog`（技能+意图示例），模型可引用既有案例而不用重写 |
+| 模式返回里给示范 | `iraf_enter_robot_mode` 返回 `skills` / `intents` / `routing_policy` / `examples`（成功+被过滤各一例） |
+
+实测（0.3.9，跨机）：`TOOLS` 5 个、`RESOURCES` 3 个；`mode=robot_dev | skills=13 |
+intents=13 | examples=['robot_task','non_robot']`；过滤用例返回
+`IRAF-NOT-ROBOT-TASK` 且 `next_steps` 明确"由平台自己处理、不要重试"。
+
+### 9.2 平台内容层（属其配置/内容，可回滚，不是改框架）
+
+- **停用旁路 skill** `~/.intewell/skills/iraf-mcp-task-submit`（整目录移到备份区）。
+- **注入路由守则**到 `~/.intewell/SOUL.md`（每会话生效），内容与 §8.2 一致。
+- 两件事都有脚本与备份：`apply_agentos_routing.py`（`--revert` 可原样还原）。
+- 可选（更硬的约束）：机器人开发模式下收紧平台工具集，禁用 `execute_code`/`terminal`/`host_command`。
+
+### 9.3 运行保障
+
+演示/验证前必须复位仿真场景（重启 x86 Capability Provider），否则必现
+`distance≈0.374m tolerance=0.005000m`；模型会把这种环境状态误判成实现 bug，
+进而自己"修"代码。同一时间只跑一路任务（并发搬运会让目标匀速位移）。

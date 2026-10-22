@@ -119,6 +119,35 @@ def iraf_exit_robot_mode() -> str:
     return iraf_robot_mode(action="exit")
 
 
+from iraf_adapters.mcp.hints import (  # noqa: E402  (内容与 server 解耦，便于单测)
+    FILTERED_EXAMPLE as _FILTERED_EXAMPLE,
+    WORKED_EXAMPLE as _WORKED_EXAMPLE,
+    next_steps as _next_steps,
+)
+
+
+@app.resource("iraf://examples/pick_box_01")
+def _resource_pick_example() -> str:
+    """已验证的抓取案例（原话 / 技能 / 预期结果 / 核验方式 / 注意事项）。"""
+    return json.dumps(_WORKED_EXAMPLE, ensure_ascii=False, indent=2)
+
+
+@app.resource("iraf://examples/filtered_request")
+def _resource_filtered_example() -> str:
+    """被 IRAF 过滤掉的请求长什么样（平台据此回退到自己的处理）。"""
+    return json.dumps(_FILTERED_EXAMPLE, ensure_ascii=False, indent=2)
+
+
+@app.resource("iraf://skills/catalog")
+def _resource_skill_catalog() -> str:
+    """当前可用机器人 Skill 与意图示例（路由表；只读）。"""
+    facts = _robot_facts()
+    return json.dumps({"skills": facts.get("skills") or [],
+                       "intents": facts.get("intents") or {},
+                       "profile": facts.get("profile"),
+                       "simulation": facts.get("simulation")}, ensure_ascii=False, indent=2)
+
+
 @app.tool()
 def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800) -> str:
     """机器人开发模式的开关与状态（语义触发：用户说"开始机器人开发模式"时调用）。
@@ -151,6 +180,8 @@ def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800) -> str:
     payload.update(extra)
     payload.update(st.snapshot())
     payload.update(_robot_facts())
+    # 自带"正确用法示范"：模型不必自己摸索该怎么调，也减少它去翻源码/重写实现的动机。
+    payload["examples"] = {"robot_task": _WORKED_EXAMPLE, "non_robot": _FILTERED_EXAMPLE}
     return json.dumps(payload, ensure_ascii=False)
 
 
@@ -223,8 +254,14 @@ def robot_dev_mode() -> str:
 def iraf_submit_task(text: str, deadline_seconds: int = 120) -> str:
     """提交一条**任务**给 IRAF（自然语言语义）。技能选择由 IRAF Skill Manager 完成。
 
-    返回与 IRAF CLI 同构的 JSON：status / execution_id / error_code / reason / evidence。
-    失败不会被包装成成功；缺 Provider、策略拒绝、精度不达标都会如实返回错误码。
+    ⚠ 这是机器人动作的**唯一受支持入口**：
+      · 抓取/移动/放置/标定/视觉/停止这类请求，必须调用本工具，**不要**用 execute_code、
+        terminal、host_command 或自己写脚本去驱动机器人（那样绕过 Skill Manager、策略与证据链）；
+      · 不要自行"重新实现"抓取，也不要修改本仓源码去迁就一次失败；失败先按返回里的
+        `next_steps` 处理（多数是场景状态或参数问题，不是实现 bug）。
+
+    返回与 IRAF CLI 同构的 JSON：status / execution_id / error_code / reason / evidence /
+    resolved_skill / robot_mode / next_steps。失败不会被包装成成功。
     """
     from iraf_adapters.agentos.cli import build_request
 
@@ -242,6 +279,7 @@ def iraf_submit_task(text: str, deadline_seconds: int = 120) -> str:
 
     if isinstance(result, dict):
         result.setdefault("robot_mode", mode_mod.state().name())
+        result.setdefault("next_steps", _next_steps(result))
     return json.dumps(result, ensure_ascii=False)
 
 
