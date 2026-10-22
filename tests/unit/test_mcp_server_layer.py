@@ -54,6 +54,26 @@ class McpLayerTest(unittest.TestCase):
                 if isinstance(n, ast.FunctionDef) and n.name.startswith("iraf_")]
         self.assertEqual(defs, [], "scripts/iraf_mcp_server.py 不应再定义工具：%s" % defs)
 
+    def test_robot_mode_returns_next_steps(self):
+        """进入模式必须回传"照做什么"。
+
+        实机（2026-10-22 dashboard /chat）：模型把"进入模式"自行补成"只读自检 + 冒烟提交"两段，
+        冒烟那次把 MuJoCo 场景弄脏（后续必现 distance≈0.374435m）。返回值里缺 next_steps
+        是诱因之一，这条用例防止再被删掉。
+        """
+        tree = ast.parse(SERVER.read_text(encoding="utf-8"))
+        funcs = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+        self.assertIn("iraf_robot_mode", funcs, "缺少 iraf_robot_mode")
+        keys = set()
+        for node in ast.walk(funcs["iraf_robot_mode"]):
+            if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Store):
+                sl = node.slice
+                if isinstance(sl, ast.Constant) and isinstance(sl.value, str):
+                    keys.add(sl.value)
+        self.assertIn("next_steps", keys,
+                      "iraf_robot_mode 的返回里没有 next_steps：平台会自己设计下一步（可能先冒烟提交）")
+        self.assertIn("examples", keys)
+
     def test_chdir_to_version_dir(self):
         """启动时必须把 cwd 切到 <version dir>：装配单里的 profiles/、skills/ 是相对路径。
 

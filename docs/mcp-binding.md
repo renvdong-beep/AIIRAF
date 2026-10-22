@@ -151,7 +151,7 @@ IRAF 自带 CLI（`deploy/sdk/board_text_task.sh`）或 HTTP MCP（`:8765`）直
 
 | 入口 | 返回 | 用途 |
 |---|---|---|
-| `iraf_enter_robot_mode()` | `mode=robot_dev`、`skills`（13 个）、`intents`（每技能意图示例）、`routing_policy`（分派守则）、`profile`、`safety_policy`、`provider_endpoint`、`simulation` | 进入模式并一次性拿到**路由表**，平台据此判断"该不该交给 IRAF" |
+| `iraf_enter_robot_mode()` | `mode=robot_dev`、`skills`（13 个）、`intents`（每技能意图示例）、`routing_policy`（分派守则）、`profile`、`safety_policy`、`provider_endpoint`、`simulation`、`next_steps`（进入后固定顺序） | 进入模式并一次性拿到**路由表**，平台据此判断"该不该交给 IRAF"；`next_steps` 明确下一步是盘点报告、不是冒烟提交 |
 | `iraf_submit_task(text)` | `status / resolved_skill / execution_id / robot_mode` | 交给 TaskFlow → Skill Manager → Policy → Provider |
 | 无关请求 | `error_code=IRAF-NOT-ROBOT-TASK`（reason 里列可用技能） | **过滤信号**：平台据此回退到自己的处理 |
 | `iraf_get_task(id)` | 事件库里的权威执行事实 | 核对结果，不采信模型自述 |
@@ -165,14 +165,18 @@ IRAF 自带 CLI（`deploy/sdk/board_text_task.sh`）或 HTTP MCP（`:8765`）直
 > `mcp__iraf_task__iraf_enter_robot_mode`。
 >
 > 该模式生效期间：
-> 1. 凡**可能涉及机器人本体或物理动作**的请求（移动、抓取、放置、标定、视觉、停止/急停），
+> 1. 进入后**先做只读盘点**：把返回里的 `skills` / `intents` / `profile` / `safety_policy` /
+>    `simulation` 如实报给用户（这就是"现成能力清单"），然后等用户的真实需求。
+>    **不要为了"验证链路"先提交一条任务** —— 仿真场景有状态，一次成功抓取会搬走目标，
+>    本次会话就没有干净场景可演示了（再抓必报 `distance≈0.374435m`）。
+> 2. 凡**可能涉及机器人本体或物理动作**的请求（移动、抓取、放置、标定、视觉、停止/急停），
 >    **必须先调用** `mcp__iraf_task__iraf_submit_task(text=<用户原话>)`，
 >    由 IRAF 的 Skill Manager 选技能并执行；不要先在平台侧自行解释或执行。
-> 2. 若返回 `error_code=IRAF-NOT-ROBOT-TASK`，说明该请求与机器人无关，
+> 3. 若返回 `error_code=IRAF-NOT-ROBOT-TASK`，说明该请求与机器人无关，
 >    按你自己的工具与流程处理（**不要**把它当成机器人失败，也不要包装成成功）。
-> 3. 平台自身事务（项目、代码、文件、构建、对话）由你判断处理，**不要**交给 IRAF。
-> 4. 需要核对执行事实时调用 `mcp__iraf_task__iraf_get_task(execution_id)`，不要采信模型自述。
-> 5. 用户说「结束机器人开发模式」时调用 `mcp__iraf_task__iraf_exit_robot_mode`。
+> 4. 平台自身事务（项目、代码、文件、构建、对话）由你判断处理，**不要**交给 IRAF。
+> 5. 需要核对执行事实时调用 `mcp__iraf_task__iraf_get_task(execution_id)`，不要采信模型自述。
+> 6. 用户说「结束机器人开发模式」时调用 `mcp__iraf_task__iraf_exit_robot_mode`。
 
 宿主若支持 MCP prompt，可直接取 `robot_routing_policy` 的内容注入，等价于上面的守则。
 
@@ -194,6 +198,32 @@ IRAF 自带 CLI（`deploy/sdk/board_text_task.sh`）或 HTTP MCP（`:8765`）直
   或从开发机做跨机验收；当前**无鉴权**，按需拉起、用完即停，上线前必须加 token/mTLS。
 - 平台侧前置条件仍见 §7（MCP 客户端、能读 `mcp_servers`、多轮会话有 MCP 发现）。
 
+### 8.5 进入模式 = 只读盘点，不含"冒烟提交"（0.3.10）
+
+实机（2026-10-22 dashboard /chat）：用户说"开始机器人开发模式"，平台自己设计了两段 ——
+第 1 段只读自检（成功），第 2 段**冒烟提交**（被用户当场拒绝，零 execution_id）。
+根因在我们这一侧的返回内容，不在模型"乱来"：
+
+1. `examples.robot_task` 长得像验收断言（`expected.status=SUCCEEDED`），模型自然拿去跑一遍；
+2. `iraf_robot_mode` 的返回里**没有** `next_steps`（`iraf_submit_task` 有），模型只好自己设计下一步；
+3. `HINT_ENTER` 只说"动作类请求都应交 submit"，没说"进入时先盘点、不许拿真任务探路"。
+
+代价：MuJoCo 场景有状态，一次 pick_object 就把 box_01 搬走 ⇒ 本次会话再没有干净场景可演示，
+之后任何抓取必现 `distance≈0.374435m tolerance=0.005000m`，看起来像实现 bug。
+
+处置（0.3.10，纯我方）：
+
+| 抓手 | 内容 |
+|---|---|
+| `iraf_robot_mode` 返回 `next_steps` | 固定五步：① 先只读盘点并报清单 → ② 等用户真实需求（**不要为了验证链路提交任务**）→ ③ 调 `iraf_submit_task` → ④ `iraf_get_task` 核验 → ⑤ 场景有状态、链路验收用装机探针 |
+| `WORKED_EXAMPLE.purpose` | 明示"语义映射示例、**不要求执行**、不要在进入模式时当链路自检" |
+| `HINT_ENTER` / 工具 docstring | 增"进入时只做只读盘点，不要提交任何任务做验证" |
+| 回归 | `tests/unit/test_mcp_hints.py::EnterNextStepsTest`（五条全断言）+ `test_mcp_server_layer.py::test_robot_mode_returns_next_steps`（AST 防止字段被删） |
+| 探针 | `scripts/probe_robot_mode_enter.py`：enter 后必须无 `execution_id`、`next_steps` ≥ 4 条 |
+
+口径：链路可用性由 enter 本身证明；**证明"平台能调到 IRAF"属于装机/开发阶段**
+（`scripts/probe_mcp_client.py`），不属于对话。对话里的第一次执行应当是用户的真实语义需求。
+
 ## 9. 让平台"主动用我们的"，而不是自己重新实现（2026-10-22）
 
 实机证据（板上会话 `20261022_015831_e9`）：AgentOS 在机器人任务里 **0 次**调用
@@ -208,7 +238,7 @@ IRAF 自带 CLI（`deploy/sdk/board_text_task.sh`）或 HTTP MCP（`:8765`）直
 | 工具描述硬约束 | `iraf_submit_task` 明写"机器人动作的**唯一受支持入口**"，禁止 `execute_code`/`terminal`/`host_command` 自行驱动，禁止改源码迁就一次失败 |
 | 返回里给下一步 | 每次 submit 都带 `next_steps`：成功→怎么核验；`distance≈0.374m`→场景状态、先复位 Provider、别改代码；`IRAF-NOT-ROBOT-TASK`→交给平台 |
 | 资源里给案例 | `iraf://examples/pick_box_01`、`iraf://examples/filtered_request`、`iraf://skills/catalog`（技能+意图示例），模型可引用既有案例而不用重写 |
-| 模式返回里给示范 | `iraf_enter_robot_mode` 返回 `skills` / `intents` / `routing_policy` / `examples`（成功+被过滤各一例） |
+| 模式返回里给示范 | `iraf_enter_robot_mode` 返回 `skills` / `intents` / `routing_policy` / `examples`（成功+被过滤各一例）+ `next_steps`（先盘点、禁止冒烟提交；见 §8.5） |
 
 实测（0.3.9，跨机）：`TOOLS` 5 个、`RESOURCES` 3 个；`mode=robot_dev | skills=13 |
 intents=13 | examples=['robot_task','non_robot']`；过滤用例返回

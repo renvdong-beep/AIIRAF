@@ -108,7 +108,8 @@ def iraf_enter_robot_mode() -> str:
 
     零参数、名字即语义：模型不需要在 enum 里选 action，听到这句中文就调它。
     等价于 iraf_robot_mode(action="enter")。返回 mode / 机器人 Skill 清单 / profile /
-    安全策略 / 后端端点 / simulation 标记。
+    安全策略 / 后端端点 / simulation 标记 / next_steps（进入后照做的固定顺序）。
+    调用后**只做盘点并报告**，不要为了验证链路先提交一条任务（会弄脏仿真场景）。
     """
     return iraf_robot_mode(action="enter")
 
@@ -122,6 +123,7 @@ def iraf_exit_robot_mode() -> str:
 from iraf_adapters.mcp.hints import (  # noqa: E402  (内容与 server 解耦，便于单测)
     FILTERED_EXAMPLE as _FILTERED_EXAMPLE,
     WORKED_EXAMPLE as _WORKED_EXAMPLE,
+    enter_next_steps as _enter_next_steps,
     next_steps as _next_steps,
 )
 
@@ -156,10 +158,15 @@ def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800) -> str:
     中文触发短语：开始/进入机器人开发模式 → enter；结束/退出机器人开发模式 → exit；
                  机器人环境怎么样 / 有哪些机器人技能 → status。
     返回 mode / active / remaining_s / 机器人 Skill 清单 / profile / 安全策略 / 后端端点 /
-    simulation 标记 / hint。**只读装配事实，不执行任何动作、不触发机器人运动。**
+    simulation 标记 / hint / **next_steps（进入后照做的固定顺序）**。
+    **只读装配事实，不执行任何动作、不触发机器人运动。**
 
     什么时候用：这句话有歧义（"抓取/放置"既可能是平台动作也可能是机器人任务）时，先进入
     本模式，平台就知道后续请求要交给 IRAF 的 Skill Manager，而不是自己编或先做全链路自检。
+
+    ⚠ **进入模式不等于要做冒烟提交**：下一个动作是把 skills / intents 报给用户、等真实需求。
+    不要为了"验证链路"先提交一条任务 —— 仿真场景有状态，一次成功抓取会搬走目标，
+    本次会话就没有干净场景可演示了（再抓必报 distance≈0.374435m）。链路验收用装机探针。
     """
     from iraf_adapters.mcp import mode as mode_mod
 
@@ -180,7 +187,11 @@ def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800) -> str:
     payload.update(extra)
     payload.update(st.snapshot())
     payload.update(_robot_facts())
+    # 把"进入之后照做什么"直接写进返回：实机证据（2026-10-22）是模型自己设计了
+    # "只读自检 + 冒烟提交"两段式，冒烟那次把仿真场景弄脏。规则写在返回值里比写在文档里有效。
+    payload["next_steps"] = _enter_next_steps()
     # 自带"正确用法示范"：模型不必自己摸索该怎么调，也减少它去翻源码/重写实现的动机。
+    # 注意：examples 是**语义映射说明**，不是验收脚本；purpose 字段已明示"不要求执行"。
     payload["examples"] = {"robot_task": _WORKED_EXAMPLE, "non_robot": _FILTERED_EXAMPLE}
     return json.dumps(payload, ensure_ascii=False)
 
