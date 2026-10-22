@@ -20,7 +20,7 @@ EnvironmentFile=-@CONFIG_DIR@/@PROFILE@.env
 # 凭据单独一个 600 文件（装配单按设计不写凭据；缺文件不致命 —— runtime 会因缺 token 显式失败）。
 # 为什么不能省：板上 runtime 的 RemoteProviderBackend 需要 IRAF_PROVIDER_TOKEN，而 CLI/探针
 # 不走 systemd ⇒ 新版 backend 还会读 IRAF_PROVIDER_TOKEN_FILE 兜底（2026-10-22 实机）。
-EnvironmentFile=-@CONFIG_DIR@/provider.token
+EnvironmentFile=-@CONFIG_DIR@/runtime.secrets
 ExecStartPre=/bin/mkdir -p @LOG_DIR@ @DATA_DIR@
 ExecStart=@PYTHON_BIN@ -m iraf_adapters.grpc.server
 Restart=on-failure

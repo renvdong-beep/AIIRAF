@@ -132,11 +132,11 @@ probe logs "ls -la '${LOG_DIR}' 2>/dev/null || echo 'NO-LOG-DIR'; echo ---;
 # PYTHONPATH=src:lib 的源码布局），所以这里也优先用模块形式；若存在 console script 则优先用它。
 probe cli_list_skills "if [ ! -f '${CONFIG_DIR}/${PROFILE}.env' ]; then echo 'CLI-NOT-RUNNABLE: env 文件不存在';
   elif [ -x '${PREFIX}/${CURRENT}/lib/bin/iraf-agentos' ]; then set -a; . '${CONFIG_DIR}/${PROFILE}.env'; set +a;
-    if [ -f '${CONFIG_DIR}/provider.token' ]; then set -a; . '${CONFIG_DIR}/provider.token'; set +a; fi;
+    if [ -f '${CONFIG_DIR}/runtime.secrets' ]; then set -a; . '${CONFIG_DIR}/runtime.secrets'; set +a; fi;
     PYTHONPATH='${PREFIX}/${CURRENT}/src:${PREFIX}/${CURRENT}/lib' \
     '${PREFIX}/${CURRENT}/lib/bin/iraf-agentos' --list-skills 2>&1 | head -25;
   else set -a; . '${CONFIG_DIR}/${PROFILE}.env'; set +a;
-    if [ -f '${CONFIG_DIR}/provider.token' ]; then set -a; . '${CONFIG_DIR}/provider.token'; set +a; fi;
+    if [ -f '${CONFIG_DIR}/runtime.secrets' ]; then set -a; . '${CONFIG_DIR}/runtime.secrets'; set +a; fi;
     PYTHONPATH='${PREFIX}/${CURRENT}/src:${PREFIX}/${CURRENT}/lib' \
     '${PYTHON_BIN}' -m iraf_adapters.agentos.cli --list-skills 2>&1 | head -25; fi"
 

@@ -57,4 +57,21 @@ bash deploy/sdk/board_diag.sh --profile edge-intel     # 期望 CLI 可运行 �
 ```
 判红条件不变：缺 token 时服务端拒起、客户端拒装配。
 
-口径：simulation=true，不构成真机能力证据。
+## 实施中的修正（2026-10-22 同日，0.3.13）
+
+第一版只落地 `IRAF_PROVIDER_TOKEN`（单键文件 provider.token），上板后单元立刻 exit 2：
+
+```
+iraf-runtime-grpc: error: IRAF_GRPC_TOKEN must be provided by deployment
+```
+
+即板上 runtime 需要**两个**凭据键：
+- `IRAF_PROVIDER_TOKEN`：出站调 x86 Capability Provider（RemoteProviderBackend）
+- `IRAF_GRPC_TOKEN`：本域 gRPC 服务端入站鉴权（grpc.server）
+
+所以改成**多键受控文件** `<config_dir>/runtime.secrets`（600，每行 KEY=VALUE，白名单
+`IRAF_PROVIDER_TOKEN / IRAF_GRPC_TOKEN / IRAF_AGENTOS_TOKEN`），unit 用
+`EnvironmentFile=-@CONFIG_DIR@/runtime.secrets`，CLI/探针在 diag 里 source 同一份。
+参数名 `--secrets-file`。单键写法仍兼容（一行 KEY=VALUE 即可）。
+
+口径：**simulation=true**，不构成真机能力证据。

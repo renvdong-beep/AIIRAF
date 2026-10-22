@@ -50,7 +50,7 @@ APPLY="0"
 ALLOW_UNVERIFIED="0"
 REHEARSAL="0"
 VALUES_FILE=""
-PROVIDER_TOKEN_FILE=""
+SECRETS_FILE=""
 REMOTE_ROOT=""
 UNINSTALL="0"
 PURGE="0"
@@ -76,11 +76,12 @@ usage() {
   --apply                 真部署（默认只演练、不写任何远端文件）
   --allow-unverified      放行"板卡声明未实测"（探索用；不构成验收证据）
   --env-set KEY=VALUE     装配单模板的部署期取值（可多次，如 --env-set PROVIDER_ENDPOINT=host:50052）
-  --provider-token-file <f>
-                          跨机 Capability Provider 的 token 源文件（600；裸值或 KEY=VALUE）。
-                          值不进命令行：scp 到远端 artifacts/provider.token 后由安装器落到
-                          <config_dir>/provider.token（600），并登记进安装记录（卸载即删）。
-                          不给 ⇒ 板上 runtime 因缺 token fail-closed（CLI/单元都起不来）
+  --secrets-file <f>
+                          运行期凭据文件（600；每行 KEY=VALUE：IRAF_PROVIDER_TOKEN 出站调
+                          Capability Provider、IRAF_GRPC_TOKEN 本域 gRPC 入站）。值不进命令行：
+                          scp 到远端 artifacts/runtime.secrets 后由安装器落到
+                          <config_dir>/runtime.secrets（600），并登记进安装记录（卸载即删）。
+                          不给 ⇒ 板上 runtime 因缺凭据 fail-closed（CLI/单元都起不来）
   --values <file>         装配单部署期取值的 YAML（KEY: VALUE；与 --env-set 合并）。
                           示例见 config/install/deploy_values/*.example.yaml；文件内残留 "<...>"
                           占位符一律拒绝；地址类取值不入库，用 --env-set 给。
@@ -121,9 +122,9 @@ while [ "$#" -gt 0 ]; do
     --values)
       [ "$#" -ge 2 ] || { err "--values 缺少取值"; exit 1; }
       VALUES_FILE="$2"; shift ;;
-    --provider-token-file)
-      [ "$#" -ge 2 ] || { err "--provider-token-file 缺少取值"; exit 1; }
-      PROVIDER_TOKEN_FILE="$2"; shift ;;
+    --secrets-file)
+      [ "$#" -ge 2 ] || { err "--secrets-file 缺少取值"; exit 1; }
+      SECRETS_FILE="$2"; shift ;;
     *) err "无法识别的参数：$1（用 --help 查看用法）"; exit 1 ;;
   esac
   shift
@@ -154,10 +155,10 @@ REMOTE_PYTHON="$("${PYTHON}" -c "import json,sys;print(json.loads(sys.argv[1]).g
 need_wheelhouse="$("${PYTHON}" -c "import json,sys;print(json.loads(sys.argv[1])['dependency_source']['kind'])" "${LAYOUT}")"
 if [ "${UNINSTALL}" != "1" ]; then   # 卸载不需要制品，跳过制品预检
 [ -f "${SDK_WHEEL}" ] || { err "SDK wheel 不存在：${SDK_WHEEL}"; exit 2; }
-if [ -n "${PROVIDER_TOKEN_FILE}" ]; then
-  [ -f "${PROVIDER_TOKEN_FILE}" ] || { err "provider token 文件不存在：${PROVIDER_TOKEN_FILE}"; exit 2; }
-  _perm="$(stat -c '%a' "${PROVIDER_TOKEN_FILE}" 2>/dev/null || echo '')"
-  [ "${_perm}" = "600" ] || log "警告：provider token 文件权限=${_perm:-未知}（建议 600；值不会被打印）"
+if [ -n "${SECRETS_FILE}" ]; then
+  [ -f "${SECRETS_FILE}" ] || { err "凭据文件不存在：${SECRETS_FILE}"; exit 2; }
+  _perm="$(stat -c '%a' "${SECRETS_FILE}" 2>/dev/null || echo '')"
+  [ "${_perm}" = "600" ] || log "警告：凭据文件权限=${_perm:-未知}（建议 600；值不会被打印）"
 fi
 if [ -n "${RUNTIME_BUNDLE}" ]; then
   [ -f "${RUNTIME_BUNDLE}" ] || { err "runtime 包不存在：${RUNTIME_BUNDLE}"; exit 2; }
@@ -204,9 +205,9 @@ INSTALL_CMD="PYTHON=${REMOTE_PYTHON} bash ${REMOTE_SDK_DIR}/install-iraf.sh --pr
 [ -n "${WHEELHOUSE}" ] && INSTALL_CMD="${INSTALL_CMD} --wheelhouse ${REMOTE_DIR}/wheelhouse"
 [ "${ALLOW_UNVERIFIED}" = "1" ] && INSTALL_CMD="${INSTALL_CMD} --allow-unverified"
 # 凭据：**值不进命令行**（铁律）⇒ 先 scp 成远端 600 文件，安装器只收到路径，自己落地到
-# <config_dir>/provider.token 并登记进安装记录（卸载随记录删除，不留残留凭据）。
-if [ -n "${PROVIDER_TOKEN_FILE}" ] && [ "${UNINSTALL}" != "1" ]; then
-  INSTALL_CMD="${INSTALL_CMD} --provider-token-file ${REMOTE_DIR}/artifacts/provider.token"
+# <config_dir>/runtime.secrets 并登记进安装记录（卸载随记录删除，不留残留凭据）。
+if [ -n "${SECRETS_FILE}" ] && [ "${UNINSTALL}" != "1" ]; then
+  INSTALL_CMD="${INSTALL_CMD} --secrets-file ${REMOTE_DIR}/artifacts/runtime.secrets"
 fi
 if [ -n "${VALUES_FILE}" ]; then
   [ -f "${VALUES_FILE}" ] || { err "--values 文件不存在：${VALUES_FILE}"; exit 1; }
@@ -377,12 +378,12 @@ fi
   # ② 新版 OpenSSH 的 scp 拒绝 `<dir>/.`（报 "unexpected filename: ."）⇒ 用本地 glob 展开内容。
   copy "${WHEELHOUSE}"/* "${TARGET}:${REMOTE_DIR}/wheelhouse/" || { err "wheelhouse 传输失败"; exit 3; }
 }
-if [ -n "${PROVIDER_TOKEN_FILE}" ]; then
-  # 只传文件、不传值：落地到远端暂存区后立刻 600；安装器再拷到 <config_dir>/provider.token。
-  copy "${PROVIDER_TOKEN_FILE}" "${TARGET}:${REMOTE_DIR}/artifacts/provider.token" \
-    || { err "provider token 传输失败"; exit 3; }
-  remote "chmod 600 ${REMOTE_DIR}/artifacts/provider.token" || { err "provider token 权限设置失败"; exit 3; }
-  log "   凭据：provider.token 已推送（600，值不打印）"
+if [ -n "${SECRETS_FILE}" ]; then
+  # 只传文件、不传值：落地到远端暂存区后立刻 600；安装器再拷到 <config_dir>/runtime.secrets。
+  copy "${SECRETS_FILE}" "${TARGET}:${REMOTE_DIR}/artifacts/runtime.secrets" \
+    || { err "凭据传输失败"; exit 3; }
+  remote "chmod 600 ${REMOTE_DIR}/artifacts/runtime.secrets" || { err "凭据权限设置失败"; exit 3; }
+  log "   凭据：runtime.secrets 已推送（600，值不打印）"
 fi
 
 log "④ 远端安装（目标端自行预检；失败会回滚）"

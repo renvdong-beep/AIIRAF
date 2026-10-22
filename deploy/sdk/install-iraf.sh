@@ -59,10 +59,10 @@ usage() {
   --run-user <user>       单元运行用户（默认取声明的 run_user；@current@ 表示调用者）
   --stubs-dir <dir>       覆盖声明的 proto 桩目录（演练/非常规交付用）
   --allow-unverified      显式放行"声明未实测"（探索用，不构成验收证据）
-  --provider-token-file <f>
-                          provider token 源文件（裸值或 IRAF_PROVIDER_TOKEN=…）；
-                          落地为 <config_dir>/provider.token（600）并登记进安装记录。
-                          凭据不进装配单/命令行值，只能走文件。
+  --secrets-file <f>
+                          运行期凭据文件（每行 KEY=VALUE；允许 IRAF_PROVIDER_TOKEN /
+                          IRAF_GRPC_TOKEN / IRAF_AGENTOS_TOKEN）；落地为 <config_dir>/runtime.secrets
+                          （600）并登记进安装记录。凭据不进装配单/命令行值，只能走文件。
   --json                  输出 JSON 计划/结果
   --repo-root <dir>       仓库根（调试用）
 
@@ -78,7 +78,7 @@ while [ "$#" -gt 0 ]; do
     -h|--help) usage; exit 0 ;;
     -n|--dry-run) DRY_RUN="1"; PASSTHROUGH+=("$1") ;;
     --allow-unverified|--rehearsal|--json) PASSTHROUGH+=("$1") ;;
-    --profile|--root|--sdk-wheel|--runtime-bundle|--wheelhouse|--python|--run-user|--repo-root|--stubs-dir|--env-set|--provider-token-file)
+    --profile|--root|--sdk-wheel|--runtime-bundle|--wheelhouse|--python|--run-user|--repo-root|--stubs-dir|--env-set|--secrets-file)
       [ "$#" -ge 2 ] || { err "$1 缺少取值"; exit 1; }
       PASSTHROUGH+=("$1" "$2"); shift ;;
     *) err "无法识别的参数：$1（用 --help 查看用法）"; exit 1 ;;

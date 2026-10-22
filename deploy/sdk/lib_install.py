@@ -824,7 +824,7 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
                   allow_unverified: bool = False, dry_run: bool = False,
                   run_user: str | None = None, rehearsal: bool = False,
                   env_values: dict | None = None,
-                  provider_token_file: Path | None = None) -> dict:
+                  secrets_file: Path | None = None) -> dict:
     """按声明安装；**任何一步失败即回滚本次创建的内容**（只回滚本次，不碰既有安装）。"""
     import getpass
     import tarfile
@@ -1036,42 +1036,48 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
         created_files.append(env_path)
         plan["env_file"] = str(env_path)
 
-        # 凭据单独落地（2026-10-22：板上 runtime 因缺 IRAF_PROVIDER_TOKEN 永远起不来）。
-        # 装配单按设计**不写凭据**（不进 git / 不进命令行），所以由部署期给一个源文件，
+        # 凭据单独落地（2026-10-22：板上 runtime 因缺凭据永远起不来）。
+        # 装配单按设计**不写凭据**（不进 git / 不进命令行），所以由部署期给一份 600 文件，
         # 这里只做"拷成 600 + 登记进安装记录"，卸载时随记录删除（不留残留凭据）。
-        if provider_token_file is not None:
-            src = Path(provider_token_file)
+        # 为什么是**多键容器**而不是单个 token：板上 runtime 同时需要
+        #   IRAF_PROVIDER_TOKEN（出站调 x86 Capability Provider）
+        #   IRAF_GRPC_TOKEN    （本域 gRPC 服务端入站鉴权）
+        # 实测踩到：只给前者时单元仍 exit 2 `IRAF_GRPC_TOKEN must be provided by deployment`。
+        if secrets_file is not None:
+            src = Path(secrets_file)
             if not src.is_file():
-                raise InstallError("--provider-token-file 指定的文件不存在：%s" % src, EXIT_IO)
-            raw = src.read_text(encoding="utf-8", errors="replace").strip()
-            if not raw:
-                raise InstallError("--provider-token-file 内容为空：%s" % src, EXIT_IO)
-            # 源文件允许两种写法（裸值 / KEY=VALUE）；落到目标的形状固定在装配契约里。
-            token_value = raw
-            for line in raw.splitlines():
+                raise InstallError("--secrets-file 指定的文件不存在：%s" % src, EXIT_IO)
+            allowed = ("IRAF_PROVIDER_TOKEN", "IRAF_GRPC_TOKEN", "IRAF_AGENTOS_TOKEN")
+            lines, seen = [], []
+            for line in src.read_text(encoding="utf-8", errors="replace").splitlines():
                 line = line.strip()
                 if not line or line.startswith("#"):
                     continue
-                if line.startswith("IRAF_PROVIDER_TOKEN="):
-                    token_value = line.split("=", 1)[1].strip().strip("'\"")
-                else:
-                    token_value = line.strip().strip("'\"")
-                break
-            token_path = config_dir / "provider.token"
-            token_path.write_text("IRAF_PROVIDER_TOKEN=%s\n" % token_value, encoding="utf-8")
+                if "=" not in line:
+                    raise InstallError("--secrets-file 每行必须是 KEY=VALUE（或注释）：%r" % line, EXIT_IO)
+                key = line.split("=", 1)[0].strip()
+                if key not in allowed:
+                    raise InstallError("--secrets-file 里出现未登记的键 %r（允许：%s）"
+                                       % (key, ", ".join(allowed)), EXIT_IO)
+                lines.append(line)
+                seen.append(key)
+            if not lines:
+                raise InstallError("--secrets-file 没有任何有效键：%s（允许：%s）"
+                                   % (src, ", ".join(allowed)), EXIT_IO)
+            secrets_path = config_dir / "runtime.secrets"
+            secrets_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
             try:
-                token_path.chmod(0o600)
+                secrets_path.chmod(0o600)
             except OSError as exc:  # 权限设不上就必须显式失败（凭据不能被别人读）
-                raise InstallError("provider.token 权限设置失败（%s）：%s" % (token_path, exc), EXIT_IO)
-            created_files.append(token_path)
-            plan["provider_token_file"] = str(token_path)
-            info("provider token 已落地：%s（600，%d 字符；值不打印）"
-                 % (token_path, len(token_value)))
+                raise InstallError("runtime.secrets 权限设置失败（%s）：%s" % (secrets_path, exc), EXIT_IO)
+            created_files.append(secrets_path)
+            plan["secrets_file"] = str(secrets_path)
+            info("凭据已落地：%s（600，键=%s；值不打印）" % (secrets_path, ",".join(seen)))
         elif any(str(s.get("name") or "").startswith("iraf-runtime") for s in effective["services"]):
-            # 不 fail（x86 开发档可能用本地 backend，不需要跨机 token），但必须显式提示，
+            # 不 fail（x86 开发档可能用本地 backend，不需要跨机凭据），但必须显式提示，
             # 否则就是 2026-10-22 那种"装完才发现 runtime 起不来"的静默状态。
-            print("[install][警告] 未提供 --provider-token-file：%s/provider.token 不存在，"
-                  "跨机 Capability Provider 形态下 runtime 会因缺 token fail-closed（起不来）"
+            print("[install][警告] 未提供 --secrets-file：%s/runtime.secrets 不存在，"
+                  "runtime 会因缺 IRAF_PROVIDER_TOKEN / IRAF_GRPC_TOKEN fail-closed（起不来）"
                   % config_dir, file=sys.stderr)
 
         unit_dir = under_root(root, "/etc/systemd/system" if str(effective["systemd_scope"]) == "system"
@@ -1238,10 +1244,10 @@ def main(argv=None) -> int:
     p_ins.add_argument("--env-set", action="append", default=[], metavar="KEY=VALUE",
                        help="装配单模板的部署期取值（可多次，如 --env-set PROVIDER_ENDPOINT=host:50052）；"
                             "缺必需占位符即失败，不猜默认值")
-    p_ins.add_argument("--provider-token-file", type=Path, default=None, metavar="PATH",
-                       help="跨机 Capability Provider 的 token 源文件（裸值或 IRAF_PROVIDER_TOKEN=…）；"
-                            "落地为 <config_dir>/provider.token（600）并登记进安装记录（卸载即删）。"
-                            "凭据不进装配单、不进命令行值，所以只能走文件")
+    p_ins.add_argument("--secrets-file", type=Path, default=None, metavar="PATH",
+                       help="运行期凭据文件（600；每行 KEY=VALUE，允许 IRAF_PROVIDER_TOKEN / "
+                            "IRAF_GRPC_TOKEN / IRAF_AGENTOS_TOKEN）；落地为 <config_dir>/runtime.secrets "
+                            "并登记进安装记录（卸载即删）。凭据不进装配单、不进命令行值，只能走文件")
     p_ins.add_argument("--dry-run", action="store_true", help="只跑预检并打印计划，不写任何文件")
     p_ins.add_argument("--json", action="store_true")
 
@@ -1282,7 +1288,7 @@ def main(argv=None) -> int:
                                  python_exe=args.python_exe, allow_unverified=args.allow_unverified,
                                  dry_run=args.dry_run, run_user=args.run_user,
                                  rehearsal=args.rehearsal, env_values=env_values,
-                                 provider_token_file=args.provider_token_file)
+                                 secrets_file=args.secrets_file)
             if args.json:
                 _print_json(plan)
             elif args.dry_run:
