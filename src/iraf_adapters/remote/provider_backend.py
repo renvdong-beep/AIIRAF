@@ -32,7 +32,34 @@ from __future__ import annotations
 
 import os
 import uuid
+from pathlib import Path
 from typing import Any, Dict, Optional
+
+
+def read_token_file(path) -> str:
+    """从 600 凭据文件读 token（支持 `IRAF_PROVIDER_TOKEN=...` 与裸值两种写法）。
+
+    为什么要有文件这条路（2026-10-22 实机）：装配单按设计**不写凭据**，而 CLI / MCP / 探针
+    不一定由 systemd 拉起（各自 cwd 不同），只认环境变量就等于"每次手输"。文件给两端
+    （x86 服务端 / 板卡客户端）一个共同的事实来源，同时不违反"不进 git、不进命令行"。
+
+    文件缺失/不可读/无有效行 ⇒ 返回 ""，由调用方继续 fail-closed（不抛、不猜）。
+    """
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            key, _, value = line.partition("=")
+            if key.strip() == "IRAF_PROVIDER_TOKEN":
+                return value.strip().strip("'\"")
+            continue
+        return line  # 裸值写法
+    return ""
 
 
 class RemoteProviderError(RuntimeError):
@@ -53,7 +80,7 @@ class RemoteProviderBackend:
         if not endpoint:
             raise ValueError("endpoint 必填（远端 Provider 地址，来自声明）")
         if not token:
-            raise ValueError("token 必填（只从环境变量来；缺 token 即拒绝装配，fail-closed）")
+            raise ValueError("token 必填（来源：环境变量或 600 凭据文件；缺 token 即拒绝装配，fail-closed）")
         self.endpoint = str(endpoint)
         self._token = str(token)
         self._timeout_s = float(timeout_s)
@@ -69,6 +96,11 @@ class RemoteProviderBackend:
         cfg = dict(config or {})
         token_env = str(cfg.get("token_env") or "IRAF_PROVIDER_TOKEN")
         token = os.environ.get(token_env) or ""
+        if not token:
+            # 环境没有就给 600 凭据文件一次机会（装配单不写凭据，systemd 之外的入口靠这个）
+            token_file = str(cfg.get("token_file") or os.environ.get("IRAF_PROVIDER_TOKEN_FILE") or "")
+            if token_file:
+                token = read_token_file(token_file)
         endpoint = str(cfg.get("endpoint") or os.environ.get("IRAF_PROVIDER_ENDPOINT") or "")
         return cls(endpoint, token,
                    timeout_s=float(cfg.get("timeout_s") or 180.0),
