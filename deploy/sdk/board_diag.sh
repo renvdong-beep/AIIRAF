@@ -174,15 +174,22 @@ facts = {
                and any(line.startswith("IRAF_BACKEND_CONFIG=") and len(line) > len("IRAF_BACKEND_CONFIG=")
                        for line in text("iraf_env").splitlines())},
         {"name": "单元文件（%s）" % unit, "ok": "No such file" not in text("units")},
-        {"name": "单元 active", "ok": "active (running)" in text("units") or "active (exited)" in text("units")},
+        # 设计口径（2026-10-22 实测）：edge-* 角色的 gRPC 单元**只装不启** —— 开发用适配器要求
+        # IRAF_GRPC_DEVELOPMENT=true + 仅 loopback + simulation=true，装完默认 disabled。
+        # 所以"没启用"不是缺陷：只有 enabled（声明期望常驻）却没起来时才算红。
+        {"name": "单元状态（enabled⇒必须 active；disabled=设计只装不启）",
+         "ok": ("active" in text("units")) or ("disabled" in text("units")),
+         "skip": ("disabled" in text("units")) and ("active" not in text("units"))},
         # 正向证据：有输出、且不含任何失败标记（否则"报错信息非空"会被误判成可运行 —— 实测踩到过）
         {"name": "CLI 可运行（--list-skills）",
          "ok": bool(text("cli_list_skills").strip())
                and not any(marker in text("cli_list_skills") for marker in
                            ("CLI-NOT-RUNNABLE", "No such file", "Traceback", "ModuleNotFoundError",
                             "command not found", "用法错误"))},
-        {"name": "IRAF 进程存在", "ok": "NO-IRAF-PROCESS" not in text("processes")
-                                          and "iraf" in text("processes").lower()},
+        {"name": "IRAF 进程存在（仅在单元启用/手工启动后有）",
+         "ok": ("iraf" in text("processes").lower() and "NO-IRAF-PROCESS" not in text("processes"))
+               or ("disabled" in text("units")),
+         "skip": ("disabled" in text("units")) and ("NO-IRAF-PROCESS" in text("processes"))},
     ],
     "agentos_untouched": {"agentos_port": "NO-AGENTOS-PORT" not in text("agentos")},
     "note": "本文件只做**判读**：ok=true 表示该期望成立，不表示 IRAF 能力已验收（真机验收另有证据）",
@@ -200,7 +207,8 @@ summary = {
 Path(out, "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 print("[board-diag] IRAF 就绪=%s（逐项见 summary.json）" % ready)
 for item in facts["executables"]:
-    print("  %s %s" % ("✓" if item["ok"] else "✗", item["name"]))
+    # 三态：✓ 期望成立 / ○ 按设计不适用（skip） / ✗ 真缺陷
+    print("  %s %s" % ("○" if item.get("skip") else ("✓" if item["ok"] else "✗"), item["name"]))
 PY
 
 log "采集完成：${OUT_DIR}/summary.json（原始：${RAW_DIR}/）"
