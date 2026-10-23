@@ -17,7 +17,13 @@ spec:
     joint6: [-3.14, 3.14]
     joint7: [0.0, 0.035]
     joint8: [-0.035, 0.0]
-  capabilities: [move_joint, pick_object, visual_pick, place_object, stop]
+  capabilities: [move_joint, pick_object, visual_pick, place_object, stop, reset_scene]
+  # 开发档（仅 verification: development 生效）：让"抓取 box_01"这类开发/调试语义默认看得见画面。
+  # 生产 profile **不要写这一段** —— 不写 = 与以前完全一致（不自动起、缺 provider 就显式失败）。
+  # 由 scripts/dev_provider_supervisor.py 读取并执行（它不是 Skill：进程生命周期属运维）。
+  dev:
+    provider_display: window      # window | headless
+    autostart_provider: true      # 仅开发档；supervisor 按此决定是否拉起
   # 结构化差异声明：把关节语义、夹爪位形、Home 位姿与相机视角
   # 从脚本魔数收敛为 profile 数据，换机械臂只需替换本文件。
   joint_roles:

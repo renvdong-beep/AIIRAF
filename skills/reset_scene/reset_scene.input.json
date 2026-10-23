@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["scope"],
+  "additionalProperties": false,
+  "properties": {
+    "scope": {
+      "type": "string",
+      "enum": ["all", "target"],
+      "description": "all=整场景复位到 keyframe 0；target=只复位指定自由体（free joint）"
+    },
+    "target_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "description": "scope=target 时必填（本场景为 box_01）。非自由体不支持，会显式失败"
+    }
+  }
+}

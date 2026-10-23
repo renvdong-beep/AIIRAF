@@ -1,0 +1,25 @@
+apiVersion: iraf.intewell.io/v1
+kind: Skill
+metadata: {name: reset_scene, version: 1.0.0}
+spec:
+  # 开发/调试能力：把仿真场景恢复到初始状态。**进程内复位**，不重启 Provider ⇒ 显示窗口保留。
+  # 生产 profile 不应把 reset_scene 放进 capabilities（它属于开发档语义）。
+  verification: development
+  inputSchema: reset_scene.input.json
+  outputSchema: reset_scene.output.json
+  requires: [reset_scene]
+  preconditions:
+    - safety.estop == false
+  intentExamples: ["复位场景", "清理 mujoco", "把场景恢复初始", "重置仿真", "reset scene"]
+  # 技能选择收口：可自然语言触发（"复位场景"就是它的词）
+  intentTrigger: {natural_language: true, role: "开发/调试：场景复位（窗口不关）"}
+  timeoutSeconds: 30
+  cancellation: cooperative_stop
+  recovery: [stop]
+  safetyClass: maintenance
+  providers:
+    - name: common_reset_scene_sim
+      type: python_adapter
+      entrypoint: "iraf_skills.common.scene:ResetSceneProvider"
+      selector: {mode: simulation}
+      priority: 100

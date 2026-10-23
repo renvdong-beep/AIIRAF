@@ -206,6 +206,11 @@ class RemoteProviderBackend:
         return self._invoke("accept_payload", {"payload_id": payload_id,
                                                "place_target_id": place_target_id}, lease)
 
+    def reset_scene(self, scope="all", target_id=None, lease=None) -> Dict[str, Any]:
+        """复位仿真场景（进程内，不重启 Provider ⇒ 显示窗口保留）。"""
+        return self._invoke("reset_scene", {"scope": str(scope or "all"),
+                                           "target_id": target_id}, lease)
+
     def stop(self, lease) -> None:
         self._invoke("stop", {}, lease)
 

@@ -938,6 +938,55 @@ class MujocoBackend:
             "source", "unknown"
         )
 
+    def reset_scene(self, scope="all", target_id=None, lease=None):
+        """**进程内**复位 MuJoCo 场景（不重启进程 ⇒ 显示窗口保留）。
+
+        为什么需要（2026-10-23 使用者口径）：仿真场景有状态，一次成功抓取会把目标搬走，
+        下一次抓取必报 `distance≈0.374m`。以前只能重启 provider 进程来复位，但那样**把窗口也关了**，
+        开发时看不到画面。本方法只把物理状态恢复到 keyframe 0，模型/窗口/相机全不动。
+
+        scope=all    整场景复位（所有关节与自由体回到 keyframe 0）
+        scope=target 只复位指定**自由体**的位置/朝向；非自由体显式失败（不假装成功）
+        """
+        self.authority.validate(lease)
+        key_count = int(getattr(self.model, "nkey", 0) or 0)
+        if key_count <= 0:
+            # 没有 keyframe 就没有"初始姿态"的权威来源；猜一个等于伪造复位成功。
+            raise RuntimeError("场景没有 keyframe，拒绝猜测初始姿态（无法复位）")
+
+        scope = str(scope or "all").strip().lower()
+        if scope == "all":
+            mujoco.mj_resetDataKeyframe(self.model, self.data, 0)
+            self._forward_readonly()
+            try:
+                self._reset_metrics()
+            except AttributeError:  # 极简替身/单测：没有指标缓存
+                pass
+            return {"status": "SUCCEEDED", "scope": "all", "keyframe": 0,
+                    "detail": "整场景已复位到 keyframe 0（进程未重启，窗口保留）"}
+
+        if scope == "target":
+            if not target_id:
+                raise ValueError("scope=target 需要 target_id")
+            body_id = self._body_id(str(target_id))
+            joint_id = None
+            for j in range(int(self.model.njnt)):
+                if int(self.model.jnt_bodyid[j]) == int(body_id) and \
+                        int(self.model.jnt_type[j]) == int(mujoco.mjtJoint.mjJNT_FREE):
+                    joint_id = j
+                    break
+            if joint_id is None:
+                raise ValueError("目标 %s 不是自由体（free joint），scope=target 不支持；请用 scope=all"
+                                 % target_id)
+            qadr = int(self.model.jnt_qposadr[joint_id])
+            key_qpos = self.model.key_qpos[0]
+            self.data.qpos[qadr:qadr + 7] = key_qpos[qadr:qadr + 7]
+            self._forward_readonly()
+            return {"status": "SUCCEEDED", "scope": "target", "target_id": str(target_id),
+                    "detail": "目标已复位到 keyframe 0 的位姿"}
+
+        raise ValueError("scope 只接受 all / target，实际：%s" % scope)
+
     def pick_object(self, target_id, grasp_pose, duration_ms, lease):
         """闭合双指并以目标和两侧手指的真实接触作为抓取确认。"""
         self.authority.validate(lease)

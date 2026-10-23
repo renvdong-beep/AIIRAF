@@ -67,6 +67,9 @@ _POSITIONAL = {
     "dock_for_handoff": (),
     "read_state": (),
     "emergency_stop": (),
+    # 场景复位（2026-10-23）：开发/调试用。**必须持租约** —— 它改的是物理状态，
+    # 与运行中的任务并发会互相破坏（不要加进 _NO_LEASE）。
+    "reset_scene": ("scope", "target_id"),
 }
 #: 不需要 lease 的能力（纯查询 / 无动作）
 _NO_LEASE = {"step", "runtime_inventory", "read_state"}

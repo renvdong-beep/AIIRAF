@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["status", "scope"],
+  "additionalProperties": true,
+  "properties": {
+    "status": {"type": "string", "enum": ["SUCCEEDED"]},
+    "scope": {"type": "string", "enum": ["all", "target"]},
+    "target_id": {"type": "string", "description": "scope=target 时为被复位的目标"},
+    "keyframe": {"type": "integer", "minimum": 0},
+    "detail": {"type": "string", "description": "人可读的复位说明（含\"窗口保留\"等事实）"}
+  }
+}
