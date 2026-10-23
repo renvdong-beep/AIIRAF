@@ -11,7 +11,14 @@ spec:
     # 实测运行期报「缺少运行时状态: manipulation.payload_held」——声明白不存在的东西是假声明
     # ⇒ 改为在 provider/后端用**实测事实**把关："双侧指腹必须同时接触载荷，否则拒绝放置"。
     - safety.estop == false
-  intentExamples: ["把方块放进托盘", "放置到狗背托盘", "place object into tray"]
+  # 收口（2026-10-23 实测）：本技能需要场景里真实存在接收体。当前 piper_mujoco 抓取场景
+  # targets 只有 box_01 ⇒ 一句话"放进托盘"必报"场景报告没有接收体: tray_01"。
+  # 托盘在 Go2 四足背驮场景里（tray_01），放置验收要用那套 profile/scene。
+  intentExamples: ["把方块放进托盘（需当前场景含接收体 tray_01）"]
+  intentTrigger:
+    natural_language: true
+    requires: ["场景包含接收体（见 place_object.input.json 的 place_target_id）"]
+    note: 当前 piper_mujoco 场景只有 box_01，没有 tray_01；放置请切 Go2/handoff 场景
   # 租约 TTL 必须覆盖**墙钟**（不是仿真时长）：与 pick_object 同口径（带窗口时 4 核软件渲染
   # 会把墙钟拉长数倍），放置比抓取多一段"下行+张开+抬离" ⇒ 取 120 s（= pick 的同值，够用）。
   timeoutSeconds: 120

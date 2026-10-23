@@ -9,7 +9,10 @@ spec:
   preconditions:
     - safety.estop == false
     - manipulation.target_visible == true
-  intentExamples: ["抓取 box_01", "拾取目标物体", "pick object"]
+  intentExamples: ["抓取 box_01", "拾取目标物体", "拿起方块", "pick object"]
+  # 技能选择收口（2026-10-23 实机）：抓取类自然语言默认且只落到本技能。
+  # 同族技能 visual_pick 需要显式 vision_file，不参与自然语言竞争。
+  intentTrigger: {natural_language: true, role: "抓取类默认技能"}
   # 租约 TTL 必须覆盖**墙钟**（不是仿真时长）：带重力前馈后抓取实测墙钟 53.71632638690062 s
   # （五段各 1600 ms 仿真 + 稳定窗，4 核软件渲染），原 30 s 会在收尾前过期 ⇒ 收尾路径抛
   # LeaseConflict、整步被记成崩溃（2026-09-24 实测）。120 s = 约 2.2 倍余量（与 locomote 60 s /

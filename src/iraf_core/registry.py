@@ -1,5 +1,5 @@
 """Skill manifest loading, schema validation and deterministic Provider routing."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib, importlib, json, re
 from pathlib import Path
 import yaml
@@ -67,6 +67,9 @@ class ProviderSpec:
 @dataclass(frozen=True)
 class SkillManifest:
     name: str; version: str; digest: str; verification: str; requires: tuple; preconditions: tuple; intent_examples: tuple; timeout_seconds: int; cancellation: str; recovery: tuple; safety_class: str; input_schema: dict; output_schema: dict; providers: tuple
+    #: 技能选择收口（2026-10-23）：可选。缺省（空 dict）视为"可由自然语言触发"，
+    #: 保持旧 manifest 向后兼容。约定键：natural_language(bool) / requires(list) / note(str)。
+    intent_trigger: dict = field(default_factory=dict)
 
 @dataclass(frozen=True)
 class InvocationResult:
@@ -125,7 +128,7 @@ class SkillRegistry:
         return tuple(sorted({name for name, version in self._skills}))
 
     def intent_contracts(self):
-        return {name: {"inputSchema": self.resolve(name).manifest.input_schema, "examples": self.resolve(name).manifest.intent_examples, "safetyClass": self.resolve(name).manifest.safety_class} for name in self.names()}
+        return {name: {"inputSchema": self.resolve(name).manifest.input_schema, "examples": self.resolve(name).manifest.intent_examples, "safetyClass": self.resolve(name).manifest.safety_class, "trigger": (self.resolve(name).manifest.intent_trigger or {"natural_language": True})} for name in self.names()}
 
 def load_skill_manifest(path):
     path = Path(path)
@@ -153,7 +156,7 @@ def load_skill_manifest(path):
         if ":" not in str(item["entrypoint"]):
             raise RegistryError("Provider entrypoint must be module:Class")
         providers.append(ProviderSpec(item["name"], item["type"], item["entrypoint"], item.get("selector") or {}, int(item.get("priority", 100))))
-    manifest = SkillManifest(meta["name"], str(meta["version"]), hashlib.sha256(raw).hexdigest(), str(spec.get("verification", "unverified")), tuple(spec["requires"]), tuple(spec["preconditions"]), tuple(spec["intentExamples"]), int(spec["timeoutSeconds"]), str(spec["cancellation"]), tuple(spec["recovery"]), str(spec["safetyClass"]), schema("inputSchema"), schema("outputSchema"), tuple(providers))
+    manifest = SkillManifest(meta["name"], str(meta["version"]), hashlib.sha256(raw).hexdigest(), str(spec.get("verification", "unverified")), tuple(spec["requires"]), tuple(spec["preconditions"]), tuple(spec["intentExamples"]), int(spec["timeoutSeconds"]), str(spec["cancellation"]), tuple(spec["recovery"]), str(spec["safetyClass"]), schema("inputSchema"), schema("outputSchema"), tuple(providers), dict(spec.get("intentTrigger") or {}))
     if manifest.timeout_seconds <= 0 or not manifest.providers:
         raise RegistryError("Skill timeout/providers invalid")
     return manifest

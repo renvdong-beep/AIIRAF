@@ -7,7 +7,14 @@ spec:
   outputSchema: visual_pick.output.json
   requires: [visual_pick]
   preconditions: [safety.estop == false, manipulation.target_visible == true]
-  intentExamples: [视觉抓取方块, 通过相机抓取目标, visual pick]
+  # 收口（2026-10-23 实测）：原来的 "视觉抓取方块 / 通过相机抓取目标" 会被"抓取"命中，
+  # 于是平台选到本技能并**自己猜坐标** ⇒ 必然失败（distance=0.094719m tolerance=0.005）。
+  # 本技能要求调用方显式给视觉输入，不是一句话能触发的技能。
+  intentExamples: ["用视觉抓取（需提供 vision_file）"]
+  intentTrigger:
+    natural_language: false
+    requires: [vision_file]
+    note: 必须显式提供视觉输入文件；自然语言触发会因"位姿与场景不一致"被拒
   timeoutSeconds: 45
   cancellation: cooperative_stop
   recovery: [stop, reacquire_target, request_handover]

@@ -38,6 +38,10 @@ ROUTING_POLICY = (
     "平台按自己的工具与流程处理；不要硬塞给 IRAF，也不要把失败包装成成功。"
     "③ 平台自身的项目/文件/构建/代码/对话类事务仍由平台判断与处理，IRAF 不接管。"
     "④ 需要核对事实用 iraf_get_task(execution_id) 读事件库，不采信模型自述。"
+    "⑤ 选技能只按 iraf_robot_mode 返回的 skills / intents / skill_triggers 判定："
+    "skill_triggers 里 natural_language=false 的技能（如 visual_pick，需要 vision_file）**不要**用一句话触发；"
+    "requires 里写的场景前提（如 place_object 需要接收体 tray_01）不满足时直接告诉用户缺什么，"
+    "不要换个技能硬试、也不要自己补坐标。"
 )
 
 

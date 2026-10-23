@@ -214,9 +214,14 @@ def _robot_facts() -> dict:
             # IRAF"，而不是靠猜或干脆自己做（2026-10-21 使用者口径：机器人开发模式下优先走
             # IRAF，但 AgentOS 仍要自己判断项目与事务的处理）。
             intents = {}
+            triggers = {}
             for name, contract in registry.intent_contracts().items():
                 intents[name] = list(contract.get("examples") or [])
+                # 技能选择收口（2026-10-23）：把"能不能用一句话触发、需要什么参数/场景"一起给平台，
+                # 否则模型只看 examples，会把"抓取"错配到需要 vision_file 的 visual_pick。
+                triggers[name] = dict(contract.get("trigger") or {"natural_language": True})
             facts["intents"] = intents
+            facts["skill_triggers"] = triggers
         except Exception as exc:
             facts["skills_error"] = str(exc)[:200]
     facts["profile"] = _os.environ.get("IRAF_PROFILE")
