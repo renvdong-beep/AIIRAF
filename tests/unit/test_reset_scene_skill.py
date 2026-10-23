@@ -106,6 +106,26 @@ class NothingButTaskLevelTest(unittest.TestCase):
         from iraf_adapters.remote.provider_backend import RemoteProviderBackend
         self.assertTrue(callable(getattr(RemoteProviderBackend, "reset_scene", None)))
 
+    def test_all_profile_capabilities_are_registered(self):
+        """profile 声明的每个 capability 都必须在 CAPABILITY_METHODS 里登记。
+
+        0.3.15 第一次上板就是漏了这一步：profile 加了 reset_scene、backend 也实现了，
+        但 factory 的"能力登记表"没登记 ⇒ 装配期直接
+        `BackendContractError: ... reset_scene(需 <未登记的 capability>)`，板上 CLI 起不来。
+        这条测试把"声明了却没人认"的悬空能力挡在提交前。
+        """
+        from iraf_adapters.factory import CAPABILITY_METHODS
+        from iraf_core.profile import load_robot_profile
+
+        checked = 0
+        for path in sorted((REPO / "profiles").glob("*_mujoco.yaml")):
+            profile = load_robot_profile(str(path))
+            missing = [c for c in profile.capabilities if c not in CAPABILITY_METHODS]
+            self.assertEqual([], missing, "%s 声明的能力未在 CAPABILITY_METHODS 登记：%s"
+                             % (path.name, missing))
+            checked += 1
+        self.assertGreaterEqual(checked, 2, "没扫到 profile，测试失效")
+
 
 if __name__ == "__main__":
     unittest.main()

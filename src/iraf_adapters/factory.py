@@ -53,6 +53,10 @@ CAPABILITY_METHODS = {
     "accept_payload": "accept_payload",
     # 放置（2026-09-28 §11.23(41)）：把夹持中的载荷放到接收体承载面上（临时启用做验收）。
     "place_object": "place_object",
+    # 场景复位（2026-10-23）：开发/调试能力，进程内复位场景、**不重启进程**（显示窗口保留）。
+    # 漏登记会直接拦装配：BackendContractError: ... reset_scene(需 <未登记的 capability>)
+    # —— 0.3.15 首次上板就是这么红的（profile 声明了但本表没登记）。
+    "reset_scene": "reset_scene",
     "read_state": "read_state",
     "emergency_stop": "emergency_stop",
 }
