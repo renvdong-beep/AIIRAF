@@ -27,9 +27,23 @@ if [ -z "${IRAF_AGENTOS_TOKEN:-}" ] && [ -r /etc/iraf/agentos.key ]; then
   IRAF_AGENTOS_TOKEN="$(cat /etc/iraf/agentos.key)"
   export IRAF_AGENTOS_TOKEN
 fi
-: "${IRAF_PROVIDER_TOKEN:?需要 IRAF_PROVIDER_TOKEN（跨机 Provider 鉴权）}"
-: "${IRAF_AGENTOS_MODEL_URL:?需要 IRAF_AGENTOS_MODEL_URL（意图模型网关）}"
-: "${IRAF_AGENTOS_MODEL:?需要 IRAF_AGENTOS_MODEL}"
+# 跨机 Provider 凭据：从 600 文件读（装配单按设计不写凭据），不落命令行、不打印
+if [ -z "${IRAF_PROVIDER_TOKEN:-}" ] && [ -r /etc/iraf/runtime.secrets ]; then
+  IRAF_PROVIDER_TOKEN="$(sed -n 's/^IRAF_PROVIDER_TOKEN=//p' /etc/iraf/runtime.secrets | head -1 | tr -d "'\"")"
+  export IRAF_PROVIDER_TOKEN
+fi
+# 意图模型网关：优先环境，其次板上 dashboard 的既有事实（config.yaml 的 model 段）
+if [ -z "${IRAF_AGENTOS_MODEL_URL:-}" ] && [ -r /root/.intewell/config.yaml ]; then
+  IRAF_AGENTOS_MODEL_URL="$(sed -n 's/^  base_url: *//p' /root/.intewell/config.yaml | head -1 | tr -d "'\"")"
+  export IRAF_AGENTOS_MODEL_URL
+fi
+if [ -z "${IRAF_AGENTOS_MODEL:-}" ] && [ -r /root/.intewell/config.yaml ]; then
+  IRAF_AGENTOS_MODEL="$(sed -n 's/^  default: *//p' /root/.intewell/config.yaml | head -1 | tr -d "'\"")"
+  export IRAF_AGENTOS_MODEL
+fi
+: "${IRAF_PROVIDER_TOKEN:?需要 IRAF_PROVIDER_TOKEN（跨机 Provider 鉴权）：写 /etc/iraf/runtime.secrets 或 export}"
+: "${IRAF_AGENTOS_MODEL_URL:?需要 IRAF_AGENTOS_MODEL_URL（意图模型网关）：配 dashboard 的 model.base_url 或 export}"
+: "${IRAF_AGENTOS_MODEL:?需要 IRAF_AGENTOS_MODEL（同上，model.default）}"
 
 export PYTHONPATH="$VERSION_DIR/lib:$VERSION_DIR/src"
 
