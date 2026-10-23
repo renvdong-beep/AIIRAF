@@ -33,7 +33,10 @@ for execution_id, raw, updated in rows:
     skill = result.get("resolved_skill") or result.get("skill") or "-"
     code = result.get("error_code") or "-"
     reason = (result.get("reason") or "-")
-    print("%s\n  status=%s skill=%s error=%s" % (execution_id, status, skill, code))
+    mode = result.get("robot_mode") or "(未回传)"
+    steps = len(result.get("next_steps") or [])
+    print("%s\n  status=%s skill=%s robot_mode=%s next_steps=%d error=%s"
+          % (execution_id, status, skill, mode, steps, code))
     if reason and reason != "-":
         print("  reason=%s" % str(reason)[:160])
     # 状态迁移序列（便于判断是并发/场景/鉴权哪一类）
