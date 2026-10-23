@@ -127,5 +127,71 @@ class NothingButTaskLevelTest(unittest.TestCase):
         self.assertGreaterEqual(checked, 2, "没扫到 profile，测试失效")
 
 
+class BaselineFallbackTest(unittest.TestCase):
+    """无 keyframe 的场景必须用初始化快照复位。
+
+    实测（AgentOS 会话 execution cd606a2d）：piper 抓取场景 nkey=0，
+    第一版 reset_scene 只认 keyframe ⇒ 永远报"场景没有 keyframe，拒绝猜测初始姿态"。
+    现在基准顺序是 keyframe → 初始化快照（世界刚加载时的 qpos/qvel）。
+    """
+
+    def _backend(self, nq=7):
+        import numpy as np
+        from iraf_adapters.mujoco.mujoco_backend import MujocoBackend
+
+        backend = object.__new__(MujocoBackend)   # 绕过 __init__（不加载 MJCF）
+
+        class _Model:
+            nkey = 0
+            njnt = 0
+
+        class _Data:
+            def __init__(self):
+                self.qpos = np.arange(nq, dtype=float)
+                self.qvel = np.zeros(nq)
+
+        class _Auth:
+            def validate(self, lease):
+                self.lease = lease
+
+        backend.model = _Model()
+        backend.data = _Data()
+        backend._initial_qpos = backend.data.qpos.copy()
+        backend._initial_qvel = backend.data.qvel.copy()
+        backend._plant_injected = False
+        backend.authority = _Auth()
+        backend._forward_readonly = lambda: None
+        backend._reset_metrics = lambda: None
+        return backend
+
+    def test_all_uses_initial_snapshot_when_no_keyframe(self):
+        import numpy as np
+        backend = self._backend()
+        expected = backend._initial_qpos.copy()
+        backend.data.qpos[:] = 9.9          # 模拟抓取后世界已改变
+        out = backend.reset_scene(scope="all", lease="L1")
+        self.assertEqual("SUCCEEDED", out["status"])
+        self.assertEqual("initial-snapshot", out["baseline"])
+        self.assertTrue(np.allclose(backend.data.qpos, expected))
+
+    def test_refuses_when_no_baseline_at_all(self):
+        backend = self._backend()
+        backend._initial_qpos = None
+        with self.assertRaises(RuntimeError):
+            backend.reset_scene(scope="all", lease="L1")
+
+    def test_guest_backend_refuses(self):
+        """共享世界里是 guest ⇒ 不许复位别人的世界。"""
+        backend = self._backend()
+        backend._plant_injected = True
+        with self.assertRaises(RuntimeError):
+            backend.reset_scene(scope="all", lease="L1")
+
+    def test_safety_policy_allows_reset_scene(self):
+        """default: deny 的策略必须显式放行，否则任务到不了 provider。"""
+        policy = (REPO / "profiles/safety/simulation_lab.yaml").read_text(encoding="utf-8")
+        self.assertIn("reset_scene", policy)
+
+
 if __name__ == "__main__":
     unittest.main()

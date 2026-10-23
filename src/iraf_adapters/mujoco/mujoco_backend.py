@@ -396,6 +396,16 @@ class MujocoBackend:
             self._forward_readonly()
         elif not self._plant_injected:
             self._forward_readonly()
+        # 初始状态快照（2026-10-23）：reset_scene 需要"世界刚加载时的姿态"作为基准。
+        # **不能只依赖 keyframe**：实测 piper 抓取场景 nkey=0（上面注释也写明"无 keyframe 时
+        # 保持全零，Piper 不受影响"），只认 keyframe 会让 reset_scene 在 piper 上永远失败
+        # （AgentOS 会话实测 execution cd606a2d：场景没有 keyframe，拒绝猜测初始姿态）。
+        try:
+            self._initial_qpos = self.data.qpos.copy()
+            self._initial_qvel = self.data.qvel.copy()
+        except AttributeError:  # 极简替身（单测）：没有 qpos/qvel
+            self._initial_qpos = None
+            self._initial_qvel = None
         self._actuators = {
             mujoco.mj_id2name(
                 self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, index
@@ -945,25 +955,47 @@ class MujocoBackend:
         下一次抓取必报 `distance≈0.374m`。以前只能重启 provider 进程来复位，但那样**把窗口也关了**，
         开发时看不到画面。本方法只把物理状态恢复到 keyframe 0，模型/窗口/相机全不动。
 
-        scope=all    整场景复位（所有关节与自由体回到 keyframe 0）
+        scope=all    整场景复位（所有关节与自由体回到基准）
         scope=target 只复位指定**自由体**的位置/朝向；非自由体显式失败（不假装成功）
+
+        基准（baseline）取值顺序：
+          ① 模型有 keyframe ⇒ 用 keyframe[0]（模型作者声明的合理初始位形）
+          ② 没有 keyframe ⇒ 用**初始化快照** `_initial_qpos`（世界刚加载、未执行任何动作时抓的）
+        实测 piper 抓取场景 nkey=0，若只认 keyframe，reset 会永远失败（execution cd606a2d）。
         """
         self.authority.validate(lease)
+        if getattr(self, "_plant_injected", False):
+            # 共享世界里本后端是 guest：复位别人的世界属于越权，显式拒绝。
+            raise RuntimeError("本后端是注入植物（guest），不拥有世界 ⇒ 拒绝复位场景")
+
         key_count = int(getattr(self.model, "nkey", 0) or 0)
-        if key_count <= 0:
-            # 没有 keyframe 就没有"初始姿态"的权威来源；猜一个等于伪造复位成功。
-            raise RuntimeError("场景没有 keyframe，拒绝猜测初始姿态（无法复位）")
+        if key_count > 0:
+            base_qpos = self.model.key_qpos[0]
+            baseline = "keyframe:0"
+        else:
+            base_qpos = getattr(self, "_initial_qpos", None)
+            baseline = "initial-snapshot"
+        if base_qpos is None:
+            # 既无 keyframe 也无快照：没有"初始姿态"的权威来源，猜一个等于伪造复位成功。
+            raise RuntimeError("既没有 keyframe 也没有初始快照，拒绝猜测初始姿态（无法复位）")
 
         scope = str(scope or "all").strip().lower()
         if scope == "all":
-            mujoco.mj_resetDataKeyframe(self.model, self.data, 0)
+            if key_count > 0:
+                mujoco.mj_resetDataKeyframe(self.model, self.data, 0)
+            else:
+                self.data.qpos[:] = base_qpos
+                if getattr(self, "_initial_qvel", None) is not None:
+                    self.data.qvel[:] = self._initial_qvel
+                else:
+                    self.data.qvel[:] = 0
             self._forward_readonly()
             try:
                 self._reset_metrics()
             except AttributeError:  # 极简替身/单测：没有指标缓存
                 pass
-            return {"status": "SUCCEEDED", "scope": "all", "keyframe": 0,
-                    "detail": "整场景已复位到 keyframe 0（进程未重启，窗口保留）"}
+            return {"status": "SUCCEEDED", "scope": "all", "baseline": baseline,
+                    "detail": "整场景已复位到 %s（进程未重启，窗口保留）" % baseline}
 
         if scope == "target":
             if not target_id:
@@ -979,11 +1011,12 @@ class MujocoBackend:
                 raise ValueError("目标 %s 不是自由体（free joint），scope=target 不支持；请用 scope=all"
                                  % target_id)
             qadr = int(self.model.jnt_qposadr[joint_id])
-            key_qpos = self.model.key_qpos[0]
-            self.data.qpos[qadr:qadr + 7] = key_qpos[qadr:qadr + 7]
+            self.data.qpos[qadr:qadr + 7] = base_qpos[qadr:qadr + 7]
+            self.data.qvel[int(self.model.jnt_dofadr[joint_id]):
+                           int(self.model.jnt_dofadr[joint_id]) + 6] = 0
             self._forward_readonly()
             return {"status": "SUCCEEDED", "scope": "target", "target_id": str(target_id),
-                    "detail": "目标已复位到 keyframe 0 的位姿"}
+                    "baseline": baseline, "detail": "目标已复位到 %s 的位姿" % baseline}
 
         raise ValueError("scope 只接受 all / target，实际：%s" % scope)
 
