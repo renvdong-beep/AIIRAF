@@ -56,6 +56,16 @@ case "${1:-}" in
     ;;
   --unregister-mcp)
     run "timeout 60 intewell-agent-cli mcp remove iraf-task" | tail -4 ;;
+  --model-config)
+    MODEL_PAYLOAD="${SCRIPT_DIR}/agentos_model_config.py"
+    [ -f "${MODEL_PAYLOAD}" ] || { echo "缺 ${MODEL_PAYLOAD}" >&2; exit 2; }
+    sshpass -e ssh "${SSH_OPTS[@]}" "${TARGET}" "python3 - --apply" < "${MODEL_PAYLOAD}" ;;
+  --model-config-status)
+    MODEL_PAYLOAD="${SCRIPT_DIR}/agentos_model_config.py"
+    sshpass -e ssh "${SSH_OPTS[@]}" "${TARGET}" "python3 - --status" < "${MODEL_PAYLOAD}" ;;
+  --model-config-revert)
+    MODEL_PAYLOAD="${SCRIPT_DIR}/agentos_model_config.py"
+    sshpass -e ssh "${SSH_OPTS[@]}" "${TARGET}" "python3 - --revert" < "${MODEL_PAYLOAD}" ;;
   *)
     cat >&2 <<'USAGE'
 用法：bash scripts/agentos_content_layer.sh <动作>
