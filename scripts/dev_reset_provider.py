@@ -141,11 +141,17 @@ def build_env(args) -> tuple[dict, str]:
     # 显示/GL：headless 走 egl（无 X11 也能渲），窗口模式要 glfw + DISPLAY + 软件 GL（无独显）
     if args.window:
         env["MUJOCO_GL"] = "glfw"
-        env["DISPLAY"] = os.environ.get("DISPLAY") or ":0"
-        env["XAUTHORITY"] = os.environ.get("XAUTHORITY") or "/run/user/1000/gdm/Xauthority"
+        # 注意：不能用 os.environ["DISPLAY"] —— 从 ssh 会话继承到的常是 localhost:10.0/11.0（X11 转发），
+        # 那是一个"看起来能用、其实没有真实窗口"的显示号（实测窗口黑屏/开不出来）。默认强制 :0。
+        env["DISPLAY"] = args.display
+        env["XAUTHORITY"] = args.xauthority
         env["LIBGL_ALWAYS_SOFTWARE"] = os.environ.get("LIBGL_ALWAYS_SOFTWARE") or "1"
+        # 显式声明交互显示：跳过 resolve_display_mode 的 GLFW 试创建探测
+        # （探测会残留 GL 上下文，之后 launch_passive 报 mj_copyDataVisual stack in use）
+        env["IRAF_VIEWER_DISPLAY_MODE"] = "interactive"
     else:
         env["MUJOCO_GL"] = "egl"
+        env.pop("IRAF_VIEWER_DISPLAY_MODE", None)
         for key in DISPLAY_KEYS:
             env.pop(key, None)
     # PYTHONPATH 只保留仓库内的两份：混进 build/research/mpc-env 会拉到另一个 mujoco（实测）
@@ -233,6 +239,11 @@ def main() -> int:
     p.add_argument("--status", action="store_true", help="只读体检（不重启）")
     p.add_argument("--reset", action="store_true", help="复位（停旧 + 起新）")
     p.add_argument("--window", action="store_true", help="带窗口（本机 X11；默认 headless）")
+    p.add_argument("--display", default=os.environ.get("IRAF_VIEWER_DISPLAY") or ":0",
+                   help="窗口模式的 X display（默认 :0；不要用 ssh 转发来的 localhost:N）")
+    p.add_argument("--xauthority",
+                   default=os.environ.get("XAUTHORITY") or "/run/user/1000/gdm/Xauthority",
+                   help="Xauthority 路径（GDM 会话下的默认值）")
     p.add_argument("--host", default=os.environ.get("IRAF_PROVIDER_HOST", "0.0.0.0"))
     p.add_argument("--port", type=int, default=int(os.environ.get("IRAF_PROVIDER_PORT", "50052")))
     p.add_argument("--env-file", default=os.environ.get("IRAF_PROVIDER_ENV_FILE"))
