@@ -66,6 +66,10 @@ case "${1:-}" in
   --model-config-revert)
     MODEL_PAYLOAD="${SCRIPT_DIR}/agentos_model_config.py"
     sshpass -e ssh "${SSH_OPTS[@]}" "${TARGET}" "python3 - --revert" < "${MODEL_PAYLOAD}" ;;
+  --restart)
+    RESTART_PAYLOAD="${SCRIPT_DIR}/agentos_restart_dashboard.sh"
+    [ -f "${RESTART_PAYLOAD}" ] || { echo "缺 ${RESTART_PAYLOAD}" >&2; exit 2; }
+    sshpass -e ssh "${SSH_OPTS[@]}" "${TARGET}" "bash -s" < "${RESTART_PAYLOAD}" ;;
   *)
     cat >&2 <<'USAGE'
 用法：bash scripts/agentos_content_layer.sh <动作>
