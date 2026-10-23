@@ -1,0 +1,10 @@
+# edge-intel（E300 智控域）部署期取值 —— **平铺格式**（board_deploy.sh --values 的解析器按平铺读）
+#
+# 为什么不用 e300-edge-intel.example.yaml 那种 `values:` 嵌套写法：解析器逐项取顶层 KEY=VALUE，
+# 嵌套会让它把 `values` 当成一个键（实测）。示例文件保留作说明，实际部署用本文件。
+#
+# 地址类取值（PROVIDER_ENDPOINT）**不入库**（AGENTS 6.10）：board_upgrade.sh 会从板上现有
+# /etc/iraf/edge-intel.env 里读回原值，保持升级不动配置；也允许 --provider-endpoint 显式覆盖。
+PROFILE: profiles/piper_mujoco.yaml
+SAFETY_POLICY: profiles/safety/simulation_lab.yaml
+RUNTIME_SUBJECT: board-e300-intel
