@@ -56,3 +56,26 @@ PICK_CORRECTION_SKIPPED_NON_HINGE [{"key": "ur5e_rq2f85_fingers_actuator", "join
 - 没有新增"载荷位移连续性"判据（|Δpos| 门禁）。本次靠"自由关节不得进 IK"从根上消除了瞬移来源；
   若以后还有别的瞬移通道，再加判据。
 - B（按本体重建 manipulation 段）经取证判定**不需要**：联合报告已有 per-robot 段。
+
+## 8. 干净轮验收（无 DEBUG，2026-10-26）
+```
+PYTHONPATH=src build/mcp-venv/bin/python scripts/scenario.py run --scene scenes/handoff_lab \
+    --scenario nominal --world joint --display interactive_viewer --seconds 5
+rc = 0；通过 9/9；executed=9；faults=0
+s01 s02 s03 s04 s05 s02b s05b s06 s07 全部 SUCCEEDED
+```
+证据：build/acceptance/handoff_lab/nominal/report.json、build/acceptance/handoff_lab-joint-clean.log
+
+## 9. 交付物一致性（0.3.21）
+```
+bash deploy/sdk/build_sdk.sh --target aarch64-manylinux_2_28-cp311
+  → build/sdk/iraf_sdk-0.3.21-py3-none-any.whl / iraf-runtime-0.3.21-aarch64.tar.gz（219 文件）
+uninstall-iraf.sh --profile sim-x86 → 六路残留全 0
+install-iraf.sh  --profile sim-x86 （两个实例 piper@50052 / ur5@50053）
+systemctl --user start iraf-provider@piper → active
+装好的 mujoco_backend.py 含 PICK_CORRECTION_SKIPPED_NON_HINGE（1 处）
+装好的 kinematics.py 含"臂关节回写失败"点名（1 处）
+走 skill 链的实证：run_pick_remote --endpoint 127.0.0.1:50052
+  status=SUCCEEDED wall=4.18s lifted=true bilateral_contact=true
+  center_distance_m=4.178447590816052e-05（容差 0.005）
+```
