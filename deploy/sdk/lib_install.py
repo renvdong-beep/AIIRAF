@@ -1040,6 +1040,36 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
             models_dir.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source_xml, models_dir / source_xml.name)
             shutil.copy2(source_json, models_dir / source_json.name)
+            # 场景里的 mesh 是**相对路径**（形如 ../../../piper_ros/.../meshes/link1.STL）：直接拷贝
+            # 进版本目录后 MuJoCo 找不到 STL（实装报 `Error opening file '...link1.STL'`，服务起不来）。
+            # 处置：把被引用的 mesh 目录**一起装进** <version>/models/meshes，并把引用改写成 meshes/<name>，
+            # 使安装物自包含（不依赖仓库 checkout 或构建机的邻居目录）。
+            xml_target = models_dir / source_xml.name
+            xml_text = xml_target.read_text(encoding="utf-8")
+            mesh_prefixes = sorted({ref.rsplit("/meshes/", 1)[0] + "/meshes/"
+                                    for ref in re.findall(r'file="([^"]+)"', xml_text) if "/meshes/" in ref})
+            for prefix in mesh_prefixes:
+                if not prefix.startswith(".."):
+                    continue   # 已经是可用的相对/绝对路径，不改写
+                src_mesh_dir = (source_xml.parent / prefix).resolve()
+                if not src_mesh_dir.is_dir():
+                    raise InstallError("场景引用的 mesh 目录不存在：%s（场景=%s）"
+                                       % (src_mesh_dir, source_xml), EXIT_IO)
+                dst_mesh_dir = models_dir / "meshes"
+                copied_meshes = 0
+                for item in src_mesh_dir.rglob("*"):
+                    if not item.is_file():
+                        continue
+                    target = dst_mesh_dir / item.relative_to(src_mesh_dir)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(item, target)
+                    copied_meshes += 1
+                xml_text = xml_text.replace(prefix, "meshes/")
+                plan.setdefault("scene_meshes", []).append(
+                    {"from": str(src_mesh_dir), "files": copied_meshes})
+                info("场景 mesh 已随包：%d 个（来自 %s，引用改写为 meshes/）"
+                     % (copied_meshes, src_mesh_dir))
+            xml_target.write_text(xml_text, encoding="utf-8")
             emitter = Path(str(effective["_repo_root"])) / "scripts" / "emit_backend_config.py"
             if not emitter.is_file():
                 raise InstallError("缺少 %s（生成 IRAF_BACKEND_CONFIG 的唯一入口）" % emitter, EXIT_IO)
@@ -1077,6 +1107,7 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
         #   IRAF_PROVIDER_TOKEN（出站调 x86 Capability Provider）
         #   IRAF_GRPC_TOKEN    （本域 gRPC 服务端入站鉴权）
         # 实测踩到：只给前者时单元仍 exit 2 `IRAF_GRPC_TOKEN must be provided by deployment`。
+        secrets_written = None
         if secrets_file is not None:
             src = Path(secrets_file)
             if not src.is_file():
@@ -1105,6 +1136,7 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
             except OSError as exc:  # 权限设不上就必须显式失败（凭据不能被别人读）
                 raise InstallError("runtime.secrets 权限设置失败（%s）：%s" % (secrets_path, exc), EXIT_IO)
             created_files.append(secrets_path)
+            secrets_written = secrets_path
             plan["secrets_file"] = str(secrets_path)
             info("凭据已落地：%s（600，键=%s；值不打印）" % (secrets_path, ",".join(seen)))
         elif any(str(s.get("name") or "").startswith("iraf-runtime") for s in effective["services"]):
@@ -1131,6 +1163,12 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
                     kept = [line for line in content.splitlines()
                             if not line.startswith(directive + "=")]
                     content = "\n".join(kept) + "\n"
+            # user 作用域不得有 User=/Group=：用户级 systemd 无权切换身份，实装会以
+            # `status=216/GROUP Failed to determine supplementary groups` 直接失败（2026-10-26 实测）。
+            if str(effective["systemd_scope"]) != "system":
+                kept = [line for line in content.splitlines()
+                        if not line.startswith(("User=", "Group="))]
+                content = "\n".join(kept) + "\n"
             _mkdir(unit_dir_path)
             unit_path = unit_dir_path / ("%s.service" % item["name"])
             if unit_path.exists():
@@ -1152,7 +1190,8 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
             directory.mkdir(parents=True, exist_ok=True)
 
         record = write_record(effective, version_dir, note="install-iraf.sh",
-                              config_paths=[env_path], created_dirs=created_dirs)
+                              config_paths=[env_path] + ([secrets_written] if secrets_written else []),
+                              created_dirs=created_dirs)
         plan["record"] = str(record)
 
         probe = subprocess.run([python_exe, "-c",

@@ -10,12 +10,15 @@
 [Unit]
 Description=IRAF simulation Capability Provider (profile=@PROFILE@ version=@VERSION@ simulation=true)
 Documentation=file:@PREFIX@/@CURRENT_LINK@/config/install/install_profiles.yaml
-After=network.target
-Requires=network.target
+# 不写 After/Requires=network.target：**user 作用域**的 systemd 里没有这个单元（实装报
+# `Unit network.target not found`，服务直接起不来）。本服务只做 0.0.0.0 绑定，
+# 地址未就绪时会以显式错误退出（fail-closed），不需要 system 级网络依赖。
 
 [Service]
 Type=simple
-User=@RUN_USER@
+# 不写 User=：本单元是 **user 作用域**（~/.config/systemd/user），进程本来就以该用户运行；
+# 写了反而失败 —— 实装报 `Failed to determine supplementary groups: Operation not permitted`
+# （status=216/GROUP，用户级 systemd 无权切换用户/组）。安装器对非 system 作用域也会强制删掉 User=/Group=。
 WorkingDirectory=@PREFIX@/@CURRENT_LINK@
 # 运行期依赖装在 <version>/lib（wheelhouse 或索引），proto 桩也在里面；不碰系统 site-packages。
 Environment=PYTHONPATH=@PREFIX@/@CURRENT_LINK@/src:@PREFIX@/@CURRENT_LINK@/lib
