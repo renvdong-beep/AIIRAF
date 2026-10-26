@@ -5188,9 +5188,14 @@ class MujocoBackend:
             # （UR5e + 2F-85 实测差 9.37mm，直接顶穿 5mm 容差）。
             # 未声明时保持 None，门禁回退到左右代表接触面（Piper 既有行为）。
             pad_boxes = raw_gripper.get("pad_boxes")
+            # 空列表按"未声明"处理（2026-10-26）：构建器对某些机型会**总是**写 `pad_boxes: []`
+            # （piper 报告就是这样），而 pad_boxes 只对"抓取段纠偏"有意义（见 3232 行的门禁）。
+            # 没有纠偏声明时拒绝空列表会让整个场景装配失败 —— 那是把"没用到的键"当成错误。
+            if pad_boxes == [] or pad_boxes == ():
+                pad_boxes = None
             if pad_boxes is not None:
                 if not isinstance(pad_boxes, (list, tuple)) or not pad_boxes:
-                    raise ValueError("pad_boxes 必须是非空的 geom 名列表")
+                    raise ValueError("pad_boxes 必须是非空的 geom 名列表（未使用时可省略或留空）")
                 names = []
                 for item in pad_boxes:
                     if not isinstance(item, str) or not item:
