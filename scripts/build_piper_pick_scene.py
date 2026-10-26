@@ -463,6 +463,14 @@ def build_scene(
             "缺声明即显式失败，不给实现层默认值（实际: %r）" % (place_settle_ms,))
     # 放置点纠偏（声明透传；**缺声明即失败**：它是判据时序/几何基准的一部分，不给默认值）
     _pose_correction = (config.get("grasp") or {}).get("place_pose_correction")
+    # 抓取段纠偏的声明（2026-10-26，可选）：缺省 = 不纠偏（行为与改动前一致）。
+    _pad_boxes = (config.get("grasp") or {}).get("pad_boxes") or []
+    if _pad_boxes and (not isinstance(_pad_boxes, list)
+                       or not all(isinstance(item, str) and item for item in _pad_boxes)):
+        raise ValueError("grasp.pad_boxes 必须是非空字符串列表（夹持区 geom 名）")
+    _pick_correction = (config.get("grasp") or {}).get("grasp_pose_correction")
+    if _pick_correction is not None and not isinstance(_pick_correction, dict):
+        raise ValueError("grasp.grasp_pose_correction 必须是对象（含 mode）")
     if not isinstance(_pose_correction, dict) or not _pose_correction:
         raise ValueError("grasp.place_pose_correction 必须声明为对象（含 mode；实现层不给默认值）")
     # ⚠ 这是**第 8 个**枚举点（本会话第 8 次踩"新取值在某层被静默/显式拒绝"）：
@@ -578,6 +586,11 @@ def build_scene(
         # 放置点纠偏声明（**语义字典**：含字符串 mode + 数值上限）⇒ 必须**原样**透传：
         # 落到通用"名字改写/浮点转换"分支会把 mode 当名字或 float("measure_only") 而炸掉。
         "place_pose_correction": dict(_pose_correction),
+        # 抓取段纠偏（2026-10-26）：与放置段同一套语义字典 ⇒ **原样透传**，不做名字改写/float 转换。
+        # 有了它，方块被挪到可及范围内的别处（例如机械臂左侧）也能按**实测目标**重解抓取列；
+        # 没有它，抓取只能用构建期按声明位置解出的关节角（方块一挪就 distance 超 5 mm 必拒）。
+        "pad_boxes": list(_pad_boxes),
+        "grasp_pose_correction": (dict(_pick_correction) if _pick_correction else None),
         "closed_positions": _merge_arm_and_gripper({}, closed_positions),
         "lift_positions": _merge_arm_and_gripper(lift_arm, phase_gripper["lift"]),
         "min_lift_delta_m": float(acceptance.get("min_lift_delta_m", 0.02)),
