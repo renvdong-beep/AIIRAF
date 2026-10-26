@@ -164,7 +164,7 @@ def read_runtime_env_ports(repo_root: Path) -> dict:
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if line.startswith("IRAF_RUNTIME_PORT=") or line.startswith("IRAF_GRPC_PORT=") \
-                or line.startswith("IRAF_PROVIDER_PORT="):
+                or line.startswith("IRAF_PROVIDER_PORT"):
             name, _, value = line.partition("=")
             value = value.strip()
             if not value.isdigit():
@@ -307,9 +307,24 @@ def check_semantics(declaration: dict, repo_root: Path) -> tuple:
             add("%s：仿真档必须声明装配单模板（env_template）" % pid,
                 bool(profile.get("env_template")),
                 "env_template=%r" % profile.get("env_template"))
-            add("%s：仿真档必须声明 sim_scene（装完有场景与后端配置）" % pid,
-                bool(profile.get("sim_scene")),
-                "sim_scene=%r" % profile.get("sim_scene"))
+            # 场景按**服务实例**声明（A''）；每条 scene 都必须能落到仓库里（文件存在），
+            # 并且该实例必须声明**恰好一个**端口（一份装配单只能有一个监听端口）。
+            scenes = [(str(item["name"]), dict(item.get("scene") or {})) for item in profile["services"]]
+            scenes = [(name, scene) for name, scene in scenes if scene]
+            missing_files = []
+            for _name, scene in scenes:
+                for key in ("robot_profile", "sim_scene"):
+                    rel = str(scene.get(key) or "")
+                    if rel and not (repo_root / rel).is_file():
+                        missing_files.append(rel)
+            add("%s：每个服务实例都声明了仿真场景（services[].scene）" % pid,
+                bool(scenes), "声明了 scene 的服务=%s" % [name for name, _ in scenes])
+            add("%s：场景文件在仓库内存在（robot_profile / sim_scene）" % pid,
+                not missing_files, "缺失=%s" % missing_files)
+            bad_ports = [str(item["name"]) for item in profile["services"]
+                         if item.get("scene") and len(item.get("ports") or []) != 1]
+            add("%s：声明场景的实例必须有且仅有一个端口" % pid, not bad_ports,
+                "不符合的实例=%s" % bad_ports)
 
         units = [str(item["name"]) + ".service" for item in profile["services"]]
         residue = profile["residue"]

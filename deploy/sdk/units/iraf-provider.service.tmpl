@@ -23,7 +23,7 @@ WorkingDirectory=@PREFIX@/@CURRENT_LINK@
 # 运行期依赖装在 <version>/lib（wheelhouse 或索引），proto 桩也在里面；不碰系统 site-packages。
 Environment=PYTHONPATH=@PREFIX@/@CURRENT_LINK@/src:@PREFIX@/@CURRENT_LINK@/lib
 Environment=PYTHONDONTWRITEBYTECODE=1
-EnvironmentFile=-@CONFIG_DIR@/@PROFILE@.env
+EnvironmentFile=-@CONFIG_DIR@/@ENV_FILE@
 # 凭据单独一个 600 文件（装配单按设计不写凭据）。缺文件不致命 —— 进程会因缺 token 显式失败，
 # 不会静默提供一个"看似可用"的 Provider。
 EnvironmentFile=-@CONFIG_DIR@/runtime.secrets

@@ -127,3 +127,32 @@ reset_scene → exec=exec-bcecdae7d1de45359d469b7ab6febe6f status=SUCCEEDED base
 IRAF_BACKEND_CONFIG.model_path=<prefix>/0.3.19/models/ur5-pick-scene.xml
 ```
 注意 UR5 场景有 keyframe（baseline=keyframe:0），piper 场景没有（initial-snapshot）—— 复位基准不同是场景事实，不是代码分支。
+
+## 4.3 按场景实例化（A''，同日）：装一次两套，切换只重启实例
+
+问题：单服务方案下"切 UR5"= 改声明 + 重装（9042 个文件）+ 板上改 env + 重启 runtime。
+硬件有限（单实例实测 RSS 771 MB / CPU 269%，4 核），所以**不双开**，走实例化。
+
+声明（sim-x86）：
+```
+services:
+  - name: iraf-provider@piper   ports: [50052]  scene: {robot_profile: profiles/piper_mujoco.yaml, sim_scene: build/models/piper-pick-scene.xml}
+  - name: iraf-provider@ur5     ports: [50053]  scene: {robot_profile: profiles/ur5_mujoco.yaml,   sim_scene: build/models/ur5-pick-scene.xml}
+residue: units=[iraf-provider@piper.service, iraf-provider@ur5.service] ports=[50052,50053]
+```
+安装器：每个声明 `scene` 的服务各落地一套场景（XML+报告+mesh+资产+后端配置）与**独立装配单**
+（`<config_dir>/iraf-provider@<实例>.env`），单元用 `EnvironmentFile=@ENV_FILE@`；角色无 scene 时退回单 env（板侧不变）。
+
+实装实测（本机）：
+```
+装配单 /home/coretek/.config/iraf/iraf-provider@piper.env、iraf-provider@ur5.env
+单元   /home/coretek/.config/systemd/user/iraf-provider@{piper,ur5}.service
+切 piper：systemctl --user start iraf-provider@piper  → 端口 50052 就绪 1 s，窗口 "MuJoCo : piper_description"
+切 ur5  ：stop piper → start ur5                       → 端口 50053 就绪 2 s，窗口 "MuJoCo : ur5e"
+reset_scene(50053) → exec-4b8c2844… SUCCEEDED baseline=keyframe:0
+窗口数量 = 1（任一时刻只跑一套世界）
+```
+校验：install_profile_check 110 项 0 未通过；install 相关单测 63 passed；卸载六路全 0（keep 目录单列）。
+
+仍未解决（口径不变）：**板上** runtime 仍是一进程一机型（src/iraf_adapters/bootstrap.py:36-46），
+换机型要改一次 edge-intel.env + 重启 iraf-runtime-grpc（秒级）；要"板上也不重启"需 profile registry（ADR 级，方案 B）。

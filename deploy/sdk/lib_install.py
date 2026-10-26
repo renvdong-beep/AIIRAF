@@ -1056,9 +1056,13 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
 
         # 仿真档：把声明的场景（模型 XML + 同名旁挂报告）复制进版本目录，并在**目标端**生成
         # IRAF_BACKEND_CONFIG（铁律：这份 JSON 一律由场景报告生成，不手写 —— 手写副本已实测静默过期两次）。
-        sim_scene = effective.get("sim_scene")
-        if sim_scene and not effective.get("backend_config"):
-            source_xml = Path(str(effective["_repo_root"])) / str(sim_scene)
+        def _stage_scene(scene_rel):
+            """把**一套**仿真场景落地到 <version>/models 并生成 IRAF_BACKEND_CONFIG（返回 JSON 文本）。
+
+            为什么是函数（2026-10-26 A''）：服务按场景实例化（iraf-provider@piper / @ur5）后，
+            一台机器要同时装好多套场景；每套各自拷 XML+报告+mesh+资产、各自生成后端配置。
+            """
+            source_xml = Path(str(effective["_repo_root"])) / str(scene_rel)
             source_json = source_xml.with_suffix(".json")
             if not source_xml.is_file() or not source_json.is_file():
                 raise InstallError("声明的仿真场景缺文件：%s（需同时存在同名 .json 旁挂报告）"
@@ -1133,19 +1137,62 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
                 json.loads(config_text)
             except json.JSONDecodeError as exc:
                 raise InstallError("生成的 IRAF_BACKEND_CONFIG 不是合法 JSON（%s）" % exc, EXIT_IO)
-            effective["backend_config"] = config_text
-            plan["backend_config_from"] = str(models_dir / source_xml.name)
-            plan["backend_config_bytes"] = len(config_text)
+            plan.setdefault("backend_configs", []).append(
+                {"scene": source_xml.name, "bytes": len(config_text),
+                 "from": str(models_dir / source_xml.name)})
             info("IRAF_BACKEND_CONFIG 已由场景报告生成：%d 字节（场景=%s）"
                  % (len(config_text), source_xml.name))
+            return config_text
 
-        env_path = config_dir / ("%s.env" % effective["id"])
+        # 装配单与服务实例（2026-10-26 A''）：**每个声明了 services[].scene 的实例一份装配单**，
+        # 各自指向自己的 profile/场景/端口。没有任何 scene 声明时退回"角色一份装配单"（板侧/开发档）。
+        scene_targets = []
+        for item in effective["services"]:
+            scene = dict(item.get("scene") or {})
+            if not scene:
+                continue
+            ports = [int(port) for port in (item.get("ports") or [])]
+            scene_targets.append({
+                "service": str(item["name"]),
+                "env_file": "%s.env" % str(item["name"]),
+                "robot_profile": str(scene.get("robot_profile") or effective.get("robot_profile") or ""),
+                "sim_scene": str(scene["sim_scene"]),
+                "port": (ports[0] if len(ports) == 1 else None),
+            })
+        if not scene_targets:
+            scene_targets.append({"service": None, "env_file": "%s.env" % effective["id"],
+                                  "robot_profile": effective.get("robot_profile"),
+                                  "sim_scene": effective.get("sim_scene"), "port": None})
+
+        env_paths = []
         _mkdir(config_dir)
-        env_path.write_text(render_env_file(effective, root, tokens,
-                                            repo_root=effective.get("_repo_root"),
-                                            env_values=env_values), encoding="utf-8")
-        created_files.append(env_path)
-        plan["env_file"] = str(env_path)
+        for target in scene_targets:
+            instance = dict(effective)
+            instance["robot_profile"] = target["robot_profile"]
+            instance["sim_scene"] = target["sim_scene"]
+            instance["backend_config"] = ""
+            if target["service"]:
+                instance["id"] = target["service"]
+            if target["sim_scene"]:
+                instance["backend_config"] = _stage_scene(target["sim_scene"])
+            instance_env = dict(env_values or {})
+            if target["port"] is not None:
+                instance_env["PROVIDER_PORT"] = str(target["port"])
+            instance_tokens = dict(tokens)
+            instance_tokens["ENV_FILE"] = target["env_file"]
+            if target["service"]:
+                instance_tokens["PROFILE"] = target["service"]
+            env_path = config_dir / target["env_file"]
+            env_path.write_text(render_env_file(instance, root, instance_tokens,
+                                                repo_root=effective.get("_repo_root"),
+                                                env_values=instance_env), encoding="utf-8")
+            created_files.append(env_path)
+            env_paths.append(env_path)
+            info("装配单已生成：%s（实例=%s 场景=%s）"
+                 % (env_path, target["service"] or effective["id"], target["sim_scene"] or "-"))
+        plan["env_files"] = [str(path) for path in env_paths]
+        plan["env_file"] = str(env_paths[0]) if env_paths else ""
+        env_path = env_paths[0] if env_paths else None
 
         # 凭据单独落地（2026-10-22：板上 runtime 因缺凭据永远起不来）。
         # 装配单按设计**不写凭据**（不进 git / 不进命令行），所以由部署期给一份 600 文件，
@@ -1200,6 +1247,10 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
         for item in effective["services"]:
             template = Path(str(effective["_repo_root"])) / str(item["template"])
             svc_tokens = dict(tokens)
+            # 实例化单元（iraf-provider@piper 等）各自读**自己的**装配单，Description 也显示实例名。
+            if item.get("scene"):
+                svc_tokens["ENV_FILE"] = "%s.env" % item["name"]
+                svc_tokens["PROFILE"] = str(item["name"])
             svc_tokens["CPU_QUOTA"] = str(item.get("cpu_quota") or "")
             svc_tokens["MEMORY_MAX"] = str(item.get("memory_max") or "")
             content = render_template(template, svc_tokens)
@@ -1237,7 +1288,7 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
             directory.mkdir(parents=True, exist_ok=True)
 
         record = write_record(effective, version_dir, note="install-iraf.sh",
-                              config_paths=[env_path] + ([secrets_written] if secrets_written else []),
+                              config_paths=list(env_paths) + ([secrets_written] if secrets_written else []),
                               created_dirs=created_dirs)
         plan["record"] = str(record)
 

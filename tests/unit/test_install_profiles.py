@@ -51,6 +51,10 @@ FIXTURES = (
     "deploy/sdk/env/sim-x86.env.tmpl",
     "deploy/sdk/units/iraf-provider.service.tmpl",
     "deploy/sdk/iraf-sdk-board.service",
+    # 场景实例声明里引用的机型/安全声明（校验器会实读它们是否存在）
+    "profiles/piper_mujoco.yaml",
+    "profiles/ur5_mujoco.yaml",
+    "profiles/safety/simulation_lab.yaml",
 )
 
 DECLARATION_REL = "config/install/install_profiles.yaml"
@@ -64,6 +68,16 @@ class InstallProfileDeclarationTest(unittest.TestCase):
             target = self.root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(REPO / rel, target)
+        # 场景文件是**构建产物**（build/models/，不进 git）：夹具里按声明补最小占位，
+        # 否则"场景文件在仓库内存在"这条规则会在夹具里假红（真实仓库里由 build_baseline 产出）。
+        declaration = self._declaration()
+        for profile in declaration["profiles"]:
+            for item in profile.get("services") or []:
+                rel = str((item.get("scene") or {}).get("sim_scene") or "")
+                if rel and not (self.root / rel).is_file():
+                    scene = self.root / rel
+                    scene.parent.mkdir(parents=True, exist_ok=True)
+                    scene.write_text("<mujoco/>", encoding="utf-8")
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -170,12 +184,27 @@ class InstallProfileDeclarationTest(unittest.TestCase):
         self._write_declaration(data)
         self.assertIn("sim-x86：仿真档必须声明装配单模板（env_template）", self._failed_names())
 
-    def test_simulation_provider_role_must_declare_scene(self):
-        """仿真 Provider 角色必须声明 sim_scene：否则装完没有场景，IRAF_BACKEND_CONFIG 也生成不出来。"""
+    def test_simulation_provider_services_must_declare_scene(self):
+        """场景按**服务实例**声明（A'' 2026-10-26）：没有 scene 的实例不会有自己的装配单与后端配置。"""
         data = self._declaration()
-        self._profile(data, "sim-x86").pop("sim_scene", None)
+        for item in self._profile(data, "sim-x86")["services"]:
+            item.pop("scene", None)
         self._write_declaration(data)
-        self.assertIn("sim-x86：仿真档必须声明 sim_scene（装完有场景与后端配置）", self._failed_names())
+        self.assertIn("sim-x86：每个服务实例都声明了仿真场景（services[].scene）", self._failed_names())
+
+    def test_scene_files_must_exist_in_repo(self):
+        """声明的场景/机型文件必须存在 —— 否则装到一半才发现（装配单已写、场景却缺）。"""
+        data = self._declaration()
+        self._profile(data, "sim-x86")["services"][0]["scene"]["sim_scene"] = "build/models/nope-scene.xml"
+        self._write_declaration(data)
+        self.assertIn("sim-x86：场景文件在仓库内存在（robot_profile / sim_scene）", self._failed_names())
+
+    def test_scene_instance_must_have_exactly_one_port(self):
+        """一个实例一份装配单 ⇒ 只能有一个监听端口（多端口会让实例起不来或占错端口）。"""
+        data = self._declaration()
+        self._profile(data, "sim-x86")["services"][1]["ports"] = [50053, 50054]
+        self._write_declaration(data)
+        self.assertIn("sim-x86：声明场景的实例必须有且仅有一个端口", self._failed_names())
 
     def test_provider_service_port_must_be_declared_in_residue(self):
         """服务端口没进 residue.ports ⇒ 卸载必留端口占用（2026-10-26 新增服务时踩的形态）。"""

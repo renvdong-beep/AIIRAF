@@ -158,20 +158,32 @@ profiles:
       - numpy
     backend_entrypoint: iraf_adapters.mujoco.mujoco_backend:MujocoBackend
     # 仿真装配（2026-10-26「装完 SDK 就有 Provider」）：
-    #   robot_profile / safety_policy 来自仓库声明（相对路径，单元 WorkingDirectory 指向 current）；
-    #   sim_scene 由安装器拷进 <version>/models，并用旁挂报告在**目标端**生成 IRAF_BACKEND_CONFIG；
+    #   每套场景由**服务实例**自己声明（services[].scene）—— 不再有"角色级唯一场景"，
+    #   因此一台机器可同时装好 piper / ur5 两套，切换只重启实例；
     #   provider_display 决定开窗与否（window 需部署期给 PROVIDER_DISPLAY/PROVIDER_XAUTHORITY）。
-    robot_profile: profiles/ur5_mujoco.yaml
     safety_policy: profiles/safety/simulation_lab.yaml
-    sim_scene: build/models/ur5-pick-scene.xml
     provider_display: window
     env_template: deploy/sdk/env/sim-x86.env.tmpl
+    # 服务按**场景实例化**（2026-10-26 A''）：一套场景一个实例、一份装配单、一个端口。
+    # 装一次两套都有，切换只重启对应实例（systemctl --user restart iraf-provider@ur5）；
+    # 两者任一时刻只跑一个（硬件有限：单实例实测 CPU 269%/4 核，双开必然抢核）。
     services:
-      - name: iraf-provider
+      - name: iraf-provider@piper
         template: deploy/sdk/units/iraf-provider.service.tmpl
         scope: user
         ports: [50052]
         optional: false
+        scene:
+          robot_profile: profiles/piper_mujoco.yaml
+          sim_scene: build/models/piper-pick-scene.xml
+      - name: iraf-provider@ur5
+        template: deploy/sdk/units/iraf-provider.service.tmpl
+        scope: user
+        ports: [50053]
+        optional: false
+        scene:
+          robot_profile: profiles/ur5_mujoco.yaml
+          sim_scene: build/models/ur5-pick-scene.xml
     cross_domain:
       role: upstream
       peers: ["edge-intel"]
@@ -180,8 +192,8 @@ profiles:
     residue:
       scan_roots: ["{prefix}", "{config_dir}", "{log_dir}", "{data_dir}"]
       # 单元/端口必须与服务清单一致（install_profile_check 会逐项比对），否则卸载必留残留。
-      units: ["iraf-provider.service"]
-      ports: [50052]
+      units: ["iraf-provider@piper.service", "iraf-provider@ur5.service"]
+      ports: [50052, 50053]
       processes: ["iraf_provider_cli", "scenario.py", "view_mujoco.py"]
 
   - id: edge-intel

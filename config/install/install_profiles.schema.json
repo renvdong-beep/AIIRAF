@@ -282,7 +282,8 @@
       "properties": {
         "name": {
           "type": "string",
-          "pattern": "^[a-z0-9][a-z0-9-]*$"
+          "pattern": "^[a-z0-9][a-z0-9@._-]*$",
+          "description": "systemd 单元基名；实例化单元用 `iraf-provider@piper` 这种写法（@ 后是实例名）"
         },
         "template": {
           "type": "string",
@@ -315,6 +316,25 @@
           "type": "string",
           "pattern": "^[0-9]+[KMG]$",
           "description": "systemd MemoryMax（如 512M）。缺省表示不限额；edge-* 角色必须声明。"
+        },
+        "scene": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "robot_profile",
+            "sim_scene"
+          ],
+          "description": "该实例跑哪套仿真场景。声明了 scene ⇒ 安装器为它单独落地场景资产 + 生成 IRAF_BACKEND_CONFIG + 独立装配单（一台机器可同时装好多套，切换只重启实例）",
+          "properties": {
+            "robot_profile": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sim_scene": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
         }
       }
     },
@@ -523,7 +543,10 @@
         "provider_display": {
           "description": "仿真 Provider 的显示模式（window=开窗需部署期给 DISPLAY/XAUTHORITY；headless=强制不开窗）。只有装 adapters_sim 的仿真角色可声明。",
           "type": "string",
-          "enum": ["window", "headless"]
+          "enum": [
+            "window",
+            "headless"
+          ]
         },
         "services": {
           "type": "array",
