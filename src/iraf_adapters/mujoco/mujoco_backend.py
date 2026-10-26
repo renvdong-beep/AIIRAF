@@ -3221,8 +3221,17 @@ class MujocoBackend:
             pad_points.append({"kind": "geom", "id": ident})
         arm_joints = []
         for key in (positions_by_phase.get("grasp") or {}):
-            joint_id = int(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT,
-                                             self._model_name(str(key))))
+            name = self._model_name(str(key))
+            joint_id = int(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name))
+            if joint_id < 0:
+                # 键可能是**执行器（ctrl 通道）名**：场景报告里 gripper.*_positions 是 ctrl 通道口径，
+                # 而 UR5e 的执行器叫 shoulder_pan、关节叫 shoulder_pan_joint（不同名）。Piper 两者同名，
+                # 这个差异被掩盖了 —— 2026-10-26 在 UR5 上表现为
+                # `grasp_positions 里没有可解的臂关节键（纠偏无从下手）`（exec cc274700…）。
+                # 处置：按 actuator_trnid 反查它驱动的关节（与 `_joint_qpos` 同口径，不引入机型特例）。
+                actuator = self._actuators.get(name)
+                if actuator is not None:
+                    joint_id = int(self.model.actuator_trnid[actuator, 0])
             if joint_id >= 0:
                 arm_joints.append((str(key), joint_id))
         if not arm_joints:
