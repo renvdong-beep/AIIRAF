@@ -123,6 +123,8 @@ Execute
 
 ResourceCoordinator 支持两级租约：task-scope lease 用于跨步骤保持物理区域（如 `handoff_zone`），execution-scope lease 用于单次动作（如 `piper.arm`、`quadruped.base`）。TaskFlow 必须声明 scope 和全局获取顺序；子 execution 通过受限 delegation 使用所属 task lease，不重复竞争。所有 lease 均包含 TTL、续租、owner task/execution_id 与单调递增 fencing token。Provider 下发控制时携带 token，旧 token 必须被 adapter 拒绝。资源竞争返回 `IRAF-RESOURCE-BUSY`，不得无限等待。
 
+**执行域租约的释放时机（2026-10-26 明确）**：跨机 `CapabilityProviderService` 的一次 `Invoke` 就是一个 execution（服务端生成 `execution_id`），其 execution-scope lease 必须在**该次调用返回前**放开（成功 → 释放并记 `SUCCEEDED`，拒绝 → 释放并记 `REJECTED`，异常 → 释放并记 `FAILED`）。留到 TTL 到期才放，会让紧随其后的能力调用被误判 `IRAF-RESOURCE-BUSY`（实测「`reset_scene` → 立刻 `pick_object`」卡在 `resource busy: robot-arm`，剩余 120.0 s）。释放不削弱护栏：下一次动作重新 acquire 并取得**更新**的 fencing token，终态执行的再发控制请求仍被拒绝。
+
 核心 C++ 接口：
 
 ```cpp

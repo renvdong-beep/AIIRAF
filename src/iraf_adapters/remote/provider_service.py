@@ -225,15 +225,23 @@ class ExecutionRegistry:
                     self._leases[execution_id] = lease
         return execution_id, lease
 
-    def release(self, execution_id: str, state: str) -> None:
+    def release(self, execution_id: str, state: str) -> bool:
+        """放开该 execution 的**执行域**租约（单次动作结束即放开，铁律 2.12）。
+
+        返回"是否真的释放了租约"。没有租约时**不写终态**：拒绝路径（deadline / fencing /
+        BUSY）本身就没取到租约，若照旧写终态，会把"从未执行的调用"记成终态，
+        空的 execution_id 还会污染登记表。
+        """
         with self._lock:
             lease = self._leases.pop(execution_id, None)
+            if lease is None:
+                return False
             self._terminal[execution_id] = state
-        if lease is not None:
-            try:
-                self._authority.release(lease)
-            except LeaseConflict:
-                pass  # 已过期 / 已被回收：不视为错误
+        try:
+            self._authority.release(lease)
+        except LeaseConflict:
+            pass  # 已过期 / 已被回收：不视为错误
+        return True
 
     def remember(self, idempotency_key: str, summary: Any) -> None:
         if idempotency_key:
@@ -408,15 +416,17 @@ def build_servicer_class(provider_pb2, provider_pb2_grpc, skill_pb2):
                 execution_id, lease = self._registry.resolve(envelope, capability)
                 outputs = self._capability_call(capability, inputs, lease)
             except CapabilityRejected as exc:
-                if capability in MOTION_CAPABILITIES and execution_id:
-                    self._registry.mark(execution_id, "REJECTED")
+                # 拒绝也可能发生在"租约已取到之后"（能力未实现 / 参数形状未登记）：
+                # 同样要放开，否则资源被占到 TTL 到期。
+                if not self._registry.release(execution_id, "REJECTED"):
+                    if capability in MOTION_CAPABILITIES and execution_id:
+                        self._registry.mark(execution_id, "REJECTED")
                 return provider_pb2.CapabilityResult(
                     capability=capability, accepted=False, simulation=True,
                     provider=self._provider_id, error=self._error(capability, exc),
                     fencing_token=0, occurred_at=_now_ts())
             except Exception as exc:  # noqa: BLE001 显式转换，不吞错、不伪造成功
-                if execution_id:
-                    self._registry.release(execution_id, "FAILED")
+                self._registry.release(execution_id, "FAILED")
                 return provider_pb2.CapabilityResult(
                     capability=capability, accepted=False, simulation=True,
                     provider=self._provider_id,
@@ -433,6 +443,12 @@ def build_servicer_class(provider_pb2, provider_pb2_grpc, skill_pb2):
             # execution_id 由服务端生成时**必须**回传（铁律 2.12），放 outputs 里显式给出
             result.outputs["provider_execution_id"] = execution_id
             self._registry.remember(idem, MessageToDict(result))
+            # 执行域租约：本动作已完成 ⇒ 立刻放开（2026-10-26）。不放开会让同一资源在
+            # ttl_seconds 内被判 IRAF-RESOURCE-BUSY —— 实测「复位 → 立刻抓」就是这么被卡的：
+            # 服务端只有异常路径调 release，成功路径把 robot-arm 占满 120 s。
+            # 安全边界不变：下一次动作要重新 acquire，fencing token 单调上升；
+            # 终态执行的再发控制请求仍由 resolve() 拒绝。
+            self._registry.release(execution_id, "SUCCEEDED")
             return result
 
         def Cancel(self, request, context):
