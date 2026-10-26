@@ -1,83 +1,61 @@
-"""只读探针：报告残留场景/参考姿态的状态，用于定位构建失败发生在哪一步。
+# -*- coding: utf-8 -*-
+"""探针：看一眼**场景脏不脏**（只读），并按需复位（显式 --reset）。
 
-背景：把 IK 目标从"pad1 中点"改成"4 点夹持区中点"后，
-`validate_grasp_pose` 报 `tip_z=-0.0013 required=0.003`。
+为什么需要：任务失败时最常见的真因不是模型/参数，而是**世界状态被上一次执行改过**
+（目标已被搬走、夹爪还夹着东西、臂停在半路）。判据只有一个 —— 被控对象自己报的
+`inventory.manipulation`（声明目标位姿 vs 实测目标位姿），不靠猜。
 
-需要先回答一个问题：**这次失败发生在写入路径还是求解阶段？**
-`build_scene` 会在收到 `reference` 之前先落一次盘，因此若磁盘上的
-`build/models/ur5-pick-scene.json` 里已经含 `home_positions` /
-`grasp_positions`，说明 `reference` 已被成功求解并传入，
-失败只发生在最后的 `validate_grasp_pose` 复核。
-
-本脚本无副作用，只读。
+用法：
+  PYTHONPATH=src:build/generated/python build/mcp-venv/bin/python \
+      scripts/probe_scene_state.py [--endpoint 10.203.247.121:50052] [--reset]
+退出码：0 读到状态 / 1 不可达 / 2 缺 token
 """
+from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
-ROOT = Path("/home/coretek/AIIRAF")
+from iraf_adapters.remote.provider_backend import RemoteProviderBackend, read_token_file
 
 
-def describe(label, path):
-    path = ROOT / path
-    print("=== %s ===" % label)
-    print("path      :", path)
-    if not path.is_file():
-        print("状态      : 不存在")
-        return None
-    print("bytes     :", path.stat().st_size)
+def _show(tag: str, inv: dict) -> None:
+    manipulation = dict(inv.get("manipulation") or {})
+    print("[%s] mode=%s safety=%s" % (tag, inv.get("mode"), inv.get("safety")))
+    if not manipulation:
+        print("      manipulation=<无>（被控对象未报操作段）")
+        return
+    print("      manipulation=%s" % json.dumps(manipulation, ensure_ascii=False, sort_keys=True)[:900])
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--endpoint", default="10.203.247.121:50052")
+    parser.add_argument("--token-file", default=str(Path.home() / ".iraf/provider.token"))
+    parser.add_argument("--reset", action="store_true", help="读完后复位场景（会改变世界状态，需明确给）")
+    args = parser.parse_args()
+
+    token = read_token_file(args.token_file)
+    if not token:
+        print("[scene][错误] 缺 token：%s" % args.token_file)
+        return 2
+    backend = RemoteProviderBackend(args.endpoint, token, timeout_s=30.0, subject="probe-scene")
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception as error:  # noqa: BLE001 - 探针要报告任何解析问题
-        print("解析失败  :", error)
-        return None
-    return data
+        before = (backend.health().get("inventory") or {})
+    except Exception as exc:  # noqa: BLE001 探针只报告
+        print("[scene] 不可达：%s" % exc)
+        return 1
+    _show("复位前", before)
 
+    if not args.reset:
+        print("（只读；要复位请加 --reset）")
+        return 0
 
-def main():
-    scene = describe("场景 report", "build/models/ur5-pick-scene.json")
-    pose = describe("参考姿态 evidence", "build/calibration/ur5-baseline-pose.json")
-
-    if scene:
-        gripper = scene.get("gripper") or {}
-        print("gripper keys          :", sorted(gripper.keys()))
-        for key in ("home_positions", "approach_positions", "grasp_positions"):
-            print("%-22s: %s" % (key, "有" if gripper.get(key) else "**缺失**"))
-        print("target_position       :", scene.get("target_position"))
-        print("scene schema_version  :", scene.get("schema_version"))
-        print("有 reference_poses    :", "reference_poses" in scene)
-        print("有 grasp_pose_validation:",
-              "grasp_pose_validation" in scene)
-
-    if pose:
-        print()
-        print("=== 参考姿态关键量 ===")
-        for key in (
-            "schema_version", "finger_height_correction_m", "finger_tip_z_m",
-            "finger_center_m", "grasp_point_m", "target_z_m", "pad_height_diff_m",
-            "lift_offset_m", "home_rise_m",
-        ):
-            print("%-26s: %s" % (key, pose.get(key)))
-        print("grip_region               :", json.dumps(
-            pose.get("grip_region"), ensure_ascii=False))
-        print("orientation_error_deg     :", json.dumps(
-            pose.get("orientation_error_deg"), ensure_ascii=False))
-        print("grasp position_error_m    :",
-              (pose.get("grasp") or {}).get("position_error_m"))
-        print()
-        print("=== 间隙配平轨迹 ===")
-        for row in pose.get("clearance_trace") or []:
-            print("  it=%d corr=%+.6f tip_z=%+.6f deficit=%+.6f "
-                  "pos_err=%.2e ori=%s"
-                  % (row["iteration"], row["correction_m"], row["tip_z_m"],
-                     row["deficit_m"], row["position_error_m"],
-                     row.get("orientation_deg")))
-
-    validation = (scene or {}).get("grasp_pose_validation")
-    if validation:
-        print()
-        print("=== 抓取姿态校验 ===")
-        print(json.dumps(validation, ensure_ascii=False, indent=2))
+    out = backend._invoke("reset_scene", {"scope": "all", "target_id": None}, None)
+    print("[reset] exec=%s status=%s baseline=%s detail=%s"
+          % (out.get("provider_execution_id"), out.get("status"), out.get("baseline"), out.get("detail")))
+    after = (backend.health().get("inventory") or {})
+    _show("复位后", after)
     return 0
 
 

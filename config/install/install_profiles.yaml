@@ -184,6 +184,8 @@ profiles:
         scene:
           robot_profile: profiles/ur5_mujoco.yaml
           sim_scene: build/models/ur5-pick-scene.xml
+          # 演示口径：按真实时间推进，动作看得见（12 s 的抓取就是 12 s，不是 2.6 s 一闪而过）。
+          realtime: true
     cross_domain:
       role: upstream
       peers: ["edge-intel"]

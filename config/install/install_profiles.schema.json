@@ -333,6 +333,10 @@
             "sim_scene": {
               "type": "string",
               "minLength": 1
+            },
+            "realtime": {
+              "type": "boolean",
+              "description": "按真实时间推进仿真（演示口径：动作看得见）。缺省 false = 尽快跑完（回归/验收口径）。"
             }
           }
         }

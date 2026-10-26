@@ -1056,7 +1056,7 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
 
         # 仿真档：把声明的场景（模型 XML + 同名旁挂报告）复制进版本目录，并在**目标端**生成
         # IRAF_BACKEND_CONFIG（铁律：这份 JSON 一律由场景报告生成，不手写 —— 手写副本已实测静默过期两次）。
-        def _stage_scene(scene_rel):
+        def _stage_scene(scene_rel, realtime=False):
             """把**一套**仿真场景落地到 <version>/models 并生成 IRAF_BACKEND_CONFIG（返回 JSON 文本）。
 
             为什么是函数（2026-10-26 A''）：服务按场景实例化（iraf-provider@piper / @ur5）后，
@@ -1126,7 +1126,8 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
                 raise InstallError("缺少 %s（生成 IRAF_BACKEND_CONFIG 的唯一入口）" % emitter, EXIT_IO)
             proc_emit = subprocess.run(
                 [python_exe, str(emitter), "--scene", str(models_dir / source_xml.name),
-                 "--compact", "--root", str(effective["_repo_root"])],
+                 "--compact", "--root", str(effective["_repo_root"])]
+                + (["--realtime"] if realtime else []),
                 capture_output=True, text=True, timeout=300)
             if proc_emit.returncode != 0:
                 raise InstallError("生成 IRAF_BACKEND_CONFIG 失败（%d）：%s"
@@ -1157,12 +1158,14 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
                 "env_file": "%s.env" % str(item["name"]),
                 "robot_profile": str(scene.get("robot_profile") or effective.get("robot_profile") or ""),
                 "sim_scene": str(scene["sim_scene"]),
+                "realtime": bool(scene.get("realtime")),
                 "port": (ports[0] if len(ports) == 1 else None),
             })
         if not scene_targets:
             scene_targets.append({"service": None, "env_file": "%s.env" % effective["id"],
                                   "robot_profile": effective.get("robot_profile"),
-                                  "sim_scene": effective.get("sim_scene"), "port": None})
+                                  "sim_scene": effective.get("sim_scene"), "port": None,
+                                  "realtime": False})
 
         env_paths = []
         _mkdir(config_dir)
@@ -1174,7 +1177,7 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
             if target["service"]:
                 instance["id"] = target["service"]
             if target["sim_scene"]:
-                instance["backend_config"] = _stage_scene(target["sim_scene"])
+                instance["backend_config"] = _stage_scene(target["sim_scene"], bool(target.get("realtime")))
             instance_env = dict(env_values or {})
             if target["port"] is not None:
                 instance_env["PROVIDER_PORT"] = str(target["port"])
