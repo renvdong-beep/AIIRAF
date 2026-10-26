@@ -234,10 +234,15 @@ def check_semantics(declaration: dict, repo_root: Path) -> tuple:
                 machine = [probe for probe in ("/home/", "/Users/", "coretek") if probe in text]
                 add("%s：装配单模板不含开发机痕迹" % pid, not machine,
                     "命中=%s（模板只允许占位符）" % machine)
+                # IP 检查的语义边界（2026-10-26 收紧时定）：127.0.0.0/8 与 0.0.0.0 是**协议常量**
+                # （loopback / any），不是"会变的机器地址"，改它们反而会静默改变网络暴露面；
+                # 判定要看的是 10.x / 192.168.x 这类**具体机器地址**，那些必须占位符化。
                 import re as _re
-                ips = _re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", text)
-                add("%s：装配单模板不含写死的 IP" % pid, not ips,
-                    "命中=%s（地址会变，必须由部署期填入）" % ips)
+                found = _re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", text)
+                ips = [ip for ip in found
+                       if ip != "0.0.0.0" and not ip.startswith("127.")]
+                add("%s：装配单模板不含写死的机器 IP" % pid, not ips,
+                    "命中=%s（具体机器地址必须由部署期填入；127.0.0.1/0.0.0.0 视为协议常量）" % ips)
 
         target = profile["target"]
         if pid in X86_FORM_IDS:
@@ -290,6 +295,21 @@ def check_semantics(declaration: dict, repo_root: Path) -> tuple:
         else:
             add("%s：真机档未安装仿真 Provider（adapters_sim）" % pid, "adapters_sim" not in components,
                 "simulation_only=false components=%s" % components)
+
+        # 「装完 SDK 就有 Provider」（2026-10-26 使用者口径）：**仿真 Provider 角色**
+        # （purpose=simulation，即 sim-x86）不能只有包、没有常驻服务。
+        # 不套到 purpose=development 的单机开发档（single-ubuntu2204）：它按需拉起、装配单程序化生成。
+        # 这里只判**结构性**事实（服务/装配单/场景都声明了），不写死端口号 —— 端口仍由声明给出。
+        if simulation_only and str(profile.get("purpose")) == "simulation":
+            add("%s：仿真档必须声明 Provider 常驻服务（装完即具备 Provider）" % pid,
+                bool(profile["services"]),
+                "services=%s（空 ⇒ 装完只能靠仓库脚本前台拉起）" % profile["services"])
+            add("%s：仿真档必须声明装配单模板（env_template）" % pid,
+                bool(profile.get("env_template")),
+                "env_template=%r" % profile.get("env_template"))
+            add("%s：仿真档必须声明 sim_scene（装完有场景与后端配置）" % pid,
+                bool(profile.get("sim_scene")),
+                "sim_scene=%r" % profile.get("sim_scene"))
 
         units = [str(item["name"]) + ".service" for item in profile["services"]]
         residue = profile["residue"]

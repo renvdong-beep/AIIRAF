@@ -48,6 +48,8 @@ FIXTURES = (
     "deploy/sdk/units/iraf-runtime-grpc.service.tmpl",
     "deploy/sdk/units/iraf-control-provider.service.tmpl",
     "deploy/sdk/env/edge-intel.env.tmpl",
+    "deploy/sdk/env/sim-x86.env.tmpl",
+    "deploy/sdk/units/iraf-provider.service.tmpl",
     "deploy/sdk/iraf-sdk-board.service",
 )
 
@@ -145,6 +147,42 @@ class InstallProfileDeclarationTest(unittest.TestCase):
         self._write_declaration(data)
         self.assertIn("single-ubuntu2204：仿真依赖只允许部署在 x86 主机（板卡不装仿真）",
                       self._failed_names())
+
+    def test_simulation_provider_role_must_declare_service(self):
+        """**装完 SDK 就有 Provider**（2026-10-26 使用者口径）：purpose=simulation 的角色必须声明常驻服务。
+
+        删掉 sim-x86 的 services（并同步清 residue）⇒ 校验器必须报红 —— 否则"装完只有包、
+        没有服务"这种状态会静默存在，演示前还得靠人手工起进程。
+        """
+        data = self._declaration()
+        profile = self._profile(data, "sim-x86")
+        profile["services"] = []
+        profile["residue"]["units"] = []
+        profile["residue"]["ports"] = []
+        self._write_declaration(data)
+        self.assertIn("sim-x86：仿真档必须声明 Provider 常驻服务（装完即具备 Provider）",
+                      self._failed_names())
+
+    def test_simulation_provider_role_must_declare_env_template(self):
+        """仿真 Provider 角色必须声明装配单模板：否则装完没有可用的 IRAF_* 装配。"""
+        data = self._declaration()
+        self._profile(data, "sim-x86").pop("env_template", None)
+        self._write_declaration(data)
+        self.assertIn("sim-x86：仿真档必须声明装配单模板（env_template）", self._failed_names())
+
+    def test_simulation_provider_role_must_declare_scene(self):
+        """仿真 Provider 角色必须声明 sim_scene：否则装完没有场景，IRAF_BACKEND_CONFIG 也生成不出来。"""
+        data = self._declaration()
+        self._profile(data, "sim-x86").pop("sim_scene", None)
+        self._write_declaration(data)
+        self.assertIn("sim-x86：仿真档必须声明 sim_scene（装完有场景与后端配置）", self._failed_names())
+
+    def test_provider_service_port_must_be_declared_in_residue(self):
+        """服务端口没进 residue.ports ⇒ 卸载必留端口占用（2026-10-26 新增服务时踩的形态）。"""
+        data = self._declaration()
+        self._profile(data, "sim-x86")["residue"]["ports"] = []
+        self._write_declaration(data)
+        self.assertIn("sim-x86：residue.ports 与服务端口一致", self._failed_names())
 
     def test_simulation_role_must_declare_sim_dependencies(self):
         """仿真角色必须自带仿真依赖（2026-10-19 板卡装机暴露的缺口 G4）。
