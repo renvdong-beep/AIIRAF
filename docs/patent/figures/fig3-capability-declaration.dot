@@ -1,0 +1,19 @@
+digraph capab {
+  graph [rankdir=TB, fontname="Noto Serif CJK SC", fontsize=12, nodesep=0.4, ranksep=0.55, bgcolor="white"];
+  node  [shape=box, style="rounded,filled", fontname="Noto Serif CJK SC", fontsize=10, fillcolor="#eaf2ff", color="#4a6fa5"];
+  edge  [fontname="Noto Serif CJK SC", fontsize=9, color="#444444"];
+
+  self [label="执行面健康查询\n自报清单：ready / simulation\n+ capabilities / inventory", fillcolor="#ffe9f4", color="#b5658f"];
+  decl [label="控制面声明清单\n(技能声明的能力依赖 / 板级声明)"];
+  diff [label="差集判定\n声明 − 自报"];
+  deny [label="声明缺项 ⇒ 拒绝装配\n(非零退出，给出缺失项)", fillcolor="#fdeaea", color="#b34a4a"];
+  okk  [label="声明 ⊆ 自报 ⇒ 通过\n装配后按声明放行", fillcolor="#e9f7e9", color="#4a8f4a"];
+  rec  [label="自报多于声明\n⇒ 仅记录 undeclared\n(不拒绝、不假装有能力)", fillcolor="#fff4e0", color="#b58b3a"];
+
+  self -> diff;
+  decl -> diff;
+  diff -> deny [label="非空"];
+  diff -> okk  [label="为空"];
+  self -> rec [label="存在多余项"];
+  okk -> rec [style=dashed, label="写入执行事实/装配报告"];
+}

@@ -1,0 +1,28 @@
+digraph lease {
+  graph [rankdir=LR, fontname="Noto Serif CJK SC", fontsize=12, nodesep=0.35, ranksep=0.55, bgcolor="white"];
+  node  [shape=box, style="rounded,filled", fontname="Noto Serif CJK SC", fontsize=10, fillcolor="#eaf2ff", color="#4a6fa5"];
+  edge  [fontname="Noto Serif CJK SC", fontsize=9, color="#444444"];
+
+  req   [label="执行请求"];
+  check [label="四道校验\n(下发前)"] ;
+  acq   [label="取执行域租约\n取单调令牌 t=n"];
+  exec  [label="执行能力"];
+  ok    [label="SUCCEEDED", fillcolor="#e9f7e9", color="#4a8f4a"];
+  rej   [label="REJECTED\n(截止/终态/令牌/占用/未声明)", fillcolor="#fdeaea", color="#b34a4a"];
+  fail  [label="FAILED", fillcolor="#fdeaea", color="#b34a4a"];
+  rel   [label="释放执行域租约\n(三条路径均释放)"];
+  next  [label="下一动作\n必须取 t>n"];
+  term  [label="终态已写入\n再发控制请求 ⇒ 拒绝", fillcolor="#f0f0f0", color="#777777"];
+
+  req -> check;
+  check -> acq [label="通过"];
+  check -> rej [label="不通过\n(未取到租约 ⇒ 不写终态)"];
+  acq -> exec [label="冲突 ⇒ 资源占用\n(不无界等待)"];
+  acq -> rej [label="获取失败"];
+  exec -> ok;
+  exec -> fail;
+  ok -> rel;
+  fail -> rel;
+  rel -> next [label="令牌水位保留"];
+  next -> term [label="复用旧执行标识"];
+}

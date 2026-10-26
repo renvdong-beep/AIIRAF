@@ -1,0 +1,31 @@
+digraph topology {
+  graph [rankdir=LR, fontname="Noto Serif CJK SC", fontsize=12, nodesep=0.35, ranksep=0.7, bgcolor="white"];
+  node  [shape=box, style="rounded,filled", fontname="Noto Serif CJK SC", fontsize=11, fillcolor="#eaf2ff", color="#4a6fa5"];
+  edge  [fontname="Noto Serif CJK SC", fontsize=9, color="#444444"];
+
+  subgraph cluster_ctrl {
+    label="控制面（边缘运行面）"; fontsize=12; color="#7cc4ff"; style="rounded,dashed";
+    T [label="任务编排\n(场景/判据)"];
+    K [label="技能选择与\n参数校验"];
+    P [label="策略放行\n(签名配置为上限)"];
+    D [label="执行请求\n技能+参数\n+截止时间+身份"];
+    T -> K -> P -> D;
+  }
+
+  subgraph cluster_exec {
+    label="执行面（可替换：本机 / 跨机 / 仿真替身）"; fontsize=12; color="#ff9ad5"; style="rounded,dashed";
+    V [label="下发前四道校验\n① 截止时间\n② 终态未复用\n③ 令牌不回退\n④ 能力已自报", fillcolor="#ffe9f4", color="#b5658f"];
+    L [label="执行域租约\n+ 单调围栏令牌", fillcolor="#ffe9f4", color="#b5658f"];
+    X [label="能力实施\n驱动/现场总线\n或 物理仿真+显示", fillcolor="#ffe9f4", color="#b5658f"];
+    V -> L -> X;
+  }
+
+  R [label="权威执行事实记录\n状态/令牌/终态/拒绝码\n+ 仿真标志", fillcolor="#e9f7e9", color="#4a8f4a"];
+  EXT [label="北向入口\n(任务级接口)", shape=box, fillcolor="#fff4e0", color="#b58b3a"];
+
+  EXT -> T [label="任务语义"];
+  D -> V [label="版本化接口\n截止时间·取消·幂等键·凭据"];
+  X -> R [label="结果/执行标识/令牌/仿真标志"];
+  R -> EXT [label="查询执行事实\n(不采信自述)"];
+  D -> R [style=dashed, label="记录请求"];
+}
