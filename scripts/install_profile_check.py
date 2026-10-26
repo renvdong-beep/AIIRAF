@@ -163,7 +163,8 @@ def read_runtime_env_ports(repo_root: Path) -> dict:
     ports = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
-        if line.startswith("IRAF_RUNTIME_PORT=") or line.startswith("IRAF_GRPC_PORT="):
+        if line.startswith("IRAF_RUNTIME_PORT=") or line.startswith("IRAF_GRPC_PORT=") \
+                or line.startswith("IRAF_PROVIDER_PORT="):
             name, _, value = line.partition("=")
             value = value.strip()
             if not value.isdigit():
@@ -217,7 +218,17 @@ def check_semantics(declaration: dict, repo_root: Path) -> tuple:
             add("%s：装配单模板存在" % pid, path.is_file(), "缺失=%s" % template)
             if path.is_file():
                 text = path.read_text(encoding="utf-8")
-                required = ("@VERSION_DIR@", "@DATA_DIR@", "@PROVIDER_ENDPOINT@", "@PROFILE@")
+                # 必需占位符按角色性质定（2026-10-26 收紧）：
+                #   · 所有模板都要 @PROFILE@（机型 Profile）与 @VERSION_DIR@/@DATA_DIR@（安装路径）；
+                #   · 只有**跨机调用方**（backend 是远端 Provider 客户端，如 edge-intel）才必须给对端地址
+                #     @PROVIDER_ENDPOINT@ —— 服务端角色（sim-x86 自己就是 Provider）不适用，
+                #     硬要求会逼人写一个没人用的占位符；
+                #   · 声明了 provider_display 的角色必须把显示模式也占位符化（不许在模板里写死）。
+                required = ["@PROFILE@", "@VERSION_DIR@", "@DATA_DIR@"]
+                if "provider_backend" in str(profile.get("backend_entrypoint") or ""):
+                    required.append("@PROVIDER_ENDPOINT@")
+                if profile.get("provider_display"):
+                    required.append("@PROVIDER_DISPLAY_MODE@")
                 missing = [token for token in required if token not in text]
                 add("%s：装配单模板占位符齐备" % pid, not missing, "缺失占位符=%s" % missing)
                 machine = [probe for probe in ("/home/", "/Users/", "coretek") if probe in text]

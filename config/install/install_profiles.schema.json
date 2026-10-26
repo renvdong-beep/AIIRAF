@@ -520,6 +520,11 @@
           "type": "string",
           "minLength": 1
         },
+        "provider_display": {
+          "description": "仿真 Provider 的显示模式（window=开窗需部署期给 DISPLAY/XAUTHORITY；headless=强制不开窗）。只有装 adapters_sim 的仿真角色可声明。",
+          "type": "string",
+          "enum": ["window", "headless"]
+        },
         "services": {
           "type": "array",
           "items": {

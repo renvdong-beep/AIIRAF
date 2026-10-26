@@ -1,0 +1,42 @@
+# IRAF 仿真 Capability Provider 单元模板（x86 仿真侧）—— 安装时由 install-iraf.sh 按声明渲染。
+#
+# 边界（AGENTS.md 1.7 / 2.11 / 6.9）：
+#   · 本单元是**仿真域**能力服务端：Health 一律 simulation=true，不得表述为真机能力；
+#   · 入口是**包内模块**（`python -m iraf_adapters.remote.provider_cli`），不是仓库 scripts/ ——
+#     交付包不含 scripts/（实测），写脚本路径在目标端必然 ExecStart 失败；
+#   · 机器相关的值（路径/用户/解释器/限额）一律走占位符，不得写死（铁律 5.3）；
+#   · 身份只来自受信 transport（Bearer token）；缺 IRAF_PROVIDER_TOKEN 时进程 fail-closed 退出。
+
+[Unit]
+Description=IRAF simulation Capability Provider (profile=@PROFILE@ version=@VERSION@ simulation=true)
+Documentation=file:@PREFIX@/@CURRENT_LINK@/config/install/install_profiles.yaml
+After=network.target
+Requires=network.target
+
+[Service]
+Type=simple
+User=@RUN_USER@
+WorkingDirectory=@PREFIX@/@CURRENT_LINK@
+# 运行期依赖装在 <version>/lib（wheelhouse 或索引），proto 桩也在里面；不碰系统 site-packages。
+Environment=PYTHONPATH=@PREFIX@/@CURRENT_LINK@/src:@PREFIX@/@CURRENT_LINK@/lib
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=-@CONFIG_DIR@/@PROFILE@.env
+# 凭据单独一个 600 文件（装配单按设计不写凭据）。缺文件不致命 —— 进程会因缺 token 显式失败，
+# 不会静默提供一个"看似可用"的 Provider。
+EnvironmentFile=-@CONFIG_DIR@/runtime.secrets
+ExecStartPre=/bin/mkdir -p @LOG_DIR@ @DATA_DIR@
+ExecStart=@PYTHON_BIN@ -m iraf_adapters.remote.provider_cli
+Restart=on-failure
+RestartSec=3
+# 独立资源限额（AGENTS 6.11）：角色未声明时渲染器整行删除（x86 开发档通常不限额）。
+CPUQuota=@CPU_QUOTA@
+MemoryMax=@MEMORY_MAX@
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@LOG_DIR@ @DATA_DIR@
+UMask=0077
+
+[Install]
+WantedBy=default.target

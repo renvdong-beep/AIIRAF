@@ -146,25 +146,43 @@ profiles:
       - scenarios
       - config
       - adapters_sim
-    # 仿真侧的运行期依赖（角色级）：mujoco 与 numpy 由 src/iraf_adapters/mujoco/* 实测 import。
+      - adapters_remote
+    # 仿真侧的运行期依赖（角色级）：mujoco 与 numpy 由 src/iraf_adapters/mujoco/* 实测 import；
+    # grpcio/protobuf 是**服务端**要的（CapabilityProviderService + iraf.v1 桩），2026-10-26 补。
     runtime_dependencies:
       - pyyaml
       - jsonschema
+      - grpcio
+      - protobuf
       - mujoco
       - numpy
-    # 不起常驻服务：仿真侧由上层按需拉起（scenario.py / view_mujoco.py / iraf-agentos 的本地后端）。
     backend_entrypoint: iraf_adapters.mujoco.mujoco_backend:MujocoBackend
-    services: []
+    # 仿真装配（2026-10-26「装完 SDK 就有 Provider」）：
+    #   robot_profile / safety_policy 来自仓库声明（相对路径，单元 WorkingDirectory 指向 current）；
+    #   sim_scene 由安装器拷进 <version>/models，并用旁挂报告在**目标端**生成 IRAF_BACKEND_CONFIG；
+    #   provider_display 决定开窗与否（window 需部署期给 PROVIDER_DISPLAY/PROVIDER_XAUTHORITY）。
+    robot_profile: profiles/piper_mujoco.yaml
+    safety_policy: profiles/safety/simulation_lab.yaml
+    sim_scene: build/models/piper-pick-scene.xml
+    provider_display: window
+    env_template: deploy/sdk/env/sim-x86.env.tmpl
+    services:
+      - name: iraf-provider
+        template: deploy/sdk/units/iraf-provider.service.tmpl
+        scope: user
+        ports: [50052]
+        optional: false
     cross_domain:
       role: upstream
       peers: ["edge-intel"]
       transport: grpc
       deadline_ms: 30000
     residue:
-      scan_roots: ["{prefix}"]
-      units: []
-      ports: []
-      processes: ["scenario.py", "view_mujoco.py"]
+      scan_roots: ["{prefix}", "{config_dir}", "{log_dir}", "{data_dir}"]
+      # 单元/端口必须与服务清单一致（install_profile_check 会逐项比对），否则卸载必留残留。
+      units: ["iraf-provider.service"]
+      ports: [50052]
+      processes: ["iraf_provider_cli", "scenario.py", "view_mujoco.py"]
 
   - id: edge-intel
     label: 边缘智能域（aarch64 Hyper，TaskFlow/Skill/Policy/AgentOSBridge）

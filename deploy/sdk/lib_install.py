@@ -140,7 +140,7 @@ def effective_layout(repo_root: Path, profile_id: str) -> dict:
     effective["target_glibc_min"] = target.get("glibc_min")
     for key in ("min_free_mb", "python_bin", "run_user", "robot_profile", "safety_policy",
                 "backend_config", "runtime_subject", "runtime_dependencies", "python_stubs_dir",
-                "sim_scene", "env_template"):
+                "sim_scene", "env_template", "provider_display"):
         # **角色级优先**：仿真档声明仿真机型/仿真策略，真机档留空待运控域 —— 不能让真机档继承仿真档的
         # safety_policy（那会把 simulation_only=true 的策略带到真机路径上）。
         if key in profile:
@@ -158,6 +158,21 @@ def under_root(root: Path, declared: str) -> Path:
     if str(root) in ("", "/"):
         return Path(text)
     return Path(str(root).rstrip("/")) / text.lstrip("/")
+
+
+def unit_dir(root: Path, scope: str) -> Path:
+    """单元落点（**唯一规则**：install / uninstall / residue 三处共用，避免规则漂移留残留）。
+
+    system → `<root>/etc/systemd/system`；
+    user   → 真实根且调用者**非 root** ⇒ `<家目录>/.config/systemd/user`
+             （写 /etc/systemd/user 需要 root，单机开发档根本装不上，装完就没有服务）；
+             否则（沙箱 root 或 root 身份）⇒ `<root>/etc/systemd/user`，便于演练逐字比对。
+    """
+    if str(scope) == "system":
+        return under_root(root, "/etc/systemd/system")
+    if str(root) in ("", "/") and hasattr(os, "geteuid") and os.geteuid() != 0:
+        return Path.home() / ".config" / "systemd" / "user"
+    return under_root(root, "/etc/systemd/user")
 
 
 def _sha256(path: Path) -> str:
@@ -324,7 +339,7 @@ def _running_processes() -> list:
 def _unit_state(names: list, *, root: Path, scope: str) -> dict:
     """单元是否存在/启用（沙箱演练不查 systemd，直接看文件）。"""
     result = {}
-    system_dir = under_root(root, "/etc/systemd/system" if scope == "system" else "/etc/systemd/user")
+    system_dir = unit_dir(root, scope)
     for name in names:
         candidates = [system_dir / name]
         if scope == "system":
@@ -466,8 +481,7 @@ def plan_uninstall(effective: dict, root: Path, record: dict, *, purge: bool = F
                 kept.append(keep)
 
     # 单元文件与 current 链接（记录里记了名字 ⇒ 属于本包）
-    system_dir = under_root(root, "/etc/systemd/system" if str(effective["systemd_scope"]) == "system"
-                                     else "/etc/systemd/user")
+    system_dir = unit_dir(root, str(effective["systemd_scope"]))
     for unit in record.get("units", []):
         for candidate in (system_dir / unit, system_dir / "multi-user.target.wants" / unit):
             if candidate.exists() or candidate.is_symlink():
@@ -503,10 +517,9 @@ def plan_force_clean(effective: dict, root: Path, *, purge: bool = False) -> dic
                 delete.append(child)
         else:
             delete.append(prefix)
-    unit_dir = under_root(root, "/etc/systemd/system" if str(effective["systemd_scope"]) == "system"
-                          else "/etc/systemd/user")
+    unit_dir_path = unit_dir(root, str(effective["systemd_scope"]))
     for name in effective["residue_units"]:
-        for candidate in (unit_dir / name, unit_dir / "multi-user.target.wants" / name):
+        for candidate in (unit_dir_path / name, unit_dir_path / "multi-user.target.wants" / name):
             if candidate.exists() or candidate.is_symlink():
                 delete.append(candidate)
     config_dir = under_root(root, str(effective["config_dir"]))
@@ -595,7 +608,12 @@ UNIT_TOKENS = ("PROFILE", "VERSION", "PREFIX", "CURRENT_LINK", "PYTHON_BIN", "CO
                # 装配单模板（声明的 env_template，如 edge-intel）额外允许的占位符：
                # 路径/身份来自声明生效值，部署期值（如 @PROVIDER_ENDPOINT@）必须由 --env-set 显式给。
                "SAFETY_POLICY", "VERSION_DIR", "RUNTIME_SUBJECT",
-               "PROVIDER_ENDPOINT", "INTENT_MODEL_URL", "INTENT_MODEL_NAME")
+               "PROVIDER_ENDPOINT", "INTENT_MODEL_URL", "INTENT_MODEL_NAME",
+               # 仿真 Provider 装配（2026-10-26）：后端配置由场景报告生成后注入；
+               # 显示模式来自声明 provider_display；端口来自声明 services[].ports；
+               # 绑定地址 / DISPLAY / XAUTHORITY 只能由部署期给。
+               "BACKEND_CONFIG", "PROVIDER_DISPLAY_MODE", "PROVIDER_DISPLAY", "PROVIDER_XAUTHORITY",
+               "PROVIDER_PORT", "PROVIDER_BIND")
 
 
 def _unit_tokens(effective: dict, root: Path, *, python_bin: str, run_user: str) -> dict:
@@ -651,6 +669,23 @@ def render_env_file(effective: dict, root: Path, tokens: dict, *,
             "VERSION_DIR": "%s/%s" % (tokens["PREFIX"], tokens["CURRENT_LINK"]),
             "RUNTIME_SUBJECT": str(effective.get("runtime_subject") or "iraf-runtime"),
         })
+        # 仿真 Provider 装配（2026-10-26）：
+        #   BACKEND_CONFIG 由安装期场景报告生成（effective["backend_config"]）——**只在非空时**注入，
+        #   否则占位符残留会被 render_template 显式拒绝（绝不能落一条 `IRAF_BACKEND_CONFIG=` 空值：
+        #   那会让服务"看起来起了、装配其实是空的"）。
+        if str(effective.get("backend_config") or "").strip():
+            merged["BACKEND_CONFIG"] = str(effective["backend_config"]).strip()
+        # 显示模式来自声明；headless 模式下不要求部署期给 DISPLAY/XAUTHORITY（给了也不用）。
+        display_mode = str(effective.get("provider_display") or "").strip().lower()
+        if display_mode:
+            merged.setdefault("PROVIDER_DISPLAY_MODE", display_mode)
+        if display_mode in {"headless", "offscreen", "offscreen_frames"}:
+            merged.setdefault("PROVIDER_DISPLAY", "")
+            merged.setdefault("PROVIDER_XAUTHORITY", "")
+        # 服务端口来自声明（services[].ports）——唯一来源，模板里不许再写一遍数字。
+        declared_ports = [int(p) for item in effective.get("services") or [] for p in (item.get("ports") or [])]
+        if len(declared_ports) == 1:
+            merged.setdefault("PROVIDER_PORT", str(declared_ports[0]))
         merged.update({str(k).strip().upper(): str(v) for k, v in dict(env_values or {}).items()})
         template_path = Path(repo_root) / template_rel
         try:
@@ -885,8 +920,7 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
         traces.append("current 链接已存在：%s" % current)
     if record_path(effective, version_dir).is_file():
         traces.append("安装记录已存在：%s" % record_path(effective, version_dir))
-    unit_dir_probe = under_root(root, "/etc/systemd/system" if str(effective["systemd_scope"]) == "system"
-                                else "/etc/systemd/user")
+    unit_dir_probe = unit_dir(root, str(effective["systemd_scope"]))
     for item in effective["services"]:
         candidate = unit_dir_probe / ("%s.service" % item["name"])
         if candidate.exists() or candidate.is_symlink():
@@ -1080,8 +1114,9 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
                   "runtime 会因缺 IRAF_PROVIDER_TOKEN / IRAF_GRPC_TOKEN fail-closed（起不来）"
                   % config_dir, file=sys.stderr)
 
-        unit_dir = under_root(root, "/etc/systemd/system" if str(effective["systemd_scope"]) == "system"
-                                     else "/etc/systemd/user")
+        unit_dir_path = unit_dir(root, str(effective["systemd_scope"]))
+        if not unit_dir_path.exists():
+            created_dirs.append(unit_dir_path)
         rendered_units = []
         for item in effective["services"]:
             template = Path(str(effective["_repo_root"])) / str(item["template"])
@@ -1096,8 +1131,8 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
                     kept = [line for line in content.splitlines()
                             if not line.startswith(directive + "=")]
                     content = "\n".join(kept) + "\n"
-            _mkdir(unit_dir)
-            unit_path = unit_dir / ("%s.service" % item["name"])
+            _mkdir(unit_dir_path)
+            unit_path = unit_dir_path / ("%s.service" % item["name"])
             if unit_path.exists():
                 raise InstallError("unit 已存在，拒绝覆盖（请先走受控卸载/变更流程）：%s" % unit_path,
                                    EXIT_MISMATCH)
