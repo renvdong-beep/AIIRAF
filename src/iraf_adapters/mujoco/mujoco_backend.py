@@ -2089,10 +2089,27 @@ class MujocoBackend:
         payload_geoms = [_geom_id(payload_geom)]
         if any(item["id"] < 0 for item in pad_points) or payload_geoms[0] < 0:
             raise ValueError("指腹/载荷 geom 未在模型中解析到（名字口径不一致）")
-        # 臂关节 id：声明名 → 模型名（`_model_name` 走 name_map，联合世界下 joint1 → piper_joint1）
-        arm_joints = [int(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT,
-                                            self._model_name(name)))
-                      for name in self._arm_joint_names()]
+        # 臂关节 id：声明名 → 模型名（`_model_name` 走 name_map，联合世界下 joint1 → piper_joint1）。
+        # **解析失败必须点名**（2026-10-26 实测）：旧写法把 -1 一路带进 IK，最后在回写阶段炸成
+        # 「臂关节名称解析失败, 无法回写关节解」——既看不出是哪个关节，也看不出是哪个名字口径错。
+        arm_joints = []
+        unresolved_joints = []
+        for name in self._arm_joint_names():
+            model_name = self._model_name(name)
+            joint_id = int(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, model_name))
+            if joint_id < 0:
+                # profile 的 joints 也可能是执行器名（Piper 同名、UR5e 不同名）⇒ 反查它驱动的关节
+                actuator = self._actuators.get(model_name)
+                if actuator is not None:
+                    joint_id = int(self.model.actuator_trnid[actuator, 0])
+            if joint_id < 0:
+                unresolved_joints.append("%s→%s" % (name, model_name))
+            else:
+                arm_joints.append(joint_id)
+        if unresolved_joints:
+            raise ValueError(
+                "臂关节在模型里解析不到（声明名→模型名）：%s；模型关节数=%d"
+                "（检查 profile.joints 与场景报告 name_map 口径）" % (unresolved_joints, int(self.model.njnt)))
         duration_ms = max(1, int(duration_ms))
         phase_ms = max(1, duration_ms // 4)
         solver = {"iterations": 800, "step": 0.5, "tolerance_m": 1e-5}
@@ -3220,6 +3237,7 @@ class MujocoBackend:
                 raise ValueError("夹持区 geom 在模型里不存在: " + name)
             pad_points.append({"kind": "geom", "id": ident})
         arm_joints = []
+        skipped_joints = []
         for key in (positions_by_phase.get("grasp") or {}):
             name = self._model_name(str(key))
             joint_id = int(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name))
@@ -3232,10 +3250,26 @@ class MujocoBackend:
                 actuator = self._actuators.get(name)
                 if actuator is not None:
                     joint_id = int(self.model.actuator_trnid[actuator, 0])
-            if joint_id >= 0:
-                arm_joints.append((str(key), joint_id))
+            if joint_id < 0:
+                continue
+            # **只接受铰接（hinge）关节**（2026-10-26 joint world 的 s06 实测）：
+            # 反查可能落到自由关节（id 0 / jnt_type=0，载荷或浮动基座）。把自由关节塞进 IK 的
+            # 关节集，等于允许求解器"通过移动载荷"来满足末端目标 —— 画面上就是方块从背上瞬移到头上，
+            # 最后还会在回写阶段报"臂关节名称解析失败"。非铰接一律跳过并留证。
+            if int(self.model.jnt_type[joint_id]) != int(mujoco.mjtJoint.mjJNT_HINGE):
+                skipped_joints.append({"key": str(key), "joint_id": joint_id,
+                                       "jnt_type": int(self.model.jnt_type[joint_id])})
+                continue
+            arm_joints.append((str(key), joint_id))
         if not arm_joints:
-            raise ValueError("grasp_positions 里没有可解的臂关节键（纠偏无从下手）")
+            raise ValueError("grasp_positions 里没有可解的臂关节键（纠偏无从下手）"
+                             if not skipped_joints else
+                             "grasp_positions 里没有**铰接**关节键（已跳过非铰接 %s），纠偏无从下手"
+                             % skipped_joints)
+        if skipped_joints:
+            # 只打一行证据（不塞 report：这里 report 还没构造），排查时 grep 这一行即可
+            print("PICK_CORRECTION_SKIPPED_NON_HINGE " + json.dumps(skipped_joints, ensure_ascii=False),
+                  flush=True)
         axis = self._unit_axis(gripper.get("pad_offset_axis"))
         pad_offset = float(gripper.get("pad_offset_m", 0.0) or 0.0)
 
@@ -3555,7 +3589,25 @@ class MujocoBackend:
         """
         roles = getattr(self.profile, "joint_roles", None) or {}
         names = [name for name in self.profile.joints if roles.get(name) == "arm"]
-        return names or list(self.profile.joints)
+        if not names:
+            names = list(self.profile.joints)
+        # 只保留**铰接（hinge）**关节（2026-10-26）：IK 只对铰接自由度有意义。
+        # 联合世界里 profile.joints 会包含浮动基座/载荷的 **free** 关节（jnt_type=0，且常常没有名字），
+        # 把它们的 id 交给 solve_position_ik 会在回写阶段炸成"臂关节名称解析失败"，且把 IK 解到
+        # 一个自由体上（危险）。这里显式过滤，宁可少一个自由度也不静默解错。
+        hinge_names = []
+        for name in names:
+            model_name = self._model_name(name)
+            joint_id = int(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, model_name))
+            if joint_id < 0:
+                actuator = self._actuators.get(model_name)
+                if actuator is not None:
+                    joint_id = int(self.model.actuator_trnid[actuator, 0])
+            if joint_id < 0:
+                continue
+            if int(self.model.jnt_type[joint_id]) == int(mujoco.mjtJoint.mjJNT_HINGE):
+                hinge_names.append(name)
+        return hinge_names
 
     def _joint_qpos(self, name):
         """读取关节角：既接受执行器名，也接受关节名。

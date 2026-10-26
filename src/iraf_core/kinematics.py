@@ -18,6 +18,7 @@ r"""机器人无关的数值逆运动学契约。
 """
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Iterable, Sequence
 
 import mujoco
@@ -94,6 +95,35 @@ def _jacobian_for_points(model, data, points):
     return total / float(len(points))
 
 
+def _joint_names_or_raise(model, arm_joints, where=""):
+    """把关节 id 解析成名称；解析不到就**带诊断**失败（2026-10-26）。
+
+    为什么：旧实现只说"臂关节名称解析失败, 无法回写关节解"，既不说哪个 id，也不说它是什么类型。
+    实测踩到过一次（joint world 的 s06_unload_at_b）：id 合法（0≤id<njnt）但**没有名字**，
+    最典型的是自由关节（jnt_type=0，载荷/载体的 freejoint）——那种 id 进 IK 一定是调用方把
+    "自由体"当成了"臂关节"。
+    """
+    names, unnamed = [], []
+    for joint in arm_joints:
+        joint = int(joint)
+        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, joint)
+        if name is None:
+            unnamed.append({"id": joint, "jnt_type": int(model.jnt_type[joint]),
+                            "type_zh": {0: "free", 1: "ball", 2: "slide", 3: "hinge"}.get(
+                                int(model.jnt_type[joint]), "unknown")})
+        else:
+            names.append(str(name))
+    if unnamed:
+        import traceback as _tb
+        frames = ["%s:%d" % (Path(_f.filename).name, _f.lineno)
+                  for _f in _tb.extract_stack()[-4:-1]]
+        raise KinematicsError(
+            "%s臂关节回写失败：下列 id 在模型里没有名字 %s（模型关节数=%d）"
+            "⇒ 调用方把非臂关节（常见为自由体 freejoint）当成了臂关节；调用链=%s"
+            % (("%s：" % where) if where else "", unnamed, int(model.njnt), " ← ".join(reversed(frames))))
+    return names
+
+
 def solve_position_ik(
     model,
     data,
@@ -124,6 +154,13 @@ def solve_position_ik(
     arm_joints = list(arm_joints)
     if not arm_joints:
         raise KinematicsError("IK 至少需要一个臂关节")
+    # 入参校验（2026-10-26）：ids 必须落在 [0, njnt) —— 传 -1（名称没解析到）会让
+    # jnt_qposadr[-1] 取到最后一个关节，静默解错、最后在回写阶段报"名称解析失败"，不可操作。
+    invalid = [joint for joint in arm_joints if not (0 <= int(joint) < int(model.njnt))]
+    if invalid:
+        raise KinematicsError(
+            "传入的臂关节 id 非法: %s（模型关节数=%d）⇒ 调用方\"名称→id\"解析有误"
+            "（常见：执行器名当关节名、name_map 未生效）" % (invalid, int(model.njnt)))
     qpos_adr = [int(model.jnt_qposadr[joint]) for joint in arm_joints]
     dof_adr = [int(model.jnt_dofadr[joint]) for joint in arm_joints]
 
@@ -163,11 +200,7 @@ def solve_position_ik(
         ],
         axis=0,
     )
-    names = [
-        mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, joint) for joint in arm_joints
-    ]
-    if any(name is None for name in names):
-        raise KinematicsError("臂关节名称解析失败, 无法回写关节解")
+    names = _joint_names_or_raise(model, arm_joints, where="位置 IK")
     return IkResult(
         joint_positions={
             str(name): float(data.qpos[adr]) for name, adr in zip(names, qpos_adr)
@@ -413,12 +446,7 @@ def solve_pose_ik(
         ],
         axis=0,
     )
-    names = [
-        mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, joint)
-        for joint in arm_joints
-    ]
-    if any(name is None for name in names):
-        raise KinematicsError("臂关节名称解析失败, 无法回写关节解")
+    names = _joint_names_or_raise(model, arm_joints, where="位姿 IK")
     site_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_SITE, flange_site)
     return IkResult(
         joint_positions={
