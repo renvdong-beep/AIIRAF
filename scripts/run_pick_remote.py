@@ -91,6 +91,11 @@ def main() -> int:
     keys = ("lifted", "lift_delta_m", "distance_m", "target_body", "grasp_distance_m", "qpos")
     shown = {k: payload[k] for k in keys if k in payload}
     print("[pick] result=%s" % json.dumps(shown or payload, ensure_ascii=False, default=str)[:1200])
+    # 证据落盘（2026-10-26）：事件库只存 status/reason，逐项证据（lifted/残差/力）必须另存，
+    # 否则"跑成功了"无法复核。路径与事件库同目录，文件名固定。
+    evidence_path = store_path.parent / "result.json"
+    evidence_path.write_text(json.dumps(result, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    print("[pick] 证据：%s" % evidence_path)
     print("[pick] 证据：%s" % (REPO / args.store))
     return 0 if result.get("status") == "SUCCEEDED" else 1
 
