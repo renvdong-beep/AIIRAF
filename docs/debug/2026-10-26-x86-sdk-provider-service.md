@@ -102,3 +102,28 @@ verify_residue.sh  --profile sim-x86 → files 0 / dirs 0 / env_files 0 / ports 
   （不猜路径），`--env-set PROVIDER_DISPLAY_MODE=headless` 可走无窗模式。
 - 服务重启 = MuJoCo 世界重载（场景回到 initial-snapshot）。这是"演示前场景已复位"的免费好处，但必须在操作手册里写明，不能变成悄悄重置。
 - `scripts/dev_provider_up.sh` 保留为"从仓库源码跑"的开发入口；**演示/交付走安装后的 systemd 单元**。
+
+## 4.2 切换到 UR5（同日下午，固化口径不变）
+
+声明改动（config/install/install_profiles.yaml，sim-x86）：
+  robot_profile: profiles/piper_mujoco.yaml → profiles/ur5_mujoco.yaml
+  sim_scene:     build/models/piper-pick-scene.xml → build/models/ur5-pick-scene.xml
+
+切换后又抓到两个真缺陷（都是"装完才发现"那类）：
+1. **场景资产目录没随包**：UR5e 场景引用 `ur5e_2f85/assets/*.obj`（甚至裸文件名 base_0.obj，
+   真实位置由 meshdir 决定），只拷 XML+mesh 会让服务启动报
+   `Error opening file 'ur5e_2f85/assets/base_1.obj'` / `'base_0.obj'`。
+   修法：安装器把**同级、名字出现在 XML 里**的模型目录整棵拷进 `<version>/models/`（本次 30 个文件）。
+2. **残留核验把"声明保留的数据目录"当残留**：`uninstall.keep` 里的 `<data_dir>/iraf-provider.db`
+   让 verify_residue 报 files=1、退出码 4 ⇒ 干净卸载永远判不干净。
+   修法：residue_scan 跳过 keep 根下的文件，单列 `kept_files`。
+
+UR5 态实测（本机）：
+```
+systemctl --user is-active iraf-provider → active；LISTEN *:50052
+X 窗口 0x620000b "MuJoCo : ur5e" 1280x720
+reset_scene → exec=exec-bcecdae7d1de45359d469b7ab6febe6f status=SUCCEEDED baseline=keyframe:0
+环境装配 /home/coretek/.config/iraf/sim-x86.env：IRAF_PROFILE=profiles/ur5_mujoco.yaml，
+IRAF_BACKEND_CONFIG.model_path=<prefix>/0.3.19/models/ur5-pick-scene.xml
+```
+注意 UR5 场景有 keyframe（baseline=keyframe:0），piper 场景没有（initial-snapshot）—— 复位基准不同是场景事实，不是代码分支。

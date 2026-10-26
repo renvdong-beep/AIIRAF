@@ -161,9 +161,9 @@ profiles:
     #   robot_profile / safety_policy 来自仓库声明（相对路径，单元 WorkingDirectory 指向 current）；
     #   sim_scene 由安装器拷进 <version>/models，并用旁挂报告在**目标端**生成 IRAF_BACKEND_CONFIG；
     #   provider_display 决定开窗与否（window 需部署期给 PROVIDER_DISPLAY/PROVIDER_XAUTHORITY）。
-    robot_profile: profiles/piper_mujoco.yaml
+    robot_profile: profiles/ur5_mujoco.yaml
     safety_policy: profiles/safety/simulation_lab.yaml
-    sim_scene: build/models/piper-pick-scene.xml
+    sim_scene: build/models/ur5-pick-scene.xml
     provider_display: window
     env_template: deploy/sdk/env/sim-x86.env.tmpl
     services:

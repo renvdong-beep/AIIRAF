@@ -351,15 +351,42 @@ def _unit_state(names: list, *, root: Path, scope: str) -> dict:
 
 def residue_scan(effective: dict, root: Path, *, record: dict | None = None) -> dict:
     """六路残留扫描。record=None 时不比对记录（只回答"这些根下还剩什么"）。"""
-    findings = {"files": [], "dirs": [], "units": {}, "env_files": [], "ports": [], "processes": []}
+    findings = {"files": [], "dirs": [], "units": {}, "env_files": [], "ports": [], "processes": [],
+                "kept_files": []}
     roots = [under_root(root, str(item)) for item in effective["residue_scan_roots"]]
+    # 声明里 uninstall.keep 的目录（data/log）是**故意保留**的：卸载不删、--purge 才删。
+    # 把它们的文件算成"残留"会让干净卸载永远判不干净（2026-10-26 实测：事件库
+    # <data_dir>/iraf-provider.db 让 verify_residue 报 files 1 ⇒ 退出码 4）。
+    keep_roots = []
+    for item in (effective.get("uninstall_keep") or []):
+        try:
+            keep_roots.append(Path(str(item)).resolve())
+        except OSError:
+            continue
+
+    def _under_kept(path: Path) -> bool:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path
+        for keep in keep_roots:
+            try:
+                resolved.relative_to(keep)
+                return True
+            except ValueError:
+                continue
+        return False
+
     for scan_root in roots:
         if not scan_root.exists():
             continue
         for path in sorted(scan_root.rglob("*")):
             if path.is_file():
+                if _under_kept(path):
+                    findings["kept_files"].append(str(path))
+                    continue
                 findings["files"].append(str(path))
-            elif path.is_dir() and not any(path.iterdir()):
+            elif path.is_dir() and not any(path.iterdir()) and not _under_kept(path):
                 findings["dirs"].append(str(path))
         if scan_root.is_file():
             findings["files"].append(str(scan_root))
@@ -1070,6 +1097,26 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
                 info("场景 mesh 已随包：%d 个（来自 %s，引用改写为 meshes/）"
                      % (copied_meshes, src_mesh_dir))
             xml_target.write_text(xml_text, encoding="utf-8")
+            # 除 mesh 之外，场景还会引用**普通资产**（UR5e 的 `ur5e_2f85/assets/*.obj`、贴图等），
+            # 且引用写法可能只有裸文件名（真实位置由 meshdir/texturedir 决定）。按名字猜路径不可靠，
+            # 处置：把场景**同级、且名字出现在 XML 里**的模型目录整棵拷进版本目录（按原相对位置）。
+            # 依据：`Error opening file 'ur5e_2f85/assets/base_1.obj'` / `'base_0.obj'`（2026-10-26 实装）。
+            copied_assets = 0
+            for sibling in sorted(source_xml.parent.iterdir()):
+                if not sibling.is_dir() or sibling.name not in xml_text:
+                    continue
+                for item in sibling.rglob("*"):
+                    if not item.is_file():
+                        continue
+                    dst = models_dir / sibling.name / item.relative_to(sibling)
+                    if dst.is_file():
+                        continue
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(item, dst)
+                    copied_assets += 1
+            if copied_assets:
+                plan["scene_assets_copied"] = copied_assets
+                info("场景资产目录已随包：%d 个文件（同级模型目录按原位置保留）" % copied_assets)
             emitter = Path(str(effective["_repo_root"])) / "scripts" / "emit_backend_config.py"
             if not emitter.is_file():
                 raise InstallError("缺少 %s（生成 IRAF_BACKEND_CONFIG 的唯一入口）" % emitter, EXIT_IO)
