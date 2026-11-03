@@ -107,6 +107,7 @@ profiles:
       - protobuf
       - mujoco
       - numpy
+      - mcp
     backend_entrypoint: iraf_adapters.mujoco.mujoco_backend:MujocoBackend
     services:
       - name: iraf-runtime-http
@@ -237,6 +238,14 @@ profiles:
       - adapters_remote
     # 真机/边缘：Provider 在**运控域**，本域只做上游；仿真适配器禁止装入本域（AGENTS 1.7/6.9）。
     forbidden_components: [adapters_sim]
+    # 北向 MCP（HTTP/stdio）依赖：`python3 -m iraf_adapters.mcp.server` 需要 mcp>=1.26,<2。
+    # 边缘角色显式声明，禁止靠宿主碰巧装过；交付 wheelhouse 必须补入该包及其传递闭包。
+    runtime_dependencies:
+      - pyyaml
+      - jsonschema
+      - grpcio
+      - protobuf
+      - mcp
     # 2026-10-16：本域 runtime 的 Capability Provider 经跨机 gRPC 调 **x86 仿真 Provider**
     # （板上跑 TaskFlow/Skill/Policy，x86 只把能力执行出来并显示）。
     # 设计见 .hermes/plans/2026-10-16-agentos-semantic-mcp-bridge.md；
