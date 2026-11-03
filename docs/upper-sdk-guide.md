@@ -1,6 +1,6 @@
 # IRAF 上位机 SDK 交付与使用指南
 
-版本：0.4.0（2026-11-03）  
+版本：0.4.1（2026-11-03）  
 适用对象：在**自己的 x86 Ubuntu** 上开发上位机 harness / LLM agent，通过任务级接口调用**边缘侧 IRAF** 的团队。  
 口径：一切执行结论 `simulation=true`，不构成真机/实时能力证据。
 
@@ -32,12 +32,13 @@
 ### 0.3 产物
 
 ```text
-build/sdk/iraf_sdk-0.4.0-py3-none-any.whl
-  sha256 = 651df3ce9c6d4ddb30f5620cc283532aeb2c7577e8582f29d2caa219d6ec535b
+build/sdk/iraf_sdk-0.4.1-py3-none-any.whl
+  sha256 = 7bd7180944f96e1049525b70df616ef3c8694b90b394f68d3c447150bd4761cc
   成员：iraf_sdk/{__init__,client,errors,mcp,provider}.py + dist-info
+  元数据：Provides-Extra: mcp / provider（基础安装零第三方依赖）
 
-build/sdk/iraf-runtime-0.4.0-aarch64.tar.gz
-  sha256 = 6e63bad33fee18f47f2ecd0700d86bcd340ae513b43f481996ebafcc0835eb12
+build/sdk/iraf-runtime-0.4.1-aarch64.tar.gz
+  sha256 = cd75a9d0735e23490f751d19ca0445394eb5284195706774fe953bc4fe932163
 ```
 
 重新构建（改了 `src/iraf_sdk/**` 后必须重建，否则交付的是旧代码）：
@@ -180,11 +181,17 @@ curl -s -o /dev/null -w 'no_token=%{http_code}\n' -X POST http://<边缘IP>:8765
 ### 3.1 安装
 
 ```bash
-python3 -m pip install build/sdk/iraf_sdk-0.3.22-py3-none-any.whl
-python3 -m pip install 'mcp>=1.26,<2'      # MCP 客户端可选依赖，wheel 未声明 extras
+# 只装客户端（纯标准库）
+python3 -m pip install iraf_sdk-0.4.1-py3-none-any.whl
+
+# 需要 MCP 客户端 / 南向 Provider SDK 时，用 extras（也可分开装）
+python3 -m pip install 'iraf_sdk-0.4.1-py3-none-any.whl[mcp]'
+python3 -m pip install 'iraf_sdk-0.4.1-py3-none-any.whl[provider]'
 ```
 
 要求：Python >= 3.9；MCP 客户端固定 1.x（2.x 移除了 AgentOS 依赖的 API）。
+wheel 的基础安装仍是零第三方依赖；`mcp` / `provider` 只在显式选 extras 时安装。
+安装后可自检：`python3 -c "import iraf_sdk; print(iraf_sdk.__version__)"` → `0.4.1`。
 
 ### 3.2 最小示例（streamable-http）
 
@@ -331,7 +338,7 @@ IRAF_RUNTIME_SUBJECT=edge-runtime PYTHONPATH=src:build/generated/python \
 
 ## 7. 与南向 Provider 的关系
 
-本 SDK 已包含 `iraf_sdk.provider.ProviderKit`（0.4.0）：第三方可以用它把**自己的 MuJoCo /
+本 SDK 已包含 `iraf_sdk.provider.ProviderKit`（0.4.1）：第三方可以用它把**自己的 MuJoCo /
 控制器**实现成 `CapabilityProviderService`，由边缘 IRAF 调用。详见
 `docs/provider-sdk-guide.md`。
 
