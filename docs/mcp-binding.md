@@ -20,9 +20,11 @@ Skill Manager 直接 `skill.execute`，把契约校验、策略判定和证据�
 
 | 工具 | 入参 | 行为 |
 |---|---|---|
-| `iraf_robot_mode` | `action=enter|status|exit`、`ttl_seconds=1800` | 机器人开发模式：只读装配事实（技能清单/profile/策略/端点/simulation）+ 置一个会话级模式标记。**不选技能、不执行动作** |
+| `iraf_enter_robot_mode` | 无 | 等价 `iraf_robot_mode(action="enter")`；零参数、名字即语义 |
+| `iraf_exit_robot_mode` | 无 | 等价 `iraf_robot_mode(action="exit")` |
+| `iraf_robot_mode` | `action=enter|exit|status`、`ttl_seconds=1800` | 机器人开发模式：只读装配事实（技能清单/profile/策略/端点/simulation）+ 置一个会话级模式标记。**不选技能、不执行动作** |
 | `iraf_submit_task` | `text`（自然语言任务语义），`deadline_seconds=120` | 交给 IRAF TaskFlow；**技能选择、参数校验、策略判定全在 IRAF 内部**；返回里带 `robot_mode` |
-| `iraf_get_task` | `execution_id` | 读 `IRAF_EVENT_STORE`（`SqliteExecutionStore.get`）返回权威执行事实 |
+| `iraf_get_task` | `execution_id` | 读 `IRAF_EVENT_STORE`（`SqliteExecutionStore.get_for_subject`）返回权威执行事实；只返回本调用方自己的执行 |
 
 #### 为什么加 `iraf_robot_mode`（语义触发，2026-10-21 使用者口径）
 
@@ -79,6 +81,68 @@ intewell-agent-cli mcp add iraf-task --command /usr/bin/python3 \
 | `IRAF_AGENTOS_MODEL_URL` / `IRAF_AGENTOS_MODEL` | 是 | IRAF 内部**受约束**意图解析（把任务语义映射到契约内技能） |
 | `IRAF_AGENTOS_TOKEN` 或 `IRAF_AGENTOS_KEY_FILE` | 是 | 模型网关 key；默认从 `/etc/iraf/agentos.key`（600）读 |
 | `IRAF_VERSION_DIR` | 否 | 默认 `/opt/iraf-sdk/current` |
+| `IRAF_RUNTIME_SUBJECT` | stdio 必需 | 本进程调用方身份（HTTP 形态从 token 取，不用它） |
+| `IRAF_MCP_TOKEN_FILE` | HTTP 必需 | token 注册表（600）；缺且未显式 `IRAF_MCP_INSECURE=1` 即拒绝启动 |
+| `IRAF_MCP_TLS_CERT` / `_KEY` | 对外必需 | 服务端证书/私钥；反向代理终止 TLS 时可省 |
+| `IRAF_MCP_TLS_CA` / `_REQUIRE_CLIENT` | 可选 | 客户端证书校验（mTLS 的传输层部分） |
+| `IRAF_MCP_AUDIT_LOG` | 建议 | JSONL 审计（auth/tool_call），不含 token 明文或哈希 |
+
+### 3.1 鉴权与多调用方（2026-11-03，ADR-0011）
+
+HTTP 形态**默认 fail-closed**：没有 token 注册表就退出 2；`IRAF_MCP_INSECURE=1` 只允许绑
+loopback（本机调试），对外必须签发 token 并终止 TLS。
+
+签发（明文只输出一次，注册表 600、只存 SHA-256）：
+
+```bash
+python3 -m iraf_tools.mcp_tokens --file /etc/iraf/mcp-tokens.json issue \
+  --subject harness-a --tenant cust-a --scopes task.submit,task.read \
+  --resources '*' --expires-days 90
+python3 -m iraf_tools.mcp_tokens --file /etc/iraf/mcp-tokens.json list
+python3 -m iraf_tools.mcp_tokens --file /etc/iraf/mcp-tokens.json revoke --id tok-xxxx
+```
+
+授权语义：
+
+- scope：`task.submit`（提交）、`task.read`（模式/查询）；未知 scope 在加载期即失败。
+- `resources`：允许的 `resource_id`，`*` 表示部署级不隔离；提交时校验 dispatcher 的资源。
+- 身份不来自工具参数：请求体里写 caller/role/tenant 一律无效（AGENTS 1.8）。
+- `iraf_get_task` 只返回**本 subject 自己**的 execution；别人的 id 一律 `NOT_FOUND`。
+- `iraf_robot_mode` 状态按 subject 分桶，一个 HTTP 进程服务多个调用方互不影响。
+- 撤销/过期按注册表签名热加载，无需重启。
+
+TLS：`IRAF_MCP_TLS_CERT` + `IRAF_MCP_TLS_KEY` 直接由 uvicorn 终止；
+`IRAF_MCP_TLS_CA` + `IRAF_MCP_TLS_REQUIRE_CLIENT=1` 要求客户端证书。
+⚠ 当前 uvicorn 不向 ASGI 暴露 peer cert，**CN→subject 绑定尚未实现**；对外生产环境
+应由反向代理/网关终止 mTLS 并把身份映射为 token（见 ADR-0011「未完成」）。
+
+审计：`IRAF_MCP_AUDIT_LOG=<path>`，每行 JSON，含 `auth_ok/auth_failed/tool_call`、
+subject/tenant/token_id/tool/execution_id/status，不含 token 明文或哈希。
+
+### 3.2 旧 AgentOS 登记保持兼容（2026-11-03）
+
+这次只**加**了 HTTP 鉴权，没有删旧路径：
+
+- 5 个任务级工具名不变，`iraf_robot_mode` / enter / exit / resources / prompts 全部保留；
+  `scripts/iraf_mcp_server.py` 兼容转发入口保留。
+- stdio 形态仍是 AgentOS 的默认接入，**不需要** token 注册表；身份来自
+  `IRAF_RUNTIME_SUBJECT`（装配单 `edge-intel.env.tmpl` 一直有这一项）。
+- 若某台机器的装配单缺 `IRAF_RUNTIME_SUBJECT`，在 `mcp add` 的 `--env` 里补一行即可：
+
+```bash
+intewell-agent-cli mcp add iraf-task --command /usr/bin/python3 \
+  --env IRAF_ENV_FILE=/etc/iraf/edge-intel.env \
+        IRAF_RUNTIME_SUBJECT=edge-runtime \
+        IRAF_PROVIDER_TOKEN=... \
+        PYTHONPATH=/opt/iraf-sdk/current/lib:/opt/iraf-sdk/current/src \
+        IRAF_AGENTOS_MODEL_URL=... IRAF_AGENTOS_MODEL=... \
+  --args -m iraf_adapters.mcp.server
+```
+
+- 唯一行为差异（安全修正）：`iraf_get_task` 按执行归属过滤。AgentOS 与 CLI 使用同一个
+  `IRAF_RUNTIME_SUBJECT` 时行为不变；历史执行若属于别的 subject，会返回 `NOT_FOUND`。
+- `iraf_robot_mode` 状态按 subject 隔离；stdio 单进程单 subject，行为不变。
+
 
 ## 4. 验证（三级，逐级加证据）
 

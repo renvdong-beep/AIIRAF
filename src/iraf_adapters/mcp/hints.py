@@ -75,7 +75,7 @@ def next_steps(result: dict) -> list:
     if code in {"IRAF-PROVIDER-ERROR", "IRAF-EXECUTION-FAILED"}:
         steps.append("先用 iraf_get_task 回查同一条 execution 的完整证据（qpos/evidence），"
                      "再判断是参数、场景还是 Provider 不可达。")
-    if code.startswith("IRAF-POLICY") or code.startswith("IRAF-UNAUTHENTICATED"):
+    if code.startswith("IRAF-POLICY-DENIED") or code.startswith("IRAF-UNAUTHENTICATED"):
         steps.append("这是策略/鉴权拒绝：不要重试或放宽参数，按运维流程处理。")
     if not steps:
         steps.append("用 iraf_get_task(execution_id) 回查权威事实；不要把失败表述为成功。")

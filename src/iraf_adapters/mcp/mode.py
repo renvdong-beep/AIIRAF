@@ -14,7 +14,9 @@
 """
 from __future__ import annotations
 
+import threading
 import time
+from typing import Dict
 
 DEFAULT_TTL_S = 1800
 MODE_IDLE = "idle"
@@ -99,7 +101,36 @@ class RobotModeState:
 
 _STATE = RobotModeState()
 
+#: 多调用方隔离（2026-11-03）：HTTP MCP 下一个进程服务多个 token/会话，
+#: 全局单例会让 A 的 enter 影响 B。按 subject 分桶；stdio 仍只有一个 subject。
+_STATES: Dict[str, RobotModeState] = {}
+_STATES_LOCK = threading.RLock()
+
 
 def state() -> RobotModeState:
-    """进程级单例（server 进程 = 一个会话）。"""
+    """进程级单例（stdio 形态/兼容旧调用）。"""
     return _STATE
+
+
+def state_for(subject: str) -> RobotModeState:
+    """按调用方 subject 取模式状态；空 subject 显式失败（身份不能猜）。"""
+    key = (subject or "").strip()
+    if not key:
+        raise ValueError("缺少调用方 subject：机器人开发模式必须按身份隔离")
+    with _STATES_LOCK:
+        state_obj = _STATES.get(key)
+        if state_obj is None:
+            state_obj = RobotModeState()
+            _STATES[key] = state_obj
+        else:
+            # 过期即清，避免长跑进程按 token/subject 无界增长。
+            if state_obj._expires_at is not None and not state_obj.active():
+                state_obj = RobotModeState()
+                _STATES[key] = state_obj
+        return state_obj
+
+
+def reset_all() -> None:
+    """测试/退出用：清空所有分桶。"""
+    with _STATES_LOCK:
+        _STATES.clear()

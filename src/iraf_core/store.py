@@ -67,6 +67,23 @@ class SqliteExecutionStore:
             row = self._db.execute("SELECT result_json FROM executions WHERE execution_id=?", (execution_id,)).fetchone()
             return json.loads(row[0]) if row else None
 
+    def get_for_subject(self, execution_id, subject):
+        """按**执行归属**读取（2026-11-03）：跨调用方不得读别人的执行事实。
+
+        为什么返回 None 而不是 FORBIDDEN：不泄露“该 execution_id 是否存在”。
+        调用方据此统一按 NOT_FOUND 处理，避免枚举执行 id。
+        """
+        owner = str(subject or "").strip()
+        if not owner:
+            return None
+        with self._lock:
+            row = self._db.execute(
+                "SELECT subject,result_json FROM executions WHERE execution_id=?",
+                (execution_id,)).fetchone()
+            if not row or str(row[0]) != owner:
+                return None
+            return json.loads(row[1])
+
     def get_replay_manifest(self, execution_id):
         """构建不包含原始请求、身份和密钥的确定性回放索引。"""
         with self._lock:

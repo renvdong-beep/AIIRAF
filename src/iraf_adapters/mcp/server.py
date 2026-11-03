@@ -80,13 +80,41 @@ app = FastMCP("iraf-task")
 _STATE = {}
 
 
+def _principal():
+    """取当前调用方身份（http 由中间件绑定；stdio 由部署环境给出）。
+
+    身份只来自受信 transport（AGENTS 1.8）：工具参数里没有 caller/role/tenant，
+    也不允许调用方自报。缺身份即失败，不提供“匿名默认用户”。
+    """
+    from iraf_adapters.mcp import auth
+
+    current = auth.current_principal()
+    if current is not None:
+        return current
+    if "stdio_principal" not in _STATE:
+        _STATE["stdio_principal"] = auth.env_principal()
+    return _STATE["stdio_principal"]
+
+
+def _context(principal):
+    """按 Principal 构造本次调用的 AuthenticatedContext（不缓存跨调用方）。"""
+    from iraf_adapters.agentos.cli import build_context
+
+    transport = "local" if principal.token_id == "local" else "bearer"
+    return build_context(principal.subject, principal.scopes, transport)
+
+
+def _auth_error(exc) -> str:
+    return json.dumps({"status": "FAILED", "error_code": exc.code, "reason": exc.reason},
+                      ensure_ascii=False)
+
+
 def _bridge():
     """惰性构建 TaskFlow 入口（bridge = 意图解析 + 任务分派），失败即抛。"""
     if "bridge" in _STATE:
-        return _STATE["bridge"], _STATE["context"]
+        return _STATE["bridge"]
     from iraf_adapters.agentos.bridge import AgentOSBridge
-    from iraf_adapters.agentos.cli import (build_context, build_intent_provider,
-                                           resolve_subject)
+    from iraf_adapters.agentos.cli import build_intent_provider
     from iraf_adapters.agentos.dispatcher import TaskDispatcher
     from iraf_adapters.bootstrap import build_runtime_from_env
 
@@ -96,10 +124,8 @@ def _bridge():
             "IRAF 侧意图 Provider 未配置（需要 IRAF_AGENTOS_MODEL_URL + IRAF_AGENTOS_MODEL）")
     dispatcher = TaskDispatcher(build_runtime_from_env())
     bridge = AgentOSBridge(provider, dispatcher)
-    context = build_context(resolve_subject(None))
     _STATE["bridge"] = bridge
-    _STATE["context"] = context
-    return bridge, context
+    return bridge
 
 
 @app.tool()
@@ -168,10 +194,17 @@ def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800) -> str:
     不要为了"验证链路"先提交一条任务 —— 仿真场景有状态，一次成功抓取会搬走目标，
     本次会话就没有干净场景可演示了（再抓必报 distance≈0.374435m）。链路验收用装机探针。
     """
+    from iraf_adapters.mcp import auth
     from iraf_adapters.mcp import mode as mode_mod
 
+    try:
+        principal = _principal()
+        auth.require_scope(principal, "task.read")
+    except auth.AuthError as exc:
+        return _auth_error(exc)
     act = (action or "status").strip().lower()
-    st = mode_mod.state()
+    st = mode_mod.state_for(principal.subject)
+    auth.audit("tool_call", principal, tool="iraf_robot_mode", action=act)
     if act == "enter":
         granted = st.enter(int(ttl_seconds))
         extra = {"entered": True, "ttl_s": granted}
@@ -280,8 +313,17 @@ def iraf_submit_task(text: str, deadline_seconds: int = 120) -> str:
     resolved_skill / robot_mode / next_steps。失败不会被包装成成功。
     """
     from iraf_adapters.agentos.cli import build_request
+    from iraf_adapters.mcp import auth
+    from iraf_adapters.mcp import mode as mode_mod
 
-    bridge, context = _bridge()
+    try:
+        principal = _principal()
+        auth.require_scope(principal, "task.submit")
+        bridge = _bridge()
+        auth.require_resource(principal, bridge.dispatcher.resource_id)
+        context = _context(principal)
+    except auth.AuthError as exc:
+        return _auth_error(exc)
     try:
         request = build_request(text, deadline_seconds=int(deadline_seconds),
                                 controller="agentos-mcp-task")
@@ -291,27 +333,43 @@ def iraf_submit_task(text: str, deadline_seconds: int = 120) -> str:
     result = bridge.execute_intent(request, context)
     # 把模式一并回传：平台据此知道"现在处理的是机器人任务域"，也便于审计
     # （不在模式里时给一句 hint，但不阻断执行——模式是提示性约定，不是安全边界）。
-    from iraf_adapters.mcp import mode as mode_mod
-
     if isinstance(result, dict):
-        result.setdefault("robot_mode", mode_mod.state().name())
+        result.setdefault("robot_mode", mode_mod.state_for(principal.subject).name())
         result.setdefault("next_steps", _next_steps(result))
+    auth.audit("tool_call", principal, tool="iraf_submit_task",
+               execution_id=(result or {}).get("execution_id"),
+               status=(result or {}).get("status"))
     return json.dumps(result, ensure_ascii=False)
 
 
 @app.tool()
 def iraf_get_task(execution_id: str) -> str:
-    """按 execution_id 查询 IRAF 事件库里的执行事实（权威来源，不是缓存）。"""
+    """按 execution_id 查询 IRAF 事件库里的执行事实（权威来源，不是缓存）。
+
+    只返回**本调用方自己提交**的执行；别人的 execution_id 一律按 NOT_FOUND 处理，
+    不泄露存在性（2026-11-03 多租户鉴权）。
+    """
+    from iraf_adapters.mcp import auth
+
+    try:
+        principal = _principal()
+        auth.require_scope(principal, "task.read")
+    except auth.AuthError as exc:
+        return _auth_error(exc)
     store_path = os.environ.get("IRAF_EVENT_STORE") or "/var/lib/iraf/iraf-runtime.db"
     if not Path(store_path).is_file():
         return json.dumps({"status": "NOT_FOUND", "reason": "事件库不存在: %s" % store_path},
                           ensure_ascii=False)
     from iraf_core.store import SqliteExecutionStore
 
-    result = SqliteExecutionStore(store_path).get(execution_id)
+    result = SqliteExecutionStore(store_path).get_for_subject(execution_id, principal.subject)
     if result is None:
+        auth.audit("tool_call", principal, tool="iraf_get_task",
+                   execution_id=execution_id, status="NOT_FOUND")
         return json.dumps({"status": "NOT_FOUND", "execution_id": execution_id},
                           ensure_ascii=False)
+    auth.audit("tool_call", principal, tool="iraf_get_task",
+               execution_id=execution_id, status=result.get("status"))
     return json.dumps(result, ensure_ascii=False)
 
 
@@ -347,7 +405,74 @@ def main() -> int:
         except Exception as exc:  # 老版本 SDK 没有这项：显式提示，不静默
             print(f"[iraf-mcp][警告] 无法设置 allowed_hosts（{exc}）；跨机访问可能被 421 拒绝",
                   file=sys.stderr, flush=True)
-        app.run(transport="streamable-http")
+
+        # 北向鉴权（2026-11-03，fail-closed）：HTTP 形态默认必须有 token 注册表。
+        # 只有显式 IRAF_MCP_INSECURE=1 且绑定 loopback 才允许无鉴权（本机调试）。
+        from iraf_adapters.mcp.auth import AuthError, BearerAuthMiddleware, TokenRegistry
+
+        insecure = (os.environ.get("IRAF_MCP_INSECURE") or "").strip().lower() in {
+            "1", "true", "yes"}
+        token_file = Path(os.environ.get("IRAF_MCP_TOKEN_FILE")
+                          or "/etc/iraf/mcp-tokens.json")
+        registry = None
+        if token_file.is_file():
+            try:
+                registry = TokenRegistry.from_file(token_file)
+                print(f"[iraf-mcp] auth=bearer token_file={token_file} "
+                      f"tokens={len(registry.redacted())}", file=sys.stderr, flush=True)
+            except AuthError as exc:
+                print(f"[iraf-mcp][错误] {exc}", file=sys.stderr, flush=True)
+                return 2
+        elif not insecure:
+            print("[iraf-mcp][错误] HTTP 形态缺少 token 注册表：%s\n"
+                  "  必须先签发 token（python -m iraf_tools.mcp_tokens issue ...）；"
+                  "仅本机调试可设 IRAF_MCP_INSECURE=1 并绑定 127.0.0.1。"
+                  % token_file, file=sys.stderr, flush=True)
+            return 2
+        else:
+            loopback = host in {"127.0.0.1", "localhost", "::1"}
+            if not loopback:
+                print("[iraf-mcp][错误] IRAF_MCP_INSECURE=1 只允许绑定 loopback；"
+                      "对外必须配置 IRAF_MCP_TOKEN_FILE", file=sys.stderr, flush=True)
+                return 2
+            print("[iraf-mcp][警告] auth=disabled（IRAF_MCP_INSECURE=1，仅 loopback 调试）",
+                  file=sys.stderr, flush=True)
+
+        cert = (os.environ.get("IRAF_MCP_TLS_CERT") or "").strip()
+        key = (os.environ.get("IRAF_MCP_TLS_KEY") or "").strip()
+        if bool(cert) != bool(key):
+            print("[iraf-mcp][错误] IRAF_MCP_TLS_CERT 与 IRAF_MCP_TLS_KEY 必须同时给",
+                  file=sys.stderr, flush=True)
+            return 2
+        if cert and not Path(cert).is_file():
+            print(f"[iraf-mcp][错误] TLS 证书不存在：{cert}", file=sys.stderr, flush=True)
+            return 2
+        if key and not Path(key).is_file():
+            print(f"[iraf-mcp][错误] TLS 私钥不存在：{key}", file=sys.stderr, flush=True)
+            return 2
+        ca = (os.environ.get("IRAF_MCP_TLS_CA") or "").strip()
+        require_client = (os.environ.get("IRAF_MCP_TLS_REQUIRE_CLIENT") or "").strip().lower() in {
+            "1", "true", "yes"}
+
+        import uvicorn
+
+        starlette_app = app.streamable_http_app()
+        if registry is not None:
+            starlette_app.add_middleware(BearerAuthMiddleware, registry=registry)
+        ssl_kwargs = {}
+        if cert:
+            import ssl as _ssl
+
+            ssl_kwargs = {"ssl_certfile": cert, "ssl_keyfile": key}
+            if ca:
+                ssl_kwargs["ssl_ca_certs"] = ca
+                ssl_kwargs["ssl_cert_reqs"] = _ssl.CERT_REQUIRED if require_client else _ssl.CERT_NONE
+            print(f"[iraf-mcp] tls=on cert={cert} client_cert={'required' if require_client else 'optional'}",
+                  file=sys.stderr, flush=True)
+        else:
+            print("[iraf-mcp][警告] tls=off：对外部署必须由本服务或反向代理终止 TLS",
+                  file=sys.stderr, flush=True)
+        uvicorn.run(starlette_app, host=host, port=port, log_level="info", **ssl_kwargs)
         return 0
     if transport not in ("stdio", ""):
         print(f"[iraf-mcp][错误] 不认识的 IRAF_MCP_TRANSPORT={transport}"

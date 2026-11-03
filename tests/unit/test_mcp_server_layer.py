@@ -97,5 +97,53 @@ class McpLayerTest(unittest.TestCase):
         self.assertTrue(called, "模块顶层没有调用 _enter_version_dir（import 时不会切目录）")
 
 
+class McpAuthWiringTest(unittest.TestCase):
+    """北向鉴权接线（2026-11-03）：HTTP 默认 fail-closed，身份只来自 transport。"""
+
+    def setUp(self):
+        self.source = SERVER.read_text(encoding="utf-8")
+        self.tree = ast.parse(self.source)
+        self.funcs = {n.name: n for n in self.tree.body if isinstance(n, ast.FunctionDef)}
+
+    def test_http_requires_token_registry(self):
+        self.assertIn("IRAF_MCP_TOKEN_FILE", self.source)
+        self.assertIn("BearerAuthMiddleware", self.source)
+        self.assertIn("IRAF_MCP_INSECURE", self.source)
+        # 无注册表且非显式 insecure 时必须 return 2（拒绝启动），不能静默放行
+        main = self.funcs["main"]
+        returns = [n for n in ast.walk(main) if isinstance(n, ast.Return)
+                   and isinstance(n.value, ast.Constant) and n.value.value == 2]
+        self.assertGreaterEqual(len(returns), 3, "main 对缺 token/非法 TLS 等必须显式失败")
+
+    def test_tools_use_principal_and_scopes(self):
+        for name, scope in (("iraf_submit_task", "task.submit"),
+                            ("iraf_get_task", "task.read"),
+                            ("iraf_robot_mode", "task.read")):
+            func = self.funcs[name]
+            calls = [n for n in ast.walk(func) if isinstance(n, ast.Call)]
+            self.assertTrue(any(isinstance(c.func, ast.Name) and c.func.id == "_principal"
+                                for c in calls), "%s 没有取 Principal" % name)
+            self.assertTrue(any(isinstance(c.func, ast.Attribute) and c.func.attr == "require_scope"
+                                and c.args and isinstance(c.args[-1], ast.Constant)
+                                and c.args[-1].value == scope for c in calls),
+                            "%s 没有校验 scope=%s" % (name, scope))
+
+    def test_get_task_filters_by_owner(self):
+        self.assertIn("get_for_subject", self.source,
+                      "iraf_get_task 必须按调用方归属过滤，否则可读别人的执行事实")
+
+    def test_tool_signatures_have_no_identity_params(self):
+        for name in ALLOWED:
+            func = self.funcs[name]
+            params = {a.arg for a in func.args.args}
+            self.assertFalse(params & {"subject", "caller", "role", "tenant", "token"},
+                             "%s 不应接受身份参数（身份只能来自 transport）：%s"
+                             % (name, sorted(params)))
+
+    def test_mode_state_is_per_subject(self):
+        self.assertIn("state_for", self.source,
+                      "HTTP 多调用方共用一个进程，机器人开发模式必须按 subject 隔离")
+
+
 if __name__ == "__main__":
     unittest.main()

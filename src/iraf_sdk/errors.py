@@ -304,6 +304,21 @@ ERROR_SPECS: Tuple[ErrorSpec, ...] = (
         ),
     ),
     ErrorSpec(
+        code="IRAF-AUTH-NOT-CONFIGURED",
+        summary_zh="MCP HTTP 鉴权未配置（缺少 token 注册表）",
+        suggestion_zh=(
+            "按 ADR-0011 签发 token 并设置 IRAF_MCP_TOKEN_FILE（注册表必须 600、只存 SHA-256）；"
+            "仅本机调试可显式 IRAF_MCP_INSECURE=1 并绑定 127.0.0.1。服务端在缺配置时拒绝启动，"
+            "不会以无鉴权方式放行。"
+        ),
+        retryable=False,
+        retry_policy_zh="否；这是部署配置缺失，补齐配置后重启服务",
+        provenance=PROVENANCE_CODE_ONLY,
+        emitter=(
+            "src/iraf_adapters/mcp/auth.py:40",
+        ),
+    ),
+    ErrorSpec(
         code="IRAF-EXECUTION-CONFLICT",
         summary_zh="同一 execution 已处于活动状态",
         suggestion_zh=(
@@ -527,6 +542,19 @@ ERROR_SPECS: Tuple[ErrorSpec, ...] = (
         emitter=("src/iraf_adapters/remote/provider_service.py:44",),
     ),
     ErrorSpec(
+        code="IRAF-CAPABILITY-NOT-IMPLEMENTED",
+        summary_zh="Provider 声明/收到了某项能力，但后端没有实现",
+        suggestion_zh=(
+            "在 Provider 后端实现同名方法（契约词表见 iraf_sdk.provider.CAPABILITY_METHODS），"
+            "或从 RobotProfile.capabilities 中删除该能力。禁止返回伪造成功；这是装配期/实现缺口，"
+            "原地重试无效。"
+        ),
+        retryable=False,
+        retry_policy_zh="否；先补实现或收窄声明",
+        provenance=PROVENANCE_CODE_ONLY,
+        emitter=("src/iraf_sdk/provider.py:313",),
+    ),
+    ErrorSpec(
         code="IRAF-DEADLINE-MISSING",
         summary_zh="跨机能力调用缺少 deadline",
         suggestion_zh=(
@@ -610,6 +638,18 @@ ERROR_SPECS: Tuple[ErrorSpec, ...] = (
         retry_policy_zh="否；先补服务端错误码",
         provenance=PROVENANCE_CODE_ONLY,
         emitter=("src/iraf_adapters/remote/provider_backend.py:174",),
+    ),
+    ErrorSpec(
+        code="IRAF-NOT-ROBOT-TASK",
+        summary_zh="请求被判定为与机器人无关（非机器人任务）",
+        suggestion_zh=(
+            "IRAF 只接管机器人语义；本请求被判为与机器人无关。请改发机器人技能请求，"
+            "或用工程工具（engineering.* / iraf_get_task 等）查询状态。"
+        ),
+        retryable=False,
+        retry_policy_zh="否（非机器人任务，重试无意义）",
+        provenance=PROVENANCE_IDL_AND_CODE,
+        emitter=("src/iraf_adapters/model/openai_intent.py:31",),
     ),
 )
 
