@@ -54,9 +54,13 @@ from .client import (
 try:
     from importlib.metadata import PackageNotFoundError as _PNF, version as _pkg_version
 
-    try:
-        __version__ = _pkg_version("intewell-iraf")
-    except _PNF:
+    for _dist_name in ("intewell-iraf", "iraf-sdk", "iraf_sdk"):
+        try:
+            __version__ = _pkg_version(_dist_name)
+            break
+        except _PNF:
+            continue
+    else:
         # 直接从源码树运行（未 pip install）时，回到唯一来源 pyproject.toml 读，
         # 而不是复制一个版本号字面量（否则又会与 pyproject 分叉）。
         __version__ = "0.0.0+dev"

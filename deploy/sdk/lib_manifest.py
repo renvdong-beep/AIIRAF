@@ -39,6 +39,7 @@
 from __future__ import annotations
 
 import base64
+import ast
 import gzip
 import hashlib
 import io
@@ -299,6 +300,46 @@ def read_declared_version(repo_root: Path, version_ref: str) -> str:
     )
 
 
+def read_optional_dependencies(repo_root: Path, wanted=None) -> dict:
+    """从 pyproject 的 `[project.optional-dependencies]` 读可选依赖（打包元数据用）。
+
+    只解析该段的 `name = ["pkg>=x", ...]` 行（不引入 tomllib/第三方解析器）；
+    取不到/格式非法即显式失败，避免 wheel METADATA 与 pyproject 静默分叉。
+    """
+    path = repo_root / "pyproject.toml"
+    if not path.is_file():
+        raise ManifestError("pyproject.toml 不存在，无法读取可选依赖", ExitCode.PRECHECK)
+    section = None
+    result = {}
+    for raw_line in _read_text(path).splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip()
+            continue
+        if section != "project.optional-dependencies":
+            continue
+        name, sep, value = line.partition("=")
+        if not sep:
+            raise ManifestError(
+                f"optional-dependencies 行格式非法：{raw_line!r}", ExitCode.PRECHECK)
+        name = name.strip()
+        if wanted is not None and name not in wanted:
+            continue
+        try:
+            parsed = ast.literal_eval(value.strip())
+        except (ValueError, SyntaxError) as exc:
+            raise ManifestError(
+                f"optional-dependencies.{name} 不是合法列表：{value!r}", ExitCode.PRECHECK
+            ) from exc
+        if not isinstance(parsed, list) or not all(isinstance(item, str) for item in parsed):
+            raise ManifestError(
+                f"optional-dependencies.{name} 必须是字符串列表", ExitCode.PRECHECK)
+        result[name] = list(parsed)
+    return result
+
+
 def git_state(repo_root: Path) -> dict:
     """产物必须可追溯到提交：读不到 git 状态即失败，不写 `unknown`。"""
 
@@ -366,6 +407,7 @@ def build_wheel(
     summary: str,
     requires_python: str,
     license_text: str = "Proprietary",
+    extras=None,
 ) -> dict:
     """手工组装纯 Python wheel（PEP 427）。
 
@@ -380,17 +422,20 @@ def build_wheel(
     normalized = normalize_dist_name(dist_name)
     source_dir = repo_root / "src" / package
     dist_info = f"{normalized}-{version}.dist-info"
-    metadata = "\n".join(
-        [
-            "Metadata-Version: 2.1",
-            f"Name: {dist_name}",
-            f"Version: {version}",
-            f"Summary: {summary}",
-            f"License: {license_text}",
-            f"Requires-Python: {requires_python}",
-            "",
-        ]
-    ).encode("utf-8")
+    metadata_lines = [
+        "Metadata-Version: 2.1",
+        f"Name: {dist_name}",
+        f"Version: {version}",
+        f"Summary: {summary}",
+        f"License: {license_text}",
+        f"Requires-Python: {requires_python}",
+    ]
+    # 可选依赖：必须带 `extra == "..."` 标记，基础安装仍然是零第三方依赖。
+    for extra_name, specs in (extras or {}).items():
+        metadata_lines.append(f"Provides-Extra: {extra_name}")
+        for spec in specs:
+            metadata_lines.append(f'Requires-Dist: {spec}; extra == "{extra_name}"')
+    metadata = ("\n".join(metadata_lines) + "\n").encode("utf-8")
     wheel_meta = "\n".join(
         [
             "Wheel-Version: 1.0",
@@ -474,10 +519,11 @@ def validate_wheel(
                 if not re.search(rf"^Version: {re.escape(version)}$", text, re.MULTILINE):
                     violations.append(f"METADATA 的 Version 不是 {version}")
                 requires = [l for l in text.splitlines() if l.startswith("Requires-Dist:")]
-                if requires:
+                mandatory = [line for line in requires if "extra ==" not in line]
+                if mandatory:
                     violations.append(
-                        f"SDK wheel 声明了第三方依赖：{requires}"
-                        "（契约：SDK 只依赖标准库，目标端才可独立安装）"
+                        f"SDK wheel 声明了基础第三方依赖：{mandatory}"
+                        "（契约：基础安装只依赖标准库；可选依赖必须带 extra 标记）"
                     )
             if f"{dist_info}/RECORD" in names:
                 recorded = set()
@@ -1178,6 +1224,11 @@ def cmd_wheel(options: dict) -> int:
     repo_root, matrix_path, out_dir = _paths(options)
     plan = _preflight(repo_root, matrix_path, options)
     matrix, target, version = plan["matrix"], plan["target"], plan["version"]
+    extras = read_optional_dependencies(repo_root, wanted=("mcp", "provider"))
+    if not extras:
+        raise ManifestError(
+            "pyproject 缺少 [project.optional-dependencies] mcp/provider，"
+            "交付 wheel 必须声明这两个可选依赖", ExitCode.PRECHECK)
     built = build_wheel(
         repo_root,
         out_dir,
@@ -1186,6 +1237,7 @@ def cmd_wheel(options: dict) -> int:
         package=matrix["sdk"]["module"],
         summary="IRAF Python SDK (pure Python, cross-arch)",
         requires_python=">=3.9",
+        extras=extras,
     )
     violations = validate_wheel(
         built["path"],
@@ -1200,7 +1252,7 @@ def cmd_wheel(options: dict) -> int:
     info(f"wheel 产出：{display_path(built['path'], repo_root)}"
          f"（{len(built['files'])} 个成员）")
     info(f"  sha256={digest}")
-    info("  校验：文件名/版本/标签、METADATA、RECORD 覆盖、零第三方依赖 —— 通过")
+    info("  校验：文件名/版本/标签、METADATA、RECORD 覆盖、零基础第三方依赖 —— 通过")
     info(f"  目标端标签（声明，未验证）：{target['platform_tag']} / {target['python_tag']}"
          "（SDK 为 py3-none-any，与架构无关）")
     return ExitCode.OK

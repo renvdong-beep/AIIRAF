@@ -74,7 +74,8 @@ class Fixture(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def build_wheel(self, out: Path, version: str = None, dist_name: str = "iraf-sdk"):
+    def build_wheel(self, out: Path, version: str = None, dist_name: str = "iraf-sdk",
+                    extras=None):
         # 版本单一来源：缺省取 pyproject 的声明值，避免测试里再写一份版本号
         version = version or lib_manifest.read_declared_version(
             REPO_ROOT, "pyproject.toml#project.version")
@@ -86,6 +87,7 @@ class Fixture(unittest.TestCase):
             package="iraf_sdk",
             summary="test",
             requires_python=">=3.9",
+            extras=extras,
         )
 
     def build_bundle(self, out: Path, version: str = None):
@@ -240,6 +242,23 @@ class WheelTests(Fixture):
                     continue
                 self.assertIn(name, record, f"RECORD 未覆盖 {name}")
             self.assertIn("sha256=", record)
+
+    def test_wheel_optional_extras_are_declared_with_markers(self):
+        """可选依赖（mcp/provider）必须进 METADATA，但只能带 extra 标记。"""
+        extras = lib_manifest.read_optional_dependencies(REPO_ROOT, wanted=("mcp", "provider"))
+        self.assertEqual(set(extras), {"mcp", "provider"})
+        built = self.build_wheel(self.root / "out", extras=extras)
+        with zipfile.ZipFile(built["path"]) as handle:
+            text = handle.read("iraf_sdk-%s.dist-info/METADATA" % DECLARED_VERSION).decode()
+        self.assertEqual([], lib_manifest.validate_wheel(
+            built["path"], dist_name="iraf-sdk", version=DECLARED_VERSION,
+            package="iraf_sdk", required_members=built["required_members"]))
+        self.assertIn("Provides-Extra: mcp", text)
+        self.assertIn("Provides-Extra: provider", text)
+        requires = [line for line in text.splitlines() if line.startswith("Requires-Dist:")]
+        self.assertTrue(requires)
+        self.assertTrue(all('extra == "' in line for line in requires), requires)
+        self.assertTrue(any("mcp>=1.26" in line for line in requires), requires)
 
     def test_wheel_is_reproducible_bit_identical(self):
         first = self.build_wheel(self.root / "out1")["path"]
