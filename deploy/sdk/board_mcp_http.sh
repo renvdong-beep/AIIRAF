@@ -17,6 +17,18 @@ VERSION_DIR="${IRAF_VERSION_DIR:-/opt/iraf-sdk/current}"
 LOG="${IRAF_MCP_HTTP_LOG:-/var/log/iraf/mcp-http.log}"
 PORT="${IRAF_MCP_PORT:-8765}"
 HOST="${IRAF_MCP_HOST_BIND:-0.0.0.0}"
+TOKEN_FILE="${IRAF_MCP_TOKEN_FILE:-/etc/iraf/mcp-tokens.json}"
+# 跨机访问必须显式给出允许的 Host（MCP SDK 默认只认 loopback，否则 421）。
+# 不在这里猜板卡 IP（AGENTS 5.3）：缺省保持 loopback，跨机由调用方 export。
+ALLOWED_HOSTS="${IRAF_MCP_ALLOWED_HOSTS:-127.0.0.1:${PORT},localhost:${PORT}}"
+if [ "$HOST" != "127.0.0.1" ] && [ "$HOST" != "localhost" ]; then
+  case "$ALLOWED_HOSTS" in
+    "127.0.0.1:${PORT},localhost:${PORT}"|"localhost:${PORT},127.0.0.1:${PORT}")
+      echo "[警告] HOST=$HOST 但 IRAF_MCP_ALLOWED_HOSTS 只有 loopback：" >&2
+      echo "       跨机请求会被 421 拒绝；请 export IRAF_MCP_ALLOWED_HOSTS=127.0.0.1:$PORT,<板卡IP>:$PORT" >&2
+      ;;
+  esac
+fi
 
 if [ "${1:-}" = "--stop" ]; then
   pkill -f "iraf_adapters.mcp.server" || true
@@ -33,6 +45,13 @@ mkdir -p "$(dirname "$LOG")"
 IRAF_MCP_TRANSPORT=http \
 IRAF_MCP_HOST="$HOST" \
 IRAF_MCP_PORT="$PORT" \
+IRAF_MCP_ALLOWED_HOSTS="$ALLOWED_HOSTS" \
+IRAF_MCP_TOKEN_FILE="$TOKEN_FILE" \
+IRAF_MCP_TLS_CERT="${IRAF_MCP_TLS_CERT:-}" \
+IRAF_MCP_TLS_KEY="${IRAF_MCP_TLS_KEY:-}" \
+IRAF_MCP_TLS_CA="${IRAF_MCP_TLS_CA:-}" \
+IRAF_MCP_TLS_REQUIRE_CLIENT="${IRAF_MCP_TLS_REQUIRE_CLIENT:-}" \
+IRAF_MCP_AUDIT_LOG="${IRAF_MCP_AUDIT_LOG:-}" \
 IRAF_ENV_FILE="$ENV_FILE" \
 PYTHONPATH="$VERSION_DIR/lib:$VERSION_DIR/src" \
 IRAF_AGENTOS_MODEL_URL="${IRAF_AGENTOS_MODEL_URL:-http://192.168.100.89:3000/v1}" \
