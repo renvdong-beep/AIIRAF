@@ -38,7 +38,7 @@ build/sdk/iraf_sdk-0.4.1-py3-none-any.whl
   元数据：Provides-Extra: mcp / provider（基础安装零第三方依赖）
 
 build/sdk/iraf-runtime-0.4.1-aarch64.tar.gz
-  sha256 = 723e99aba586494f03c19fabda39bf9122df3a4019f8facdf71e42eae19263d1
+  sha256 = b5513200a22aca09d16e8682c1f5080c9f86971b7d520b331014933445ff9f68
 ```
 
 重新构建（改了 `src/iraf_sdk/**` 后必须重建，否则交付的是旧代码）：
@@ -198,6 +198,36 @@ systemctl restart iraf-mcp-http
 - 单元文件模板：`deploy/sdk/units/iraf-mcp-http.service.tmpl`；
   轮换 token：`python3 -m iraf_tools.mcp_tokens ... revoke/issue` 后服务按文件签名热加载，
   不需要重启。
+
+### 2.5 AgentOS worker 自动绑定（0.4.1+）
+
+chat 的 agent 跑在 `agentos-worker-*` 容器里，home 是宿主
+`/var/lib/agentos-shared/.intewell` 的 bind mount；只配宿主 dashboard 不够。
+`board_upgrade.sh` 在 edge-intel 安装完成后会自动调用：
+
+```bash
+bash /opt/iraf-sdk/current/deploy/sdk/board_agentos_mcp_bind.sh --apply \
+  --url http://<板卡IP>:8765/mcp
+```
+
+它做四件事：
+1. 从 `docker inspect` 发现 worker 与共享 home（不硬编码路径）；
+2. 签发/复用 `agentos-worker` token（`/etc/iraf/mcp-agentos.token`，600）；
+3. 把 `mcp_servers.iraf-task` **合并**进共享 `config.yaml`（备份 + 原子写 + 幂等，
+   保留其它 server）；
+4. 重启 worker，让 AgentOS 重新做 MCP 发现；worker 缺 `mcp` 包时显式告警。
+
+运维命令：
+
+```bash
+# 只读状态
+bash /opt/iraf-sdk/current/deploy/sdk/board_agentos_mcp_bind.sh --status
+# 解除绑定（只删 iraf-task 段）
+bash /opt/iraf-sdk/current/deploy/sdk/board_agentos_mcp_bind.sh --revert
+```
+
+注意：worker 镜像必须自带 `mcp>=1.26,<2`；这是厂商镜像职责，安装器只检查并告警，
+不会私自往容器里 pip 安装。
 
 ## 3. 上位机：安装与最小可运行示例
 

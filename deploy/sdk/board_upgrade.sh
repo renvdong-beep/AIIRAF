@@ -173,6 +173,9 @@ if [ "${CURRENT}" = "none" ] || [ -z "${CURRENT}" ]; then
   log "③ 板上无已装版本，跳过卸载"
 else
   log "③ 受控卸载 ${CURRENT}"
+  # 先停本角色的常驻进程：卸载只删文件，不会替你停服务；不停会占着 8765/50051，
+  # 下一次安装预检会报“端口冲突”（2026-11-04 实测）。
+  run_remote "systemctl stop iraf-mcp-http iraf-runtime-grpc 2>/dev/null || true; pkill -f 'iraf_adapters.mcp.server' 2>/dev/null || true; sleep 1; true" >/dev/null 2>&1 || true
   # 注意：board_deploy.sh 的整体退出码是**残留核验**的结果，而卸载后唯一预期残留是
   # /etc/iraf/agentos.key（模型网关 key，非安装器产物，按约定保留）⇒ 整体 rc=4 是正常语义。
   # 所以这里不看 rc，看**事实**：current 链接是否真的没了。
@@ -197,6 +200,11 @@ RC=${PIPESTATUS[0]}
 if [ "$PROFILE" = "edge-intel" ]; then
   log "④.1 启用 iraf-mcp-http.service（首次签发 token → 600 文件）"
   run_remote "bash /opt/iraf-sdk/current/deploy/sdk/board_mcp_enable.sh" 2>&1 | tail -8
+
+  log "④.2 绑定 AgentOS worker 的 MCP 配置（共享 config.yaml + 重启 worker）"
+  if ! run_remote "bash /opt/iraf-sdk/current/deploy/sdk/board_agentos_mcp_bind.sh --apply --url http://${IRAF_BOARD_HOST}:8765/mcp" 2>&1 | tail -12; then
+    log "   [警告] AgentOS MCP 绑定未完成（chat 可能仍看不到工具）；见上面的中文原因"
+  fi
 else
   log "④.1 非 edge-intel 角色：跳过 MCP HTTP 服务启用"
 fi
