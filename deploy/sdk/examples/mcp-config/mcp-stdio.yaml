@@ -1,0 +1,21 @@
+# 上位机 harness 的 MCP 配置（stdio，仅同机且已安装 IRAF runtime）
+#
+# stdio 没有网络鉴权：身份来自 IRAF_RUNTIME_SUBJECT（进程边界即信任边界）。
+# 跨机上位机不能用这一份，请用 mcp-http.yaml。
+
+mcp_servers:
+  iraf-task:
+    command: /usr/bin/python3
+    args:
+      - "-m"
+      - "iraf_adapters.mcp.server"
+    env:
+      PYTHONPATH: "/opt/iraf-sdk/current/lib:/opt/iraf-sdk/current/src"
+      IRAF_ENV_FILE: "/etc/iraf/edge-intel.env"
+      IRAF_RUNTIME_SUBJECT: "edge-runtime"
+      IRAF_PROVIDER_TOKEN: "REPLACE_WITH_PROVIDER_TOKEN"
+      IRAF_AGENTOS_MODEL_URL: "https://MODEL_GATEWAY/v1"
+      IRAF_AGENTOS_MODEL: "MODEL_NAME"
+      IRAF_AGENTOS_KEY_FILE: "/etc/iraf/agentos.key"
+    enabled: true
+    timeout: 180

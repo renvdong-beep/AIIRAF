@@ -1,0 +1,12 @@
+{
+  "_comment": "Claude Desktop / 通用 mcpServers 配置；替换 EDGE_HOST 与 TOKEN。若宿主支持环境变量展开，可改为 ${IRAF_MCP_URL} / ${IRAF_MCP_TOKEN}。",
+  "mcpServers": {
+    "iraf-task": {
+      "type": "http",
+      "url": "https://EDGE_HOST:8765/mcp",
+      "headers": {
+        "Authorization": "Bearer TOKEN"
+      }
+    }
+  }
+}

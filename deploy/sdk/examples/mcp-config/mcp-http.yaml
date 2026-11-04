@@ -1,0 +1,17 @@
+# 上位机 harness 的 MCP 配置（HTTP / streamable-http）
+#
+# 复制到你的 harness 配置里，替换 EDGE_HOST 与 TOKEN。
+# 字段名按宿主可能略有差异：常见别名是 type / transport / protocol；
+# 只要保证"URL + Authorization 头 + enabled"三件事即可。
+#
+# 注意：TOKEN 是边缘侧签发的 Bearer token（scope 至少 task.submit、task.read）。
+# 不要把 token 提交进 git；建议用宿主的环境变量展开或 600 权限的 include 文件。
+
+mcp_servers:
+  iraf-task:
+    transport: streamable-http       # 有些宿主写 type: http / streamable-http
+    url: "https://EDGE_HOST:8765/mcp"
+    headers:
+      Authorization: "Bearer TOKEN"
+    enabled: true
+    timeout: 180                     # 秒；单次任务建议 >=120
