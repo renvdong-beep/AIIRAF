@@ -32,6 +32,8 @@ VERSION=""
 TARGET=""
 VALUES=""
 PROVIDER_ENDPOINT=""
+INTENT_MODEL_URL=""
+INTENT_MODEL_NAME=""
 KEEP_SECRETS="1"
 SKIP_BUILD="0"
 SKIP_DIAG="0"
@@ -48,6 +50,8 @@ while [ "$#" -gt 0 ]; do
     --target) TARGET="${2:?}"; shift ;;
     --values) VALUES="${2:?}"; shift ;;
     --provider-endpoint) PROVIDER_ENDPOINT="${2:?}"; shift ;;
+    --intent-model-url) INTENT_MODEL_URL="${2:?}"; shift ;;
+    --intent-model-name) INTENT_MODEL_NAME="${2:?}"; shift ;;
     --no-secrets) KEEP_SECRETS="0" ;;
     --skip-build) SKIP_BUILD="1" ;;
     --skip-diag) SKIP_DIAG="1" ;;
@@ -150,6 +154,8 @@ trap cleanup EXIT
 COMMON=(--profile "$PROFILE" --sdk-wheel "$WHEEL" --runtime-bundle "$BUNDLE"
         --wheelhouse "$WHEELHOUSE" --allow-unverified --values "$VALUES")
 [ -n "$PROVIDER_ENDPOINT" ] && COMMON+=(--env-set "PROVIDER_ENDPOINT=${PROVIDER_ENDPOINT}")
+[ -n "$INTENT_MODEL_URL" ] && COMMON+=(--env-set "INTENT_MODEL_URL=${INTENT_MODEL_URL}")
+[ -n "$INTENT_MODEL_NAME" ] && COMMON+=(--env-set "INTENT_MODEL_NAME=${INTENT_MODEL_NAME}")
 # 北向 MCP 的 Host 允许列表是机器相关值：板卡 IP 只能在部署期给（AGENTS 5.3）。
 COMMON+=(--env-set "MCP_ALLOWED_HOSTS=127.0.0.1:8765,localhost:8765,${IRAF_BOARD_HOST}:8765")
 [ "${#SECRETS_ARG[@]}" -gt 0 ] && COMMON+=("${SECRETS_ARG[@]}")
