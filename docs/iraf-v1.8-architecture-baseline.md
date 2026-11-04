@@ -2,8 +2,8 @@
 
 ## 图纸
 
-- `iraf-refined-architecture.png`：总体架构图，说明 AgentOS、IRAF 控制面、Provider 与仿真/真机后端的模块边界。
-- `iraf-detailed-interface-security.png`：详细接口/安全架构图，说明 Skill Query、Tool/Skill Manager、公共契约、执行状态、幂等、租约和 SafetyEvent。
+- `iraf-refined-architecture.png`：总体架构图（由 `agentos机器人应用框架-更新版.dot` 生成），说明 AgentOS worker、IRAF 智控域/运控域、MCP 北向鉴权、Provider 与仿真/真机后端的模块边界。
+- `iraf-detailed-interface-security.png`：详细接口/安全架构图（由 `IRAF详细技术架构图.dot` 生成），说明 MCP 鉴权、TaskFlow、Skill Runtime、Policy Gateway、ControlAuthority 的 lease/fencing/幂等、SafetyEvent 隔离与证据链。
 
 ## 工程边界
 
@@ -41,21 +41,20 @@ dot -Tsvg docs/diagrams/iraf-unitree-scene-stack.dot -o docs/diagrams/iraf-unitr
 
 图内所有结论均为开发端（x86_64）可复现的部分；目标端真实安装、`/health`、AgentOS 联通为 **DEFERRED（延后，不是失败）**，因为边缘板卡不在场。
 
-## 图纸欠债登记（M1.7 遗留，未完成）
+## 根级两张总图的源文件（2026-11-04 补齐）
 
-根级两张总图只有 SVG、**没有 `.dot` 源**，因此无法从仓库内自动重绘或审查其结构：
+根级两张总图已补 `.dot` 源，不再属于“只能手工改 SVG”的欠债。图为 v0.4.1 口径
+（MCP Bearer 鉴权、AgentOS worker 共享 config、ProviderKit、智控域/运控域分离）：
 
-| 文件 | 体积 | 欠债 |
+| 图 | 源文件 | 生成命令 |
 |---|---|---|
-| `agentos机器人应用框架-更新版.svg` | 11 338 B | 无源文件；改图只能手工编辑 SVG |
-| `IRAF详细技术架构图.svg` | 16 918 B | 无源文件；改图只能手工编辑 SVG |
+| 总体架构 | `agentos机器人应用框架-更新版.dot` | `dot -Tsvg ... -o agentos机器人应用框架-更新版.svg`；`dot -Tpng -Gdpi=140 ... -o iraf-refined-architecture.png` |
+| 详细技术架构 | `IRAF详细技术架构图.dot` | `dot -Tsvg ... -o IRAF详细技术架构图.svg`；`dot -Tpng -Gdpi=140 ... -o iraf-detailed-interface-security.png` |
 
-补源计划（尚未执行，不在此处声称已完成）：
+两张图与 `docs/mcp-binding.md`、`docs/adr/0011-mcp-northbound-auth.md`、
+`docs/upper-sdk-guide.md`、`docs/provider-sdk-guide.md` 同口径；图内所有执行结论仍为
+`simulation=true`，不构成真机/实时能力证据。
 
-1. 由架构负责人确认两张总图当前语义基线，避免"照抄 SVG 反推"引入与正文不一致的中间版本；
-2. 在新战役中以 `docs/diagrams/*.dot` 的统一风格重绘，产出 `.dot` + `.svg` 双件，并把对应章节（`docs/iraf-engineering-design.md` §2、§3）的引用改指向新源；
-3. 替换完成后移除根级仅 SVG 的两张文件，或保留 SVG 并在旁注注明"由 `<name>.dot` 生成"；
-4. 在 CI 中加一条门禁：`docs/diagrams/` 下每个 `.svg` 必须有同名 `.dot`（本战役新增的两张已满足，历史两张在补齐前不纳入门禁，避免恒红）。
-
-同时登记：`docs/diagrams/iraf-current-implementation-overview.{dot,svg,png}` 与 `iraf-minimal-chain.{dot,svg,png}` 已有 `.dot` 源，不属本欠债。
+`docs/diagrams/iraf-current-implementation-overview.{dot,svg,png}` 与
+`iraf-minimal-chain.{dot,svg,png}` 已有 `.dot` 源，不属本欠债。
 

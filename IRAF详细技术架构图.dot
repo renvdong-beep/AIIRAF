@@ -1,0 +1,127 @@
+// IRAF 详细技术架构（v0.4.1，2026-11-04）
+// 由 dot -Tsvg/-Tpng 生成 IRAF详细技术架构图.svg / iraf-detailed-interface-security.png
+// 重点：北向 MCP 鉴权、TaskFlow→Skill→Policy→Authority→Provider 的不可旁路链、
+//       lease/fencing/幂等、SafetyEvent 隔离；v1 仿真口径。
+digraph IRAF_Detailed {
+  graph [rankdir=LR, newrank=true, nodesep=0.22, ranksep=0.42,
+         fontname="Noto Sans CJK SC", fontsize=12, bgcolor="#f7fafc",
+         label="IRAF 详细技术架构 v0.4.1（2026-11-04）｜任务级 MCP · 不可旁路执行链",
+         labelloc=t, fontsize=19, pad=0.2, compound=true];
+  node  [shape=box, style="rounded,filled", fontname="Noto Sans CJK SC",
+         fontsize=10, color="#2b5d78", fillcolor="#ffffff", penwidth=1.2, margin="0.10,0.05"];
+  edge  [fontname="Noto Sans CJK SC", fontsize=8, color="#496779",
+         arrowsize=0.65, penwidth=1.1];
+
+  subgraph cluster_access {
+    label="① 接入与身份（transport 是唯一身份来源）"; fontsize=12; color="#22a6b3"; style="rounded,dashed";
+    upper [label="上位机 harness\nBearer upper-sdk", fillcolor="#e7f6f8"];
+    agentos [label="AgentOS worker\nBearer agentos-worker", fillcolor="#e7f6f8"];
+    cli [label="CLI / 语音\nstdio: IRAF_RUNTIME_SUBJECT", fillcolor="#e7f6f8"];
+    registry [label="token 注册表\n/etc/iraf/mcp-tokens.json\n只存 SHA-256 · 600 · 热撤销", shape=cylinder, fillcolor="#f1eaf7"];
+    middleware [label="BearerAuthMiddleware\nscope: task.submit / task.read\nresources 绑定 · 审计 JSONL", fillcolor="#fff1cf"];
+  }
+
+  subgraph cluster_north {
+    label="② 北向 MCP（任务级，5 个工具）"; fontsize=12; color="#357258"; style="rounded,dashed";
+    mcp [label="FastMCP server\niraf-mcp-http.service :8765\nstdio / streamable-http", fillcolor="#e9f5ef"];
+    tools [label="enter / exit / robot_mode\nsubmit_task / get_task", fillcolor="#e9f5ef"];
+    mode [label="robot_mode\n按 subject 分桶（进程内）", fillcolor="#e9f5ef"];
+    owner [label="get_task\n按执行归属过滤\n（跨 subject → NOT_FOUND）", fillcolor="#e9f5ef"];
+    res [label="resources / prompts\nskills catalog · examples\nrouting policy", fillcolor="#e9f5ef"];
+  }
+
+  subgraph cluster_flow {
+    label="③ TaskFlow / 意图与契约"; fontsize=12; color="#2b5d78"; style="rounded,dashed";
+    bridge [label="AgentOSBridge\n受约束意图解析", fillcolor="#e7f1fa"];
+    model [label="模型网关\nIRAF_AGENTOS_MODEL_URL\n+ key（600）", fillcolor="#fff7e6"];
+    dispatcher [label="TaskDispatcher\nrequest/correlation/idempotency\ndeadline", fillcolor="#e7f1fa"];
+    contracts [label="Skill 契约\ninput/output schema\nintents / triggers", shape=note, fillcolor="#fffbe6"];
+  }
+
+  subgraph cluster_runtime {
+    label="④ Skill Runtime / Manager"; fontsize=12; color="#357258"; style="rounded,dashed";
+    manager [label="Skill Manager\n版本选择 · 能力依赖\n前置/成功条件", fillcolor="#e9f5ef"];
+    runtime [label="Skill Runtime\n校验 · 执行 · 超时\n取消 · 恢复 · 证据", fillcolor="#e9f5ef"];
+    reg [label="Skill Registry\nskills/<name>/skill.yaml", fillcolor="#e9f5ef"];
+  }
+
+  subgraph cluster_policy {
+    label="⑤ Policy Gateway / 安全边界"; fontsize=12; color="#b27612"; style="rounded,dashed";
+    ctx [label="AuthenticatedContext\nsubject · scopes · transport", fillcolor="#fff1cf"];
+    profile [label="RobotProfile\n已签名 · joints · limits\ncapabilities", fillcolor="#fff1cf"];
+    safety [label="SafetyPolicy\nallowed_skills · max_duration\nsimulation_only", fillcolor="#fff1cf"];
+    sgate [label="SafetyEvent\n→ QUARANTINED\n复位前不释放", fillcolor="#fff0ef"];
+  }
+
+  subgraph cluster_auth {
+    label="⑥ ControlAuthority / 执行控制"; fontsize=12; color="#704889"; style="rounded,dashed";
+    authority [label="ControlAuthority\nexecution_id · lease TTL\n单控制源", fillcolor="#f1eaf7"];
+    fence [label="fencing token\n单调 · 旧 token 拒绝\n终态拒绝新控制", fillcolor="#f1eaf7"];
+    idem [label="idempotency store\n同键同摘要 → 既有结果", shape=cylinder, fillcolor="#f1eaf7"];
+  }
+
+  subgraph cluster_cap {
+    label="⑦ 能力执行（南向 provider.proto）"; fontsize=12; color="#29717b"; style="rounded,dashed";
+    backend [label="RemoteProviderBackend\n/local MujocoBackend", fillcolor="#eaf3f5"];
+    invoke [label="CapabilityProviderService\nHealth / Invoke / Cancel\nLeaseEnvelope", fillcolor="#eaf3f5"];
+    x86 [label="x86 MuJoCo Provider\n:50052 / :50053\nsimulation=true", fillcolor="#eaf3f5"];
+    ext [label="客户 ProviderKit\n自有 MuJoCo / 控制器\n同 lease/fencing 契约", fillcolor="#fff7e6"];
+    rtp [label="运控域实时 Provider\nL0/L1（v1 不验收）", fillcolor="#fff0ef"];
+  }
+
+  subgraph cluster_evidence {
+    label="⑧ 证据与可观测"; fontsize=12; color="#6a4c86"; style="rounded,dashed";
+    store [label="SqliteExecutionStore\nexecution 事实 · 事件序列", shape=cylinder, fillcolor="#f1eaf7"];
+    audit [label="mcp-audit.jsonl\nauth_ok / auth_failed / tool_call", shape=cylinder, fillcolor="#f1eaf7"];
+    logs [label="systemd journal\nprovider / runtime 日志", shape=cylinder, fillcolor="#f1eaf7"];
+  }
+
+  // 接入
+  upper -> middleware [label="Authorization: Bearer"];
+  agentos -> middleware [label="Authorization: Bearer"];
+  cli -> mcp [label="stdio", style=dashed];
+  registry -> middleware [label="校验 hash / expiry / scope", style=dashed];
+  middleware -> mcp [label="Principal(subject,scopes,resources)"];
+
+  // 北向
+  mcp -> tools;
+  tools -> bridge [label="submit(text)"];
+  tools -> mode [style=dashed];
+  tools -> owner [style=dashed];
+  tools -> res [style=dashed];
+
+  // 意图与任务
+  bridge -> model [label="parse"];
+  bridge -> contracts [style=dashed];
+  bridge -> dispatcher [label="canonical task"];
+  dispatcher -> manager [label="skill + params"];
+
+  // Runtime
+  manager -> reg [label="查契约/版本"];
+  manager -> runtime [label="选中的 skill"];
+  runtime -> ctx [label="policy check"];
+  ctx -> profile;
+  ctx -> safety;
+  safety -> sgate [label="拒绝/安全事件", style=dashed];
+  runtime -> authority [label="acquire lease"];
+  authority -> fence;
+  authority -> idem [style=dashed];
+  runtime -> backend [label="能力调用"];
+  backend -> invoke [label="gRPC + token"];
+  invoke -> x86 [label="LeaseEnvelope"];
+  invoke -> ext [label="同一契约"];
+  invoke -> rtp [label="独立安全边界", style=dashed];
+
+  // 证据
+  runtime -> store [label="执行事实", style=dashed];
+  mcp -> store [label="get_task 读取", style=dashed];
+  middleware -> audit [style=dashed];
+
+  // 注记
+  boundary [shape=note, fillcolor="#fffbe6", color="#b27612", fontsize=9,
+    label="不可旁路：任何外部请求必须\nTaskFlow → Skill Runtime → Policy → Provider。\ntoken 只证明调用方身份，\n不放大 Profile/SafetyPolicy 的安全上限。"];
+  safety -> boundary [style=invis];
+  sim [shape=note, fillcolor="#eef7ee", color="#357258", fontsize=9,
+    label="v1 范围：MuJoCo 仿真证据（simulation=true）。\n不包含 HIL、真机实时性、现场总线验收。"];
+  x86 -> sim [style=invis];
+}

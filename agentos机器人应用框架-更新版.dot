@@ -1,0 +1,87 @@
+// IRAF 总体架构（v0.4.1，2026-11-04）
+// 由 dot -Tsvg/-Tpng 生成 agentos机器人应用框架-更新版.svg / iraf-refined-architecture.png
+// 口径：v1 = 仿真范围（simulation=true），不构成真机/实时能力证据。
+digraph IRAF_Overall {
+  graph [rankdir=LR, newrank=true, splines=spline, nodesep=0.30, ranksep=0.55,
+         fontname="Noto Sans CJK SC", fontsize=13, bgcolor="#f7fafc",
+         label="IRAF 总体架构 v0.4.1（2026-11-04）｜simulation=true",
+         labelloc=t, fontsize=19, pad=0.25, compound=true];
+  node  [shape=box, style="rounded,filled", fontname="Noto Sans CJK SC",
+         fontsize=11, color="#2b5d78", fillcolor="#ffffff", penwidth=1.3, margin="0.12,0.06"];
+  edge  [fontname="Noto Sans CJK SC", fontsize=9, color="#496779",
+         arrowsize=0.7, penwidth=1.2];
+
+  subgraph cluster_clients {
+    label="调用方 / 语义层"; fontsize=14; color="#22a6b3"; style="rounded,dashed";
+    upper [label="上位机 harness\n(自有 MuJoCo / UI)", fillcolor="#e7f6f8"];
+    chat  [label="AgentOS chat\n(worker 容器内的 LLM agent)", fillcolor="#e7f6f8"];
+    cli   [label="IRAF CLI / 语音前端\n(board_text_task / voice)", fillcolor="#e7f6f8"];
+  }
+
+  subgraph cluster_agentos {
+    label="AgentOS 平台（第三方；IRAF 只对接，不修改其代码）"; fontsize=13;
+    color="#704889"; style="rounded,dashed";
+    dash   [label="dashboard :9119\n会话 / 模型网关", fillcolor="#f3ecf8"];
+    worker [label="agentos-worker-1/2\nmcp>=1.26,<2 + config.yaml", fillcolor="#f3ecf8"];
+    shared [label="共享内容层\n/var/lib/agentos-shared/.intewell/\nconfig.yaml → mcp_servers.iraf-task\nAuthorization: Bearer <agentos-worker>",
+            fillcolor="#f3ecf8", fontsize=10];
+  }
+
+  subgraph cluster_edge_intel {
+    label="IRAF 边缘 · 智控域（aarch64 Hyper VM，10.203.247.147）"; fontsize=13;
+    color="#357258"; style="rounded,dashed";
+    mcp    [label="iraf-mcp-http.service :8765\ntask-level MCP（5 个工具）\nBearer 鉴权 · scope · 审计", fillcolor="#e9f5ef"];
+    grpc   [label="iraf-runtime-grpc.service :50051\n跨域公共契约（可选）", fillcolor="#e9f5ef"];
+    flow   [label="TaskFlow / AgentOSBridge\n任务语义 → 技能", fillcolor="#e9f5ef"];
+    skill  [label="Skill Runtime / Skill Manager\n契约 · schema · 超时/取消/恢复", fillcolor="#e9f5ef"];
+    policy [label="Policy Gateway\nAuthenticatedContext · RobotProfile\nSafetyPolicy · SafetyEvent", fillcolor="#fff1cf"];
+    auth   [label="ControlAuthority\nresource lease · execution_id\nidempotency · fencing token", fillcolor="#fff1cf"];
+    store  [label="事件库 / 审计\nSqliteExecutionStore\nmcp-audit.jsonl", shape=cylinder, fillcolor="#f1eaf7"];
+  }
+
+  subgraph cluster_x86 {
+    label="x86 仿真侧（10.203.247.121，simulation=true）"; fontsize=13;
+    color="#29717b"; style="rounded,dashed";
+    provider [label="iraf-provider@piper/@ur5\n:50052 / :50053\nCapabilityProviderService", fillcolor="#eaf3f5"];
+    mujoco   [label="MuJoCo 世界 + 显示\nreal_frames / realtime", fillcolor="#eaf3f5"];
+  }
+
+  subgraph cluster_motion {
+    label="IRAF 边缘 · 运控域（独立 VM）"; fontsize=12; color="#a8433f"; style="rounded,dashed";
+    rt [label="实时 Capability Provider\nL0/L1 控制环（v1 不验收 HIL）", fillcolor="#fff0ef"];
+  }
+
+  subgraph cluster_ext {
+    label="外部 / 客户环境"; fontsize=12; color="#b27612"; style="rounded,dashed";
+    customer [label="客户自有 MuJoCo / 控制器\n经 iraf_sdk.provider 接入", fillcolor="#fff7e6"];
+    kit      [label="ProviderKit（南向 SDK）\nlease / fencing / idempotency\nProviderServicer", fillcolor="#fff7e6"];
+    model    [label="模型网关\nOpenAI-compatible\n（IRAF 意图解析）", fillcolor="#fff7e6"];
+  }
+
+  // 北向：任务级 MCP
+  upper -> mcp [label="MCP /mcp\nBearer upper-sdk"];
+  chat  -> worker [style=dashed, arrowhead=none];
+  worker -> shared [style=dashed, arrowhead=none];
+  shared -> mcp [label="HTTP + Authorization\nBearer agentos-worker"];
+  cli   -> mcp [label="stdio / HTTP", style=dashed];
+
+  // 边缘内部执行链
+  mcp -> flow [label="submit / enter / get"];
+  flow -> skill [label="选定 skill + 参数"];
+  flow -> model [label="受约束意图解析", style=dashed, constraint=false];
+  skill -> policy [label="preconditions"];
+  policy -> auth [label="允许 + lease"];
+  auth -> provider [label="provider.proto\nHealth / Invoke / Cancel\nLeaseEnvelope"];
+  provider -> mujoco [label="能力执行"];
+  auth -> kit [label="provider.proto（客户 Provider）\n同一 lease/fencing 契约", style=dashed, constraint=false];
+  customer -> kit [label="实现能力", style=dashed, constraint=false];
+  auth -> rt [label="运控域（独立安全边界）", style=dashed, constraint=false];
+  mcp -> store [label="get_task（按 subject 归属）", style=dashed];
+  policy -> store [label="SafetyEvent / 证据", style=dashed];
+  grpc -> flow [label="公共契约", style=dashed];
+
+  // 安全与信任边界注记
+  note [shape=note, fillcolor="#fffbe6", color="#b27612", fontsize=10,
+        label="身份只来自 transport：\n• 上位机 token（upper-sdk）\n• AgentOS token（agentos-worker）\n• Provider token（x86 Provider）\n• 模型网关 key（意图解析）\n四套凭据互不复用；token 不是安全上限。"];
+  policy -> note [style=invis];
+}

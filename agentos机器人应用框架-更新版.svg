@@ -1,129 +1,328 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1190" viewBox="0 0 1400 1190">
-  <style>
-    .title{font:700 27px Arial,'Microsoft YaHei',sans-serif;fill:#17324d}
-    .sub{font:14px Arial,'Microsoft YaHei',sans-serif;fill:#486176}
-    .section{font:700 18px Arial,'Microsoft YaHei',sans-serif;fill:#17324d}
-    .label{font:700 15px Arial,'Microsoft YaHei',sans-serif;fill:#17324d}
-    .text{font:14px Arial,'Microsoft YaHei',sans-serif;fill:#17324d}
-    .small{font:12px Arial,'Microsoft YaHei',sans-serif;fill:#486176}
-    .box{fill:#fff;stroke:#285b78;stroke-width:2;rx:5}
-    .arrow{stroke:#456477;stroke-width:2;fill:none;marker-end:url(#arrow)}
-  </style>
-  <defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" fill="#456477"/></marker></defs>
-  <rect width="1400" height="1060" fill="#f7fafc"/>
-  <rect x="0" y="0" width="1400" height="6" fill="#f4b400"/>
-  <text x="26" y="44" class="title">鸿道机器人总体架构：Agent 应用、机器人应用框架与执行底座</text>
-  <text x="47" y="68" class="sub">应用通过机器人应用框架调用能力，由 AgentOS 统一提供运行、治理、数据和安全支持</text>
-  <text x="1240" y="42" class="small">Intewell®</text><text x="1210" y="60" class="small">光电鸿道</text>
-
-  <!-- applications -->
-  <rect x="4" y="86" width="1392" height="114" fill="#e1f1d8" stroke="#385e37" stroke-width="2"/>
-  <text x="24" y="118" class="section">Agent 应用层</text>
-  <line x1="166" y1="98" x2="166" y2="190" stroke="#385e37" stroke-width="2"/>
-  <rect x="178" y="98" width="1200" height="92" fill="#eff8e9" stroke="#385e37" stroke-width="2"/>
-  <text x="778" y="121" text-anchor="middle" class="label">鸿道机器人 Agent</text>
-  <g class="text" text-anchor="middle">
-    <rect x="192" y="139" width="132" height="32" class="box"/><text x="258" y="160">巡检</text>
-    <rect x="337" y="139" width="132" height="32" class="box"/><text x="403" y="160">导览</text>
-    <rect x="482" y="139" width="132" height="32" class="box"/><text x="548" y="160">配送</text>
-    <rect x="627" y="139" width="132" height="32" class="box"/><text x="693" y="160">迎宾</text>
-    <rect x="772" y="139" width="132" height="32" class="box"/><text x="838" y="160">工业操作</text>
-    <rect x="917" y="139" width="132" height="32" class="box"/><text x="983" y="160">家庭服务</text>
-    <rect x="1062" y="139" width="132" height="32" class="box"/><text x="1128" y="160">安防</text>
-    <rect x="1207" y="139" width="150" height="32" class="box"/><text x="1282" y="160">园区运营</text>
-  </g>
-
-  <!-- app framework -->
-  <rect x="4" y="220" width="1392" height="560" fill="#eef4fa" stroke="#285b78" stroke-width="2"/>
-  <text x="23" y="262" class="section">机器人应用框架（IRAF）</text>
-  <line x1="166" y1="234" x2="166" y2="768" stroke="#285b78" stroke-width="2"/>
-
-  <!-- task layer -->
-  <rect x="178" y="236" width="1200" height="74" fill="#d8edf8" stroke="#21658a" stroke-width="2"/>
-  <text x="198" y="261" class="label">任务编排 TaskFlow（可借鉴 IB-Robot 的任务/流程编排能力）</text>
-  <g class="text" text-anchor="middle">
-    <rect x="198" y="272" width="190" height="26" class="box"/><text x="293" y="290">任务图 / 行为树</text>
-    <rect x="405" y="272" width="190" height="26" class="box"/><text x="500" y="290">前置条件 / 成功条件</text>
-    <rect x="612" y="272" width="190" height="26" class="box"/><text x="707" y="290">重试 / 恢复 / 接管</text>
-    <rect x="819" y="272" width="190" height="26" class="box"/><text x="914" y="290">任务状态与反馈</text>
-    <rect x="1026" y="272" width="330" height="26" class="box"/><text x="1191" y="290">离线执行与云端协同</text>
-  </g>
-
-  <!-- agentos -->
-  <rect x="178" y="324" width="1200" height="142" fill="#e5ebf8" stroke="#285b78" stroke-width="2"/>
-  <text x="198" y="350" class="label">AgentOS 接入层（AgentOSBridge 版本协商、身份委托、生命周期与事件）</text>
-  <g class="text" text-anchor="middle">
-    <rect x="198" y="362" width="180" height="32" class="box"/><text x="288" y="383">LLM / VLM / VLA</text>
-    <rect x="395" y="362" width="180" height="32" class="box"/><text x="485" y="383">Memory / World Model</text>
-    <rect x="592" y="362" width="180" height="32" class="box"/><text x="682" y="383">Agent Scheduler</text>
-    <rect x="789" y="362" width="180" height="32" class="box"/><text x="879" y="383">Tool / Skill Registry</text>
-    <rect x="986" y="362" width="180" height="32" class="box"/><text x="1076" y="383">Access / Governance</text>
-    <rect x="1183" y="362" width="174" height="32" class="box"/><text x="1270" y="383">Storage / Memory</text>
-    <rect x="198" y="408" width="1150" height="38" class="box"/><text x="773" y="432">AgentOS System Call　·　MCP Client/Server　·　HTTP/A2A　·　ROS 2 Client</text>
-  </g>
-
-  <!-- skill/policy -->
-  <rect x="178" y="480" width="1200" height="142" fill="#fff0c9" stroke="#bd7200" stroke-width="2"/>
-  <text x="198" y="506" class="label">技能与策略层 Skill / Policy（传统控制、VLA、学习策略可插拔，单写者仲裁）</text>
-  <g class="text" text-anchor="middle">
-    <rect x="198" y="518" width="180" height="30" class="box"/><text x="288" y="538">感知 Provider</text>
-    <rect x="395" y="518" width="180" height="30" class="box"/><text x="485" y="538">导航 Provider</text>
-    <rect x="592" y="518" width="180" height="30" class="box"/><text x="682" y="538">操作 · 传统控制</text>
-    <rect x="789" y="518" width="180" height="30" class="box"/><text x="879" y="538">操作 · VLA 引导</text>
-    <rect x="986" y="518" width="180" height="30" class="box"/><text x="1076" y="538">ACT / Diffusion / RL</text>
-    <rect x="1183" y="518" width="174" height="30" class="box"/><text x="1270" y="538">遥操作 / 回放 / 数据</text>
-    <rect x="198" y="562" width="1159" height="42" fill="#ffe2a3" stroke="#bd7200" stroke-width="1"/><text x="778" y="582">Provider Router + ControlAuthorityManager → Policy Gateway</text><text x="778" y="598" class="small">身份 / schema / 模式权限 / 限位 / 碰撞 / 互锁 / Safety Projector → 确定性执行器</text>
-  </g>
-
-  <!-- capability -->
-  <rect x="178" y="636" width="1200" height="74" fill="#e1f2ee" stroke="#28716f" stroke-width="2"/>
-  <text x="198" y="660" class="label">机器人能力抽象层（可借鉴 IB-Robot 的设备/能力封装方式）</text>
-  <g class="text" text-anchor="middle">
-    <rect x="198" y="670" width="210" height="28" class="box"/><text x="303" y="689">Capability API</text>
-    <rect x="428" y="670" width="210" height="28" class="box"/><text x="533" y="689">Robot Profile / 本体配置</text>
-    <rect x="658" y="670" width="210" height="28" class="box"/><text x="763" y="689">Skill Runtime / Mode Router</text>
-    <rect x="888" y="670" width="210" height="28" class="box"/><text x="993" y="689">状态 / 反馈 / 事件</text>
-    <rect x="1118" y="670" width="240" height="28" class="box"/><text x="1238" y="689">录制 / 回放 / 评测</text>
-  </g>
-
-  <!-- skill lifecycle -->
-  <rect x="178" y="716" width="1200" height="54" fill="#f0e7f7" stroke="#6d4585" stroke-width="2"/>
-  <text x="198" y="739" class="label">Skill 生命周期</text>
-  <text x="360" y="739" class="text">注册 → 仿真 → 训练 → 评测 → 部署 → 运行 → 采集 → 迭代</text>
-  <text x="360" y="758" class="small">运行日志 · 任务轨迹 · 示范数据 · 失败案例 · 技能版本 · 模型版本</text>
-
-  <!-- capability framework -->
-  <rect x="4" y="792" width="1392" height="126" fill="#e0f2ef" stroke="#28716f" stroke-width="2"/>
-  <text x="23" y="830" class="section">机器人能力执行层</text>
-  <line x1="166" y1="804" x2="166" y2="907" stroke="#28716f" stroke-width="2"/>
-  <g text-anchor="middle" class="text">
-    <rect x="178" y="808" width="370" height="48" fill="#fff" stroke="#b86728" stroke-width="2"/><text x="363" y="828" class="label">智控域</text><text x="363" y="847">AI Agent · VLA · World Model · Task Planner</text>
-    <rect x="563" y="808" width="370" height="48" fill="#fff" stroke="#b86728" stroke-width="2"/><text x="748" y="828" class="label">运控域</text><text x="748" y="847">ROS 2 Humble/Jazzy Adapter · MoveIt2 · WBC/MPC</text>
-    <rect x="948" y="808" width="430" height="48" fill="#fff" stroke="#28716f" stroke-width="2"/><text x="1163" y="828" class="label">通信主站域</text><text x="1163" y="847">EtherCAT · AUTBUS · 设备聚合 · 主站诊断</text>
-    <rect x="178" y="866" width="1200" height="38" fill="#fff" stroke="#b86728" stroke-width="2"/><text x="778" y="891">应用语义总线：DDS / 消息中间件　　实时控制通道：运控域 ↔ 通信主站域　　AI 任务通道：智控域 ↔ 运控域</text>
-  </g>
-
-  <!-- system -->
-  <rect x="4" y="940" width="1392" height="112" fill="#f1f5f8" stroke="#285b78" stroke-width="2"/>
-  <text x="23" y="978" class="section">系统软件底座（AgentOS 之下）</text>
-  <line x1="166" y1="952" x2="166" y2="1040" stroke="#285b78" stroke-width="2"/>
-  <g text-anchor="middle" class="text">
-    <rect x="178" y="956" width="360" height="48" fill="#286b79" stroke="#184957" stroke-width="2"/><text x="358" y="986" fill="#fff">Intewell Linux（智控域）</text>
-    <rect x="558" y="956" width="360" height="48" fill="#286b79" stroke="#184957" stroke-width="2"/><text x="738" y="986" fill="#fff">Intewell Linux RT（运控域）</text>
-    <rect x="938" y="956" width="220" height="48" fill="#286b79" stroke="#184957" stroke-width="2"/><text x="1048" y="986" fill="#fff">Intewell RTOS（通信主站域）</text>
-    <rect x="1178" y="956" width="200" height="48" fill="#286b79" stroke="#184957" stroke-width="2"/><text x="1278" y="986" fill="#fff">Intewell Hypervisor</text>
-    <text x="778" y="1026" class="small">认证基线：Ubuntu 22.04 · ROS 2 Humble · MuJoCo　|　Ubuntu 24.04：Jammy/Humble OCI 兼容，Jazzy 原生预览</text>
-    <text x="778" y="1044" class="small">首期本体：Piper + Unitree Go2 EDU　|　边缘：E300 / FIREFLY 逐构型验收，S600 待正式 Profile</text>
-  </g>
-  <path d="M700 200 L700 220 M700 770 L700 792 M700 918 L700 940" class="arrow"/>
-
-  <!-- supported Hyper release profiles -->
-  <rect x="4" y="1065" width="1392" height="112" fill="#f0e7f7" stroke="#6d4585" stroke-width="2"/>
-  <text x="23" y="1092" class="section">AgentOS / Hyper 兼容发布构型（签名 HyperProfile 驱动）</text>
-  <g text-anchor="middle">
-    <rect x="178" y="1106" width="380" height="52" class="box"/><text x="368" y="1127" class="label">MQ50-E300-3VM-LPR</text><text x="368" y="1147" class="small">Linux 智控 + Linux RT 运控 + RTOS 主站</text>
-    <rect x="578" y="1106" width="380" height="52" class="box"/><text x="768" y="1127" class="label">MQ50-E300-3VM-LPP</text><text x="768" y="1147" class="small">Linux 智控 + Linux RT 运控 + Linux RT 主站</text>
-    <rect x="978" y="1106" width="400" height="52" class="box"/><text x="1178" y="1127" class="label">FIREFLY-RK3588-2VM-LR</text><text x="1178" y="1147" class="small">Linux 智控 + Linux RT 运控/主站（隔离进程）</text>
-  </g>
-  <path d="M700 1052 L700 1065" class="arrow"/>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+ "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<!-- Generated by graphviz version 2.43.0 (0)
+ -->
+<!-- Title: IRAF_Overall Pages: 1 -->
+<svg width="2760pt" height="768pt"
+ viewBox="0.00 0.00 2760.00 768.07" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18 750.07)">
+<title>IRAF_Overall</title>
+<polygon fill="#f7fafc" stroke="transparent" points="-18,18 -18,-750.07 2742,-750.07 2742,18 -18,18"/>
+<text text-anchor="middle" x="1362" y="-712.87" font-family="Noto Sans CJK SC" font-size="19.00">IRAF 总体架构 v0.4.1（2026&#45;11&#45;04）｜simulation=true</text>
+<g id="clust1" class="cluster">
+<title>cluster_clients</title>
+<path fill="#f7fafc" stroke="#22a6b3" stroke-dasharray="5,2" d="M24,-143.07C24,-143.07 601,-143.07 601,-143.07 607,-143.07 613,-149.07 613,-155.07 613,-155.07 613,-264.07 613,-264.07 613,-270.07 607,-276.07 601,-276.07 601,-276.07 24,-276.07 24,-276.07 18,-276.07 12,-270.07 12,-264.07 12,-264.07 12,-155.07 12,-155.07 12,-149.07 18,-143.07 24,-143.07"/>
+<text text-anchor="middle" x="312.5" y="-260.87" font-family="Noto Sans CJK SC" font-size="14.00">调用方 / 语义层</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_agentos</title>
+<path fill="#f7fafc" stroke="#704889" stroke-dasharray="5,2" d="M55,-284.07C55,-284.07 630,-284.07 630,-284.07 636,-284.07 642,-290.07 642,-296.07 642,-296.07 642,-362.07 642,-362.07 642,-368.07 636,-374.07 630,-374.07 630,-374.07 55,-374.07 55,-374.07 49,-374.07 43,-368.07 43,-362.07 43,-362.07 43,-296.07 43,-296.07 43,-290.07 49,-284.07 55,-284.07"/>
+<text text-anchor="middle" x="342.5" y="-359.67" font-family="Noto Sans CJK SC" font-size="13.00">AgentOS 平台（第三方；IRAF 只对接，不修改其代码）</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_edge_intel</title>
+<path fill="#f7fafc" stroke="#357258" stroke-dasharray="5,2" d="M776,-124.07C776,-124.07 2187.5,-124.07 2187.5,-124.07 2193.5,-124.07 2199.5,-130.07 2199.5,-136.07 2199.5,-136.07 2199.5,-276.07 2199.5,-276.07 2199.5,-282.07 2193.5,-288.07 2187.5,-288.07 2187.5,-288.07 776,-288.07 776,-288.07 770,-288.07 764,-282.07 764,-276.07 764,-276.07 764,-136.07 764,-136.07 764,-130.07 770,-124.07 776,-124.07"/>
+<text text-anchor="middle" x="1481.75" y="-273.67" font-family="Noto Sans CJK SC" font-size="13.00">IRAF 边缘 · 智控域（aarch64 Hyper VM，10.203.247.147）</text>
+</g>
+<g id="clust4" class="cluster">
+<title>cluster_x86</title>
+<path fill="#f7fafc" stroke="#29717b" stroke-dasharray="5,2" d="M2351,-124.07C2351,-124.07 2704,-124.07 2704,-124.07 2710,-124.07 2716,-130.07 2716,-136.07 2716,-136.07 2716,-194.07 2716,-194.07 2716,-200.07 2710,-206.07 2704,-206.07 2704,-206.07 2351,-206.07 2351,-206.07 2345,-206.07 2339,-200.07 2339,-194.07 2339,-194.07 2339,-136.07 2339,-136.07 2339,-130.07 2345,-124.07 2351,-124.07"/>
+<text text-anchor="middle" x="2527.5" y="-191.67" font-family="Noto Sans CJK SC" font-size="13.00">x86 仿真侧（10.203.247.121，simulation=true）</text>
+</g>
+<g id="clust5" class="cluster">
+<title>cluster_motion</title>
+<path fill="#f7fafc" stroke="#a8433f" stroke-dasharray="5,2" d="M19,-622.07C19,-622.07 186,-622.07 186,-622.07 192,-622.07 198,-628.07 198,-634.07 198,-634.07 198,-683.07 198,-683.07 198,-689.07 192,-695.07 186,-695.07 186,-695.07 19,-695.07 19,-695.07 13,-695.07 7,-689.07 7,-683.07 7,-683.07 7,-634.07 7,-634.07 7,-628.07 13,-622.07 19,-622.07"/>
+<text text-anchor="middle" x="102.5" y="-681.47" font-family="Noto Sans CJK SC" font-size="12.00">IRAF 边缘 · 运控域（独立 VM）</text>
+</g>
+<g id="clust6" class="cluster">
+<title>cluster_ext</title>
+<path fill="#f7fafc" stroke="#b27612" stroke-dasharray="5,2" d="M22,-387.07C22,-387.07 183,-387.07 183,-387.07 189,-387.07 195,-393.07 195,-399.07 195,-399.07 195,-602.07 195,-602.07 195,-608.07 189,-614.07 183,-614.07 183,-614.07 22,-614.07 22,-614.07 16,-614.07 10,-608.07 10,-602.07 10,-602.07 10,-399.07 10,-399.07 10,-393.07 16,-387.07 22,-387.07"/>
+<text text-anchor="middle" x="102.5" y="-600.47" font-family="Noto Sans CJK SC" font-size="12.00">外部 / 客户环境</text>
+</g>
+<!-- upper -->
+<g id="node1" class="node">
+<title>upper</title>
+<path fill="#e7f6f8" stroke="#2b5d78" stroke-width="1.3" d="M577,-245.07C577,-245.07 488,-245.07 488,-245.07 482,-245.07 476,-239.07 476,-233.07 476,-233.07 476,-221.07 476,-221.07 476,-215.07 482,-209.07 488,-209.07 488,-209.07 577,-209.07 577,-209.07 583,-209.07 589,-215.07 589,-221.07 589,-221.07 589,-233.07 589,-233.07 589,-239.07 583,-245.07 577,-245.07"/>
+<text text-anchor="middle" x="532.5" y="-230.27" font-family="Noto Sans CJK SC" font-size="11.00">上位机 harness</text>
+<text text-anchor="middle" x="532.5" y="-218.27" font-family="Noto Sans CJK SC" font-size="11.00">(自有 MuJoCo / UI)</text>
+</g>
+<!-- mcp -->
+<g id="node7" class="node">
+<title>mcp</title>
+<path fill="#e9f5ef" stroke="#2b5d78" stroke-width="1.3" d="M931.5,-249.07C931.5,-249.07 793.5,-249.07 793.5,-249.07 787.5,-249.07 781.5,-243.07 781.5,-237.07 781.5,-237.07 781.5,-217.07 781.5,-217.07 781.5,-211.07 787.5,-205.07 793.5,-205.07 793.5,-205.07 931.5,-205.07 931.5,-205.07 937.5,-205.07 943.5,-211.07 943.5,-217.07 943.5,-217.07 943.5,-237.07 943.5,-237.07 943.5,-243.07 937.5,-249.07 931.5,-249.07"/>
+<text text-anchor="middle" x="862.5" y="-236.27" font-family="Noto Sans CJK SC" font-size="11.00">iraf&#45;mcp&#45;http.service :8765</text>
+<text text-anchor="middle" x="862.5" y="-224.27" font-family="Noto Sans CJK SC" font-size="11.00">task&#45;level MCP（5 个工具）</text>
+<text text-anchor="middle" x="862.5" y="-212.27" font-family="Noto Sans CJK SC" font-size="11.00">Bearer 鉴权 · scope · 审计</text>
+</g>
+<!-- upper&#45;&gt;mcp -->
+<g id="edge1" class="edge">
+<title>upper&#45;&gt;mcp</title>
+<path fill="none" stroke="#496779" stroke-width="1.2" d="M589.14,-227.07C639.81,-227.07 715.46,-227.07 774.18,-227.07"/>
+<polygon fill="#496779" stroke="#496779" stroke-width="1.2" points="774.26,-229.52 781.26,-227.07 774.26,-224.62 774.26,-229.52"/>
+<text text-anchor="middle" x="703" y="-239.87" font-family="Noto Sans CJK SC" font-size="9.00">MCP /mcp</text>
+<text text-anchor="middle" x="703" y="-229.87" font-family="Noto Sans CJK SC" font-size="9.00">Bearer upper&#45;sdk</text>
+</g>
+<!-- chat -->
+<g id="node2" class="node">
+<title>chat</title>
+<path fill="#e7f6f8" stroke="#2b5d78" stroke-width="1.3" d="M173,-245.07C173,-245.07 32,-245.07 32,-245.07 26,-245.07 20,-239.07 20,-233.07 20,-233.07 20,-221.07 20,-221.07 20,-215.07 26,-209.07 32,-209.07 32,-209.07 173,-209.07 173,-209.07 179,-209.07 185,-215.07 185,-221.07 185,-221.07 185,-233.07 185,-233.07 185,-239.07 179,-245.07 173,-245.07"/>
+<text text-anchor="middle" x="102.5" y="-230.27" font-family="Noto Sans CJK SC" font-size="11.00">AgentOS chat</text>
+<text text-anchor="middle" x="102.5" y="-218.27" font-family="Noto Sans CJK SC" font-size="11.00">(worker 容器内的 LLM agent)</text>
+</g>
+<!-- worker -->
+<g id="node5" class="node">
+<title>worker</title>
+<path fill="#f3ecf8" stroke="#2b5d78" stroke-width="1.3" d="M378,-332.07C378,-332.07 243,-332.07 243,-332.07 237,-332.07 231,-326.07 231,-320.07 231,-320.07 231,-308.07 231,-308.07 231,-302.07 237,-296.07 243,-296.07 243,-296.07 378,-296.07 378,-296.07 384,-296.07 390,-302.07 390,-308.07 390,-308.07 390,-320.07 390,-320.07 390,-326.07 384,-332.07 378,-332.07"/>
+<text text-anchor="middle" x="310.5" y="-317.27" font-family="Noto Sans CJK SC" font-size="11.00">agentos&#45;worker&#45;1/2</text>
+<text text-anchor="middle" x="310.5" y="-305.27" font-family="Noto Sans CJK SC" font-size="11.00">mcp&gt;=1.26,&lt;2 + config.yaml</text>
+</g>
+<!-- chat&#45;&gt;worker -->
+<g id="edge2" class="edge">
+<title>chat&#45;&gt;worker</title>
+<path fill="none" stroke="#496779" stroke-width="1.2" stroke-dasharray="5,2" d="M134.66,-245.16C159.99,-259.32 196.98,-278.78 231,-292.07 234.43,-293.41 237.97,-294.7 241.57,-295.94"/>
+</g>
+<!-- cli -->
+<g id="node3" class="node">
+<title>cli</title>
+<path fill="#e7f6f8" stroke="#2b5d78" stroke-width="1.3" d="M593,-187.07C593,-187.07 472,-187.07 472,-187.07 466,-187.07 460,-181.07 460,-175.07 460,-175.07 460,-163.07 460,-163.07 460,-157.07 466,-151.07 472,-151.07 472,-151.07 593,-151.07 593,-151.07 599,-151.07 605,-157.07 605,-163.07 605,-163.07 605,-175.07 605,-175.07 605,-181.07 599,-187.07 593,-187.07"/>
+<text text-anchor="middle" x="532.5" y="-172.27" font-family="Noto Sans CJK SC" font-size="11.00">IRAF CLI / 语音前端</text>
+<text text-anchor="middle" x="532.5" y="-160.27" font-family="Noto Sans CJK SC" font-size="11.00">(board_text_task / voice)</text>
+</g>
+<!-- cli&#45;&gt;mcp -->
+<g id="edge5" class="edge">
+<title>cli&#45;&gt;mcp</title>
+<path fill="none" stroke="#496779" stroke-width="1.2" stroke-dasharray="5,2" d="M605.08,-181.72C654.87,-190.53 721.53,-202.32 774.41,-211.67"/>
+<polygon fill="#496779" stroke="#496779" stroke-width="1.2" points="774.12,-214.1 781.44,-212.91 774.98,-209.28 774.12,-214.1"/>
+<text text-anchor="middle" x="703" y="-208.87" font-family="Noto Sans CJK SC" font-size="9.00">stdio / HTTP</text>
+</g>
+<!-- dash -->
+<g id="node4" class="node">
+<title>dash</title>
+<path fill="#f3ecf8" stroke="#2b5d78" stroke-width="1.3" d="M142,-336.07C142,-336.07 63,-336.07 63,-336.07 57,-336.07 51,-330.07 51,-324.07 51,-324.07 51,-312.07 51,-312.07 51,-306.07 57,-300.07 63,-300.07 63,-300.07 142,-300.07 142,-300.07 148,-300.07 154,-306.07 154,-312.07 154,-312.07 154,-324.07 154,-324.07 154,-330.07 148,-336.07 142,-336.07"/>
+<text text-anchor="middle" x="102.5" y="-321.27" font-family="Noto Sans CJK SC" font-size="11.00">dashboard :9119</text>
+<text text-anchor="middle" x="102.5" y="-309.27" font-family="Noto Sans CJK SC" font-size="11.00">会话 / 模型网关</text>
+</g>
+<!-- shared -->
+<g id="node6" class="node">
+<title>shared</title>
+<path fill="#f3ecf8" stroke="#2b5d78" stroke-width="1.3" d="M622,-344.07C622,-344.07 443,-344.07 443,-344.07 437,-344.07 431,-338.07 431,-332.07 431,-332.07 431,-304.07 431,-304.07 431,-298.07 437,-292.07 443,-292.07 443,-292.07 622,-292.07 622,-292.07 628,-292.07 634,-298.07 634,-304.07 634,-304.07 634,-332.07 634,-332.07 634,-338.07 628,-344.07 622,-344.07"/>
+<text text-anchor="middle" x="532.5" y="-332.07" font-family="Noto Sans CJK SC" font-size="10.00">共享内容层</text>
+<text text-anchor="middle" x="532.5" y="-321.07" font-family="Noto Sans CJK SC" font-size="10.00">/var/lib/agentos&#45;shared/.intewell/</text>
+<text text-anchor="middle" x="532.5" y="-310.07" font-family="Noto Sans CJK SC" font-size="10.00">config.yaml → mcp_servers.iraf&#45;task</text>
+<text text-anchor="middle" x="532.5" y="-299.07" font-family="Noto Sans CJK SC" font-size="10.00">Authorization: Bearer &lt;agentos&#45;worker&gt;</text>
+</g>
+<!-- worker&#45;&gt;shared -->
+<g id="edge3" class="edge">
+<title>worker&#45;&gt;shared</title>
+<path fill="none" stroke="#496779" stroke-width="1.2" stroke-dasharray="5,2" d="M390.3,-315.5C403.5,-315.74 417.34,-315.99 430.99,-316.24"/>
+</g>
+<!-- shared&#45;&gt;mcp -->
+<g id="edge4" class="edge">
+<title>shared&#45;&gt;mcp</title>
+<path fill="none" stroke="#496779" stroke-width="1.2" d="M627.49,-291.99C674.04,-279.08 729.84,-263.59 775.28,-250.99"/>
+<polygon fill="#496779" stroke="#496779" stroke-width="1.2" points="776.11,-253.3 782.2,-249.07 774.8,-248.58 776.11,-253.3"/>
+<text text-anchor="middle" x="703" y="-295.87" font-family="Noto Sans CJK SC" font-size="9.00">HTTP + Authorization</text>
+<text text-anchor="middle" x="703" y="-285.87" font-family="Noto Sans CJK SC" font-size="9.00">Bearer agentos&#45;worker</text>
+</g>
+<!-- flow -->
+<g id="node9" class="node">
+<title>flow</title>
+<path fill="#e9f5ef" stroke="#2b5d78" stroke-width="1.3" d="M1269,-182.07C1269,-182.07 1139,-182.07 1139,-182.07 1133,-182.07 1127,-176.07 1127,-170.07 1127,-170.07 1127,-158.07 1127,-158.07 1127,-152.07 1133,-146.07 1139,-146.07 1139,-146.07 1269,-146.07 1269,-146.07 1275,-146.07 1281,-152.07 1281,-158.07 1281,-158.07 1281,-170.07 1281,-170.07 1281,-176.07 1275,-182.07 1269,-182.07"/>
+<text text-anchor="middle" x="1204" y="-167.27" font-family="Noto Sans CJK SC" font-size="11.00">TaskFlow / AgentOSBridge</text>
+<text text-anchor="middle" x="1204" y="-155.27" font-family="Noto Sans CJK SC" font-size="11.00">任务语义 → 技能</text>
+</g>
+<!-- mcp&#45;&gt;flow -->
+<g id="edge6" class="edge">
+<title>mcp&#45;&gt;flow</title>
+<path fill="none" stroke="#496779" stroke-width="1.2" d="M943.53,-212.22C996.53,-202.38 1065.9,-189.51 1119.58,-179.55"/>
+<polygon fill="#496779" stroke="#496779" stroke-width="1.2" points="1120.28,-181.91 1126.72,-178.22 1119.39,-177.09 1120.28,-181.91"/>
+<text text-anchor="middle" x="1040" y="-208.87" font-family="Noto Sans CJK SC" font-size="9.00">submit / enter / get</text>
+</g>
+<!-- store -->
+<g id="node13" class="node">
+<title>store</title>
+<path fill="#f1eaf7" stroke="#2b5d78" stroke-width="1.3" d="M2167,-253.02C2167,-256.08 2138.99,-258.57 2104.5,-258.57 2070.01,-258.57 2042,-256.08 2042,-253.02 2042,-253.02 2042,-203.11 2042,-203.11 2042,-200.05 2070.01,-197.56 2104.5,-197.56 2138.99,-197.56 2167,-200.05 2167,-203.11 2167,-203.11 2167,-253.02 2167,-253.02"/>
+<path fill="none" stroke="#2b5d78" stroke-width="1.3" d="M2167,-253.02C2167,-249.96 2138.99,-247.48 2104.5,-247.48 2070.01,-247.48 2042,-249.96 2042,-253.02"/>
+<text text-anchor="middle" x="2104.5" y="-237.27" font-family="Noto Sans CJK SC" font-size="11.00">事件库 / 审计</text>
+<text text-anchor="middle" x="2104.5" y="-225.27" font-family="Noto Sans CJK SC" font-size="11.00">SqliteExecutionStore</text>
+<text text-anchor="middle" x="2104.5" y="-213.27" font-family="Noto Sans CJK SC" font-size="11.00">mcp&#45;audit.jsonl</text>
+</g>
+<!-- mcp&#45;&gt;store -->
+<g id="edge16" class="edge">
+<title>mcp&#45;&gt;store</title>
+<path fill="none" stroke="#496779" stroke-width="1.2" stroke-dasharray="5,2" d="M943.76,-227.07C1012.55,-227.07 1114.29,-227.07 1203,-227.07 1203,-227.07 1203,-227.07 1780,-227.07 1867.92,-227.07 1969.28,-227.44 2034.77,-227.73"/>
+<polygon fill="#496779" stroke="#496779" stroke-width="1.2" points="2034.77,-230.18 2041.78,-227.76 2034.8,-225.28 2034.77,-230.18"/>
+<text text-anchor="middle" x="1480.5" y="-229.87" font-family="Noto Sans CJK SC" font-size="9.00">get_task（按 subject 归属）</text>
+</g>
+<!-- grpc -->
+<g id="node8" class="node">
+<title>grpc</title>
+<path fill="#e9f5ef" stroke="#2b5d78" stroke-width="1.3" d="M941,-182.07C941,-182.07 784,-182.07 784,-182.07 778,-182.07 772,-176.07 772,-170.07 772,-170.07 772,-158.07 772,-158.07 772,-152.07 778,-146.07 784,-146.07 784,-146.07 941,-146.07 941,-146.07 947,-146.07 953,-152.07 953,-158.07 953,-158.07 953,-170.07 953,-170.07 953,-176.07 947,-182.07 941,-182.07"/>
+<text text-anchor="middle" x="862.5" y="-167.27" font-family="Noto Sans CJK SC" font-size="11.00">iraf&#45;runtime&#45;grpc.service :50051</text>
+<text text-anchor="middle" x="862.5" y="-155.27" font-family="Noto Sans CJK SC" font-size="11.00">跨域公共契约（可选）</text>
+</g>
+<!-- grpc&#45;&gt;flow -->
+<g id="edge18" class="edge">
+<title>grpc&#45;&gt;flow</title>
+<path fill="none" stroke="#496779" stroke-width="1.2" stroke-dasharray="5,2" d="M953.14,-164.07C1004.84,-164.07 1069.39,-164.07 1119.93,-164.07"/>
+<polygon fill="#496779" stroke="#496779" stroke-width="1.2" points="1119.96,-166.52 1126.96,-164.07 1119.96,-161.62 1119.96,-166.52"/>
+<text text-anchor="middle" x="1040" y="-166.87" font-family="Noto Sans CJK SC" font-size="9.00">公共契约</text>
+</g>
+<!-- skill -->
+<g id="node10" class="node">
+<title>skill</title>
+<path fill="#e9f5ef" stroke="#2b5d78" stroke-width="1.3" d="M1563,-179.07C1563,-179.07 1398,-179.07 1398,-179.07 1392,-179.07 1386,-173.07 1386,-167.07 1386,-167.07 1386,-155.07 1386,-155.07 1386,-149.07 1392,-143.07 1398,-143.07 1398,-143.07 1563,-143.07 1563,-143.07 1569,-143.07 1575,-149.07 1575,-155.07 1575,-155.07 1575,-167.07 1575,-167.07 1575,-173.07 1569,-179.07 1563,-179.07"/>
+<text text-anchor="middle" x="1480.5" y="-164.27" font-family="Noto Sans CJK SC" font-size="11.00">Skill Runtime / Skill Manager</text>
+<text text-anchor="middle" x="1480.5" y="-152.27" font-family="Noto Sans CJK SC" font-size="11.00">契约 · schema · 超时/取消/恢复</text>
+</g>
+<!-- flow&#45;&gt;skill -->
+<g id="edge7" class="edge">
+<title>flow&#45;&gt;skill</title>
+<path fill="none" stroke="#496779" stroke-width="1.2" d="M1281.1,-163.24C1311.26,-162.91 1346.38,-162.52 1378.62,-162.17"/>
+<polygon fill="#496779" stroke="#496779" stroke-width="1.2" points="1378.91,-164.62 1385.88,-162.09 1378.85,-159.72 1378.91,-164.62"/>
+<text text-anchor="middle" x="1333.5" y="-164.87" font-family="Noto Sans CJK SC" font-size="9.00">选定 skill + 参数</text>
+</g>
+<!-- model -->
+<g id="node19" class="node">
+<title>model</title>
+<path fill="#fff7e6" stroke="#2b5d78" stroke-width="1.3" d="M149.5,-439.07C149.5,-439.07 55.5,-439.07 55.5,-439.07 49.5,-439.07 43.5,-433.07 43.5,-427.07 43.5,-427.07 43.5,-407.07 43.5,-407.07 43.5,-401.07 49.5,-395.07 55.5,-395.07 55.5,-395.07 149.5,-395.07 149.5,-395.07 155.5,-395.07 161.5,-401.07 161.5,-407.07 161.5,-407.07 161.5,-427.07 161.5,-427.07 161.5,-433.07 155.5,-439.07 149.5,-439.07"/>
+<text text-anchor="middle" x="102.5" y="-426.27" font-family="Noto Sans CJK SC" font-size="11.00">模型网关</text>
+<text text-anchor="middle" x="102.5" y="-414.27" font-family="Noto Sans CJK SC" font-size="11.00">OpenAI&#45;compatible</text>
+<text text-anchor="middle" x="102.5" y="-402.27" font-family="Noto Sans CJK SC" font-size="11.00">（IRAF 意图解析）</text>
+</g>
+<!-- flow&#45;&gt;model -->
+<g id="edge8" class="edge">
+<title>flow&#45;&gt;model</title>
+<path fill="none" stroke="#496779" stroke-width="1.2" stroke-dasharray="5,2" d="M1166.31,-145.97C1082.4,-107.45 875.18,-29.2 764,-135.07 744.26,-153.86 768.98,-358.75 752,-380.07 681.07,-469.13 318.59,-440.71 168.6,-424.73"/>
+<polygon fill="#496779" stroke="#496779" stroke-width="1.2" points="168.84,-422.3 161.62,-423.98 168.32,-427.17 168.84,-422.3"/>
+<text text-anchor="middle" x="532.5" y="-443.87" font-family="Noto Sans CJK SC" font-size="9.00">受约束意图解析</text>
+</g>
+<!-- policy -->
+<g id="node11" class="node">
+<title>policy</title>
+<path fill="#fff1cf" stroke="#2b5d78" stroke-width="1.3" d="M1873,-183.07C1873,-183.07 1685,-183.07 1685,-183.07 1679,-183.07 1673,-177.07 1673,-171.07 1673,-171.07 1673,-151.07 1673,-151.07 1673,-145.07 1679,-139.07 1685,-139.07 1685,-139.07 1873,-139.07 1873,-139.07 1879,-139.07 1885,-145.07 1885,-151.07 1885,-151.07 1885,-171.07 1885,-171.07 1885,-177.07 1879,-183.07 1873,-183.07"/>
+<text text-anchor="middle" x="1779" y="-170.27" font-family="Noto Sans CJK SC" font-size="11.00">Policy Gateway</text>
+<text text-anchor="middle" x="1779" y="-158.27" font-family="Noto Sans CJK SC" font-size="11.00">AuthenticatedContext · RobotProfile</text>
+<text text-anchor="middle" x="1779" y="-146.27" font-family="Noto Sans CJK SC" font-size="11.00">SafetyPolicy · SafetyEvent</text>
+</g>
+<!-- skill&#45;&gt;policy -->
+<g id="edge9" class="edge">
+<title>skill&#45;&gt;policy</title>
+<path fill="none" stroke="#496779" stroke-width="1.2" d="M1575.31,-161.07C1604.06,-161.07 1635.97,-161.07 1665.81,-161.07"/>
+<polygon fill="#496779" stroke="#496779" stroke-width="1.2" points="1665.94,-163.52 1672.94,-161.07 1665.94,-158.62 1665.94,-163.52"/>
+<text text-anchor="middle" x="1624" y="-163.87" font-family="Noto Sans CJK SC" font-size="9.00">preconditions</text>
+</g>
+<!-- auth -->
+<g id="node12" class="node">
+<title>auth</title>
+<path fill="#fff1cf" stroke="#2b5d78" stroke-width="1.3" d="M2179.5,-176.07C2179.5,-176.07 2029.5,-176.07 2029.5,-176.07 2023.5,-176.07 2017.5,-170.07 2017.5,-164.07 2017.5,-164.07 2017.5,-144.07 2017.5,-144.07 2017.5,-138.07 2023.5,-132.07 2029.5,-132.07 2029.5,-132.07 2179.5,-132.07 2179.5,-132.07 2185.5,-132.07 2191.5,-138.07 2191.5,-144.07 2191.5,-144.07 2191.5,-164.07 2191.5,-164.07 2191.5,-170.07 2185.5,-176.07 2179.5,-176.07"/>
+<text text-anchor="middle" x="2104.5" y="-163.27" font-family="Noto Sans CJK SC" font-size="11.00">ControlAuthority</text>
+<text text-anchor="middle" x="2104.5" y="-151.27" font-family="Noto Sans CJK SC" font-size="11.00">resource lease · execution_id</text>
+<text text-anchor="middle" x="2104.5" y="-139.27" font-family="Noto Sans CJK SC" font-size="11.00">idempotency · fencing token</text>
+</g>
+<!-- policy&#45;&gt;auth -->
+<g id="edge10" class="edge">
+<title>policy&#45;&gt;auth</title>
+<path fill="none" stroke="#496779" stroke-width="1.2" d="M1885.03,-158.79C1925.33,-157.92 1971,-156.93 2010.13,-156.09"/>
+<polygon fill="#496779" stroke="#496779" stroke-width="1.2" points="2010.41,-158.53 2017.35,-155.93 2010.3,-153.63 2010.41,-158.53"/>
+<text text-anchor="middle" x="1944" y="-160.87" font-family="Noto Sans CJK SC" font-size="9.00">允许 + lease</text>
+</g>
+<!-- policy&#45;&gt;store -->
+<g id="edge17" class="edge">
+<title>policy&#45;&gt;store</title>
+<path fill="none" stroke="#496779" stroke-width="1.2" stroke-dasharray="5,2" d="M1885.03,-182.82C1934.24,-193.01 1991.47,-204.86 2035.01,-213.88"/>
+<polygon fill="#496779" stroke="#496779" stroke-width="1.2" points="2034.52,-216.28 2041.87,-215.3 2035.52,-211.48 2034.52,-216.28"/>
+<text text-anchor="middle" x="1944" y="-204.87" font-family="Noto Sans CJK SC" font-size="9.00">SafetyEvent / 证据</text>
+</g>
+<!-- note -->
+<g id="node20" class="node">
+<title>note</title>
+<polygon fill="#fffbe6" stroke="#b27612" stroke-width="1.3" points="2200,-110.07 2003,-110.07 2003,-36.07 2206,-36.07 2206,-104.07 2200,-110.07"/>
+<polyline fill="none" stroke="#b27612" stroke-width="1.3" points="2200,-110.07 2200,-104.07 "/>
+<polyline fill="none" stroke="#b27612" stroke-width="1.3" points="2206,-104.07 2200,-104.07 "/>
+<text text-anchor="middle" x="2104.5" y="-98.07" font-family="Noto Sans CJK SC" font-size="10.00">身份只来自 transport：</text>
+<text text-anchor="middle" x="2104.5" y="-87.07" font-family="Noto Sans CJK SC" font-size="10.00">• 上位机 token（upper&#45;sdk）</text>
+<text text-anchor="middle" x="2104.5" y="-76.07" font-family="Noto Sans CJK SC" font-size="10.00">• AgentOS token（agentos&#45;worker）</text>
+<text text-anchor="middle" x="2104.5" y="-65.07" font-family="Noto Sans CJK SC" font-size="10.00">• Provider token（x86 Provider）</text>
+<text text-anchor="middle" x="2104.5" y="-54.07" font-family="Noto Sans CJK SC" font-size="10.00">• 模型网关 key（意图解析）</text>
+<text text-anchor="middle" x="2104.5" y="-43.07" font-family="Noto Sans CJK SC" font-size="10.00">四套凭据互不复用；token 不是安全上限。</text>
+</g>
+<!-- policy&#45;&gt;note -->
+<!-- provider -->
+<g id="node14" class="node">
+<title>provider</title>
+<path fill="#eaf3f5" stroke="#2b5d78" stroke-width="1.3" d="M2487,-176.07C2487,-176.07 2359,-176.07 2359,-176.07 2353,-176.07 2347,-170.07 2347,-164.07 2347,-164.07 2347,-144.07 2347,-144.07 2347,-138.07 2353,-132.07 2359,-132.07 2359,-132.07 2487,-132.07 2487,-132.07 2493,-132.07 2499,-138.07 2499,-144.07 2499,-144.07 2499,-164.07 2499,-164.07 2499,-170.07 2493,-176.07 2487,-176.07"/>
+<text text-anchor="middle" x="2423" y="-163.27" font-family="Noto Sans CJK SC" font-size="11.00">iraf&#45;provider@piper/@ur5</text>
+<text text-anchor="middle" x="2423" y="-151.27" font-family="Noto Sans CJK SC" font-size="11.00">:50052 / :50053</text>
+<text text-anchor="middle" x="2423" y="-139.27" font-family="Noto Sans CJK SC" font-size="11.00">CapabilityProviderService</text>
+</g>
+<!-- auth&#45;&gt;provider -->
+<g id="edge11" class="edge">
+<title>auth&#45;&gt;provider</title>
+<path fill="none" stroke="#496779" stroke-width="1.2" d="M2191.57,-154.07C2237.7,-154.07 2294.25,-154.07 2339.78,-154.07"/>
+<polygon fill="#496779" stroke="#496779" stroke-width="1.2" points="2339.99,-156.52 2346.99,-154.07 2339.99,-151.62 2339.99,-156.52"/>
+<text text-anchor="middle" x="2276.5" y="-176.87" font-family="Noto Sans CJK SC" font-size="9.00">provider.proto</text>
+<text text-anchor="middle" x="2276.5" y="-166.87" font-family="Noto Sans CJK SC" font-size="9.00">Health / Invoke / Cancel</text>
+<text text-anchor="middle" x="2276.5" y="-156.87" font-family="Noto Sans CJK SC" font-size="9.00">LeaseEnvelope</text>
+</g>
+<!-- rt -->
+<g id="node16" class="node">
+<title>rt</title>
+<path fill="#fff0ef" stroke="#2b5d78" stroke-width="1.3" d="M177,-666.07C177,-666.07 28,-666.07 28,-666.07 22,-666.07 16,-660.07 16,-654.07 16,-654.07 16,-642.07 16,-642.07 16,-636.07 22,-630.07 28,-630.07 28,-630.07 177,-630.07 177,-630.07 183,-630.07 189,-636.07 189,-642.07 189,-642.07 189,-654.07 189,-654.07 189,-660.07 183,-666.07 177,-666.07"/>
+<text text-anchor="middle" x="102.5" y="-651.27" font-family="Noto Sans CJK SC" font-size="11.00">实时 Capability Provider</text>
+<text text-anchor="middle" x="102.5" y="-639.27" font-family="Noto Sans CJK SC" font-size="11.00">L0/L1 控制环（v1 不验收 HIL）</text>
+</g>
+<!-- auth&#45;&gt;rt -->
+<g id="edge15" class="edge">
+<title>auth&#45;&gt;rt</title>
+<path fill="none" stroke="#496779" stroke-width="1.2" stroke-dasharray="5,2" d="M2020.57,-176.17C2014.35,-179.34 2008.41,-182.95 2003,-187.07 1990.24,-196.77 1996.19,-207.96 1983,-217.07 1396.91,-621.57 487.12,-651.43 196.24,-649.96"/>
+<polygon fill="#496779" stroke="#496779" stroke-width="1.2" points="196.08,-647.51 189.07,-649.92 196.06,-652.41 196.08,-647.51"/>
+<text text-anchor="middle" x="1040" y="-588.87" font-family="Noto Sans CJK SC" font-size="9.00">运控域（独立安全边界）</text>
+</g>
+<!-- kit -->
+<g id="node18" class="node">
+<title>kit</title>
+<path fill="#fff7e6" stroke="#2b5d78" stroke-width="1.3" d="M175,-505.07C175,-505.07 30,-505.07 30,-505.07 24,-505.07 18,-499.07 18,-493.07 18,-493.07 18,-473.07 18,-473.07 18,-467.07 24,-461.07 30,-461.07 30,-461.07 175,-461.07 175,-461.07 181,-461.07 187,-467.07 187,-473.07 187,-473.07 187,-493.07 187,-493.07 187,-499.07 181,-505.07 175,-505.07"/>
+<text text-anchor="middle" x="102.5" y="-492.27" font-family="Noto Sans CJK SC" font-size="11.00">ProviderKit（南向 SDK）</text>
+<text text-anchor="middle" x="102.5" y="-480.27" font-family="Noto Sans CJK SC" font-size="11.00">lease / fencing / idempotency</text>
+<text text-anchor="middle" x="102.5" y="-468.27" font-family="Noto Sans CJK SC" font-size="11.00">ProviderServicer</text>
+</g>
+<!-- auth&#45;&gt;kit -->
+<g id="edge13" class="edge">
+<title>auth&#45;&gt;kit</title>
+<path fill="none" stroke="#496779" stroke-width="1.2" stroke-dasharray="5,2" d="M2017.45,-133.37C1749.37,-71.22 936.86,98.84 764,-79.07 746.24,-97.34 764.84,-286.06 752,-308.07 722.79,-358.12 695.82,-356.59 642,-378.07 621.26,-386.34 341.96,-438.83 194.02,-466.32"/>
+<polygon fill="#496779" stroke="#496779" stroke-width="1.2" points="193.52,-463.93 187.08,-467.61 194.41,-468.74 193.52,-463.93"/>
+<text text-anchor="middle" x="1040" y="-18.87" font-family="Noto Sans CJK SC" font-size="9.00">provider.proto（客户 Provider）</text>
+<text text-anchor="middle" x="1040" y="-8.87" font-family="Noto Sans CJK SC" font-size="9.00">同一 lease/fencing 契约</text>
+</g>
+<!-- mujoco -->
+<g id="node15" class="node">
+<title>mujoco</title>
+<path fill="#eaf3f5" stroke="#2b5d78" stroke-width="1.3" d="M2696,-172.07C2696,-172.07 2588,-172.07 2588,-172.07 2582,-172.07 2576,-166.07 2576,-160.07 2576,-160.07 2576,-148.07 2576,-148.07 2576,-142.07 2582,-136.07 2588,-136.07 2588,-136.07 2696,-136.07 2696,-136.07 2702,-136.07 2708,-142.07 2708,-148.07 2708,-148.07 2708,-160.07 2708,-160.07 2708,-166.07 2702,-172.07 2696,-172.07"/>
+<text text-anchor="middle" x="2642" y="-157.27" font-family="Noto Sans CJK SC" font-size="11.00">MuJoCo 世界 + 显示</text>
+<text text-anchor="middle" x="2642" y="-145.27" font-family="Noto Sans CJK SC" font-size="11.00">real_frames / realtime</text>
+</g>
+<!-- provider&#45;&gt;mujoco -->
+<g id="edge12" class="edge">
+<title>provider&#45;&gt;mujoco</title>
+<path fill="none" stroke="#496779" stroke-width="1.2" d="M2499.29,-154.07C2521.82,-154.07 2546.47,-154.07 2568.8,-154.07"/>
+<polygon fill="#496779" stroke="#496779" stroke-width="1.2" points="2568.96,-156.52 2575.96,-154.07 2568.96,-151.62 2568.96,-156.52"/>
+<text text-anchor="middle" x="2537.5" y="-156.87" font-family="Noto Sans CJK SC" font-size="9.00">能力执行</text>
+</g>
+<!-- customer -->
+<g id="node17" class="node">
+<title>customer</title>
+<path fill="#fff7e6" stroke="#2b5d78" stroke-width="1.3" d="M166,-585.07C166,-585.07 39,-585.07 39,-585.07 33,-585.07 27,-579.07 27,-573.07 27,-573.07 27,-561.07 27,-561.07 27,-555.07 33,-549.07 39,-549.07 39,-549.07 166,-549.07 166,-549.07 172,-549.07 178,-555.07 178,-561.07 178,-561.07 178,-573.07 178,-573.07 178,-579.07 172,-585.07 166,-585.07"/>
+<text text-anchor="middle" x="102.5" y="-570.27" font-family="Noto Sans CJK SC" font-size="11.00">客户自有 MuJoCo / 控制器</text>
+<text text-anchor="middle" x="102.5" y="-558.27" font-family="Noto Sans CJK SC" font-size="11.00">经 iraf_sdk.provider 接入</text>
+</g>
+<!-- customer&#45;&gt;kit -->
+<g id="edge14" class="edge">
+<title>customer&#45;&gt;kit</title>
+<path fill="none" stroke="#496779" stroke-width="1.2" stroke-dasharray="5,2" d="M102.5,-548.83C102.5,-538.2 102.5,-524.55 102.5,-512.44"/>
+<polygon fill="#496779" stroke="#496779" stroke-width="1.2" points="104.95,-512.14 102.5,-505.14 100.05,-512.14 104.95,-512.14"/>
+<text text-anchor="middle" x="94.5" y="-524.87" font-family="Noto Sans CJK SC" font-size="9.00">实现能力</text>
+</g>
+</g>
 </svg>
