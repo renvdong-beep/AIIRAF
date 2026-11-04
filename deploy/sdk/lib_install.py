@@ -636,6 +636,8 @@ UNIT_TOKENS = ("PROFILE", "VERSION", "PREFIX", "CURRENT_LINK", "PYTHON_BIN", "CO
                # 路径/身份来自声明生效值，部署期值（如 @PROVIDER_ENDPOINT@）必须由 --env-set 显式给。
                "SAFETY_POLICY", "VERSION_DIR", "RUNTIME_SUBJECT",
                "PROVIDER_ENDPOINT", "INTENT_MODEL_URL", "INTENT_MODEL_NAME",
+               # 北向 MCP HTTP（2026-11-04）：允许的 Host 是机器相关值，只能部署期给。
+               "MCP_ALLOWED_HOSTS",
                # 仿真 Provider 装配（2026-10-26）：后端配置由场景报告生成后注入；
                # 显示模式来自声明 provider_display；端口来自声明 services[].ports；
                # 绑定地址 / DISPLAY / XAUTHORITY 只能由部署期给。

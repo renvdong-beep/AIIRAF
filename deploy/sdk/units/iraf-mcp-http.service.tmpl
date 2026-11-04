@@ -1,0 +1,43 @@
+# IRAF 北向 MCP HTTP 单元模板 —— 安装时由 install-iraf.sh 按声明渲染。
+#
+# 边界：
+#   · 本单元只跑任务级 MCP server（5 个工具），不执行技能、不直连 Provider；
+#   · 传输固定 streamable-http；Host 允许列表来自装配单 @CONFIG_DIR@/@PROFILE@.env；
+#   · 身份只来自 Bearer token（@CONFIG_DIR@/mcp-tokens.json，600，只存 SHA-256）；
+#     缺 token 注册表时进程会 fail-closed 退出（退出码 2），不会以无鉴权方式放行；
+#   · 所有机器相关路径/解释器/用户都走占位符（AGENTS 5.3）。
+
+[Unit]
+Description=IRAF MCP task server (HTTP, profile=@PROFILE@ version=@VERSION@)
+Documentation=file:@PREFIX@/@CURRENT_LINK@/config/install/install_profiles.yaml
+After=network.target
+
+[Service]
+Type=simple
+User=@RUN_USER@
+WorkingDirectory=@PREFIX@/@CURRENT_LINK@
+Environment=PYTHONPATH=@PREFIX@/@CURRENT_LINK@/src:@PREFIX@/@CURRENT_LINK@/lib
+EnvironmentFile=-@CONFIG_DIR@/@PROFILE@.env
+EnvironmentFile=-@CONFIG_DIR@/runtime.secrets
+# 覆盖装配单里的 stdio 默认值：只影响本服务，AgentOS 的 stdio 登记仍按自己的方式启动。
+Environment=IRAF_MCP_TRANSPORT=http
+Environment=IRAF_MCP_HOST=0.0.0.0
+Environment=IRAF_MCP_PORT=8765
+Environment=IRAF_MCP_TOKEN_FILE=@CONFIG_DIR@/mcp-tokens.json
+Environment=IRAF_MCP_AUDIT_LOG=@LOG_DIR@/mcp-audit.jsonl
+ExecStartPre=/bin/mkdir -p @LOG_DIR@ @DATA_DIR@
+ExecStart=@PYTHON_BIN@ -m iraf_adapters.mcp.server
+Restart=on-failure
+RestartSec=5
+# 独立资源限额（AGENTS 6.11）：未声明时渲染器整行删除。
+CPUQuota=@CPU_QUOTA@
+MemoryMax=@MEMORY_MAX@
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@LOG_DIR@ @DATA_DIR@
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

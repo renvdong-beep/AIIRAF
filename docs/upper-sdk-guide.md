@@ -38,7 +38,7 @@ build/sdk/iraf_sdk-0.4.1-py3-none-any.whl
   元数据：Provides-Extra: mcp / provider（基础安装零第三方依赖）
 
 build/sdk/iraf-runtime-0.4.1-aarch64.tar.gz
-  sha256 = cd75a9d0735e23490f751d19ca0445394eb5284195706774fe953bc4fe932163
+  sha256 = 75ad53f85be0f30df44a51b7a419ace7549ff69997c9fb26a3a2a38a324c9acb
 ```
 
 重新构建（改了 `src/iraf_sdk/**` 后必须重建，否则交付的是旧代码）：
@@ -175,6 +175,29 @@ curl -s -o /dev/null -w 'no_token=%{http_code}\n' -X POST http://<边缘IP>:8765
   当前 uvicorn 不向 ASGI 暴露 peer cert，**CN→subject 绑定未实现**，建议由网关终止 mTLS。
 
 ---
+
+### 2.4 常驻服务（0.4.1+，edge-intel）
+
+SDK 安装会渲染 `iraf-mcp-http.service`（system 作用域），随 SDK 一起交付：
+
+```bash
+# 安装后由 board_upgrade.sh 自动调用；也可手工执行
+bash /opt/iraf-sdk/current/deploy/sdk/board_mcp_enable.sh
+
+# 状态 / 重启
+systemctl status iraf-mcp-http --no-pager
+systemctl restart iraf-mcp-http
+```
+
+- 首次执行会签发 token：注册表 `/etc/iraf/mcp-tokens.json`（600，只存 SHA-256），
+  明文写到 `/etc/iraf/mcp-client.token`（600），由部署者取走交给上位机；
+  token 不会打进日志。
+- 服务缺 token 注册表会 fail-closed 退出，不会无鉴权监听。
+- Host 允许列表来自 `/etc/iraf/edge-intel.env` 的 `IRAF_MCP_ALLOWED_HOSTS`
+  （安装时由 `MCP_ALLOWED_HOSTS` 部署值渲染，含板卡 IP）。
+- 单元文件模板：`deploy/sdk/units/iraf-mcp-http.service.tmpl`；
+  轮换 token：`python3 -m iraf_tools.mcp_tokens ... revoke/issue` 后服务按文件签名热加载，
+  不需要重启。
 
 ## 3. 上位机：安装与最小可运行示例
 

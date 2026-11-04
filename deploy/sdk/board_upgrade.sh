@@ -150,6 +150,8 @@ trap cleanup EXIT
 COMMON=(--profile "$PROFILE" --sdk-wheel "$WHEEL" --runtime-bundle "$BUNDLE"
         --wheelhouse "$WHEELHOUSE" --allow-unverified --values "$VALUES")
 [ -n "$PROVIDER_ENDPOINT" ] && COMMON+=(--env-set "PROVIDER_ENDPOINT=${PROVIDER_ENDPOINT}")
+# 北向 MCP 的 Host 允许列表是机器相关值：板卡 IP 只能在部署期给（AGENTS 5.3）。
+COMMON+=(--env-set "MCP_ALLOWED_HOSTS=127.0.0.1:8765,localhost:8765,${IRAF_BOARD_HOST}:8765")
 [ "${#SECRETS_ARG[@]}" -gt 0 ] && COMMON+=("${SECRETS_ARG[@]}")
 
 if [ "$APPLY" != "1" ]; then
@@ -184,6 +186,14 @@ IRAF_BOARD_HOST="$IRAF_BOARD_HOST" bash "${SDK_DIR}/board_deploy.sh" "${COMMON[@
   | grep -E "凭据已落地|安装完成|自检|current|错误|警告" | tail -8
 RC=${PIPESTATUS[0]}
 [ "$RC" -eq 0 ] || { err "安装失败（rc=${RC}）：见 build/board/.../deploy-install.log"; exit 5; }
+
+# ---------- 4.1 启用北向 MCP HTTP 常驻服务（edge-intel） ----------
+if [ "$PROFILE" = "edge-intel" ]; then
+  log "④.1 启用 iraf-mcp-http.service（首次签发 token → 600 文件）"
+  run_remote "bash /opt/iraf-sdk/current/deploy/sdk/board_mcp_enable.sh" 2>&1 | tail -8
+else
+  log "④.1 非 edge-intel 角色：跳过 MCP HTTP 服务启用"
+fi
 
 # ---------- 5. 判读 ----------
 if [ "$SKIP_DIAG" = "1" ]; then
