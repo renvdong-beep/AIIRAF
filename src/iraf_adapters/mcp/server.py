@@ -148,6 +148,7 @@ def iraf_exit_robot_mode() -> str:
 
 from iraf_adapters.mcp.hints import (  # noqa: E402  (内容与 server 解耦，便于单测)
     FILTERED_EXAMPLE as _FILTERED_EXAMPLE,
+    HANDOFF_LAB_EXAMPLE as _HANDOFF_LAB_EXAMPLE,
     WORKED_EXAMPLE as _WORKED_EXAMPLE,
     enter_next_steps as _enter_next_steps,
     next_steps as _next_steps,
@@ -164,6 +165,12 @@ def _resource_pick_example() -> str:
 def _resource_filtered_example() -> str:
     """被 IRAF 过滤掉的请求长什么样（平台据此回退到自己的处理）。"""
     return json.dumps(_FILTERED_EXAMPLE, ensure_ascii=False, indent=2)
+
+
+@app.resource("iraf://examples/handoff_lab")
+def _resource_handoff_lab_example() -> str:
+    """handoff_lab 联合世界（Go2 + Piper + UR5e）演示入口与判据（在 x86 仿真上运行）。"""
+    return json.dumps(_HANDOFF_LAB_EXAMPLE, ensure_ascii=False, indent=2)
 
 
 @app.resource("iraf://skills/catalog")

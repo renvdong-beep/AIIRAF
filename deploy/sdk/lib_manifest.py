@@ -70,7 +70,8 @@ IDL_PROTO_FILES = (
 #: `iraf.v1.*` 从这里 import），也是验收口径里的"既有流程"。
 CANONICAL_STUB_DIR = Path("build/generated/python")
 #: runtime bundle 的成员目录（步骤 06「步骤 4」声明，顺序即 tar 顺序来源）。
-BUNDLE_DIRS = ("src", "skills", "profiles", "config", "deploy")
+# scenes 进 bundle：handoff_lab 联合世界的场景声明随 SDK 交付（供 x86 仿真复跑与 MCP examples 引用）。
+BUNDLE_DIRS = ("src", "skills", "profiles", "config", "deploy", "scenes")
 #: 打包时排除的目录名/后缀：编辑器备份与字节码不是运行时内容。
 #: 排除不是"静默过滤"——被排掉的路径会写进 manifest 的 `bundle.excluded`。
 EXCLUDE_DIR_NAMES = frozenset({"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"})

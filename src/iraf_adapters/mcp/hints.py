@@ -29,6 +29,23 @@ FILTERED_EXAMPLE = {
     "then": "由平台自己的能力处理；不要重试本工具，也不要把失败包装成成功。",
 }
 
+#: handoff_lab 联合世界（Go2 + Piper + UR5e 三机同台）的语义映射说明。
+#: 该演示在 x86 仿真（MuJoCo）上运行，不在板卡；板卡 MCP 只做任务级语义下发，
+#: 联合场景的运行入口与判据如下（供平台回答"怎么跑联合演示"时引用，不要求板卡执行）。
+HANDOFF_LAB_EXAMPLE = {
+    "text": "运行 handoff_lab 联合世界演示（Go2 + Piper + UR5e 三机同台）",
+    "purpose": "多机器人联合场景的语义映射说明：说明这类联合演示如何在 x86 仿真上运行；不要求板卡执行。",
+    "scene": "scenes/handoff_lab",
+    "entry": "PYTHONPATH=src python3 scripts/run_joint_chain.py --scene scenes/handoff_lab --scenario nominal --world joint",
+    "world": "build/scenes/handoff_lab/handoff_lab_joint.xml（scripts/build_scene.py --scene scenes/handoff_lab --robot unitree_go2 --attach piper 构建）",
+    "expected": {"report": "build/acceptance/handoff_lab/nominal/report.json", "passed": "true"},
+    "verify_with": "读 report.json 的 passed 字段",
+    "notes": [
+        "联合世界在 x86 仿真（MuJoCo）上运行，不在板卡；板卡经 MCP 只下发任务级语义。",
+        "想看画面用 scripts/record_demo.sh（DISPLAY=:0 MUJOCO_GL=glfw）或 scenario.py --world joint --display <X>；演示必须 realtime:true，否则窗口出来时狗已走完。",
+    ],
+}
+
 
 #: 进入机器人开发模式后的**固定动作顺序**（给平台读）。
 #: 实机教训（2026-10-22 dashboard /chat）：模型把"进入模式"理解成"先做全链路自检"，
