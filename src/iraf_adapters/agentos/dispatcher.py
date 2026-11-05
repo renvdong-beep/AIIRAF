@@ -20,8 +20,8 @@ class TaskDispatcher:
     def resource_id(self):
         return self.runtime.resource_id
 
-    def dispatch(self, payload, context):
-        return self.runtime.execute(payload, context)
+    def dispatch(self, payload, context, execution_id=None, ready_event=None):
+        return self.runtime.execute(payload, context, execution_id=execution_id, ready_event=ready_event)
 
     def get(self, execution_id):
         return self.runtime.get(execution_id)

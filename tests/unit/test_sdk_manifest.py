@@ -641,7 +641,7 @@ class PlanCommandTests(unittest.TestCase):
             text = buffer.getvalue()
             self.assertEqual(ExitCode.OK, code)
             self.assertIn("iraf_sdk-%s-py3-none-any.whl" % DECLARED_VERSION, text)
-            self.assertIn("iraf-runtime-%s-aarch64.tar.gz" % DECLARED_VERSION, text)
+            self.assertIn("iraf-runtime-%s.tar.gz" % DECLARED_VERSION, text)
             self.assertIn("verified=false", text)
             self.assertFalse(out.exists())
 

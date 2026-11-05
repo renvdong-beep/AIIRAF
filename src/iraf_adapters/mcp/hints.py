@@ -57,9 +57,10 @@ ENTER_NEXT_STEPS = [
     "（这是\"现成能力清单\"），不要自编技能名或场景名。",
     "② 等用户给出真实语义需求。**不要为了验证链路而提交任务** —— 进入模式本身已经证明链路可用；"
     "examples 只是语义映射说明，不要求执行。",
-    "③ 用户给出动作类需求后，调用 iraf_submit_task(text=<用户原话>)，"
-    "由 IRAF Skill Manager 选技能，不要自编参数或自己执行。",
-    "④ 提交后用 iraf_get_task(execution_id) 回查权威事实，不要采信模型自述。",
+    "③ 用户给出动作类需求后，调用 iraf_submit_task(text=<用户原话>)；它只返回 execution_id"
+    "（异步受理，不再同步等执行完成），由 IRAF Skill Manager 选技能，不要自编参数或自己执行。",
+    "④ 必须用 iraf_get_task(execution_id) 轮询到 SUCCEEDED/FAILED —— 提交不再同步返回结论，"
+    "回查权威事实，不要采信模型自述，也不要重复提交。",
     "⑤ 场景有状态：一次成功抓取会把目标搬走，再次抓取前必须复位（重启 Capability Provider），"
     "否则会报 distance≈0.374435m；链路验收请在装机阶段用探针，不要在对话里拿真任务试。",
 ]
@@ -81,6 +82,10 @@ def next_steps(result: dict) -> list:
                      "不要采信任何模型自述。" % (result or {}).get("execution_id"))
         steps.append("MuJoCo 场景有状态：成功抓取会把目标带走，下一次抓取前需要复位场景"
                      "（重新启动 Capability Provider），否则会报 distance≈0.374m。")
+        return steps
+    if status in ("VALIDATING", "RUNNING", "PENDING"):
+        steps.append("任务已异步受理：用 iraf_get_task(execution_id=%s) 轮询到 SUCCEEDED/FAILED，"
+                     "不要重复提交（会重复执行、把场景目标搬走）。" % (result or {}).get("execution_id"))
         return steps
     if code == "IRAF-NOT-ROBOT-TASK":
         steps.append("这不是机器人任务：请由平台自己的能力处理，不要重试本工具、不要伪造执行结果。")

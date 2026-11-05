@@ -337,7 +337,7 @@ def iraf_submit_task(text: str, deadline_seconds: int = 120) -> str:
     except ValueError as exc:
         return json.dumps({"status": "FAILED", "error_code": "IRAF-INPUT-INVALID",
                            "reason": str(exc)}, ensure_ascii=False)
-    result = bridge.execute_intent(request, context)
+    result = bridge.submit_intent(request, context)  # 异步受理：立即返回 execution_id，执行在后台
     # 把模式一并回传：平台据此知道"现在处理的是机器人任务域"，也便于审计
     # （不在模式里时给一句 hint，但不阻断执行——模式是提示性约定，不是安全边界）。
     if isinstance(result, dict):
