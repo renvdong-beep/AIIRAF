@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"inspect_robot 输入","type":"object","additionalProperties":false,"required":["model_path"],"properties":{"model_path":{"type":"string","minLength":1,"description":"MJCF 模型路径（相对仓库根或绝对路径）"}}}
