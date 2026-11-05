@@ -31,3 +31,9 @@ screenshot*.png
 # 口径（2026-10-26 使用者定）：`.hermes/plans/` 不做版本控制，计划与进度只留本机。
 # 需要长期留档的结论请写进 docs/debug/ 或 docs/，不要在 `.hermes/` 下留唯一副本。
 .hermes/
+
+# 厂商资产按 source-lock 约定不提交（含 RL 权重 motion.pt + 网格），按锁重取
+vendor/unitree_g1/
+vendor/franka_emika_panda/
+# 临时备份不提交
+*.bak
