@@ -118,3 +118,98 @@ EnvironmentFile 优先级更高）。0.4.1 的 unit 已改为在 ExecStart 的 s
 - AgentOS 日志：`/root/.intewell/logs/agent.log`、
   worker 内 `/home/agentos/.intewell/logs/agent.log`
 - 服务单元：`/etc/systemd/system/iraf-mcp-http.service`
+
+## 7. 当前实机状态（2026-11-05，10.203.247.147）
+
+### 7.1 版本与服务
+
+```
+/opt/iraf-sdk/current -> /opt/iraf-sdk/0.4.1
+iraf-mcp-http.service  active / enabled
+0.0.0.0:8765 监听；GET /healthz 200；POST /mcp 无 token 401
+```
+
+TLS 未启用（HTTP），只在可信内网使用。
+
+### 7.2 三套 token（均为 600，明文只在各自文件）
+
+| 用途 | 文件 | subject | token id | 到期 |
+|---|---|---|---|---|
+| 上位机 harness | `/etc/iraf/mcp-client.token` | upper-sdk | tok-e81492d3 | 2027-02-02 |
+| AgentOS worker/task-api | `/etc/iraf/mcp-agentos.token` | agentos-worker | tok-446c233e | 2027-02-02 |
+| AgentOS 宿主 chat | `/etc/iraf/mcp-host.token` | agentos-host | tok-4a089e63 | 2027-02-03 |
+
+注册表：`/etc/iraf/mcp-tokens.json`（600，只存 SHA-256）。
+Dashboard 自动化凭据：`/etc/iraf/agentos-admin`（600；只记录路径，值不写入文档）。
+
+### 7.3 两套 AgentOS 配置
+
+```
+宿主 chat：
+  /root/.intewell/config.yaml
+  mcp_servers.iraf-task = http://10.203.247.147:8765/mcp
+  Authorization: Bearer <agentos-host token>（字面值，600 文件权限）
+  enabled: true
+
+worker：
+  /var/lib/agentos-shared/.intewell/config.yaml（10001:10001，600）
+  mcp_servers.iraf-task = 同上
+  Authorization: Bearer <agentos-worker token>
+  enabled: true
+```
+
+worker 容器内 `/home/agentos/.intewell` 是共享目录的 bind mount。
+worker 镜像 `agentos-worker:c29de20f-arm64` **不带 mcp 包**；当前两个 worker 已手工安装
+`mcp==1.26.0`，容器重建后会丢，需要重装或由厂商写入镜像。
+
+### 7.4 verify 实测（板上）
+
+```
+$ bash /opt/iraf-sdk/current/deploy/sdk/board_agentos_mcp_bind.sh \
+    --verify --url http://10.203.247.147:8765/mcp
+
+service                  OK healthz=True no_token=401
+host_api                 OK tools=5
+agentos-worker-1.mcp     OK
+agentos-worker-1.tools   OK（5 个工具）
+agentos-worker-2.mcp     OK
+agentos-worker-2.tools   OK（5 个工具）
+```
+
+验证记录：`/etc/iraf/agentos-mcp-binding.json`（600）。
+
+宿主日志（2026-11-05 03:42:33）：
+
+```
+MCP server 'iraf-task' (HTTP): registered 9 tool(s):
+  mcp__iraf_task__iraf_enter_robot_mode
+  mcp__iraf_task__iraf_exit_robot_mode
+  mcp__iraf_task__iraf_robot_mode
+  mcp__iraf_task__iraf_submit_task
+  mcp__iraf_task__iraf_get_task
+  + list_resources / read_resource / list_prompts / get_prompt
+AgentOS capability assembly: 9 MCP tool(s) registered
+```
+
+### 7.5 使用与复验
+
+- chat 必须**新开会话**才会采纳 MCP 工具；旧会话快照不会自动补。
+- 新会话输入“进入机器人开发模式”，预期调用
+  `mcp__iraf_task__iraf_enter_robot_mode`，返回 `mode=robot_dev`、`skills=15`、
+  `simulation=true`。
+- 日常复验：
+
+```bash
+bash /opt/iraf-sdk/current/deploy/sdk/board_agentos_mcp_bind.sh --status
+bash /opt/iraf-sdk/current/deploy/sdk/board_agentos_mcp_bind.sh \
+  --verify --url http://10.203.247.147:8765/mcp
+```
+
+- 若宿主配置被 AgentOS 重写、或 worker 容器重建：
+
+```bash
+bash /opt/iraf-sdk/current/deploy/sdk/board_agentos_mcp_bind.sh \
+  --apply --verify --url http://10.203.247.147:8765/mcp
+```
+
+  并在 worker 缺 mcp 包时补 `mcp==1.26.0`（长期应由镜像提供）。
