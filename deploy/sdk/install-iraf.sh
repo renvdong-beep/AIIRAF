@@ -23,7 +23,7 @@
 #   # 真装
 #   bash deploy/sdk/install-iraf.sh --profile single-ubuntu2204 \
 #        --sdk-wheel build/sdk/iraf_sdk-0.2.0-py3-none-any.whl \
-#        --runtime-bundle build/sdk/iraf-runtime-0.2.0-aarch64.tar.gz
+#        --runtime-bundle build/sdk/iraf-runtime-0.2.0.tar.gz
 #
 # 退出码（设计 §5 统一约定）：0 成功/演练完成 / 1 参数错误 / 2 预检失败 / 3 安装 IO 失败
 #                              4 范围或校验失败 / 5 后置自检失败

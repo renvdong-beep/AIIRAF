@@ -82,7 +82,8 @@ MATRIX_REL = "config/sdk/package_matrix.yaml"
 MATRIX_SCHEMA_REL = "config/sdk/package_matrix.schema.json"
 DEFAULT_OUT = "build/sdk"
 DEFAULT_WHEELHOUSE_ROOT = "build/wheelhouse"
-RUNTIME_BUNDLE_TEMPLATE = "iraf-runtime-{version}-{arch}.tar.gz"
+# runtime bundle 内容平台无关（纯 Python + YAML/JSON），名字不带 arch（AGENTS 5.3：不在命名里暗示架构）。
+RUNTIME_BUNDLE_TEMPLATE = "iraf-runtime-{version}.tar.gz"
 SDK_WHEEL_TEMPLATE = "{dist}-{version}-py3-none-any.whl"
 PROFILE_CHECK_SCRIPT = "scripts/profile_check.py"
 #: 随 bundle 交付的脚本（相对仓库根）。缺失即**组装失败**（不得交付跑不起来的安装包）。

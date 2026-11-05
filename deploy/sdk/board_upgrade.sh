@@ -81,7 +81,7 @@ TARGET_ID="$(PYTHONPATH="${REPO_ROOT}/deploy/sdk" python3 "${SDK_DIR}/lib_instal
 [ -n "$VALUES" ] || VALUES="${REPO_ROOT}/config/install/deploy_values/${PROFILE}.yaml"
 
 WHEEL="${REPO_ROOT}/build/sdk/iraf_sdk-${VERSION}-py3-none-any.whl"
-BUNDLE="${REPO_ROOT}/build/sdk/iraf-runtime-${VERSION}-aarch64.tar.gz"
+BUNDLE="${REPO_ROOT}/build/sdk/iraf-runtime-${VERSION}.tar.gz"
 WHEELHOUSE="${REPO_ROOT}/build/wheelhouse/${TARGET}"
 
 log "构建目标 ${TARGET}｜取值 ${VALUES}｜wheelhouse ${WHEELHOUSE}"

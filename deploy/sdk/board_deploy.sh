@@ -24,7 +24,7 @@
 #   # 1) 先看计划（默认 dry-run，不做任何写操作）
 #   bash deploy/sdk/board_deploy.sh --profile edge-intel \
 #        --sdk-wheel build/sdk-cp311/iraf_sdk-0.2.0-py3-none-any.whl \
-#        --runtime-bundle build/sdk-cp311/iraf-runtime-0.2.0-aarch64.tar.gz \
+#        --runtime-bundle build/sdk-cp311/iraf-runtime-0.2.0.tar.gz \
 #        --wheelhouse build/wheelhouse/aarch64-manylinux_2_28-cp311
 #   # 2) 真部署（显式 --apply）
 #   bash deploy/sdk/board_deploy.sh --profile edge-intel … --apply

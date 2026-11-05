@@ -125,7 +125,7 @@ import sys, tarfile
 from pathlib import Path
 
 dest = Path(sys.argv[1])
-bundle = dest / "iraf-runtime-0.2.0-aarch64.tar.gz"
+bundle = dest / "iraf-runtime-0.2.0.tar.gz"
 with tarfile.open(bundle, "w:gz") as tar:
     import io
     payload = "# IRAF runtime (sandbox fixture)\n".encode("utf-8")

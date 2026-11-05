@@ -586,7 +586,8 @@ def build_runtime_bundle(
     if not members:
         raise ManifestError("bundle 成员为空，拒绝产出空包", ExitCode.BUILD)
     out_dir.mkdir(parents=True, exist_ok=True)
-    bundle_path = out_dir / f"{name}-{version}-{arch}.tar.gz"
+    # runtime bundle 内容平台无关，名字不带 arch（避免误导 x86/板卡同包）。
+    bundle_path = out_dir / f"{name}-{version}.tar.gz"
 
     buffer = io.BytesIO()
     with gzip.GzipFile(filename="", mode="wb", fileobj=buffer, mtime=0) as gz:
@@ -1107,7 +1108,7 @@ def _planned_artifacts(repo_root: Path, matrix: dict, target: dict, version: str
     wheel_name = (
         f"{normalize_dist_name(matrix['sdk']['name'])}-{version}-{WHEEL_TAG}.whl"
     )
-    bundle_name = f"iraf-runtime-{version}-{target['arch']}.tar.gz"
+    bundle_name = f"iraf-runtime-{version}.tar.gz"
     members, excluded = iter_bundle_files(repo_root)
     return {
         "wheel": wheel_name,
@@ -1285,7 +1286,7 @@ def cmd_manifest(options: dict) -> int:
     matrix, target, version = plan["matrix"], plan["target"], plan["version"]
 
     wheel_path = out_dir / f"{normalize_dist_name(matrix['sdk']['name'])}-{version}-{WHEEL_TAG}.whl"
-    bundle_path = out_dir / f"iraf-runtime-{version}-{target['arch']}.tar.gz"
+    bundle_path = out_dir / f"iraf-runtime-{version}.tar.gz"
     missing = [
         relpath_posix(path, repo_root) for path in (wheel_path, bundle_path) if not path.is_file()
     ]

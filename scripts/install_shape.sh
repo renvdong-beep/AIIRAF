@@ -91,7 +91,7 @@ fi
 # ── 版本与产物路径：全部从声明/矩阵读，不在本脚本里写死 ──────────────────────────
 VERSION="$("${PYTHON}" -c "import sys;sys.path.insert(0,'${REPO_ROOT}/deploy/sdk');import lib_manifest as m;from pathlib import Path;print(m.read_declared_version(Path('${REPO_ROOT}'),m.load_matrix(Path('${REPO_ROOT}'),Path('${REPO_ROOT}/config/sdk/package_matrix.yaml'))['sdk']['version_ref']))")"
 SDK_WHEEL="${REPO_ROOT}/build/sdk/iraf_sdk-${VERSION}-py3-none-any.whl"
-RUNTIME_BUNDLE="${REPO_ROOT}/build/sdk/iraf-runtime-${VERSION}-aarch64.tar.gz"
+RUNTIME_BUNDLE="${REPO_ROOT}/build/sdk/iraf-runtime-${VERSION}.tar.gz"
 
 TARGET_ARGS=()
 [ -n "${TARGET}" ] && TARGET_ARGS=(--target "${TARGET}")
