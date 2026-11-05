@@ -1,0 +1,135 @@
+// IRAF 分层技术架构（v0.4.1，2026-11-04，从上到下）
+// 由 dot -Tsvg/-Tpng 生成 IRAF分层技术架构图.svg / iraf-layered-architecture.png
+// 口径：v1 = 仿真范围（simulation=true），不构成真机/实时能力证据。
+digraph IRAF_Layered {
+  graph [rankdir=TB, newrank=true, splines=spline, nodesep=0.22, ranksep=0.38,
+         fontname="Noto Sans CJK SC", fontsize=12, bgcolor="#f7fafc",
+         label="IRAF 分层技术架构 v0.4.1（2026-11-04）｜从上到下：调用方 → 接入 → 编排 → 技能 → 策略 → 控制 → 能力 → 物理/仿真",
+         labelloc=t, fontsize=17, pad=0.2, compound=true];
+  node  [shape=box, style="rounded,filled", fontname="Noto Sans CJK SC",
+         fontsize=10, color="#2b5d78", fillcolor="#ffffff", penwidth=1.2, margin="0.10,0.05"];
+  edge  [fontname="Noto Sans CJK SC", fontsize=8, color="#496779",
+         arrowsize=0.65, penwidth=1.1];
+
+  // ── L0 调用方 ──────────────────────────────────────────────────────────
+  subgraph cluster_l0 {
+    label="L0 调用方 / 语义层"; fontsize=12; color="#22a6b3"; style="rounded,dashed";
+    upper [label="上位机 harness\n自有 MuJoCo / UI\nBearer upper-sdk", fillcolor="#e7f6f8"];
+    agentos [label="AgentOS chat\nagentos-worker-1/2\nBearer agentos-worker", fillcolor="#e7f6f8"];
+    cli [label="IRAF CLI / 语音\nstdio: IRAF_RUNTIME_SUBJECT", fillcolor="#e7f6f8"];
+  }
+
+  // ── L1 接入与身份 ──────────────────────────────────────────────────────
+  subgraph cluster_l1 {
+    label="L1 接入与身份（transport 是唯一身份来源）"; fontsize=12; color="#357258"; style="rounded,dashed";
+    mcp [label="iraf-mcp-http.service :8765\nstreamable-http /mcp\n5 个任务级工具", fillcolor="#e9f5ef"];
+    stdio [label="stdio MCP\n同机宿主 / AgentOS", fillcolor="#e9f5ef"];
+    auth [label="BearerAuthMiddleware\nscope: task.submit / task.read\nresources 绑定 · 审计", fillcolor="#fff1cf"];
+    tokens [label="token 注册表\n/etc/iraf/mcp-tokens.json\n只存 SHA-256 · 600 · 热撤销", shape=cylinder, fillcolor="#f1eaf7"];
+    shared [label="AgentOS 共享内容层\n/var/lib/agentos-shared/.intewell/\nconfig.yaml → mcp_servers.iraf-task", fillcolor="#f3ecf8"];
+  }
+
+  // ── L2 任务编排 ────────────────────────────────────────────────────────
+  subgraph cluster_l2 {
+    label="L2 任务编排 / 意图与契约"; fontsize=12; color="#2b5d78"; style="rounded,dashed";
+    flow [label="TaskFlow / AgentOSBridge\n任务语义 → 技能", fillcolor="#e7f1fa"];
+    model [label="模型网关\nIRAF_AGENTOS_MODEL_URL\n+ 600 key", fillcolor="#fff7e6"];
+    dispatcher [label="TaskDispatcher\nrequest / correlation\nidempotency / deadline", fillcolor="#e7f1fa"];
+    contracts [label="Skill 契约\ninput/output schema\nintents / triggers", shape=note, fillcolor="#fffbe6"];
+  }
+
+  // ── L3 技能运行 ────────────────────────────────────────────────────────
+  subgraph cluster_l3 {
+    label="L3 技能运行 / Skill Manager"; fontsize=12; color="#357258"; style="rounded,dashed";
+    manager [label="Skill Manager\n版本选择 · 能力依赖\n前置/成功条件", fillcolor="#e9f5ef"];
+    runtime [label="Skill Runtime\n校验 · 执行 · 超时\n取消 · 恢复", fillcolor="#e9f5ef"];
+    registry [label="Skill Registry\nskills/<name>/skill.yaml", fillcolor="#e9f5ef"];
+  }
+
+  // ── L4 安全策略 ────────────────────────────────────────────────────────
+  subgraph cluster_l4 {
+    label="L4 安全策略 / Policy Gateway（安全上限只来自已签名声明）"; fontsize=12; color="#b27612"; style="rounded,dashed";
+    policy [label="Policy Gateway\nAuthenticatedContext\n判定", fillcolor="#fff1cf"];
+    profile [label="RobotProfile\njoints · limits\ncapabilities", fillcolor="#fff1cf"];
+    safety [label="SafetyPolicy\nallowed_skills\nmax_duration · simulation_only", fillcolor="#fff1cf"];
+    event [label="SafetyEvent\n→ QUARANTINED\n复位前不释放", fillcolor="#fff0ef"];
+  }
+
+  // ── L5 执行控制 ────────────────────────────────────────────────────────
+  subgraph cluster_l5 {
+    label="L5 执行控制 / ControlAuthority"; fontsize=12; color="#704889"; style="rounded,dashed";
+    authority [label="ControlAuthority\nexecution_id · lease TTL\n单控制源", fillcolor="#f1eaf7"];
+    fencing [label="fencing token\n单调 · 旧 token 拒绝\n终态拒绝新控制", fillcolor="#f1eaf7"];
+    idem [label="idempotency store\n同键同摘要 → 既有结果", shape=cylinder, fillcolor="#f1eaf7"];
+    store [label="SqliteExecutionStore\nexecution 事实 · 事件序列", shape=cylinder, fillcolor="#f1eaf7"];
+  }
+
+  // ── L6 能力适配 ────────────────────────────────────────────────────────
+  subgraph cluster_l6 {
+    label="L6 能力适配 / 南向 provider.proto"; fontsize=12; color="#29717b"; style="rounded,dashed";
+    backend [label="RemoteProviderBackend\n/ 本地 MujocoBackend", fillcolor="#eaf3f5"];
+    invoke [label="CapabilityProviderService\nHealth / Invoke / Cancel\nLeaseEnvelope", fillcolor="#eaf3f5"];
+    envelope [label="lease / deadline\nfencing · idempotency\n拒绝过期/旧 token", fillcolor="#eaf3f5"];
+  }
+
+  // ── L7 Provider / 物理与仿真 ───────────────────────────────────────────
+  subgraph cluster_l7 {
+    label="L7 Provider / 物理与仿真"; fontsize=12; color="#a8433f"; style="rounded,dashed";
+    x86 [label="x86 MuJoCo Provider\n:50052 / :50053\nsimulation=true", fillcolor="#eaf3f5"];
+    kit [label="客户 ProviderKit\n自有 MuJoCo / 控制器\n同 lease/fencing 契约", fillcolor="#fff7e6"];
+    rt [label="运控域实时 Provider\nL0/L1（v1 不验收 HIL）", fillcolor="#fff0ef"];
+  }
+
+  // ── L8 交付与证据 ──────────────────────────────────────────────────────
+  subgraph cluster_l8 {
+    label="L8 交付 / 证据 / 可观测"; fontsize=12; color="#6a4c86"; style="rounded,dashed";
+    sdk [label="SDK 交付物\niraf_sdk wheel\nruntime bundle\n上层指南 / ProviderKit", fillcolor="#f1eaf7"];
+    units [label="systemd 常驻\niraf-mcp-http\niraf-runtime-grpc\nprovider@scene", fillcolor="#f1eaf7"];
+    audit [label="证据与审计\nmcp-audit.jsonl\nexecution store\njournal", shape=cylinder, fillcolor="#f1eaf7"];
+  }
+
+  // 层间主链：从上到下
+  upper -> mcp [label="Authorization: Bearer"];
+  agentos -> shared [style=dashed, arrowhead=none];
+  shared -> mcp [label="HTTP + Bearer"];
+  cli -> stdio [label="stdio"];
+  mcp -> auth [label="Principal"];
+  stdio -> auth [label="env subject", style=dashed];
+  tokens -> auth [label="hash / scope / expiry", style=dashed];
+  auth -> flow [label="submit / enter / get"];
+
+  flow -> model [label="受约束解析", style=dashed];
+  flow -> contracts [style=dashed];
+  flow -> dispatcher [label="canonical task"];
+  dispatcher -> manager [label="skill + params"];
+  manager -> registry [label="契约/版本"];
+  manager -> runtime [label="选中 skill"];
+
+  runtime -> policy [label="policy check"];
+  policy -> profile [style=dashed];
+  policy -> safety [style=dashed];
+  safety -> event [label="拒绝/安全事件", style=dashed, constraint=false];
+
+  runtime -> authority [label="acquire lease"];
+  authority -> fencing [style=dashed];
+  authority -> idem [style=dashed];
+  authority -> store [label="执行事实", style=dashed];
+
+  authority -> backend [label="能力调用"];
+  backend -> invoke [label="gRPC + token"];
+  invoke -> envelope [label="LeaseEnvelope"];
+  invoke -> x86 [label="能力执行"];
+  invoke -> kit [label="同一契约", style=dashed];
+  invoke -> rt [label="独立安全边界", style=dashed];
+
+  mcp -> store [label="get_task\n按 subject 归属", style=dashed, constraint=false];
+  auth -> audit [style=dashed, constraint=false];
+
+  // 不可旁路与仿真口径注记
+  note [shape=note, fillcolor="#fffbe6", color="#b27612", fontsize=9,
+        label="不可旁路：TaskFlow → Skill Runtime → Policy → Provider。\nMCP token 只证明调用方身份，不放大 Profile/SafetyPolicy 的安全上限。\nProvider 只执行能力，不做策略判定。"];
+  policy -> note [style=invis];
+  sim [shape=note, fillcolor="#eef7ee", color="#357258", fontsize=9,
+       label="v1 范围：MuJoCo 仿真证据（simulation=true）；\n不含 HIL、真机实时性、现场总线验收。"];
+  x86 -> sim [style=invis];
+}

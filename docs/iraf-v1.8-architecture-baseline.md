@@ -50,8 +50,9 @@ dot -Tsvg docs/diagrams/iraf-unitree-scene-stack.dot -o docs/diagrams/iraf-unitr
 |---|---|---|
 | 总体架构 | `agentos机器人应用框架-更新版.dot` | `dot -Tsvg ... -o agentos机器人应用框架-更新版.svg`；`dot -Tpng -Gdpi=140 ... -o iraf-refined-architecture.png` |
 | 详细技术架构 | `IRAF详细技术架构图.dot` | `dot -Tsvg ... -o IRAF详细技术架构图.svg`；`dot -Tpng -Gdpi=140 ... -o iraf-detailed-interface-security.png` |
+| 分层技术架构（从上到下） | `IRAF分层技术架构图.dot` | `dot -Tsvg ... -o IRAF分层技术架构图.svg`；`dot -Tpng -Gdpi=120 ... -o IRAF分层技术架构图.png` |
 
-两张图与 `docs/mcp-binding.md`、`docs/adr/0011-mcp-northbound-auth.md`、
+这些图与 `docs/mcp-binding.md`、`docs/adr/0011-mcp-northbound-auth.md`、
 `docs/upper-sdk-guide.md`、`docs/provider-sdk-guide.md` 同口径；图内所有执行结论仍为
 `simulation=true`，不构成真机/实时能力证据。
 

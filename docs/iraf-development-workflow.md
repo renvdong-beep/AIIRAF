@@ -36,7 +36,8 @@
 
 ## 架构变更同步门禁
 
-PR 必须填写 `architecture-impact: yes/no`。选择 `yes` 或变更 `core/`、公共 `api/`、Provider/adapter 边界、Profile、平台矩阵或安全执行路径时，必须在同一 PR 更新 `agentos机器人应用框架-更新版.svg`、`IRAF详细技术架构图.svg` 和对应 ADR。CI 的 `docs-architecture` job 校验两张 SVG 的 XML、文档链接和 ADR 状态；评审人确认图中的模块、调用方向、信任边界和文档一致后才可合并。
+PR 必须填写 `architecture-impact: yes/no`。选择 `yes` 或变更 `core/`、公共 `api/`、Provider/adapter 边界、Profile、平台矩阵或安全执行路径时，必须在同一 PR 更新 `agentos机器人应用框架-更新版.svg`、`IRAF详细技术架构图.svg`、
+`IRAF分层技术架构图.svg` 和对应 ADR。CI 的 `docs-architecture` job 校验这些 SVG 的 XML、文档链接和 ADR 状态；评审人确认图中的模块、调用方向、信任边界和文档一致后才可合并。
 
 ## 事件与故障处理
 
