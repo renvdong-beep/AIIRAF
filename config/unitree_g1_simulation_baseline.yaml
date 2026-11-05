@@ -1,0 +1,38 @@
+schema_version: iraf.unitree_g1-baseline/v1
+description: Unitree G1 受控仿真基线骨架（流程验证生成；数值需按实现填写，勿直接使用）
+
+model:
+  source: vendor/unitree_g1/g1.xml
+  trunk_body: pelvis
+  floating_base: true
+  # 关节分组（声明名）
+  leg_joints:
+    [left_hip_pitch_joint, left_hip_roll_joint, left_hip_yaw_joint, left_knee_joint,
+     left_ankle_pitch_joint, left_ankle_roll_joint,
+     right_hip_pitch_joint, right_hip_roll_joint, right_hip_yaw_joint, right_knee_joint,
+     right_ankle_pitch_joint, right_ankle_roll_joint]
+  waist_joints: [waist_yaw_joint, waist_roll_joint, waist_pitch_joint]
+  arm_joints:
+    [left_shoulder_pitch_joint, left_shoulder_roll_joint, left_shoulder_yaw_joint, left_elbow_joint,
+     left_wrist_roll_joint, left_wrist_pitch_joint, left_wrist_yaw_joint,
+     right_shoulder_pitch_joint, right_shoulder_roll_joint, right_shoulder_yaw_joint, right_elbow_joint,
+     right_wrist_roll_joint, right_wrist_pitch_joint, right_wrist_yaw_joint]
+
+# 站姿参考（默认站立位形：全 0，pelvis z=0.793）
+stance:
+  home_qpos: null          # TODO: 由 inspect-robot 注入 29 关节默认位形
+  target_height_m: null    # TODO: 实测站立高度（pelvis z 的站立值）
+  height_tolerance_m: 0.03
+  max_tilt_deg: 15.0
+
+# 步态（未实现，数值待 bipedal gait 方案落地）
+gait:
+  max_speed_mps: 0.3       # TODO: 由安全策略确认（对应 Go2 max_speed_mps=0.5 口径）
+  step_frequency_hz: null  # TODO
+  support_margin_m: null   # TODO: 支撑多边形裕量（对应 Go2 支撑分类探针）
+
+acceptance:
+  stand_height_error_max_m: 0.03
+  stand_final_speed_max_mps: 0.05
+  walk_offset_max_m: 0.10
+  walk_yaw_error_max_deg: 2.0

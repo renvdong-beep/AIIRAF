@@ -687,10 +687,17 @@ class LocomoteProvider:
     能力契约层在**执行前**拒绝（实测：`IRAF-SKILL-PROVIDER-UNAVAILABLE`）。
     """
 
-    #: 输出 schema（`skills/locomote/locomote.output.json`）要的 evidence 键。
+    #: 输出 schema（`skills/locomote/locomote.output.json`）**必需**的 evidence 键。
     #: `velocity` 不在适配器报告里（报告叫 `command`）⇒ 在 `execute` 里显式映射，
     #: 而不是把 `command` 改名（改名会牵动报告契约与其他消费方）。
     EVIDENCE_KEYS = ("simulation", "capability", "duration_ms")
+
+    #: **有则带上**的证据键：`distance_m`/`fell` 是「到底走没走」的唯一证据。
+    #: 为什么必需键里不能放：go2 适配器目前不报告这两个字段，设成必需会让它直接
+    #: `SkillContractError`（`_evidence` 缺键即失败，这是有意的）。所以设成可选透传，
+    #: 并且在下面把 `fell=True` 判成失败 —— 否则「摔倒了也 SUCCEEDED」。
+    OPTIONAL_EVIDENCE_KEYS = ("distance_m", "fell", "command_forward_mps",
+                              "execution_id", "fencing_token")
 
     def __init__(self, profile, backend):
         self.profile = profile
@@ -707,6 +714,19 @@ class LocomoteProvider:
         )
         evidence = _evidence(report, self.EVIDENCE_KEYS)
         evidence["velocity"] = dict(velocity)
+        # 可选证据透传：适配器报了才带（go2 未报 → 不加键，schema 侧是可选项）。
+        for key in self.OPTIONAL_EVIDENCE_KEYS:
+            if key in report:
+                evidence[key] = report[key]
+        # 摔倒即失败：适配器把 `fell` 放在报告里而不是抛错（它只把 ledger 标成 FAILED），
+        # 若这里不复核，「摔倒了也 SUCCEEDED」——那正是本项目禁止的伪造成功。
+        if report.get("fell") is True:
+            from iraf_skills.common.motion import SkillRejected
+
+            raise SkillRejected(
+                "locomote 过程中躯干低于高度门限（fell=True，位移 %.3f m）；不得当作成功"
+                % float(report.get("distance_m") or 0.0)
+            )
         return {"skill": "locomote", "accepted": True, "evidence": evidence}
 
 

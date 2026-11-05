@@ -211,6 +211,46 @@ class RemoteProviderBackend:
         return self._invoke("reset_scene", {"scope": str(scope or "all"),
                                            "target_id": target_id}, lease)
 
+    # ---- 四足/人形（U4 能力：stand / locomote）----
+    # 为什么必须在这里：`factory.verify_backend_contract` 是**类级**校验，profile 声明了
+    # capabilities=[stand, stop, locomote] 就要求代理类有同名方法；缺了在装配期直接失败：
+    #   BackendContractError: Backend 未实现 RobotProfile 声明的能力: locomote(需 locomote), stand(需 stand)
+    # 代理层语义边界与机械臂能力一致：只转发，不做策略判定、不伪造成功。
+    def stand(self, lease, targets=None, duration_ms=None) -> Dict[str, Any]:
+        """站立。目标位形与时长**只能**来自机型声明。
+
+        服务端 `provider_service._POSITIONAL["stand"] = ()` 是零参数能力 ⇒ 即使把
+        `targets` / `duration_ms` 塞进 inputs 也会被静默丢弃。与其让调用方以为参数生效，
+        这里显式拒绝（这与 `DockForHandoffProvider` 拒绝坐标参数的纪律同源）。
+        """
+        if targets is not None or duration_ms is not None:
+            raise RemoteProviderError(
+                "IRAF-INPUT-INVALID",
+                "跨机 stand 不接受调用方给 targets/duration_ms：目标位形与时长只来自机型声明"
+                "（服务端零参数能力，传了会被丢弃 ⇒ 显式拒绝而非静默忽略）")
+        return self._invoke("stand", {}, lease)
+
+    def locomote(self, velocity, duration_ms, lease) -> Dict[str, Any]:
+        """速度指令：形状校验后转发；字段语义由服务端适配器唯一校验。"""
+        parsed = self.resolve_velocity(velocity)
+        return self._invoke("locomote", {"velocity": parsed,
+                                        "duration_ms": float(duration_ms)}, lease)
+
+    def resolve_velocity(self, velocity) -> Dict[str, Any]:
+        """速度字段词表来自 `iraf_adapters.unitree.quadruped.VELOCITY_FIELDS`（唯一来源）。
+
+        代理层只做「能不能上线路」的检查（非空对象 + 字段齐全），数值/范围校验由服务端
+        适配器的 `resolve_velocity` 负责 —— 两份实现必然分叉。
+        """
+        from iraf_adapters.unitree.quadruped import VELOCITY_FIELDS
+
+        if not isinstance(velocity, dict) or not velocity:
+            raise RemoteProviderError("IRAF-INPUT-INVALID", "速度指令必须是非空对象: %r" % (velocity,))
+        missing = [field for field in VELOCITY_FIELDS if field not in velocity]
+        if missing:
+            raise RemoteProviderError("IRAF-INPUT-INVALID", "速度指令缺少字段: %s" % missing)
+        return {field: velocity[field] for field in VELOCITY_FIELDS}
+
     def stop(self, lease) -> None:
         self._invoke("stop", {}, lease)
 

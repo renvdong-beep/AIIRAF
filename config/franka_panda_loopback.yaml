@@ -1,0 +1,10 @@
+schema_version: iraf.arm-loopback/v1
+simulation: true
+robot:
+  id: franka_panda
+  profile: profiles/franka_panda_mujoco.yaml
+  backend: franka_panda_mujoco
+model:
+  file: vendor/franka_emika_panda/scene.xml
+control:
+  frequency_hz: 100

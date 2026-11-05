@@ -446,6 +446,10 @@ def check_board(board_path, allow_unverified=False):
 QUADRUPED_ENTRYPOINT = "iraf_adapters.unitree.unitree_go2:UnitreeGo2Adapter"
 QUADRUPED_SCHEMA_VERSION = "iraf.quadruped-profile-check/v1"
 
+#: 人形机型声明入口（与四足并列：人形无夹爪/抓取基线，但同样须四向一致）。
+HUMANOID_ENTRYPOINT = "iraf_adapters.unitree_g1.backend:UnitreeG1Backend"
+HUMANOID_SCHEMA_VERSION = "iraf.humanoid-profile-check/v1"
+
 
 def check_quadruped(declaration_path, root=ROOT):
     """校验四足机型声明，返回 report（`passed` 非真即整体失败，退出码 1）。
@@ -721,6 +725,123 @@ def check_quadruped(declaration_path, root=ROOT):
     return report
 
 
+def check_humanoid(declaration_path, root=ROOT):
+    """校验人形机型声明：声明 ↔ Profile ↔ 模型 ↔ 适配器能力契约 四向一致。
+
+    门禁（与实测/模型比对，不与硬编码常数比）：
+    1. 声明必需键齐备，且 simulation=true（仿真结论不得冒充真机）；
+    2. robot.id == Profile metadata.name，Profile 能被核心校验器加载；
+    3. 适配器能装配（模型可编译、关节↔执行器一对一绑定）；
+    4. spec.home 覆盖全部关节且落在声明限位内；
+    5. declared ⊆ implemented 能力契约（factory 方法层 + 人形实现层）。
+    """
+    from iraf_adapters.unitree import quadruped as quadruped_contract
+    from iraf_adapters.unitree_g1 import backend as g1_backend
+    from iraf_core.authority import ControlAuthorityManager
+    from iraf_core.profile import ProfileError, load_robot_profile
+
+    failures = []
+    report = {
+        "schema_version": HUMANOID_SCHEMA_VERSION,
+        "declaration": str(declaration_path),
+        "robot": None,
+        "profile": None,
+        "model": None,
+        "joints": [],
+        "capabilities": None,
+        "failures": failures,
+        "passed": False,
+    }
+
+    path = _resolve(root, declaration_path)
+    if not path.is_file():
+        failures.append("人形声明不存在: " + str(path))
+        return report
+
+    try:
+        declaration, _root = g1_backend.load_declaration(path)
+    except quadruped_contract.QuadrupedError as exc:
+        failures.append("声明层失败 [%s]: %s" % (exc.code, exc))
+        return report
+
+    if not bool(declaration.get("simulation", False)):
+        failures.append("声明缺少 simulation: true")
+
+    robot = declaration.get("robot") or {}
+    robot_id = str(robot.get("id") or "")
+    report["robot"] = robot_id or None
+    profile_rel = robot.get("profile")
+    if not robot_id or not isinstance(profile_rel, str):
+        failures.append("声明缺少 robot.id / robot.profile")
+        return report
+    profile_path = _resolve(root, profile_rel)
+    if not profile_path.is_file():
+        failures.append("Profile 不存在: " + str(profile_path))
+        return report
+    try:
+        profile = load_robot_profile(profile_path)
+    except ProfileError as exc:
+        failures.append("Profile 未能通过核心校验器: %s" % exc)
+        return report
+    report["profile"] = {
+        "path": str(profile_rel),
+        "name": profile.name,
+        "version": profile.version,
+        "simulation": bool(profile.simulation),
+        "capabilities": sorted(str(item) for item in profile.capabilities),
+    }
+    if profile.name != robot_id:
+        failures.append(
+            "声明 robot.id=%s 与 Profile metadata.name=%s 不一致" % (robot_id, profile.name)
+        )
+    if not bool(profile.simulation):
+        failures.append("Profile 缺少 simulation: true")
+
+    try:
+        backend_class = _resolve_class(HUMANOID_ENTRYPOINT)
+        report["backend_contract"] = verify_backend_contract(backend_class, profile)
+    except (BackendContractError, ValueError) as exc:
+        failures.append("能力契约校验失败（方法层）: %s" % exc)
+
+    adapter = None
+    try:
+        adapter = g1_backend.UnitreeG1Backend.from_config(
+            path, profile, ControlAuthorityManager()
+        )
+    except Exception as exc:  # noqa: BLE001 - 装配失败统一登记为契约失败
+        failures.append("适配器装配失败: %s" % exc)
+    if adapter is not None:
+        model_file = (adapter.declaration.get("model") or {}).get("file")
+        report["model"] = str(adapter.root / str(model_file)) if model_file else None
+        report["joints"] = list(adapter.joint_order)
+        home = dict(getattr(profile, "home", None) or {})
+        if not home:
+            failures.append("Profile 缺少 spec.home")
+        else:
+            missing_home = [name for name in profile.joints if name not in home]
+            if missing_home:
+                failures.append("spec.home 未覆盖关节: " + str(missing_home))
+            limits = dict(profile.joint_limits or {})
+            for name, value in home.items():
+                if name in limits:
+                    lower, upper = limits[name]
+                    if float(value) < float(lower) or float(value) > float(upper):
+                        failures.append(
+                            "spec.home 中 %s=%r 越出声明限位 [%r, %r]"
+                            % (name, float(value), float(lower), float(upper))
+                        )
+
+    report["capabilities"] = {
+        "declared": sorted(str(item) for item in profile.capabilities),
+        "implemented": sorted(
+            str(item)
+            for item in getattr(g1_backend.UnitreeG1Backend, "IMPLEMENTED_CAPABILITIES", ())
+        ),
+    }
+    report["passed"] = not failures
+    return report
+
+
 def _relative_to_root(path, root):
     try:
         return Path(path).resolve().relative_to(Path(root).resolve())
@@ -738,6 +859,18 @@ def _main_quadruped(args):
     for message in report["failures"]:
         print("· " + message, file=sys.stderr)
     print("\nQUADRUPED_PROFILE_CHECK_FAILED", file=sys.stderr)
+    return 1
+
+
+def _main_humanoid(args):
+    report = check_humanoid(args.humanoid)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    if report["passed"]:
+        print("HUMANOID_PROFILE_CHECK_PASSED", file=sys.stderr)
+        return 0
+    for message in report["failures"]:
+        print("· " + message, file=sys.stderr)
+    print("\nHUMANOID_PROFILE_CHECK_FAILED", file=sys.stderr)
     return 1
 
 
@@ -783,6 +916,12 @@ def main(argv=None):
         default=None,
         help="四足机型声明自检（声明 ↔ Profile ↔ 模型 ↔ 适配器能力契约 四向一致）",
     )
+    parser.add_argument(
+        "--humanoid",
+        type=Path,
+        default=None,
+        help="人形机型声明自检（声明 ↔ Profile ↔ 模型 ↔ 适配器能力契约 四向一致）",
+    )
     parser.add_argument("--profile", type=Path, default=None)
     parser.add_argument(
         "--board",
@@ -803,9 +942,16 @@ def main(argv=None):
     if args.board is not None and args.quadruped is not None:
         print("--board 与 --quadruped 是两种不同对象，请分别校验", file=sys.stderr)
         return 1
-    if args.board is None and args.baseline is None and args.quadruped is None:
+    if args.board is not None and args.humanoid is not None:
+        print("--board 与 --humanoid 是两种不同对象，请分别校验", file=sys.stderr)
+        return 1
+    if args.quadruped is not None and args.humanoid is not None:
+        print("--quadruped 与 --humanoid 是两种不同对象，请分别校验", file=sys.stderr)
+        return 1
+    if args.board is None and args.baseline is None and args.quadruped is None and args.humanoid is None:
         print(
-            "请给出 --baseline（机型基线）或 --board（板卡声明）或 --quadruped（四足声明）",
+            "请给出 --baseline（机型基线）或 --board（板卡声明）或 --quadruped（四足声明）"
+            "或 --humanoid（人形声明）",
             file=sys.stderr,
         )
         return 1
@@ -813,6 +959,8 @@ def main(argv=None):
         return _main_board(args)
     if args.quadruped is not None:
         return _main_quadruped(args)
+    if args.humanoid is not None:
+        return _main_humanoid(args)
 
     baseline_path = _resolve(ROOT, args.baseline)
     if not baseline_path.is_file():

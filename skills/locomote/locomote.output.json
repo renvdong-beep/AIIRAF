@@ -1,1 +1,33 @@
-{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"locomote 输出","type":"object","additionalProperties":false,"required":["skill","accepted","evidence"],"properties":{"skill":{"const":"locomote"},"accepted":{"const":true},"evidence":{"type":"object","additionalProperties":false,"required":["simulation","capability","velocity","duration_ms"],"properties":{"simulation":{"const":true},"capability":{"const":"locomote"},"velocity":{"type":"object"},"duration_ms":{"type":"number","exclusiveMinimum":0}}}}}
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "locomote 输出",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["skill", "accepted", "evidence"],
+  "properties": {
+    "skill": {"const": "locomote"},
+    "accepted": {"const": true},
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["simulation", "capability", "velocity", "duration_ms"],
+      "properties": {
+        "simulation": {"const": true},
+        "capability": {"const": "locomote"},
+        "velocity": {"type": "object"},
+        "duration_ms": {"type": "number", "exclusiveMinimum": 0},
+        "distance_m": {
+          "type": "number",
+          "description": "机体在躯干高度门限之上的最大前向位移（米）。「到底走没走」的证据，适配器报告了就必需透传。"
+        },
+        "fell": {
+          "type": "boolean",
+          "description": "过程中是否躯干低于高度门限。true 时 Skill Provider 直接判失败，不得 SUCCEEDED。"
+        },
+        "command_forward_mps": {"type": "number"},
+        "execution_id": {"type": "string"},
+        "fencing_token": {"type": "number"}
+      }
+    }
+  }
+}

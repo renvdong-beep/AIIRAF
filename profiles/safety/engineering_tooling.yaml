@@ -10,5 +10,5 @@ spec:
   # 以保证"工程向导"不可能被误用为机器人操作入口。
   simulation_only: false
   default: deny
-  allowed_skills: [engineering.robot_adapter]
+  allowed_skills: [engineering.robot_adapter, engineering.inspect_robot]
   max_duration_ms: 30000

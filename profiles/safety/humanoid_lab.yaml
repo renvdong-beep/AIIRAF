@@ -1,0 +1,13 @@
+apiVersion: iraf.intewell.io/v1
+kind: SafetyPolicy
+metadata:
+  name: humanoid_lab
+  version: 1.0.0
+spec:
+  verification: development
+  # 仿真专用：本策略不得用于真机。
+  simulation_only: true
+  default: deny
+  # 人形放行清单。locomote 未实现（bipedal gait 二期），不放行也不声明。
+  allowed_skills: [stand, stop, locomote]
+  max_duration_ms: 30000

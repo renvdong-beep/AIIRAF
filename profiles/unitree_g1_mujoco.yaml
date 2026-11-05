@@ -1,0 +1,97 @@
+apiVersion: iraf.intewell.io/v1
+kind: RobotProfile
+metadata:
+  name: unitree_g1
+  version: 0.1.0
+spec:
+  # 流程验证工件（inspect-robot 生成；尚未经场景构建器接入验证）。
+  # G1 = 人形：29 位置控制关节、浮动机座、橡胶手（无夹爪手指）。
+  simulation: true
+  verification: unverified
+  control_frequency_hz: 100
+  # 29 个受控关节（不含 free joint `floating_base_joint`）。顺序按 MJCF 编译结果。
+  joints:
+    [left_hip_pitch_joint, left_hip_roll_joint, left_hip_yaw_joint, left_knee_joint,
+     left_ankle_pitch_joint, left_ankle_roll_joint,
+     right_hip_pitch_joint, right_hip_roll_joint, right_hip_yaw_joint, right_knee_joint,
+     right_ankle_pitch_joint, right_ankle_roll_joint,
+     waist_yaw_joint, waist_roll_joint, waist_pitch_joint,
+     left_shoulder_pitch_joint, left_shoulder_roll_joint, left_shoulder_yaw_joint, left_elbow_joint,
+     left_wrist_roll_joint, left_wrist_pitch_joint, left_wrist_yaw_joint,
+     right_shoulder_pitch_joint, right_shoulder_roll_joint, right_shoulder_yaw_joint, right_elbow_joint,
+     right_wrist_roll_joint, right_wrist_pitch_joint, right_wrist_yaw_joint]
+  joint_limits:
+    left_hip_pitch_joint: [-2.5307, 2.8798]
+    left_hip_roll_joint: [-0.5236, 2.9671]
+    left_hip_yaw_joint: [-2.7576, 2.7576]
+    left_knee_joint: [-0.087267, 2.8798]
+    left_ankle_pitch_joint: [-0.87267, 0.5236]
+    left_ankle_roll_joint: [-0.2618, 0.2618]
+    right_hip_pitch_joint: [-2.5307, 2.8798]
+    right_hip_roll_joint: [-2.9671, 0.5236]
+    right_hip_yaw_joint: [-2.7576, 2.7576]
+    right_knee_joint: [-0.087267, 2.8798]
+    right_ankle_pitch_joint: [-0.87267, 0.5236]
+    right_ankle_roll_joint: [-0.2618, 0.2618]
+    waist_yaw_joint: [-2.618, 2.618]
+    waist_roll_joint: [-0.52, 0.52]
+    waist_pitch_joint: [-0.52, 0.52]
+    left_shoulder_pitch_joint: [-3.0892, 2.6704]
+    left_shoulder_roll_joint: [-1.5882, 2.2515]
+    left_shoulder_yaw_joint: [-2.618, 2.618]
+    left_elbow_joint: [-1.0472, 2.0944]
+    left_wrist_roll_joint: [-1.97222, 1.97222]
+    left_wrist_pitch_joint: [-1.61443, 1.61443]
+    left_wrist_yaw_joint: [-1.61443, 1.61443]
+    right_shoulder_pitch_joint: [-3.0892, 2.6704]
+    right_shoulder_roll_joint: [-2.2515, 1.5882]
+    right_shoulder_yaw_joint: [-2.618, 2.618]
+    right_elbow_joint: [-1.0472, 2.0944]
+    right_wrist_roll_joint: [-1.97222, 1.97222]
+    right_wrist_pitch_joint: [-1.61443, 1.61443]
+    right_wrist_yaw_joint: [-1.61443, 1.61443]
+  # 未验收：capabilities 为空是事实（stand/locomote/... 待逐项验收后回填，同 Go2 纪律）。
+  capabilities: [stand, stop, locomote]
+  # 人形角色词表（leg/waist/neck）超出 iraf_core.profile 现有 arm/gripper_drive*，
+  # 属未出 ADR 的扩展，故此处不声明 joint_roles（同 Go2 四足的处理方式）。
+  model:
+    vendor: unitree_g1
+    # TODO(流程验证)：需先将 menagerie unitree_g1 拷入 vendor/unitree_g1/ 并生成 source-lock.json。
+    file: vendor/unitree_g1/g1.xml
+    trunk_body: pelvis
+    floating_base: true
+  home:
+    left_hip_pitch_joint: 0.0
+    left_hip_roll_joint: 0.0
+    left_hip_yaw_joint: 0.0
+    left_knee_joint: 0.0
+    left_ankle_pitch_joint: 0.0
+    left_ankle_roll_joint: 0.0
+    right_hip_pitch_joint: 0.0
+    right_hip_roll_joint: 0.0
+    right_hip_yaw_joint: 0.0
+    right_knee_joint: 0.0
+    right_ankle_pitch_joint: 0.0
+    right_ankle_roll_joint: 0.0
+    waist_yaw_joint: 0.0
+    waist_roll_joint: 0.0
+    waist_pitch_joint: 0.0
+    left_shoulder_pitch_joint: 0.2
+    left_shoulder_roll_joint: 0.2
+    left_shoulder_yaw_joint: 0.0
+    left_elbow_joint: 1.28
+    left_wrist_roll_joint: 0.0
+    left_wrist_pitch_joint: 0.0
+    left_wrist_yaw_joint: 0.0
+    right_shoulder_pitch_joint: 0.2
+    right_shoulder_roll_joint: -0.2
+    right_shoulder_yaw_joint: 0.0
+    right_elbow_joint: 1.28
+    right_wrist_roll_joint: 0.0
+    right_wrist_pitch_joint: 0.0
+    right_wrist_yaw_joint: 0.0
+  camera:
+    lookat_m: [0.0, 0.0, 0.9]
+    distance_m: 2.0
+    azimuth_deg: 140.0
+    elevation_deg: -20.0

@@ -13,4 +13,4 @@ spec:
   joints: [placeholder_joint]
   joint_limits:
     placeholder_joint: [-1.0, 1.0]
-  capabilities: [engineering.robot_adapter]
+  capabilities: [engineering.robot_adapter, engineering.inspect_robot]

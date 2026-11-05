@@ -1,0 +1,43 @@
+apiVersion: iraf.intewell.io/v1
+kind: RobotProfile
+metadata:
+  name: franka_panda
+  version: 0.1.0
+spec:
+  simulation: true
+  verification: development
+  control_frequency_hz: 1000.0
+  joints: [joint1, joint2, joint3, joint4, joint5, joint6, joint7, finger_joint1, finger_joint2]
+  joint_limits:
+    joint1: [-2.8973, 2.8973]
+    joint2: [-1.7628, 1.7628]
+    joint3: [-2.8973, 2.8973]
+    joint4: [-3.0718, -0.0698]
+    joint5: [-2.8973, 2.8973]
+    joint6: [-0.0175, 3.7525]
+    joint7: [-2.8973, 2.8973]
+    finger_joint1: [0.0, 0.04]
+    finger_joint2: [0.0, 0.04]
+  capabilities: [move_joint, pick_object, visual_pick, stop]
+  joint_roles:
+    joint1: arm
+    joint2: arm
+    joint3: arm
+    joint4: arm
+    joint5: arm
+    joint6: arm
+    joint7: arm
+    finger_joint1: gripper_drive_left
+    finger_joint2: gripper_drive_right
+  gripper:
+    drive_joints: [finger_joint1, finger_joint2]
+    left_index: 0
+    right_index: 1
+    open_positions: {finger_joint1: 0.04, finger_joint2: 0.04}
+    closed_positions: {finger_joint1: 0.0, finger_joint2: 0.0}
+    pad_offset_m: 0.0
+  camera:
+    lookat_m: [0.2, 0.0, 0.02]
+    distance_m: 1.0
+    azimuth_deg: 180.0
+    elevation_deg: -8.0
