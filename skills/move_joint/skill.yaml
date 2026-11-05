@@ -14,3 +14,4 @@ spec:
   safetyClass: controlled_motion
   providers:
     - {name: common_motion_sim, type: python_adapter, entrypoint: "iraf_skills.common.motion:MoveJointProvider", selector: {mode: simulation}, priority: 100}
+    - {name: common_motion_hw, type: python_adapter, entrypoint: "iraf_skills.common.motion:MoveJointProvider", selector: {mode: hardware}, priority: 100}

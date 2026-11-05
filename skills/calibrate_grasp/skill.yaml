@@ -18,3 +18,9 @@ spec:
       entrypoint: "iraf_skills.common.manipulation:CalibrateGraspProvider"
       selector: {mode: simulation}
       priority: 100
+
+    - name: common_grasp_calibration_hw
+      type: python_adapter
+      entrypoint: "iraf_skills.common.manipulation:CalibrateGraspProvider"
+      selector: {mode: hardware}
+      priority: 100

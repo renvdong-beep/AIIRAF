@@ -22,3 +22,9 @@ spec:
       entrypoint: "iraf_skills.common.manipulation:DisplayPickProvider"
       selector: {mode: simulation}
       priority: 100
+
+    - name: common_display_pick_hw
+      type: python_adapter
+      entrypoint: "iraf_skills.common.manipulation:DisplayPickProvider"
+      selector: {mode: hardware}
+      priority: 100

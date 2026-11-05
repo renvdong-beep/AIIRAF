@@ -26,3 +26,4 @@ spec:
   safetyClass: controlled_motion
   providers:
     - {name: quadruped_dock_sim, type: python_adapter, entrypoint: "iraf_skills.quadruped:DockForHandoffProvider", selector: {mode: simulation}, priority: 100}
+    - {name: quadruped_dock_hw, type: python_adapter, entrypoint: "iraf_skills.quadruped:DockForHandoffProvider", selector: {mode: hardware}, priority: 100}

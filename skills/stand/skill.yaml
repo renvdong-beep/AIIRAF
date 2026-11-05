@@ -22,3 +22,4 @@ spec:
   safetyClass: controlled_motion
   providers:
     - {name: quadruped_stand_sim, type: python_adapter, entrypoint: "iraf_skills.quadruped:StandProvider", selector: {mode: simulation}, priority: 100}
+    - {name: quadruped_stand_hw, type: python_adapter, entrypoint: "iraf_skills.quadruped:StandProvider", selector: {mode: hardware}, priority: 100}

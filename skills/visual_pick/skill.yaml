@@ -25,3 +25,9 @@ spec:
       entrypoint: "iraf_skills.common.manipulation:VisualPickProvider"
       selector: {mode: simulation}
       priority: 100
+
+    - name: common_visual_pick_hw
+      type: python_adapter
+      entrypoint: "iraf_skills.common.manipulation:VisualPickProvider"
+      selector: {mode: hardware}
+      priority: 100

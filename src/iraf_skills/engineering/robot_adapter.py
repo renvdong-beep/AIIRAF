@@ -42,6 +42,22 @@ ROBOT_PRESETS = {
         "default_capabilities": ["move_joint", "pick_object", "visual_pick", "stop"],
         "notes": "7 自由度冗余臂；夹爪为独立控制通道，需确认是否映射为两个关节",
     },
+    "xarm": {
+        "display_name": "UFACTORY xArm7",
+        "dof": 7,
+        "gripper_type": "parallel",
+        "gripper_drive_joints": 2,
+        "default_capabilities": ["move_joint", "pick_object", "visual_pick", "stop"],
+        "notes": "7 自由度臂（joint1..7）；夹爪为左右手指联动（driver/finger/inner_knuckle 共 6 关节，驱动通道需验收时确认）",
+    },
+    "so100": {
+        "display_name": "TRS SO-100",
+        "dof": 5,
+        "gripper_type": "parallel",
+        "gripper_drive_joints": 1,
+        "default_capabilities": ["move_joint", "pick_object", "visual_pick", "stop"],
+        "notes": "5 自由度臂（Rotation/Pitch/Elbow/Wrist_Pitch/Wrist_Roll）；夹爪为单关节 Jaw",
+    },
     "generic": {
         "display_name": "通用机器人",
         "dof": 6,
@@ -50,12 +66,26 @@ ROBOT_PRESETS = {
         "default_capabilities": ["move_joint", "pick_object", "visual_pick", "stop"],
         "notes": "未预设机型；必须逐项填写关节名与限位",
     },
+    "humanoid": {
+        "display_name": "人形机器人（如 Unitree G1）",
+        "dof": 29,
+        "gripper_type": "none",
+        "gripper_drive_joints": 0,
+        "default_capabilities": [],
+        "notes": "人形：双腿+腰+双臂、无夹爪；能力逐项验收后回填，勿预先声明",
+    },
 }
+
+#: 人形机型不适用的"臂+夹爪"字段（对臂机型必填，对人形机型跳过）。
+_HUMANOID_N_A_FIELDS = frozenset({
+    "arm_joints", "wrist_body", "finger_geoms",
+    "gripper_drive_joints", "open_positions", "closed_positions",
+})
 
 #: 问卷字段定义：用于把客户答案归一化并做完整性校验。
 QUESTIONNAIRE = (
     ("robot_id", "机器人唯一标识（用于 profile.metadata.name 与文件命名）", True),
-    ("preset", "机型预设（piper / franka / generic）", True),
+    ("preset", "机型预设（piper / franka / xarm / so100 / generic / humanoid）", True),
     ("joints", "全部关节名，按顺序（含夹爪驱动关节）", True),
     ("joint_limits", "每关节限位 [low, high]（弧度 / 米）", True),
     ("arm_joints", "臂关节名清单（参与 IK 求解）", True),
@@ -128,9 +158,6 @@ def normalize_answers(raw):
     if not isinstance(raw, dict):
         raise WizardValidationError("问卷答案必须是对象")
     answers = {str(key): value for key, value in raw.items()}
-    for key, _question, required in QUESTIONNAIRE:
-        if required:
-            _require(answers, key)
 
     robot_id = str(_require(answers, "robot_id")).strip()
     if not _IDENTIFIER.match(robot_id):
@@ -141,6 +168,12 @@ def normalize_answers(raw):
         raise WizardValidationError(
             "未知机型预设 %s，可选: %s" % (preset, ", ".join(sorted(ROBOT_PRESETS)))
         )
+    is_humanoid = preset == "humanoid"
+
+    # 通用必填项先校验；人形机型跳过"臂+夹爪"专属字段（它们不适用）。
+    for key, _question, required in QUESTIONNAIRE:
+        if required and not (is_humanoid and key in _HUMANOID_N_A_FIELDS):
+            _require(answers, key)
 
     joints = _as_list(_require(answers, "joints"), "joints", minimum=2)
     if len(set(joints)) != len(joints):
@@ -169,53 +202,62 @@ def normalize_answers(raw):
         if str(name) not in joints:
             raise WizardValidationError("joint_limits 含未声明的关节: " + str(name))
 
-    arm_joints = _as_list(_require(answers, "arm_joints"), "arm_joints", minimum=1)
-    unknown = [name for name in arm_joints if name not in joints]
-    if unknown:
-        raise WizardValidationError("arm_joints 引用了未声明的关节: " + ", ".join(unknown))
+    # 臂+夹爪字段只对臂机型解析；人形机型置空（无夹爪、角色词表未出 ADR）。
+    if not is_humanoid:
+        arm_joints = _as_list(_require(answers, "arm_joints"), "arm_joints", minimum=1)
+        unknown = [name for name in arm_joints if name not in joints]
+        if unknown:
+            raise WizardValidationError("arm_joints 引用了未声明的关节: " + ", ".join(unknown))
 
-    drive = _as_list(
-        _require(answers, "gripper_drive_joints"),
-        "gripper_drive_joints",
-        expected=2,
-    )
-    if drive[0] == drive[1]:
-        raise WizardValidationError("夹爪两个驱动关节不能相同")
-    unknown = [name for name in drive if name not in joints]
-    if unknown:
-        raise WizardValidationError(
-            "gripper_drive_joints 引用了未声明的关节: " + ", ".join(unknown)
+        drive = _as_list(
+            _require(answers, "gripper_drive_joints"),
+            "gripper_drive_joints",
+            expected=2,
         )
-    overlap = [name for name in drive if name in arm_joints]
-    if overlap:
-        raise WizardValidationError(
-            "夹爪驱动关节不得同时作为臂关节: " + ", ".join(overlap)
-        )
-
-    open_positions = _as_float_map(_require(answers, "open_positions"), "open_positions")
-    closed_positions = _as_float_map(
-        _require(answers, "closed_positions"), "closed_positions"
-    )
-    for key, block in (("open_positions", open_positions), ("closed_positions", closed_positions)):
-        if set(block) != set(drive):
+        if drive[0] == drive[1]:
+            raise WizardValidationError("夹爪两个驱动关节不能相同")
+        unknown = [name for name in drive if name not in joints]
+        if unknown:
             raise WizardValidationError(
-                "%s 必须与 gripper_drive_joints 完全对应（%s）"
-                % (key, ", ".join(drive))
+                "gripper_drive_joints 引用了未声明的关节: " + ", ".join(unknown)
             )
+        overlap = [name for name in drive if name in arm_joints]
+        if overlap:
+            raise WizardValidationError(
+                "夹爪驱动关节不得同时作为臂关节: " + ", ".join(overlap)
+            )
+
+        open_positions = _as_float_map(_require(answers, "open_positions"), "open_positions")
+        closed_positions = _as_float_map(
+            _require(answers, "closed_positions"), "closed_positions"
+        )
+        for key, block in (("open_positions", open_positions), ("closed_positions", closed_positions)):
+            if set(block) != set(drive):
+                raise WizardValidationError(
+                    "%s 必须与 gripper_drive_joints 完全对应（%s）"
+                    % (key, ", ".join(drive))
+                )
+
+        wrist_body = str(_require(answers, "wrist_body")).strip()
+        if not _IDENTIFIER.match(wrist_body):
+            raise WizardValidationError("wrist_body 不是合法标识符: " + wrist_body)
+        if wrist_body in joints:
+            raise WizardValidationError("wrist_body 不应与关节同名: " + wrist_body)
+
+        finger_geoms = _as_list(
+            _require(answers, "finger_geoms"), "finger_geoms", expected=2
+        )
+    else:
+        arm_joints = []
+        drive = []
+        open_positions = {}
+        closed_positions = {}
+        wrist_body = None
+        finger_geoms = []
 
     frequency = float(_require(answers, "control_frequency_hz"))
     if frequency <= 0:
         raise WizardValidationError("control_frequency_hz 必须为正数")
-
-    wrist_body = str(_require(answers, "wrist_body")).strip()
-    if not _IDENTIFIER.match(wrist_body):
-        raise WizardValidationError("wrist_body 不是合法标识符: " + wrist_body)
-    if wrist_body in joints:
-        raise WizardValidationError("wrist_body 不应与关节同名: " + wrist_body)
-
-    finger_geoms = _as_list(
-        _require(answers, "finger_geoms"), "finger_geoms", expected=2
-    )
 
     simulation = answers.get("simulation", True)
     if isinstance(simulation, str):
@@ -235,24 +277,28 @@ def normalize_answers(raw):
         items = _as_list(value, key, expected=3)
         return [float(item) for item in items]
 
-    return {
-        "robot_id": robot_id,
-        "preset": preset,
-        "simulation": simulation,
-        "control_frequency_hz": frequency,
-        "joints": joints,
-        "joint_limits": limits,
-        "arm_joints": arm_joints,
-        "gripper": {
+    gripper_block = None
+    if not is_humanoid:
+        gripper_block = {
             "drive_joints": drive,
             "left_index": 0,
             "right_index": 1,
             "open_positions": open_positions,
             "closed_positions": closed_positions,
             "pad_offset_m": pad,
-        },
-        "bodies": {"wrist": wrist_body},
-        "finger_geoms": {"left": finger_geoms[0], "right": finger_geoms[1]},
+        }
+    return {
+        "robot_id": robot_id,
+        "preset": preset,
+        "is_humanoid": is_humanoid,
+        "simulation": simulation,
+        "control_frequency_hz": frequency,
+        "joints": joints,
+        "joint_limits": limits,
+        "arm_joints": arm_joints,
+        "gripper": gripper_block,
+        "bodies": {} if is_humanoid else {"wrist": wrist_body},
+        "finger_geoms": {} if is_humanoid else {"left": finger_geoms[0], "right": finger_geoms[1]},
         "camera": {
             "pos_m": _optional_vector("camera_pos_m"),
             "look_at_m": _optional_vector("camera_look_at_m"),
@@ -288,6 +334,8 @@ def render_profile_yaml(config):
     避免 Profile 加载器把 null 误当成显式声明。
     """
     preset = ROBOT_PRESETS[config["preset"]]
+    if config.get("is_humanoid"):
+        return _render_humanoid_profile_yaml(config)
     lines = [
         "apiVersion: iraf.intewell.io/v1",
         "kind: RobotProfile",
@@ -356,6 +404,8 @@ def render_adapter_skeleton(config):
     """
     robot_id = config["robot_id"]
     preset = ROBOT_PRESETS[config["preset"]]
+    if config.get("is_humanoid"):
+        return _render_humanoid_adapter_skeleton(config)
     arm = config["arm_joints"]
     drive = config["gripper"]["drive_joints"]
     wrist = config["bodies"]["wrist"]
@@ -376,6 +426,11 @@ def render_adapter_skeleton(config):
 注意：本文件不得依赖任何发行版私有库；厂商 SDK 调用应封装在本文件内部，
 外部只通过 RobotBackend 契约访问。
 """
+
+import os
+
+# 显示契约（AGENTS.md §6.12）：离屏渲染需在 import mujoco 前设置 MUJOCO_GL=egl。
+os.environ.setdefault("MUJOCO_GL", "egl")
 
 from iraf_core.kinematics import solve_position_ik
 
@@ -421,6 +476,17 @@ class %(class_name)sBackend:
     def step(self, count=1):
         raise NotImplementedError("请接入 %(robot)s 的单步推进接口")
 
+    # --- 显示契约（AGENTS.md §6.12，与 MujocoBackend/UnitreeGo2Adapter 同契约）---
+
+    def display_lock(self):
+        raise NotImplementedError("请接入 %(robot)s 的渲染互斥锁（与物理步进共用一把锁）")
+
+    def render_settings(self):
+        raise NotImplementedError("请接入 %(robot)s 的 render 段（camera/width_px/height_px/render_hz）")
+
+    def render_frames(self, count=1):
+        raise NotImplementedError("请接入 %(robot)s 的离屏渲染（MUJOCO_GL=egl 已在文件顶部设置）")
+
     # --- 运行期状态（供 Policy 前置条件求值）---
 
     def runtime_inventory(self):
@@ -451,6 +517,8 @@ class %(class_name)sBackend:
 
 def render_config_skeleton(config):
     """渲染与 profile 配套的基线 config 骨架（供参考姿态求解使用）。"""
+    if config.get("is_humanoid"):
+        return _render_humanoid_config_skeleton(config)
     arm = config["arm_joints"]
     return '''schema_version: iraf.%(robot)s-baseline/v1
 description: %(robot)s 受控仿真抓取基线（向导生成骨架，数值需按实现填写）
@@ -513,6 +581,8 @@ acceptance:
 
 def render_validation_report(config, artifacts, blocked):
     """渲染校验报告：列出已生成工件、被拒绝的覆写、以及仍需人工补齐的项。"""
+    if config.get("is_humanoid"):
+        return _render_humanoid_validation_report(config, artifacts, blocked)
     preset = ROBOT_PRESETS[config["preset"]]
     checklist = [
         "按 RobotBackend 契约补齐 move_joint / pick_object / stop / step 的实现",
@@ -532,6 +602,144 @@ def render_validation_report(config, artifacts, blocked):
         "artifacts": artifacts,
         "blocked_overwrites": blocked,
         "remaining_manual_work": checklist,
+        "preset_notes": preset["notes"],
+    }
+
+
+def _render_humanoid_profile_yaml(config):
+    """人形 RobotProfile：无夹爪、角色词表未出 ADR ⇒ 不声明 joint_roles/gripper。"""
+    lines = [
+        "apiVersion: iraf.intewell.io/v1",
+        "kind: RobotProfile",
+        "metadata:",
+        "  name: %s" % config["robot_id"],
+        "  version: 0.1.0",
+        "spec:",
+        "  simulation: %s" % _yaml_scalar(config["simulation"]),
+        "  verification: unverified",
+        "  control_frequency_hz: %s" % _yaml_scalar(config["control_frequency_hz"]),
+        "  joints: %s" % _yaml_inline_list(config["joints"]),
+        "  joint_limits:",
+    ]
+    for name in config["joints"]:
+        lines.append("    %s: %s" % (name, _yaml_inline_list(config["joint_limits"][name])))
+    lines.append("  # 未验收：capabilities 为空是事实（stand/locomote/... 逐项验收后回填）")
+    lines.append("  capabilities: []")
+    lines.append("  # 人形角色词表（leg/waist/neck）超出 iraf_core.profile 现有词表，未出 ADR 前不声明 joint_roles")
+    camera = config["camera"]
+    if camera["look_at_m"] is not None:
+        lines.append("  camera:")
+        lines.append("    lookat_m: %s" % _yaml_inline_list(camera["look_at_m"]))
+        lines.append("    distance_m: 1.0")
+        lines.append("    azimuth_deg: 180.0")
+        lines.append("    elevation_deg: -8.0")
+    return "\n".join(lines) + "\n"
+
+
+def _render_humanoid_adapter_skeleton(config):
+    """人形 Backend 骨架：stand/locomote/stop/step/runtime_inventory，均 NotImplementedError。"""
+    robot_id = config["robot_id"]
+    class_name = "".join(part.capitalize() for part in robot_id.split("_"))
+    joints = config["joints"]
+    return '''"""%(robot)s 的 IRAF Backend 适配骨架（humanoid，由向导生成）。
+
+生成时间工件，不是可运行实现：每个方法都显式抛 NotImplementedError，
+以避免"未适配"被误当成"已适配"（AGENTS.md 铁律 5）。
+人形：双腿+腰+双臂、无夹爪；角色词表未出 ADR。
+
+关节（%(n)d 个，全位置控制）：
+%(joints)s
+"""
+
+
+class %(class_name)sBackend:
+    """%(robot)s Backend 骨架（人形）。"""
+
+    JOINTS = %(joints_literal)s
+
+    def __init__(self, profile, authority, config=None):
+        self.profile = profile
+        self.authority = authority
+        self.config = config or {}
+
+    @classmethod
+    def from_config(cls, config, profile, authority):
+        return cls(profile, authority, config)
+
+    # --- 人形运动能力（骨架，未实现）---
+
+    def stand(self, lease, targets=None, duration_ms=None, execution_id=None):
+        self.authority.validate(lease)
+        raise NotImplementedError("请接入 %(robot)s 的双腿站立位形控制（含平衡）")
+
+    def locomote(self, velocity, duration_ms, lease, execution_id=None):
+        self.authority.validate(lease)
+        raise NotImplementedError("请接入 %(robot)s 的双足步态控制器（bipedal gait）")
+
+    def stop(self, lease, execution_id=None):
+        self.authority.validate(lease)
+        raise NotImplementedError("请接入 %(robot)s 的急停接口")
+
+    def step(self, count=1):
+        raise NotImplementedError("请接入 %(robot)s 的单步推进接口")
+
+    def runtime_inventory(self):
+        return {"safety": {"estop": False}, "locomotion": {"standing": False, "falling": False}}
+''' % {
+        "robot": robot_id,
+        "n": len(joints),
+        "joints": "\n".join("  " + name for name in joints),
+        "class_name": class_name,
+        "joints_literal": repr(list(joints)),
+    }
+
+
+def _render_humanoid_config_skeleton(config):
+    """人形基线 config 骨架：站姿/步态，数值待实现填写（不写默认值）。"""
+    return '''schema_version: iraf.%(robot)s-baseline/v1
+description: %(robot)s 受控仿真基线（humanoid 骨架，数值需按实现填写）
+
+model:
+  source: vendor/%(robot)s/<模型文件，按需替换>
+  trunk_body: pelvis
+
+stance:
+  pose_source: profile_home
+  height_target_m: null
+  height_tolerance_m: 0.03
+  attitude_tolerance_deg: 5.0
+
+gait:
+  kind: bipedal
+  max_speed_mps: 0.3
+
+acceptance:
+  stand_height_error_max_m: 0.03
+  stand_final_speed_max_mps: 0.05
+''' % {"robot": config["robot_id"]}
+
+
+def _render_humanoid_validation_report(config, artifacts, blocked):
+    """人形校验报告：declared_capabilities 为空 + 人形专属剩余工作清单。"""
+    preset = ROBOT_PRESETS[config["preset"]]
+    return {
+        "schema_version": "iraf.robot-adapter-wizard/v1",
+        "robot_id": config["robot_id"],
+        "preset": config["preset"],
+        "preset_display_name": preset["display_name"],
+        "dof": preset["dof"],
+        "gripper_type": preset["gripper_type"],
+        "declared_capabilities": preset["default_capabilities"],
+        "artifacts": artifacts,
+        "blocked_overwrites": blocked,
+        "remaining_manual_work": [
+            "扩展 iraf_core.profile 的 joint_roles 词表增加 leg/waist/neck 角色（需 ADR）",
+            "实现人形站立/步态/平衡控制（bipedal gait，参照四足 mpc/ 子包，不能直接复用）",
+            "实现浮动机座 initial_alignment（足底贴地，参照 Go2）",
+            "vendor 模型入库 + source-lock.json",
+            "按 knowledge/iraf-capability-registration.md 逐点登记能力并 grep 复核",
+            "新增 profile_check.py 的 humanoid 校验路径并跑通",
+        ],
         "preset_notes": preset["notes"],
     }
 

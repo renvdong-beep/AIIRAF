@@ -78,3 +78,4 @@ v1 交付**只做仿真**：仿真在 x86 主机（MuJoCo），板卡不装仿�
 9. AgentOS 只能经 `AgentOSBridge` 和版本化公共服务进入 IRAF；AgentOS 私有类型、身份声明、ROS topic 或设备凭据不得穿透公共边界。
 10. 必须兼容 `MQ50-E300-3VM-LPR`、`MQ50-E300-3VM-LPP`、`FIREFLY-RK3588-2VM-LR` 三个正式 Hyper 构型。VM 数量、编号、IP、OS 和角色映射只能来自签名 HyperProfile/Release manifest，禁止硬编码。
 11. 2VM 构型合并部署角色时不得合并安全边界；Motion 与 Master 仍须独立进程、权限、资源限额和设备所有权。S600 未有正式发布构型前禁止标记 S2。
+12. 每个新机器人适配器必须实现「显示契约」（`render_frames` / `display_lock` / `render_settings`，与 `MujocoBackend`/`UnitreeGo2Adapter` 同契约），使新机器人经 `render_frames` 输出离屏 RGB 帧（`MUJOCO_GL=egl` 需在 `import mujoco` 前设置），与既有 piper/ur5/go2/g1 同一显示通道；禁止让新机器人处于 headless 状态。

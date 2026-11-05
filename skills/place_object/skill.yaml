@@ -31,3 +31,9 @@ spec:
       entrypoint: "iraf_skills.common.manipulation:PlaceObjectProvider"
       selector: {mode: simulation}
       priority: 100
+
+    - name: common_place_hw
+      type: python_adapter
+      entrypoint: "iraf_skills.common.manipulation:PlaceObjectProvider"
+      selector: {mode: hardware}
+      priority: 100

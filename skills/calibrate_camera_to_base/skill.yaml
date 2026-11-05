@@ -18,3 +18,9 @@ spec:
       entrypoint: "iraf_skills.common.manipulation:CalibrateCameraProvider"
       selector: {mode: simulation}
       priority: 100
+
+    - name: common_camera_calibration_hw
+      type: python_adapter
+      entrypoint: "iraf_skills.common.manipulation:CalibrateCameraProvider"
+      selector: {mode: hardware}
+      priority: 100

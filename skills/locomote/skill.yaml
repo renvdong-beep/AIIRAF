@@ -24,3 +24,4 @@ spec:
   safetyClass: controlled_motion
   providers:
     - {name: quadruped_locomote_sim, type: python_adapter, entrypoint: "iraf_skills.quadruped:LocomoteProvider", selector: {mode: simulation}, priority: 100}
+    - {name: quadruped_locomote_hw, type: python_adapter, entrypoint: "iraf_skills.quadruped:LocomoteProvider", selector: {mode: hardware}, priority: 100}

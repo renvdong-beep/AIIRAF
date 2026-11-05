@@ -19,7 +19,7 @@ SKILLS_DIR = REPO / "skills"
 
 #: 不是"能力实现"的技能：display_pick 是组合演示、engineering.robot_adapter 是开发工具，
 #: 二者在别处编排，不经过 Provider 的单能力入口。
-NOT_PROVIDER_CAPABILITIES = {"display_pick", "engineering.robot_adapter"}
+NOT_PROVIDER_CAPABILITIES = {"display_pick", "engineering.robot_adapter", "engineering.inspect_robot"}
 
 
 def positional_capabilities() -> set:
