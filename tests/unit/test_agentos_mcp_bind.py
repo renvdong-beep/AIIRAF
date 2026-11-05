@@ -91,5 +91,18 @@ class ConfigFileTest(unittest.TestCase):
                 lib.load_config(path)
 
 
+class AdminFileTest(unittest.TestCase):
+    def test_read_admin_key_value_and_colon(self):
+        import agentos_mcp_bind as cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "admin"
+            path.write_text("username=admin\npassword=s3cret\n", encoding="utf-8")
+            self.assertEqual(cli.read_admin(path), ("admin", "s3cret"))
+            path.write_text("admin:pw\n", encoding="utf-8")
+            self.assertEqual(cli.read_admin(path), ("admin", "pw"))
+            self.assertIsNone(cli.read_admin(Path(tmp) / "missing"))
+
+
 if __name__ == "__main__":
     unittest.main()

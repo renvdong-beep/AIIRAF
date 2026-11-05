@@ -202,7 +202,7 @@ if [ "$PROFILE" = "edge-intel" ]; then
   run_remote "bash /opt/iraf-sdk/current/deploy/sdk/board_mcp_enable.sh" 2>&1 | tail -8
 
   log "④.2 绑定 AgentOS worker 的 MCP 配置（共享 config.yaml + 重启 worker）"
-  if ! run_remote "bash /opt/iraf-sdk/current/deploy/sdk/board_agentos_mcp_bind.sh --apply --url http://${IRAF_BOARD_HOST}:8765/mcp" 2>&1 | tail -12; then
+  if ! run_remote "bash /opt/iraf-sdk/current/deploy/sdk/board_agentos_mcp_bind.sh --apply --verify --url http://${IRAF_BOARD_HOST}:8765/mcp" 2>&1 | tail -12; then
     log "   [警告] AgentOS MCP 绑定未完成（chat 可能仍看不到工具）；见上面的中文原因"
   fi
 else

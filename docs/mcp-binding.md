@@ -188,6 +188,9 @@ intewell-agent-cli mcp add iraf-task --command /usr/bin/python3 \
 
 ## 7. 对接原则：只从 IRAF 侧对接（2026-10-21 使用者口径）
 
+> AgentOS 的宿主 chat 与 worker 是两套 home；一键绑定、verify、故障处置见
+> `docs/agentos-mcp-integration.md`。
+
 > 「我们不应该修改其他人的容器或者框架，我们只能从 iraf 的本身去对接。」
 
 因此：

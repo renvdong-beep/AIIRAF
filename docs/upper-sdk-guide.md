@@ -38,7 +38,7 @@ build/sdk/iraf_sdk-0.4.1-py3-none-any.whl
   元数据：Provides-Extra: mcp / provider（基础安装零第三方依赖）
 
 build/sdk/iraf-runtime-0.4.1-aarch64.tar.gz
-  sha256 = b5513200a22aca09d16e8682c1f5080c9f86971b7d520b331014933445ff9f68
+  sha256 = 4599b203ea3e3afd46b494cf8fead06040ddaac66444458b3a50bc9b4ecde69a
 ```
 
 重新构建（改了 `src/iraf_sdk/**` 后必须重建，否则交付的是旧代码）：
@@ -199,32 +199,37 @@ systemctl restart iraf-mcp-http
   轮换 token：`python3 -m iraf_tools.mcp_tokens ... revoke/issue` 后服务按文件签名热加载，
   不需要重启。
 
-### 2.5 AgentOS worker 自动绑定（0.4.1+）
+### 2.5 AgentOS 绑定（host chat + worker，0.4.1+）
 
-chat 的 agent 跑在 `agentos-worker-*` 容器里，home 是宿主
-`/var/lib/agentos-shared/.intewell` 的 bind mount；只配宿主 dashboard 不够。
-`board_upgrade.sh` 在 edge-intel 安装完成后会自动调用：
+AgentOS 有两套 home：
+- 宿主 chat（tui_gateway）：`/root/.intewell/config.yaml`
+- worker/task-api：`/var/lib/agentos-shared/.intewell/config.yaml`（容器 bind mount）
+
+`board_upgrade.sh` 在 edge-intel 安装完成后会执行：
 
 ```bash
-bash /opt/iraf-sdk/current/deploy/sdk/board_agentos_mcp_bind.sh --apply \
-  --url http://<板卡IP>:8765/mcp
+bash /opt/iraf-sdk/current/deploy/sdk/board_agentos_mcp_bind.sh \
+  --apply --verify --url http://<板卡IP>:8765/mcp
 ```
 
-它做四件事：
-1. 从 `docker inspect` 发现 worker 与共享 home（不硬编码路径）；
-2. 签发/复用 `agentos-worker` token（`/etc/iraf/mcp-agentos.token`，600）；
-3. 把 `mcp_servers.iraf-task` **合并**进共享 `config.yaml`（备份 + 原子写 + 幂等，
-   保留其它 server）；
-4. 重启 worker，让 AgentOS 重新做 MCP 发现；worker 缺 `mcp` 包时显式告警。
+它做五件事：
+1. 从 docker inspect 发现 worker 与共享 home；
+2. 签发/复用 `agentos-host` 与 `agentos-worker` 两个独立 token；
+3. 宿主优先走 dashboard API `POST /api/mcp/servers`（需要
+   `/etc/iraf/agentos-admin`，600）；无凭据时降级为 YAML 合并并明确告警；
+4. worker 合并共享 `config.yaml`（备份 + 原子写 + 幂等，保留其它 server）；
+5. `--verify` 检查服务、宿主、worker 和工具发现，结果写
+   `/etc/iraf/agentos-mcp-binding.json`。
 
 运维命令：
 
 ```bash
-# 只读状态
-bash /opt/iraf-sdk/current/deploy/sdk/board_agentos_mcp_bind.sh --status
-# 解除绑定（只删 iraf-task 段）
-bash /opt/iraf-sdk/current/deploy/sdk/board_agentos_mcp_bind.sh --revert
+bash .../board_agentos_mcp_bind.sh --status
+bash .../board_agentos_mcp_bind.sh --verify --url http://<板卡IP>:8765/mcp
+bash .../board_agentos_mcp_bind.sh --revert
 ```
+
+完整排障见 `docs/agentos-mcp-integration.md`。
 
 注意：worker 镜像必须自带 `mcp>=1.26,<2`；这是厂商镜像职责，安装器只检查并告警，
 不会私自往容器里 pip 安装。
