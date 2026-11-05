@@ -44,6 +44,9 @@ class RandomizationSpec:
     yaw_choices_deg: tuple = (0.0,)
     max_attempts: int = 32
     description: str = ""
+    #: 可选的 +y 方向上限（米，绝对坐标系）；None 表示不加限制。用于把采样约束在
+    #: 关节伺服可靠工作域（如 Piper joint1 阻尼 300 导致 +y 侧伸直构型误差 2cm+）。
+    max_y_m: float = None
 
     def __post_init__(self):
         if self.xy_radius_m <= 0:
@@ -52,6 +55,8 @@ class RandomizationSpec:
             raise RandomizationError("yaw_choices_deg 不能为空")
         if self.max_attempts < 1:
             raise RandomizationError("max_attempts 必须为正整数")
+        if self.max_y_m is not None and self.max_y_m < 0:
+            raise RandomizationError("max_y_m 必须为非负或省略")
 
     @classmethod
     def from_config(cls, config, half_size_m):
@@ -75,6 +80,7 @@ class RandomizationSpec:
             yaw_choices_deg=tuple(float(value) for value in choices),
             max_attempts=int(block.get("max_attempts", 32)),
             description=str(block.get("description", "")),
+            max_y_m=(float(block["max_y_m"]) if block.get("max_y_m") is not None else None),
         )
 
     @property
@@ -88,6 +94,7 @@ class RandomizationSpec:
             "yaw_randomized": self.yaw_randomized,
             "max_attempts": self.max_attempts,
             "description": self.description,
+            "max_y_m": self.max_y_m,
             "randomized_axes": ["xy"],
             "fixed_axes": ["z", "yaw", "roll", "pitch"],
             "deferred_axes": {
@@ -148,9 +155,15 @@ class UniformDiscSampler:
         if len(nominal_xy) != 2:
             raise RandomizationError("nominal_xy 必须是 2 个数值")
         radius = self.spec.xy_radius_m
-        theta = float(self._rng.uniform(0.0, 2.0 * math.pi))
-        # 面积均匀：r = R * sqrt(u)
-        r = radius * math.sqrt(float(self._rng.uniform(0.0, 1.0)))
+        # 采样 +y 约束：若声明 max_y_m，则拒绝采样到 nominal_y + offset_y > max_y_m 的点
+        # （面积均匀的圆盘采样的直接重采样，保持面积均匀不变）。
+        offset_x = offset_y = r = theta = None
+        for _ in range(1000):
+            theta = float(self._rng.uniform(0.0, 2.0 * math.pi))
+            r = radius * math.sqrt(float(self._rng.uniform(0.0, 1.0)))
+            candidate_y = float(nominal_xy[1]) + r * math.sin(theta)
+            if self.spec.max_y_m is None or candidate_y <= self.spec.max_y_m:
+                break
         yaw = float(self._rng.choice(self.spec.yaw_choices_deg))
         self._draws += 1
         offset_x = r * math.cos(theta)

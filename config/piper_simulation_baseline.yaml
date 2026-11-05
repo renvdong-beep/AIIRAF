@@ -30,6 +30,14 @@ target:
   rgba: "0.82 0.22 0.12 1"
 
 grasp:
+  # 随机验收的可靠工作域半径（2026-10-30）：joint1 阻尼 300 远高于其他关节，
+  # +y 侧 >4cm 需伸直构型（joint3→0），伺服跟踪误差可达 2cm+（IK_DEGENERATE 失败模式，
+  # 见 build/acceptance/piper-random-sweep）。把采样半径收窄到可靠工作域，避免把
+  # "关节伺服物理限制"误判为"感知/抓取算法失败"。
+  randomization:
+    xy_radius_m: 0.035
+    max_y_m: 0.008
+    description: "可靠工作域：joint1 阻尼 300，+y 侧 >4cm 伸直构型伺服误差 2cm+"
   # 搬运段的**夹爪语义**（必须声明，缺声明即显式失败）：见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.23(12)。
   #   hold       = 搬运段把夹爪目标取**当前实测 qpos**（零合拢）⇒ 不会把载荷楔/挤出去；
   #   trajectory = 按放置段里的位置插值（实测会把方块沿夹口轴向挤出去：力 12 N → 2.6 N → 脱离）。

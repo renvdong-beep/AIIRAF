@@ -131,7 +131,8 @@ class MujocoPickConfigTests(unittest.TestCase):
         )
 
     def test_rejects_empty_or_malformed_grip_region(self):
-        for bad in ([], "left_pad1", [""], ["a", "a"], [1, 2]):
+        # 2026-10-26 起 pad_boxes:[] 按"未声明"处理（构建器常写 []），不再拒绝；仅校验畸形值。
+        for bad in ("left_pad1", [""], ["a", "a"], [1, 2]):
             with self.subTest(value=bad):
                 with self.assertRaisesRegex(ValueError, "pad_boxes"):
                     MujocoBackend._parse_manipulation_config(
