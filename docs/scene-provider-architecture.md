@@ -203,13 +203,17 @@ Provider 不在/未 ready 时，边缘必须直接拒绝，不得自动拉起、
 
 ## 11. 当前实机状态（2026-11-06）
 
+本机已实现 `scripts/scene_supervisor.py`：
+`status / up piper|ur5|g1 / down`，up 会停其他世界并等 Provider Health ready；
+`joint` 在 SceneProfile/Provider 单元补齐前明确返回“未实现”。
+
 ```
 .147 边缘：profile=profiles/ur5_mujoco.yaml
            endpoint=10.203.247.121:50053
            iraf-mcp-http active :8765
-.121 x86：iraf-provider@ur5 active :50053
-           iraf-provider@piper failed/disabled
-           iraf-provider@g1 inactive/enabled
+.121 x86：iraf-provider@ur5 active :50053（enabled）
+           iraf-provider@piper failed / disabled
+           iraf-provider@g1 inactive / disabled
 ```
 
 因此当前 AgentOS 只能控制 UR5；piper 与 joint-handoff 需要启动对应 Provider 并切换

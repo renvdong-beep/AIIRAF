@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 from iraf_adapters.remote.provider_backend import RemoteProviderBackend, read_token_file
@@ -20,7 +21,7 @@ def main() -> int:
     parser.add_argument("--token-file", default=str(Path.home() / ".iraf/provider.token"))
     args = parser.parse_args()
 
-    token = read_token_file(args.token_file)
+    token = os.environ.get("IRAF_PROVIDER_TOKEN") or read_token_file(args.token_file)
     if not token:
         print("[health][错误] 缺 token：%s" % args.token_file)
         return 2
