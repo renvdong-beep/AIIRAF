@@ -1,0 +1,54 @@
+# IRAF 联合世界 SceneProfile（2026-11-06）
+#
+# 作用：把「一个 MuJoCo 世界里有哪几个本体、谁由本 Provider 控制、各自 resource_id」
+# 从脚本/文档里收进一份声明。**不是**运行期可热改的配置：改它 = 改部署。
+#
+# 边界：
+#   · 一个 Provider 进程承载一个世界；本 Provider 的控制对象是 piper（primary_robot）。
+#   · ur5e / unitree_go2 物理上在同一个世界，但它们的技能未在本 Provider 里验收，
+#     capabilities 留空；不得因为"模型里有"就对外声明能力。
+#   · 端口/端点不在这里重复：来自 config/install/install_profiles.yaml 的
+#     services[iraf-provider@joint].ports 与部署期 --env-set PROVIDER_BIND。
+#   · 一切结论 simulation=true，不构成真机/实时能力证据。
+schema_version: iraf.scene-profile/v1
+scene_id: joint-handoff
+simulation: true
+model: build/scenes/handoff_lab/handoff_lab_joint.xml
+report: build/scenes/handoff_lab/handoff_lab_joint.json
+provider:
+  service: iraf-provider@joint
+  name: iraf/handoff-lab
+  # 控制对象：本 Provider 的 IRAF_PROFILE 用它的 profile；name_map 把声明名
+  # （joint1…）映射到联合模型名（piper_joint1…）。
+  primary_robot: piper
+  primary_profile: profiles/piper_mujoco.yaml
+resources:
+  - resource_id: joint-piper
+    robot: piper
+    capabilities: [move_joint, pick_object, place_object, reset_scene, stop]
+  - resource_id: joint-ur5
+    robot: ur5e
+    capabilities: []          # 未在本 Provider 验收，不得声明
+  - resource_id: joint-go2
+    robot: unitree_go2
+    capabilities: []          # 未在本 Provider 验收，不得声明
+robots:
+  - id: piper
+    kind: arm
+    role: manipulator
+    profile: profiles/piper_mujoco.yaml
+    profile_name: piper_mujoco
+  - id: ur5e
+    kind: arm
+    role: manipulator
+    profile: profiles/ur5_mujoco.yaml
+    profile_name: ur5_mujoco
+  - id: unitree_go2
+    kind: quadruped
+    role: carrier
+    profile: profiles/unitree_go2_mujoco.yaml
+  - id: humanoid_static
+    kind: humanoid
+    role: scene_entity
+    model_only: true
+    capabilities: [static_model_only]

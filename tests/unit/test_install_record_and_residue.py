@@ -308,6 +308,7 @@ class InstallActionTest(unittest.TestCase):
                       # edge-intel 的装配单模板要求部署期给值（就像真实部署那样）
                       env_values={"PROVIDER_ENDPOINT": "PROBE-HOST:50052",
                                   "PIPER_PROVIDER_ENDPOINT": "PROBE-HOST:50052",
+                                  "JOINT_PROVIDER_ENDPOINT": "PROBE-HOST:50054",
                                   "INTENT_MODEL_URL": "https://model.example/v1",
                                   "INTENT_MODEL_NAME": "probe-model",
                                   "MCP_ALLOWED_HOSTS": "127.0.0.1:8765,localhost:8765"})
@@ -334,6 +335,7 @@ class InstallActionTest(unittest.TestCase):
         """
         base = {"PROVIDER_ENDPOINT": "PROBE-HOST:50053",
                 "PIPER_PROVIDER_ENDPOINT": "PROBE-HOST:50052",
+                "JOINT_PROVIDER_ENDPOINT": "PROBE-HOST:50054",
                 "INTENT_MODEL_URL": "https://model.example/v1",
                 "INTENT_MODEL_NAME": "probe-model",
                 "MCP_ALLOWED_HOSTS": "127.0.0.1:8765,localhost:8765"}
@@ -412,6 +414,7 @@ class InstallActionTest(unittest.TestCase):
                               allow_unverified=True, rehearsal=True, dry_run=True,
                               env_values={"PROVIDER_ENDPOINT": "PROBE-HOST:50052",
                                   "PIPER_PROVIDER_ENDPOINT": "PROBE-HOST:50052",
+                                  "JOINT_PROVIDER_ENDPOINT": "PROBE-HOST:50054",
                                   "INTENT_MODEL_URL": "https://model.example/v1",
                                   "INTENT_MODEL_NAME": "probe-model",
                                   "MCP_ALLOWED_HOSTS": "127.0.0.1:8765,localhost:8765"})

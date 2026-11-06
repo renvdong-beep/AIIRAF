@@ -1,6 +1,6 @@
 # IRAF 南向 Provider SDK 使用指南
 
-版本：0.5.0（2026-11-06）  
+版本：0.5.1（2026-11-06）  
 适用对象：在自己的 x86 Ubuntu / 运控域上实现 **Capability Provider** 的团队。  
 边界：Provider 只执行"单个能力调用"，**不做策略判定**；策略与技能选择在边缘 IRAF。
 一切仿真结论 `simulation=true`，不构成真机/实时能力证据。
@@ -20,7 +20,7 @@
 ## 2. 安装
 
 ```bash
-python3 -m pip install 'iraf_sdk-0.5.0-py3-none-any.whl[provider]'
+python3 -m pip install 'iraf_sdk-0.5.1-py3-none-any.whl[provider]'
 # protobuf 桩（本交付包的 stubs/，或边缘 SDK 的 <version>/lib）加入 PYTHONPATH：
 export PYTHONPATH=<交付包>/stubs:/opt/iraf-sdk/current/lib:$PYTHONPATH
 ```

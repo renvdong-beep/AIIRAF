@@ -17,7 +17,7 @@ TOKEN_FILE="${IRAF_MCP_TOKEN_FILE:-$CONFIG_DIR/mcp-tokens.json}"
 CLIENT_TOKEN="${IRAF_MCP_CLIENT_TOKEN:-$CONFIG_DIR/mcp-client.token}"
 # 多场景：ur5 固定 8765，piper 固定 8766（与 install_profiles.yaml 的 services[].ports 同源）。
 # 可用 IRAF_MCP_UNITS="name:port name:port" 覆盖，但默认值必须与声明一致。
-UNITS_SPEC="${IRAF_MCP_UNITS:-iraf-mcp-http.service:8765 iraf-mcp-piper.service:8766}"
+UNITS_SPEC="${IRAF_MCP_UNITS:-iraf-mcp-http.service:8765 iraf-mcp-piper.service:8766 iraf-mcp-joint.service:8767}"
 
 if [ "${1:-}" = "--status" ]; then
   for spec in $UNITS_SPEC; do

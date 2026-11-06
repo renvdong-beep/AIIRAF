@@ -269,8 +269,8 @@ class InstallProfileDeclarationTest(unittest.TestCase):
         """同一事实两处（声明 vs deploy/iraf-runtime.env）不一致即拒绝。"""
         data = self._declaration()
         services = self._profile(data, "single-ubuntu2204")["services"]
-        services[0]["ports"] = [8767]
-        self._profile(data, "single-ubuntu2204")["residue"]["ports"] = [8767, 50051]
+        services[0]["ports"] = [8768]
+        self._profile(data, "single-ubuntu2204")["residue"]["ports"] = [8768, 50051]
         self._write_declaration(data)
         self.assertIn("端口：声明与 deploy/iraf-runtime.env 一致", self._failed_names())
 

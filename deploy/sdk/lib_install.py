@@ -1110,6 +1110,58 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
             # 使安装物自包含（不依赖仓库 checkout 或构建机的邻居目录）。
             xml_target = models_dir / source_xml.name
             xml_text = xml_target.read_text(encoding="utf-8")
+            # 联合世界（2026-11-06）：构建产物可能把**绝对路径**写进 file=，并且 meshdir
+            # 指向仓库里的 vendor 目录。直接拷进版本目录后这些引用在目标端断链
+            # （安装器退出码 0、服务起不来）。这里做两件通用改写：
+            #   ① file= 落在场景目录下的绝对路径 → 场景相对路径；
+            #   ② meshdir 指向场景目录之外 → 整棵拷进 models/mesh_assets/ 并改写成相对路径。
+            scene_dir = source_xml.parent.resolve()
+            for ref in sorted(set(re.findall(r'file="([^"]+)"', xml_text))):
+                candidate = Path(ref)
+                if not candidate.is_absolute():
+                    continue
+                try:
+                    rel = candidate.resolve().relative_to(scene_dir)
+                except (OSError, ValueError):
+                    continue
+                xml_text = xml_text.replace('file="%s"' % ref, 'file="%s"' % rel.as_posix())
+            meshdir_match = re.search(r'meshdir="([^"]+)"', xml_text)
+            if meshdir_match:
+                raw_meshdir = meshdir_match.group(1)
+                mesh_src = (source_xml.parent / raw_meshdir).resolve()
+                try:
+                    mesh_src.relative_to(scene_dir)
+                    mesh_is_external = False
+                except ValueError:
+                    mesh_is_external = True
+                if mesh_is_external and mesh_src.is_dir():
+                    mesh_dst = models_dir / "mesh_assets"
+                    copied = 0
+                    for item in mesh_src.rglob("*"):
+                        if not item.is_file():
+                            continue
+                        target = mesh_dst / item.relative_to(mesh_src)
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(item, target)
+                        copied += 1
+                    # meshdir 前缀会作用到**所有** mesh file 引用；场景自带的 assets/ 也必须
+                    # 放到 mesh_assets/ 下，否则 `assets/piper/link1.STL` 会被解析成
+                    # `mesh_assets/assets/piper/link1.STL`（实装报 Error opening file）。
+                    scene_assets = scene_dir / "assets"
+                    if scene_assets.is_dir():
+                        for item in scene_assets.rglob("*"):
+                            if not item.is_file():
+                                continue
+                            target = mesh_dst / "assets" / item.relative_to(scene_assets)
+                            target.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(item, target)
+                            copied += 1
+                    xml_text = xml_text.replace('meshdir="%s"' % raw_meshdir,
+                                                'meshdir="mesh_assets/"')
+                    plan.setdefault("scene_meshdirs", []).append(
+                        {"from": str(mesh_src), "files": copied})
+                    info("场景 meshdir 已随包：%d 个（来自 %s，改写为 mesh_assets/）"
+                         % (copied, mesh_src))
             mesh_prefixes = sorted({ref.rsplit("/meshes/", 1)[0] + "/meshes/"
                                     for ref in re.findall(r'file="([^"]+)"', xml_text) if "/meshes/" in ref})
             for prefix in mesh_prefixes:

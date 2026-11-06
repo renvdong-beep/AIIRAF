@@ -7,7 +7,7 @@
 
 ```
 build/sdk/iraf_sdk-0.5.0-py3-none-any.whl   sha256=4aedf401e9718465e92a0e8db1aeb498867b774f9f9b9cbfd5208be710b0f0b4
-build/sdk/iraf-runtime-0.5.0.tar.gz         sha256=f0317efd3557333e05adcf1b6b4b9fdd2d337a8ff0bf5c3b197c67ff9bbd12e5
+build/sdk/iraf-runtime-0.5.0.tar.gz         sha256=6eb72a5a91a74fd2653c27456e189e142edd86f9ee484f4ff7712a5208915313
 ```
 
 0.4.1 保留在 git tag `v0.4.1`（指向 a667c5a），0.5.0 提交为 33a71ab。
@@ -120,12 +120,36 @@ bash deploy/sdk/verify_record.sh --profile edge-intel
 - 宿主日志同时注册 `iraf-task` 与 `iraf-piper`，各 9 个工具
 - worker 的 `mcp==1.26.0` 是容器内手工安装；容器重建会丢（厂商镜像职责）
 
+### 4.5 联合世界 Provider（2026-11-06 新增）
+
+- 新增 `iraf-provider@joint`（50054）：scene=`build/scenes/handoff_lab/handoff_lab_joint.xml`，
+  `robot_profile=profiles/piper_mujoco.yaml`；联合报告的 `manipulation.name_map` 注入
+  `IRAF_BACKEND_CONFIG`，把 joint1… 映射到 piper_joint1…。
+- 新增 `scenes/handoff_lab/scene-profile.yaml`：scene_id=joint-handoff、primary_robot=piper、
+  resources=joint-piper/joint-ur5/joint-go2；ur5e/go2 的能力**留空**（未在本 Provider 验收）。
+- 新增 `iraf-mcp-joint`（8767），AgentOS server 名 `iraf-joint`。
+- 安装器修了两处联合模型断链：
+  ① `file=` 绝对路径（构建产物写死 `/home/.../scenes/handoff_lab/assets/...`）→ 场景相对路径；
+  ② `meshdir` 指向仓库 vendor → 拷进 `models/mesh_assets/` 并把场景 `assets/` 也并入其下
+     （meshdir 会前缀所有 mesh 引用，实装报 `mesh_assets/assets/piper/base_link.STL`）。
+- 实测：
+  ```
+  .121   iraf-provider@joint active :50054；Health ready=True capabilities=6
+         窗口 0x400000b "MuJoCo : go2" 1280x720
+  直连 pick：SUCCEEDED wall=123.68s center_distance_m=0.0013979652743957177
+  .147   iraf-mcp-joint :8767 healthz=200 / 无 token 401
+         edge 全链路 pick：execution_id=00779111-a9b3-5f8a-81c7-cf8d96079405
+         lift_delta_m=0.093907 center_distance_m=0.0021519895262300053
+  ```
+- 口径：联合世界的 `realtime=true` 在 2 核机上把 12 s 动作拉到 **123.68 s** 墙钟；
+  这是性能事实，不是失败。演示若不能接受，改 `realtime=false`（同一任务约 25 s）或换机器。
+
 ## 5. 未完成
 
 - worker 的 `mcp==1.26.0` 是容器内手工安装；容器重建后会丢，需要厂商写进镜像。
 - `board_diag` 的 "CLI 可运行（--list-skills）" 在本轮最终上板时已为 true；此前 0.4.1 为 false 的原因不再复现，未单独归因。
-- joint/handoff_lab 仍无 SceneProfile/Provider，8767 未开。
 - 0.5.0 对外交付目录已重打包（build/upper-sdk-delivery-0.5.0 + tar.gz）。
+- 联合世界 `realtime=true` 墙钟 123.68 s；是否改为 `realtime=false` 待演示口径确认。
 
 ## 6. 可复跑命令
 

@@ -27,7 +27,7 @@ x86 Provider（MuJoCo；simulation=true）
 2. **身份来自 transport**：HTTP 形态必须是 Bearer token；注册表只存 SHA-256，缺表
    fail-closed（退出码 2）。工具参数里没有 caller/role/tenant，写了也不认。
 3. **一个端点绑定一个场景**：`IRAF_PROFILE` + `IRAF_BACKEND_CONFIG.endpoint` 在进程启动时
-   固定，运行中不改（AGENTS 2.6）。ur5=8765、piper=8766、joint 预留 8767。
+   固定，运行中不改（AGENTS 2.6）。ur5=8765、piper=8766、joint=8767。
 4. **AgentOS 不拥有 x86 权限**：Provider 的启停归 x86 本地 supervisor；边缘只调
    Health/Invoke/Cancel，Provider 不可用时返回 `IRAF-TRANSPORT-FAILED` /
    `IRAF-PROVIDER-UNAVAILABLE`，不自动拉起、不伪造成功。
@@ -224,6 +224,7 @@ agentos-worker-2.tools   OK（5 个工具）
 /opt/iraf-sdk/current -> 0.5.0
 iraf-mcp-http.service   active/enabled  0.0.0.0:8765  profile=profiles/ur5_mujoco.yaml
 iraf-mcp-piper.service  active/enabled  0.0.0.0:8766  profile=profiles/piper_mujoco.yaml
+iraf-mcp-joint.service  active/enabled  0.0.0.0:8767  profile=profiles/piper_mujoco.yaml
 ```
 
 实例级装配单（由安装器渲染，不是手工改）：
@@ -246,10 +247,14 @@ ur5  : execution_id=480ecb67-a982-5ff2-8476-2b79139de0aa status=SUCCEEDED
        lift_delta_m=0.07633 center_distance_m=0.00011855145570256166
 piper: execution_id=4b1ed285-a655-5114-9fd0-4d07853c61cd status=SUCCEEDED
        lift_delta_m=0.083308 center_distance_m=0.0000514227433
+joint: execution_id=00779111-a9b3-5f8a-81c7-cf8d96079405 status=SUCCEEDED
+       profile=piper_mujoco（联合世界，控制对象 piper）
+       lift_delta_m=0.093907 center_distance_m=0.0021519895262300053
 ```
 
-⚠ AgentOS 侧绑定尚未通过：宿主 dashboard 凭据 401、worker 镜像缺 `mcp` 包。
-边缘 MCP 本身正常（上面的工具发现与抓取都是有效 token 直连证据），但 chat 仍看不到工具。
+AgentOS 绑定（2026-11-06 最终）：三个 server 的 verify 全 OK（service / host_api tools=5 /
+两个 worker mcp+tools）。宿主日志同时注册 iraf-task / iraf-piper / iraf-joint，各 9 个工具。
+唯一未固化项：worker 的 mcp==1.26.0 是容器内手工安装，容器重建会丢（厂商镜像职责）。
 
 宿主日志（2026-11-05 03:42:33）：
 

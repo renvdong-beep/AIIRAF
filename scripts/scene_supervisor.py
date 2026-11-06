@@ -14,7 +14,7 @@
 边界：
   · 不启动 AgentOS，不改边缘配置；
   · 不伪造 Health；Provider 起不来就显式失败；
-  · joint 场景目前没有 Provider 单元/SceneProfile，会明确报“未实现”。
+  · joint 场景由 iraf-provider@joint.service 承载（piper 为控制对象，SceneProfile 已声明）。
 """
 from __future__ import annotations
 
@@ -38,9 +38,12 @@ SCENES = {
             "profile": "profiles/ur5_mujoco.yaml", "implemented": True},
     "g1": {"unit": "iraf-provider@g1.service", "port": 50055,
            "profile": "profiles/unitree_g1_mujoco.yaml", "implemented": True},
-    # 联合世界还没有 Provider 单元/SceneProfile；先不假装可用。
+    # 联合世界：一个 Provider 承载 piper+ur5e+go2 同一个 MuJoCo 世界；控制对象是 piper。
+    # SceneProfile 见 scenes/handoff_lab/scene-profile.yaml；能力只声明 piper 已验收的那组。
     "joint": {"unit": "iraf-provider@joint.service", "port": 50054,
-              "profile": "profiles/handoff_lab.yaml", "implemented": False},
+              "profile": "profiles/piper_mujoco.yaml",
+              "scene_profile": "scenes/handoff_lab/scene-profile.yaml",
+              "implemented": True},
 }
 
 

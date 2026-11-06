@@ -49,7 +49,7 @@ x86 仿真主机由对方/我方独立运维。
 |---|---|---|---|
 | `piper-pick` | `build/models/piper-pick-scene.xml` | piper | Provider 可运行（50052），当前未启用 |
 | `ur5-pick` | `build/models/ur5-pick-scene.xml` | ur5e | 当前 .121 已运行（50053），.147 绑定此场景 |
-| `joint-handoff` | `build/scenes/handoff_lab/handoff_lab_joint.xml` | piper、ur5e、unitree_go2、humanoid_static（静态） | 有场景文件与 scenario 脚本，**尚无 Provider/SceneProfile 声明** |
+| `joint-handoff` | `build/scenes/handoff_lab/handoff_lab_joint.xml` | piper、ur5e、unitree_go2、humanoid_static（静态） | **已实现**：`iraf-provider@joint`（50054）+ `scenes/handoff_lab/scene-profile.yaml`；控制对象 piper |
 
 联合世界不是“三个独立 Provider”；它是一个 Provider 进程承载一个多机器人世界。
 
@@ -174,7 +174,7 @@ Provider 不在/未 ready 时，边缘必须直接拒绝，不得自动拉起、
 ### 现在（不改核心）
 
 - piper / ur5 各自 Provider + 各自边缘配置/MCP 端点；
-- 联合世界单独 Provider + 单独边缘配置/MCP 端点；
+- 联合世界单独 Provider + 单独边缘配置/MCP 端点（`iraf-provider@joint` :50054 ↔ `iraf-mcp-joint` :8767）；
 - x86 systemd/supervisor 保证“先起 Provider、Health ready”；
 - AgentOS 只选对应 MCP URL；
 - Provider 不可用时明确报错，不自动启动。
@@ -201,23 +201,29 @@ Provider 不在/未 ready 时，边缘必须直接拒绝，不得自动拉起、
 - 联合世界同一时刻只有一个控制源；
 - 图内/文档结论标注 `simulation=true`。
 
-## 11. 当前实机状态（2026-11-06）
+## 11. 当前实机状态（2026-11-06，0.5.0）
 
-本机已实现 `scripts/scene_supervisor.py`：
-`status / up piper|ur5|g1 / down`，up 会停其他世界并等 Provider Health ready；
-`joint` 在 SceneProfile/Provider 单元补齐前明确返回“未实现”。
+`scripts/scene_supervisor.py` 支持 `status / up piper|ur5|g1|joint / down`；
+up 会停其他世界并等 Provider Health ready。
 
 ```
-.147 边缘：profile=profiles/ur5_mujoco.yaml
-           endpoint=10.203.247.121:50053
-           iraf-mcp-http active :8765
-.121 x86：iraf-provider@ur5 active :50053（enabled）
-           iraf-provider@piper failed / disabled
-           iraf-provider@g1 inactive / disabled
+.121 x86：
+  iraf-provider@joint active :50054（联合世界，控制对象 piper）
+  iraf-provider@piper disabled
+  iraf-provider@ur5   disabled
+  iraf-provider@g1    inactive/disabled
+
+.147 边缘：
+  iraf-mcp-http  :8765  profile=ur5_mujoco   endpoint=10.203.247.121:50053
+  iraf-mcp-piper :8766  profile=piper_mujoco endpoint=10.203.247.121:50052
+  iraf-mcp-joint :8767  profile=piper_mujoco endpoint=10.203.247.121:50054
 ```
 
-因此当前 AgentOS 只能控制 UR5；piper 与 joint-handoff 需要启动对应 Provider 并切换
-边缘 profile/endpoint（或使用独立 MCP 端点）。
+联合世界 SceneProfile：`scenes/handoff_lab/scene-profile.yaml`
+（scene_id=joint-handoff，primary_robot=piper，resources=joint-piper / joint-ur5 / joint-go2）。
+本 Provider 只声明 piper 已验收的能力；ur5e/go2 的能力留空，不得因“模型里有”就对外声明。
+
+因此 AgentOS 可按目标选三个 URL；三个 Provider 场景一时刻只跑一个（2 核限制）。
 
 ## 12. 不做什么
 

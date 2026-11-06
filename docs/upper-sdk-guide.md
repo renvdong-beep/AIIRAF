@@ -1,6 +1,6 @@
 # IRAF 上位机 SDK 交付与使用指南
 
-版本：0.5.0（2026-11-06）  
+版本：0.5.1（2026-11-06）  
 适用对象：在**自己的 x86 Ubuntu** 上开发上位机 harness / LLM agent，通过任务级接口调用**边缘侧 IRAF** 的团队。  
 口径：一切执行结论 `simulation=true`，不构成真机/实时能力证据。
 
@@ -32,13 +32,13 @@
 ### 0.3 产物
 
 ```text
-build/sdk/iraf_sdk-0.5.0-py3-none-any.whl
-  sha256 = 4aedf401e9718465e92a0e8db1aeb498867b774f9f9b9cbfd5208be710b0f0b4
+build/sdk/iraf_sdk-0.5.1-py3-none-any.whl
+  sha256 = f838d438c10240dcd3640298ec405fed80dc1c0d856f3143c0621c255b2123b8
   成员：iraf_sdk/{__init__,client,errors,mcp,provider}.py + dist-info
   元数据：Provides-Extra: mcp / provider（基础安装零第三方依赖）
 
-build/sdk/iraf-runtime-0.5.0.tar.gz
-  sha256 = f0317efd3557333e05adcf1b6b4b9fdd2d337a8ff0bf5c3b197c67ff9bbd12e5
+build/sdk/iraf-runtime-0.5.1.tar.gz
+  sha256 = dafc7ae64b280e2c049ff5ae298e9868e2c3f043ad7764c3457c38d0a6ea0cd1
 ```
 
 重新构建（改了 `src/iraf_sdk/**` 后必须重建，否则交付的是旧代码）：
@@ -242,16 +242,16 @@ bash .../board_agentos_mcp_bind.sh --revert --server-name iraf-piper
 
 ```bash
 # 只装客户端（纯标准库）
-python3 -m pip install iraf_sdk-0.5.0-py3-none-any.whl
+python3 -m pip install iraf_sdk-0.5.1-py3-none-any.whl
 
 # 需要 MCP 客户端 / 南向 Provider SDK 时，用 extras（也可分开装）
-python3 -m pip install 'iraf_sdk-0.5.0-py3-none-any.whl[mcp]'
-python3 -m pip install 'iraf_sdk-0.5.0-py3-none-any.whl[provider]'
+python3 -m pip install 'iraf_sdk-0.5.1-py3-none-any.whl[mcp]'
+python3 -m pip install 'iraf_sdk-0.5.1-py3-none-any.whl[provider]'
 ```
 
 要求：Python >= 3.9；MCP 客户端固定 1.x（2.x 移除了 AgentOS 依赖的 API）。
 wheel 的基础安装仍是零第三方依赖；`mcp` / `provider` 只在显式选 extras 时安装。
-安装后可自检：`python3 -c "import iraf_sdk; print(iraf_sdk.__version__)"` → `0.5.0`。
+安装后可自检：`python3 -c "import iraf_sdk; print(iraf_sdk.__version__)"` → `0.5.1`。
 
 ### 3.2 最小示例（streamable-http）
 
