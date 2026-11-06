@@ -9,6 +9,7 @@
 - [总体架构图](../agentos机器人应用框架-更新版.svg)
 - [IRAF 详细技术架构图](../IRAF详细技术架构图.svg)
 - [IRAF 分层技术架构图（从上到下）](../IRAF分层技术架构图.svg)（源文件 `IRAF分层技术架构图.dot`）
+- [场景 / Provider / AgentOS 边界设计](scene-provider-architecture.md)（ADR-0012）
 - [SDK 跨架构交付图](diagrams/iraf-sdk-delivery.svg)（源文件 `diagrams/iraf-sdk-delivery.dot`）
 - [宇树场景栈图](diagrams/iraf-unitree-scene-stack.svg)（源文件 `diagrams/iraf-unitree-scene-stack.dot`）
 - [IDL、Registry 与 Runtime](iraf-idl-runtime-detailed-design.md)
