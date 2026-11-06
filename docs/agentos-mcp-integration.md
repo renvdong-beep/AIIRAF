@@ -1,8 +1,43 @@
 # AgentOS MCP 绑定运维手册（IRAF 北向）
 
-状态：0.4.1（2026-11-05）  
+状态：0.4.1（2026-11-06）
 适用：智控域 `.147` / 其他 aarch64 Hyper 边缘板。  
 口径：`simulation=true`；本文只讲 IRAF 任务级 MCP 如何绑进 AgentOS。
+
+## 0. 机制总览（先看这张图）
+
+```text
+AgentOS 宿主 chat / worker / 上位机 harness
+        │  streamable-http + Authorization: Bearer <token>
+        ▼
+边缘 IRAF  MCP server（一个进程 = 一个场景端点）
+        │  iraf_submit_task / iraf_get_task / iraf_robot_mode
+        ▼
+IRAF TaskFlow → Skill Runtime → Policy Gateway
+        │  provider.proto（Health / Invoke / Cancel，跨机 gRPC）
+        ▼
+x86 Provider（MuJoCo；simulation=true）
+```
+
+四条边界：
+
+1. **只暴露任务级入口**：不是把每个机器人 Skill 注册成 MCP 工具。工具只有 5 个
+   （`iraf_enter_robot_mode`、`iraf_exit_robot_mode`、`iraf_robot_mode`、
+   `iraf_submit_task`、`iraf_get_task`），技能选择与参数校验在 IRAF 内部完成。
+2. **身份来自 transport**：HTTP 形态必须是 Bearer token；注册表只存 SHA-256，缺表
+   fail-closed（退出码 2）。工具参数里没有 caller/role/tenant，写了也不认。
+3. **一个端点绑定一个场景**：`IRAF_PROFILE` + `IRAF_BACKEND_CONFIG.endpoint` 在进程启动时
+   固定，运行中不改（AGENTS 2.6）。ur5=8765、piper=8766、joint 预留 8767。
+4. **AgentOS 不拥有 x86 权限**：Provider 的启停归 x86 本地 supervisor；边缘只调
+   Health/Invoke/Cancel，Provider 不可用时返回 `IRAF-TRANSPORT-FAILED` /
+   `IRAF-PROVIDER-UNAVAILABLE`，不自动拉起、不伪造成功。
+
+两套传输：
+
+| 形态 | 谁拉起 | 身份来源 | 适用 |
+|---|---|---|---|
+| stdio | 本机宿主作为子进程 | `IRAF_RUNTIME_SUBJECT`（进程边界即信任边界） | AgentOS 与本机 runtime 同机 |
+| streamable-http | systemd 常驻 | Bearer token（`/etc/iraf/mcp-tokens.json`） | 跨机 harness / AgentOS / 语音前端 |
 
 ## 1. 两套 home，别混
 
@@ -22,9 +57,12 @@
 B=/opt/iraf-sdk/current/deploy/sdk/board_agentos_mcp_bind.sh
 
 bash $B --status
-bash $B --apply --verify --url http://<板卡IP>:8765/mcp
+# ur5 端点（沿用现有 server 名 iraf-task）
+bash $B --apply --verify --server-name iraf-task --url http://<板卡IP>:8765/mcp
+# piper 端点（独立 server 名）
+bash $B --apply --verify --server-name iraf-piper --url http://<板卡IP>:8766/mcp
 bash $B --verify --url http://<板卡IP>:8765/mcp
-bash $B --revert
+bash $B --revert --server-name iraf-piper
 ```
 
 行为：
@@ -38,15 +76,15 @@ bash $B --revert
   - worker：合并 `/var/lib/agentos-shared/.intewell/config.yaml`，重启 worker。
   - token：宿主 `agentos-host`；worker `agentos-worker`；文件 600，只存明文一次。
 - `--verify`：检查
-  1. `iraf-mcp-http.service` active、`/healthz` 200、无 token 401；
-  2. 宿主 config 里有 `iraf-task`（有 admin 文件时改为 API test）；
+  1. 对应 `iraf-mcp-*.service` active、`/healthz` 200、无 token 401；
+  2. 宿主 config 里有目标 server（有 admin 文件时改为 API test）；
   3. 每个 worker `import mcp.client.streamable_http`；
-  4. 每个 worker `intewell-agent-cli mcp test iraf-task` 能发现 5 个工具。
-  结果写 `/etc/iraf/agentos-mcp-binding.json`（600）。
-- `--revert`：只删 `iraf-task` 段，保留其它 server。
+  4. 每个 worker `intewell-agent-cli mcp test <server>` 能发现 5 个工具。
+  结果写 `/etc/iraf/agentos-mcp-binding-<server>.json`（600）。
+- `--revert`：只删指定 server 段，保留其它 server。
 
-`board_upgrade.sh` 在 edge-intel 安装完 `iraf-mcp-http.service` 后自动执行
-`--apply --verify`。
+`board_upgrade.sh` 在 edge-intel 安装完两个 MCP 单元后，自动对
+`iraf-task:8765` 与 `iraf-piper:8766` 各执行一次 `--apply --verify`。
 
 ## 3. dashboard admin 凭据（host API 必需）
 
@@ -176,7 +214,24 @@ agentos-worker-2.mcp     OK
 agentos-worker-2.tools   OK（5 个工具）
 ```
 
-验证记录：`/etc/iraf/agentos-mcp-binding.json`（600）。
+验证记录：`/etc/iraf/agentos-mcp-binding-iraf-task.json`（600）。
+
+### 7.5 多场景端点（代码已落地，待上板）
+
+0.4.1 安装声明新增 `iraf-mcp-piper.service`（8766），并为两个 MCP 实例分别渲染：
+
+```
+/etc/iraf/edge-intel.env          ← 基础装配单（runtime-grpc/板侧脚本读回端点）
+/etc/iraf/iraf-mcp-http.env       ← ur5：PROFILE=profiles/ur5_mujoco.yaml
+/etc/iraf/iraf-mcp-piper.env      ← piper：PROFILE=profiles/piper_mujoco.yaml
+```
+
+端口来源是 `install_profiles.yaml` 的 `services[].ports`（ur5 8765、piper 8766），
+不是在 unit 里写死；`board_mcp_enable.sh` 会逐个 enable/自检两个端口。
+
+⚠ 当前 `.147` 仍是**单端点 8765（UR5）**；多端点代码尚未重新构建/上板。
+上板前必须先 `scene_supervisor.py up piper` 让 x86 的 50052 就绪，否则 8766 端点
+虽在监听，提交任务会如实返回 `IRAF-TRANSPORT-FAILED`。
 
 宿主日志（2026-11-05 03:42:33）：
 

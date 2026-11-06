@@ -317,29 +317,38 @@
           "pattern": "^[0-9]+[KMG]$",
           "description": "systemd MemoryMax（如 512M）。缺省表示不限额；edge-* 角色必须声明。"
         },
-        "scene": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "robot_profile",
-            "sim_scene"
-          ],
-          "description": "该实例跑哪套仿真场景。声明了 scene ⇒ 安装器为它单独落地场景资产 + 生成 IRAF_BACKEND_CONFIG + 独立装配单（一台机器可同时装好多套，切换只重启实例）",
-          "properties": {
-            "robot_profile": {
-              "type": "string",
-              "minLength": 1
-            },
-            "sim_scene": {
-              "type": "string",
-              "minLength": 1
-            },
-            "realtime": {
-              "type": "boolean",
-              "description": "按真实时间推进仿真（演示口径：动作看得见）。缺省 false = 尽快跑完（回归/验收口径）。"
-            }
+      "scene": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "robot_profile",
+          "sim_scene"
+        ],
+        "description": "该实例跑哪套仿真场景。声明了 scene ⇒ 安装器为它单独落地场景资产 + 生成 IRAF_BACKEND_CONFIG + 独立装配单（一台机器可同时装好多套，切换只重启实例）",
+        "properties": {
+          "robot_profile": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sim_scene": {
+            "type": "string",
+            "minLength": 1
+          },
+          "realtime": {
+            "type": "boolean",
+            "description": "按真实时间推进仿真（演示口径：动作看得见）。缺省 false = 尽快跑完（回归/验收口径）。"
           }
         }
+      },
+      "env": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": "实例级装配单覆盖：声明后安装器为该服务单独渲染一份 env（如同名角色的多个 MCP 端点，每个端点绑定不同 Profile/Provider 端点）。值可写 ${DEPLOY_KEY} 引用部署期 --env-set 的取值；缺值即安装失败，不猜地址。"
+      }
+
       }
     },
     "cross_domain": {

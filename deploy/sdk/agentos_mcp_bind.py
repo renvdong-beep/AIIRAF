@@ -489,7 +489,8 @@ def main(argv=None) -> int:
                         worker_token_file=token_file, admin_file=admin_file,
                         dashboard=args.dashboard_url, workers=workers,
                         server_name=args.server_name,
-                        record_path=Path("/etc/iraf/agentos-mcp-binding.json"))
+                        record_path=Path("/etc/iraf/agentos-mcp-binding-%s.json"
+                                         % args.server_name.replace("/", "_")))
         return 0 if ok else 1
     return 0
 

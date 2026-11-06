@@ -19,6 +19,7 @@
 #   --target <id>            构建目标（默认按 profile 的 dependency_source.target_id）
 #   --values <file>          部署期取值（默认 config/install/deploy_values/<profile>.yaml）
 #   --provider-endpoint <h:p> 覆盖 Provider 端点（默认从板上现有装配单读回）
+#   --piper-provider-endpoint <h:p> 覆盖 piper 场景 Provider 端点（默认同一主机:50052）
 #   --no-secrets             不保留板上 runtime.secrets（默认保留并复用）
 #   --skip-build             复用已有 wheel/bundle
 #   --skip-diag              装完不跑 board_diag
@@ -32,6 +33,7 @@ VERSION=""
 TARGET=""
 VALUES=""
 PROVIDER_ENDPOINT=""
+PIPER_PROVIDER_ENDPOINT=""
 INTENT_MODEL_URL=""
 INTENT_MODEL_NAME=""
 KEEP_SECRETS="1"
@@ -50,6 +52,7 @@ while [ "$#" -gt 0 ]; do
     --target) TARGET="${2:?}"; shift ;;
     --values) VALUES="${2:?}"; shift ;;
     --provider-endpoint) PROVIDER_ENDPOINT="${2:?}"; shift ;;
+    --piper-provider-endpoint) PIPER_PROVIDER_ENDPOINT="${2:?}"; shift ;;
     --intent-model-url) INTENT_MODEL_URL="${2:?}"; shift ;;
     --intent-model-name) INTENT_MODEL_NAME="${2:?}"; shift ;;
     --no-secrets) KEEP_SECRETS="0" ;;
@@ -125,6 +128,18 @@ else
   exit 2
 fi
 
+# piper 端点：默认与 ur5 同一台 x86 主机、端口 50052（来自 install_profiles.yaml
+# services[iraf-provider@piper].ports）。这是**声明驱动的默认值**，不是猜地址：
+# 主机来自板上已装端点，端口来自声明；两者任一不成立就显式失败。
+if [ -z "$PIPER_PROVIDER_ENDPOINT" ]; then
+  PIPER_PROVIDER_ENDPOINT="$(printf '%s' "$PROVIDER_ENDPOINT" | sed -E 's/:[0-9]+$/:50052/')"
+fi
+case "$PIPER_PROVIDER_ENDPOINT" in
+  *:50052) ;;
+  *) err "piper Provider 端点必须是 <host>:50052（当前：${PIPER_PROVIDER_ENDPOINT}）"; exit 2 ;;
+esac
+log "   piper Provider 端点：${PIPER_PROVIDER_ENDPOINT}"
+
 SECRETS_ARG=()
 TMP_SECRETS=""
 if [ "$KEEP_SECRETS" = "1" ] && [ "$APPLY" = "1" ]; then
@@ -154,10 +169,12 @@ trap cleanup EXIT
 COMMON=(--profile "$PROFILE" --sdk-wheel "$WHEEL" --runtime-bundle "$BUNDLE"
         --wheelhouse "$WHEELHOUSE" --allow-unverified --values "$VALUES")
 [ -n "$PROVIDER_ENDPOINT" ] && COMMON+=(--env-set "PROVIDER_ENDPOINT=${PROVIDER_ENDPOINT}")
+[ -n "$PIPER_PROVIDER_ENDPOINT" ] && COMMON+=(--env-set "PIPER_PROVIDER_ENDPOINT=${PIPER_PROVIDER_ENDPOINT}")
 [ -n "$INTENT_MODEL_URL" ] && COMMON+=(--env-set "INTENT_MODEL_URL=${INTENT_MODEL_URL}")
 [ -n "$INTENT_MODEL_NAME" ] && COMMON+=(--env-set "INTENT_MODEL_NAME=${INTENT_MODEL_NAME}")
 # 北向 MCP 的 Host 允许列表是机器相关值：板卡 IP 只能在部署期给（AGENTS 5.3）。
-COMMON+=(--env-set "MCP_ALLOWED_HOSTS=127.0.0.1:8765,localhost:8765,${IRAF_BOARD_HOST}:8765")
+# 两个端点各自要放行自己的 host:port，否则跨机请求会被 421 拒绝。
+COMMON+=(--env-set "MCP_ALLOWED_HOSTS=127.0.0.1:8765,localhost:8765,${IRAF_BOARD_HOST}:8765,127.0.0.1:8766,localhost:8766,${IRAF_BOARD_HOST}:8766")
 [ "${#SECRETS_ARG[@]}" -gt 0 ] && COMMON+=("${SECRETS_ARG[@]}")
 
 if [ "$APPLY" != "1" ]; then
@@ -175,7 +192,7 @@ else
   log "③ 受控卸载 ${CURRENT}"
   # 先停本角色的常驻进程：卸载只删文件，不会替你停服务；不停会占着 8765/50051，
   # 下一次安装预检会报“端口冲突”（2026-11-04 实测）。
-  run_remote "systemctl stop iraf-mcp-http iraf-runtime-grpc 2>/dev/null || true; pkill -f 'iraf_adapters.mcp.server' 2>/dev/null || true; sleep 1; true" >/dev/null 2>&1 || true
+  run_remote "systemctl stop iraf-mcp-http iraf-mcp-piper iraf-runtime-grpc 2>/dev/null || true; pkill -f 'iraf_adapters.mcp.server' 2>/dev/null || true; sleep 1; true" >/dev/null 2>&1 || true
   # 注意：board_deploy.sh 的整体退出码是**残留核验**的结果，而卸载后唯一预期残留是
   # /etc/iraf/agentos.key（模型网关 key，非安装器产物，按约定保留）⇒ 整体 rc=4 是正常语义。
   # 所以这里不看 rc，看**事实**：current 链接是否真的没了。
@@ -202,9 +219,15 @@ if [ "$PROFILE" = "edge-intel" ]; then
   run_remote "bash /opt/iraf-sdk/current/deploy/sdk/board_mcp_enable.sh" 2>&1 | tail -8
 
   log "④.2 绑定 AgentOS worker 的 MCP 配置（共享 config.yaml + 重启 worker）"
-  if ! run_remote "bash /opt/iraf-sdk/current/deploy/sdk/board_agentos_mcp_bind.sh --apply --verify --url http://${IRAF_BOARD_HOST}:8765/mcp" 2>&1 | tail -12; then
-    log "   [警告] AgentOS MCP 绑定未完成（chat 可能仍看不到工具）；见上面的中文原因"
-  fi
+  # 一次只绑定一个 server（脚本语义），两个端点各绑一次：
+  #   iraf-task  = ur5  :8765（沿用现有名字，避免破坏已经在用的工具名）
+  #   iraf-piper = piper:8766
+  for spec in "iraf-task:8765" "iraf-piper:8766"; do
+    NAME="${spec%%:*}"; PORT="${spec##*:}"
+    if ! run_remote "bash /opt/iraf-sdk/current/deploy/sdk/board_agentos_mcp_bind.sh --apply --verify --server-name ${NAME} --url http://${IRAF_BOARD_HOST}:${PORT}/mcp" 2>&1 | tail -12; then
+      log "   [警告] AgentOS MCP 绑定 ${NAME} 未完成（chat 可能仍看不到该端点的工具）；见上面的中文原因"
+    fi
+  done
 else
   log "④.1 非 edge-intel 角色：跳过 MCP HTTP 服务启用"
 fi

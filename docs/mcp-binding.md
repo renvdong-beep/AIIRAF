@@ -16,7 +16,7 @@ Skill Manager 直接 `skill.execute`，把契约校验、策略判定和证据�
 ## 2. 正确形状：只暴露任务级入口
 
 `src/iraf_adapters/mcp/server.py`（stdio，`python3 -m iraf_adapters.mcp.server`；也支持
-`IRAF_MCP_TRANSPORT=http` 的 streamable-http）提供三个**任务级**工具：
+`IRAF_MCP_TRANSPORT=http` 的 streamable-http）提供五个**任务级**工具：
 
 | 工具 | 入参 | 行为 |
 |---|---|---|

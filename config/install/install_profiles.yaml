@@ -264,6 +264,8 @@ profiles:
         cpu_quota: "150%"
         memory_max: "1G"
       # 北向任务级 MCP（HTTP/8765）：上层 harness / 语音 / 跨机调用；token 鉴权必配。
+      # 每个端点绑定**固定**的 Profile + Provider 端点；切换场景是部署/重启动作，不是运行时参数
+      # （AGENTS 2.6）。同一块板可同时监听 ur5(8765) / piper(8766)，AgentOS 按目标选 URL。
       - name: iraf-mcp-http
         template: deploy/sdk/units/iraf-mcp-http.service.tmpl
         scope: system
@@ -271,6 +273,21 @@ profiles:
         optional: false
         cpu_quota: "50%"
         memory_max: "512M"
+        env:
+          PROFILE: profiles/ur5_mujoco.yaml
+          PROVIDER_ENDPOINT: "${PROVIDER_ENDPOINT}"
+      # piper 场景的独立 MCP 端点：与 ur5 共用版本/令牌，但 Profile 与 Provider 端点不同。
+      # PIPER_PROVIDER_ENDPOINT 由部署期 --env-set 给出（通常同一 x86 主机的 50052）。
+      - name: iraf-mcp-piper
+        template: deploy/sdk/units/iraf-mcp-http.service.tmpl
+        scope: system
+        ports: [8766]
+        optional: false
+        cpu_quota: "50%"
+        memory_max: "512M"
+        env:
+          PROFILE: profiles/piper_mujoco.yaml
+          PROVIDER_ENDPOINT: "${PIPER_PROVIDER_ENDPOINT}"
     cross_domain:
       role: upstream
       peers: ["edge-motion"]
@@ -285,8 +302,8 @@ profiles:
       independent_device_ownership: true
     residue:
       scan_roots: ["{prefix}", "{config_dir}"]
-      units: ["iraf-runtime-grpc.service", "iraf-mcp-http.service"]
-      ports: [50051, 8765]
+      units: ["iraf-runtime-grpc.service", "iraf-mcp-http.service", "iraf-mcp-piper.service"]
+      ports: [50051, 8765, 8766]
       processes: ["iraf-runtime-grpc", "iraf-agentos", "iraf_adapters.mcp.server"]
 
   - id: edge-motion

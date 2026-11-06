@@ -1,6 +1,6 @@
 # IRAF 上位机 SDK 交付与使用指南
 
-版本：0.4.1（2026-11-03）  
+版本：0.5.0（2026-11-06）  
 适用对象：在**自己的 x86 Ubuntu** 上开发上位机 harness / LLM agent，通过任务级接口调用**边缘侧 IRAF** 的团队。  
 口径：一切执行结论 `simulation=true`，不构成真机/实时能力证据。
 
@@ -32,12 +32,12 @@
 ### 0.3 产物
 
 ```text
-build/sdk/iraf_sdk-0.4.1-py3-none-any.whl
+build/sdk/iraf_sdk-0.5.0-py3-none-any.whl
   sha256 = 7bd7180944f96e1049525b70df616ef3c8694b90b394f68d3c447150bd4761cc
   成员：iraf_sdk/{__init__,client,errors,mcp,provider}.py + dist-info
   元数据：Provides-Extra: mcp / provider（基础安装零第三方依赖）
 
-build/sdk/iraf-runtime-0.4.1-aarch64.tar.gz
+build/sdk/iraf-runtime-0.5.0-aarch64.tar.gz
   sha256 = 4599b203ea3e3afd46b494cf8fead06040ddaac66444458b3a50bc9b4ecde69a
 ```
 
@@ -176,7 +176,7 @@ curl -s -o /dev/null -w 'no_token=%{http_code}\n' -X POST http://<边缘IP>:8765
 
 ---
 
-### 2.4 常驻服务（0.4.1+，edge-intel）
+### 2.4 常驻服务（0.4.1 起，0.5.0 为多端点，edge-intel）
 
 SDK 安装会渲染 `iraf-mcp-http.service`（system 作用域），随 SDK 一起交付：
 
@@ -199,17 +199,19 @@ systemctl restart iraf-mcp-http
   轮换 token：`python3 -m iraf_tools.mcp_tokens ... revoke/issue` 后服务按文件签名热加载，
   不需要重启。
 
-### 2.5 AgentOS 绑定（host chat + worker，0.4.1+）
+### 2.5 AgentOS 绑定（host chat + worker，0.4.1 起；0.5.0 支持多端点）
 
 AgentOS 有两套 home：
 - 宿主 chat（tui_gateway）：`/root/.intewell/config.yaml`
 - worker/task-api：`/var/lib/agentos-shared/.intewell/config.yaml`（容器 bind mount）
 
-`board_upgrade.sh` 在 edge-intel 安装完成后会执行：
+`board_upgrade.sh` 在 edge-intel 安装完成后会执行（0.5.0 起两个端点各一次）：
 
 ```bash
 bash /opt/iraf-sdk/current/deploy/sdk/board_agentos_mcp_bind.sh \
-  --apply --verify --url http://<板卡IP>:8765/mcp
+  --apply --verify --server-name iraf-task  --url http://<板卡IP>:8765/mcp
+bash /opt/iraf-sdk/current/deploy/sdk/board_agentos_mcp_bind.sh \
+  --apply --verify --server-name iraf-piper --url http://<板卡IP>:8766/mcp
 ```
 
 它做五件事：
@@ -219,14 +221,14 @@ bash /opt/iraf-sdk/current/deploy/sdk/board_agentos_mcp_bind.sh \
    `/etc/iraf/agentos-admin`，600）；无凭据时降级为 YAML 合并并明确告警；
 4. worker 合并共享 `config.yaml`（备份 + 原子写 + 幂等，保留其它 server）；
 5. `--verify` 检查服务、宿主、worker 和工具发现，结果写
-   `/etc/iraf/agentos-mcp-binding.json`。
+   `/etc/iraf/agentos-mcp-binding-<server>.json`。
 
 运维命令：
 
 ```bash
 bash .../board_agentos_mcp_bind.sh --status
 bash .../board_agentos_mcp_bind.sh --verify --url http://<板卡IP>:8765/mcp
-bash .../board_agentos_mcp_bind.sh --revert
+bash .../board_agentos_mcp_bind.sh --revert --server-name iraf-piper
 ```
 
 完整排障见 `docs/agentos-mcp-integration.md`。
@@ -240,16 +242,16 @@ bash .../board_agentos_mcp_bind.sh --revert
 
 ```bash
 # 只装客户端（纯标准库）
-python3 -m pip install iraf_sdk-0.4.1-py3-none-any.whl
+python3 -m pip install iraf_sdk-0.5.0-py3-none-any.whl
 
 # 需要 MCP 客户端 / 南向 Provider SDK 时，用 extras（也可分开装）
-python3 -m pip install 'iraf_sdk-0.4.1-py3-none-any.whl[mcp]'
-python3 -m pip install 'iraf_sdk-0.4.1-py3-none-any.whl[provider]'
+python3 -m pip install 'iraf_sdk-0.5.0-py3-none-any.whl[mcp]'
+python3 -m pip install 'iraf_sdk-0.5.0-py3-none-any.whl[provider]'
 ```
 
 要求：Python >= 3.9；MCP 客户端固定 1.x（2.x 移除了 AgentOS 依赖的 API）。
 wheel 的基础安装仍是零第三方依赖；`mcp` / `provider` 只在显式选 extras 时安装。
-安装后可自检：`python3 -c "import iraf_sdk; print(iraf_sdk.__version__)"` → `0.4.1`。
+安装后可自检：`python3 -c "import iraf_sdk; print(iraf_sdk.__version__)"` → `0.5.0`。
 
 ### 3.2 最小示例（streamable-http）
 

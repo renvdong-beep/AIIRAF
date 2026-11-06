@@ -638,6 +638,8 @@ UNIT_TOKENS = ("PROFILE", "VERSION", "PREFIX", "CURRENT_LINK", "PYTHON_BIN", "CO
                "PROVIDER_ENDPOINT", "INTENT_MODEL_URL", "INTENT_MODEL_NAME",
                # 北向 MCP HTTP（2026-11-04）：允许的 Host 是机器相关值，只能部署期给。
                "MCP_ALLOWED_HOSTS",
+               # 多 MCP 端点（2026-11-06）：端口来自 services[].ports，一个服务一个端口。
+               "MCP_PORT",
                # 仿真 Provider 装配（2026-10-26）：后端配置由场景报告生成后注入；
                # 显示模式来自声明 provider_display；端口来自声明 services[].ports；
                # 绑定地址 / DISPLAY / XAUTHORITY 只能由部署期给。
@@ -677,7 +679,7 @@ def render_template(template: Path, tokens: dict) -> str:
 
 
 def render_env_file(effective: dict, root: Path, tokens: dict, *,
-                    repo_root=None, env_values=None) -> str:
+                    repo_root=None, env_values=None, env_overrides=None) -> str:
     """渲染运行装配单。
 
     两种来源（**同一事实只允许出现一处**）：
@@ -685,6 +687,10 @@ def render_env_file(effective: dict, root: Path, tokens: dict, *,
         如 edge-intel 的远端 Provider 配置）；部署期值只能由 `env_values` 显式传入，
         缺必需占位符时 `render_template` 会显式失败（不写半个文件、不猜默认值）。
       · 未声明 ⇒ 沿用程序化生成（single-ubuntu2204 / sim-x86 走这条）。
+
+    env_overrides：实例级装配单覆盖（services[].env）。必须在模板渲染**之前**并入 merged，
+    否则 `@PROFILE@`/`@PROVIDER_ENDPOINT@` 仍是角色级取值，多个 MCP 端点会静默指向同一个
+    Profile/Provider —— 这正是"看起来有两个端点、实际只有一个场景"的错误。
     """
     template_rel = str(effective.get("env_template") or "").strip()
     if template_rel:
@@ -716,6 +722,8 @@ def render_env_file(effective: dict, root: Path, tokens: dict, *,
         if len(declared_ports) == 1:
             merged.setdefault("PROVIDER_PORT", str(declared_ports[0]))
         merged.update({str(k).strip().upper(): str(v) for k, v in dict(env_values or {}).items()})
+        # 实例级覆盖最后合并：同一份模板可以渲染出不同 Profile/Provider 端点的装配单。
+        merged.update({str(k).strip().upper(): str(v) for k, v in dict(env_overrides or {}).items()})
         template_path = Path(repo_root) / template_rel
         try:
             return render_template(template_path, merged)
@@ -1147,28 +1155,41 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
                  % (len(config_text), source_xml.name))
             return config_text
 
-        # 装配单与服务实例（2026-10-26 A''）：**每个声明了 services[].scene 的实例一份装配单**，
-        # 各自指向自己的 profile/场景/端口。没有任何 scene 声明时退回"角色一份装配单"（板侧/开发档）。
+        # 装配单与服务实例（2026-10-26 A''；2026-11-06 扩展 env 实例）：
+        #   · 声明了 services[].scene ⇒ 每实例落地场景资产 + 生成后端配置 + 独立装配单；
+        #   · 声明了 services[].env   ⇒ 每实例独立装配单，但不再落地场景（边缘多 MCP 端点走这条：
+        #     同一块板、同一版本，piper / ur5 各绑一个 Profile 与 Provider 端点，互不覆盖）。
+        #   · 没有任何上述声明 ⇒ 角色一份装配单（板侧/开发档）。
         scene_targets = []
+        base_needed = False
         for item in effective["services"]:
             scene = dict(item.get("scene") or {})
-            if not scene:
+            overrides = dict(item.get("env") or {})
+            if not scene and not overrides:
+                base_needed = True
                 continue
             ports = [int(port) for port in (item.get("ports") or [])]
             scene_targets.append({
                 "service": str(item["name"]),
                 "env_file": "%s.env" % str(item["name"]),
-                "robot_profile": str(scene.get("robot_profile") or effective.get("robot_profile") or ""),
-                "sim_scene": str(scene["sim_scene"]),
+                "robot_profile": str(scene.get("robot_profile")
+                                     or overrides.get("PROFILE")
+                                     or effective.get("robot_profile") or ""),
+                "sim_scene": str(scene.get("sim_scene") or ""),
                 "realtime": bool(scene.get("realtime")),
                 "port": (ports[0] if len(ports) == 1 else None),
+                "has_scene": bool(scene),
+                "overrides": {str(k): str(v) for k, v in overrides.items()},
             })
-        if not scene_targets:
-            scene_targets.append({"service": None, "env_file": "%s.env" % effective["id"],
-                                  "robot_profile": effective.get("robot_profile"),
-                                  "sim_scene": effective.get("sim_scene"), "port": None,
-                                  "realtime": False})
-
+        if base_needed or not scene_targets:
+            # 基础装配单必须**排在第一个**：板侧脚本（board_upgrade/board_diag）按
+            # /etc/iraf/<profile>.env 读回端点与 Profile；若被实例装配单顶到前面，
+            # 升级会读错文件并静默改配置。
+            scene_targets.insert(0, {"service": None, "env_file": "%s.env" % effective["id"],
+                                     "robot_profile": effective.get("robot_profile"),
+                                     "sim_scene": effective.get("sim_scene"), "port": None,
+                                     "realtime": False, "has_scene": bool(effective.get("sim_scene")),
+                                     "overrides": {}})
         env_paths = []
         _mkdir(config_dir)
         for target in scene_targets:
@@ -1182,7 +1203,20 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
                 instance["backend_config"] = _stage_scene(target["sim_scene"], bool(target.get("realtime")))
             instance_env = dict(env_values or {})
             if target["port"] is not None:
-                instance_env["PROVIDER_PORT"] = str(target["port"])
+                # Provider 实例的端口键是 PROVIDER_PORT；MCP 实例是 MCP_PORT（单元模板只读后者）。
+                instance_env["PROVIDER_PORT" if target["has_scene"] else "MCP_PORT"] = str(target["port"])
+            overrides = {}
+            for key, raw in target["overrides"].items():
+                match = re.fullmatch(r"\$\{([A-Z0-9_]+)\}", str(raw).strip())
+                if match:
+                    dep_key = match.group(1)
+                    if not str(instance_env.get(dep_key) or "").strip():
+                        raise InstallError(
+                            "服务 %s 的 env.%s 引用了部署期取值 %s，但没有提供；"
+                            "用 --env-set %s=<值> 显式给出（地址不入库，不猜）"
+                            % (target["service"], key, dep_key, dep_key), EXIT_DECLARATION)
+                    raw = instance_env[dep_key]
+                overrides[key.upper()] = str(raw)
             instance_tokens = dict(tokens)
             instance_tokens["ENV_FILE"] = target["env_file"]
             if target["service"]:
@@ -1190,11 +1224,13 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
             env_path = config_dir / target["env_file"]
             env_path.write_text(render_env_file(instance, root, instance_tokens,
                                                 repo_root=effective.get("_repo_root"),
-                                                env_values=instance_env), encoding="utf-8")
+                                                env_values=instance_env,
+                                                env_overrides=overrides), encoding="utf-8")
             created_files.append(env_path)
             env_paths.append(env_path)
             info("装配单已生成：%s（实例=%s 场景=%s）"
                  % (env_path, target["service"] or effective["id"], target["sim_scene"] or "-"))
+
         plan["env_files"] = [str(path) for path in env_paths]
         plan["env_file"] = str(env_paths[0]) if env_paths else ""
         env_path = env_paths[0] if env_paths else None
@@ -1252,10 +1288,13 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
         for item in effective["services"]:
             template = Path(str(effective["_repo_root"])) / str(item["template"])
             svc_tokens = dict(tokens)
-            # 实例化单元（iraf-provider@piper 等）各自读**自己的**装配单，Description 也显示实例名。
-            if item.get("scene"):
+            # 实例化装配（iraf-provider@piper / iraf-mcp-piper 等）各自读**自己的**装配单，
+            # Description 也显示实例名。scene 与 env 都算"实例级声明"。
+            if item.get("scene") or item.get("env"):
                 svc_tokens["ENV_FILE"] = "%s.env" % item["name"]
                 svc_tokens["PROFILE"] = str(item["name"])
+            ports = [int(port) for port in (item.get("ports") or [])]
+            svc_tokens["MCP_PORT"] = str(ports[0]) if len(ports) == 1 else ""
             svc_tokens["CPU_QUOTA"] = str(item.get("cpu_quota") or "")
             svc_tokens["MEMORY_MAX"] = str(item.get("memory_max") or "")
             content = render_template(template, svc_tokens)

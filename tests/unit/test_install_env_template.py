@@ -29,11 +29,22 @@ def _tokens(profile_id):
     return effective, tokens
 
 
+def _deploy_values(endpoint="PROBE-HOST:50052"):
+    """部署期必需值（缺任一项模板渲染都会显式失败）。"""
+    return {
+        "PROVIDER_ENDPOINT": endpoint,
+        "PIPER_PROVIDER_ENDPOINT": "PROBE-HOST:50052",
+        "INTENT_MODEL_URL": "https://model.example/v1",
+        "INTENT_MODEL_NAME": "probe-model",
+        "MCP_ALLOWED_HOSTS": "127.0.0.1:8765,localhost:8765",
+    }
+
+
 def test_declared_role_renders_from_template():
     effective, tokens = _tokens("edge-intel")
     assert effective.get("env_template"), "edge-intel 应当声明 env_template"
     text = lib.render_env_file(effective, Path("/"), tokens, repo_root=REPO,
-                               env_values={"PROVIDER_ENDPOINT": "PROBE-HOST:50052"})
+                               env_values=_deploy_values())
     assert "IRAF_BACKEND_ENTRYPOINT=iraf_adapters.remote.provider_backend:RemoteProviderBackend" in text
     assert '"endpoint":"PROBE-HOST:50052"' in text, text
     assert "IRAF_EVENT_STORE=/var/lib/iraf/iraf-runtime.db" in text
@@ -60,6 +71,6 @@ def test_credentials_never_written_into_env_file():
     """凭据只由部署环境注入：渲染结果里不得出现 token 赋值。"""
     effective, tokens = _tokens("edge-intel")
     text = lib.render_env_file(effective, Path("/"), tokens, repo_root=REPO,
-                               env_values={"PROVIDER_ENDPOINT": "PROBE-HOST:50052"})
+                               env_values=_deploy_values())
     assert "IRAF_PROVIDER_TOKEN=" not in text
     assert "token_env" in text, "应当只声明 token 的**环境变量名**，而不是它的值"

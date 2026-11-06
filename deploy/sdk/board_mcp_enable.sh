@@ -15,13 +15,16 @@ CONFIG_DIR="${IRAF_CONFIG_DIR:-/etc/iraf}"
 VERSION_DIR="${IRAF_VERSION_DIR:-/opt/iraf-sdk/current}"
 TOKEN_FILE="${IRAF_MCP_TOKEN_FILE:-$CONFIG_DIR/mcp-tokens.json}"
 CLIENT_TOKEN="${IRAF_MCP_CLIENT_TOKEN:-$CONFIG_DIR/mcp-client.token}"
-UNIT="iraf-mcp-http.service"
-PORT="${IRAF_MCP_PORT:-8765}"
+# 多场景：ur5 固定 8765，piper 固定 8766（与 install_profiles.yaml 的 services[].ports 同源）。
+# 可用 IRAF_MCP_UNITS="name:port name:port" 覆盖，但默认值必须与声明一致。
+UNITS_SPEC="${IRAF_MCP_UNITS:-iraf-mcp-http.service:8765 iraf-mcp-piper.service:8766}"
 
 if [ "${1:-}" = "--status" ]; then
-  systemctl --no-pager status "$UNIT" 2>&1 | head -12 || true
-  echo ---
-  ss -lntp 2>/dev/null | grep ":$PORT" || echo "8765 未监听"
+  for spec in $UNITS_SPEC; do
+    UNIT="${spec%%:*}"; PORT="${spec##*:}"
+    systemctl --no-pager status "$UNIT" 2>&1 | head -6 || true
+    ss -lntp 2>/dev/null | grep ":$PORT" || echo "[mcp-enable] $PORT 未监听"
+  done
   [ -f "$CLIENT_TOKEN" ] && echo "客户端 token：$CLIENT_TOKEN（600，内容不打印）" || true
   exit 0
 fi
@@ -50,20 +53,27 @@ if [ ! -s "$TOKEN_FILE" ]; then
   [ -s "$CLIENT_TOKEN" ] || { echo "[mcp-enable][错误] token 文件为空" >&2; exit 3; }
 fi
 
-echo "[mcp-enable] 启用并启动 $UNIT"
 systemctl daemon-reload
-systemctl enable --now "$UNIT"
-
-for _ in $(seq 1 15); do
-  if ss -lntp 2>/dev/null | grep -q ":$PORT"; then
-    echo "[mcp-enable] 8765 已监听"
-    systemctl --no-pager --lines=0 status "$UNIT" 2>&1 | head -3 || true
-    echo "[mcp-enable] 客户端 token：$CLIENT_TOKEN（600）"
-    exit 0
+for spec in $UNITS_SPEC; do
+  UNIT="${spec%%:*}"; PORT="${spec##*:}"
+  echo "[mcp-enable] 启用并启动 $UNIT（$PORT）"
+  if ! systemctl enable --now "$UNIT"; then
+    echo "[mcp-enable][错误] $UNIT 启动失败，最近日志：" >&2
+    journalctl -u "$UNIT" -n 20 --no-pager 2>&1 | tail -20 >&2 || true
+    exit 4
   fi
-  sleep 1
+  for _ in $(seq 1 15); do
+    if ss -lntp 2>/dev/null | grep -q ":$PORT"; then
+      echo "[mcp-enable] $PORT 已监听"
+      break
+    fi
+    sleep 1
+  done
+  if ! ss -lntp 2>/dev/null | grep -q ":$PORT"; then
+    echo "[mcp-enable][错误] $PORT 未监听，最近日志：" >&2
+    journalctl -u "$UNIT" -n 20 --no-pager 2>&1 | tail -20 >&2 || true
+    exit 4
+  fi
 done
 
-echo "[mcp-enable][错误] 8765 未监听，最近日志：" >&2
-journalctl -u "$UNIT" -n 20 --no-pager 2>&1 | tail -20 >&2 || true
-exit 4
+echo "[mcp-enable] 客户端 token：$CLIENT_TOKEN（600）"

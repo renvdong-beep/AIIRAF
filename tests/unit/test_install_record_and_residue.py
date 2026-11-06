@@ -65,7 +65,8 @@ class InstallLayoutTest(unittest.TestCase):
         if unit:
             unit_dir = Path(str(self.root) + "/etc/systemd/system")
             unit_dir.mkdir(parents=True, exist_ok=True)
-            (unit_dir / "iraf-runtime-grpc.service").write_text("[Unit]\n", encoding="utf-8")
+            for item in self.effective["services"]:
+                (unit_dir / ("%s.service" % item["name"])).write_text("[Unit]\n", encoding="utf-8")
         if env:
             config_dir = Path(str(self.root) + str(self.effective["config_dir"]))
             config_dir.mkdir(parents=True, exist_ok=True)
@@ -110,7 +111,8 @@ class InstallLayoutTest(unittest.TestCase):
         self.assertEqual(len(record["files"]), 2)
         self.assertEqual(len(record["config_files"]), 1)
         self.assertEqual(record["file_count"], 3)
-        self.assertEqual(record["units"], ["iraf-runtime-grpc.service"])
+        self.assertEqual(record["units"],
+                         [str(item["name"]) + ".service" for item in self.effective["services"]])
         # 记录自身不计入文件清单（否则自我引用）
         self.assertNotIn(self.effective["file_record"],
                          [item["path"] for item in record["files"]])
@@ -304,7 +306,11 @@ class InstallActionTest(unittest.TestCase):
         kwargs = dict(sdk_wheel=self.wheel, wheelhouse=self.art / "wheelhouse",
                       allow_unverified=True, rehearsal=True,
                       # edge-intel 的装配单模板要求部署期给值（就像真实部署那样）
-                      env_values={"PROVIDER_ENDPOINT": "PROBE-HOST:50052"})
+                      env_values={"PROVIDER_ENDPOINT": "PROBE-HOST:50052",
+                                  "PIPER_PROVIDER_ENDPOINT": "PROBE-HOST:50052",
+                                  "INTENT_MODEL_URL": "https://model.example/v1",
+                                  "INTENT_MODEL_NAME": "probe-model",
+                                  "MCP_ALLOWED_HOSTS": "127.0.0.1:8765,localhost:8765"})
         kwargs.update(overrides)
         return lib.apply_install(self.effective, self.root, **kwargs)
 
@@ -320,6 +326,36 @@ class InstallActionTest(unittest.TestCase):
             code = lib.main(["--repo-root", str(REPO), *args])
         return code, out.getvalue() + err.getvalue()
 
+    def test_multi_mcp_endpoint_env_files_are_instance_scoped(self):
+        """同一块板两个 MCP 端点：各自装配单的 Profile/Provider 端点/端口必须不同。
+
+        这是"多端点"最容易静默出错的地方：共用一份 env 时，两个端点看起来都在监听，
+        实际都指向同一个场景/Provider。这里按文件内容断言，不只看服务是否 active。
+        """
+        base = {"PROVIDER_ENDPOINT": "PROBE-HOST:50053",
+                "PIPER_PROVIDER_ENDPOINT": "PROBE-HOST:50052",
+                "INTENT_MODEL_URL": "https://model.example/v1",
+                "INTENT_MODEL_NAME": "probe-model",
+                "MCP_ALLOWED_HOSTS": "127.0.0.1:8765,localhost:8765"}
+        plan = self._install(env_values=base)
+        self.assertTrue(plan["ok"])
+        config_dir = Path(str(self.root) + str(self.effective["config_dir"]))
+
+        ur5_env = (config_dir / "iraf-mcp-http.env").read_text(encoding="utf-8")
+        piper_env = (config_dir / "iraf-mcp-piper.env").read_text(encoding="utf-8")
+        self.assertIn("IRAF_PROFILE=profiles/ur5_mujoco.yaml", ur5_env)
+        self.assertIn('"endpoint":"PROBE-HOST:50053"', ur5_env)
+        self.assertIn("IRAF_PROFILE=profiles/piper_mujoco.yaml", piper_env)
+        self.assertIn('"endpoint":"PROBE-HOST:50052"', piper_env)
+
+        # 基础装配单仍在第一位（板侧脚本按 /etc/iraf/<profile>.env 读回端点）。
+        self.assertEqual(Path(plan["env_file"]).name, "edge-intel.env")
+
+        piper_unit = [u for u in plan["units"] if u.endswith("iraf-mcp-piper.service")][0]
+        text = Path(piper_unit).read_text(encoding="utf-8")
+        self.assertIn("IRAF_MCP_PORT=8766", text)
+        self.assertIn("IRAF_ENV_FILE=%s/iraf-mcp-piper.env" % config_dir, text)
+
     def test_dry_run_writes_nothing(self):
         plan = self._install(dry_run=True)
         self.assertTrue(plan["dry_run"])
@@ -332,9 +368,10 @@ class InstallActionTest(unittest.TestCase):
         self.assertTrue(plan["ok"])
         self.assertTrue((self._version_dir() / "lib/iraf_sdk/__init__.py").is_file())
         self.assertTrue(Path(plan["env_file"]).is_file())
-        self.assertEqual(len(plan["units"]), 1)
-        self.assertTrue(Path(plan["units"][0]).read_text(encoding="utf-8").count("@") == 0,
-                        "渲染后不得残留占位符")
+        self.assertEqual(len(plan["units"]), len(self.effective["services"]))
+        for unit in plan["units"]:
+            self.assertEqual(Path(unit).read_text(encoding="utf-8").count("@"), 0,
+                             "渲染后不得残留占位符：%s" % unit)
         record = lib.read_record(self.effective, self._version_dir())
         removed = lib.apply_uninstall(lib.plan_uninstall(self.effective, self.root, record), root=self.root)
         self.assertTrue(removed)
@@ -344,7 +381,11 @@ class InstallActionTest(unittest.TestCase):
         with self.assertRaises(lib.InstallError) as ctx:
             lib.apply_install(self.effective, Path("/"), sdk_wheel=self.wheel,
                               allow_unverified=True, rehearsal=True, dry_run=True,
-                              env_values={"PROVIDER_ENDPOINT": "PROBE-HOST:50052"})
+                              env_values={"PROVIDER_ENDPOINT": "PROBE-HOST:50052",
+                                  "PIPER_PROVIDER_ENDPOINT": "PROBE-HOST:50052",
+                                  "INTENT_MODEL_URL": "https://model.example/v1",
+                                  "INTENT_MODEL_NAME": "probe-model",
+                                  "MCP_ALLOWED_HOSTS": "127.0.0.1:8765,localhost:8765"})
         self.assertEqual(ctx.exception.code, lib.EXIT_USAGE)
         self.assertIn("真实根", str(ctx.exception))
 

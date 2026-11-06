@@ -22,8 +22,9 @@ EnvironmentFile=-@CONFIG_DIR@/runtime.secrets
 # 覆盖装配单里的 stdio 默认值：只影响本服务，AgentOS 的 stdio 登记仍按自己的方式启动。
 # 注意：systemd 的 EnvironmentFile= 会覆盖 Environment=（实测 2026-11-04），
 # 所以这些同名键必须在 ExecStart 的 shell 前缀里再给一次，不能只写 Environment=。
+# 端口来自声明 services[].ports（多端点时每个实例一个端口），这里不写死 8765。
 ExecStartPre=/bin/mkdir -p @LOG_DIR@ @DATA_DIR@
-ExecStart=/bin/sh -c 'IRAF_MCP_TRANSPORT=http IRAF_MCP_HOST=0.0.0.0 IRAF_MCP_PORT=8765 IRAF_MCP_TOKEN_FILE=@CONFIG_DIR@/mcp-tokens.json IRAF_MCP_AUDIT_LOG=@LOG_DIR@/mcp-audit.jsonl exec @PYTHON_BIN@ -m iraf_adapters.mcp.server'
+ExecStart=/bin/sh -c 'IRAF_ENV_FILE=@CONFIG_DIR@/@ENV_FILE@ IRAF_MCP_TRANSPORT=http IRAF_MCP_HOST=0.0.0.0 IRAF_MCP_PORT=@MCP_PORT@ IRAF_MCP_TOKEN_FILE=@CONFIG_DIR@/mcp-tokens.json IRAF_MCP_AUDIT_LOG=@LOG_DIR@/mcp-audit.jsonl exec @PYTHON_BIN@ -m iraf_adapters.mcp.server'
 Restart=on-failure
 RestartSec=5
 # 独立资源限额（AGENTS 6.11）：未声明时渲染器整行删除。

@@ -164,7 +164,7 @@ def read_runtime_env_ports(repo_root: Path) -> dict:
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if line.startswith("IRAF_RUNTIME_PORT=") or line.startswith("IRAF_GRPC_PORT=") \
-                or line.startswith("IRAF_PROVIDER_PORT"):
+                or line.startswith("IRAF_PROVIDER_PORT") or line.startswith("IRAF_MCP_PORT"):
             name, _, value = line.partition("=")
             value = value.strip()
             if not value.isdigit():
@@ -325,6 +325,19 @@ def check_semantics(declaration: dict, repo_root: Path) -> tuple:
                          if item.get("scene") and len(item.get("ports") or []) != 1]
             add("%s：声明场景的实例必须有且仅有一个端口" % pid, not bad_ports,
                 "不符合的实例=%s" % bad_ports)
+            # 实例级装配单（services[].env）同理：一个实例只绑定一个端口/Profile，
+            # 否则 MCP 端点与 Provider 端口无法一一对应（多端点会静默串台）。
+            bad_env_ports = [str(item["name"]) for item in profile["services"]
+                             if item.get("env") and len(item.get("ports") or []) != 1]
+            add("%s：声明实例装配单的服务必须有且仅有一个端口" % pid, not bad_env_ports,
+                "不符合的实例=%s" % bad_env_ports)
+            bad_env_profiles = []
+            for item in profile["services"]:
+                rel = str((item.get("env") or {}).get("PROFILE") or "").strip()
+                if rel and not (repo_root / rel).is_file():
+                    bad_env_profiles.append("%s:%s" % (item["name"], rel))
+            add("%s：实例装配单引用的 Profile 在仓库内存在" % pid, not bad_env_profiles,
+                "缺失=%s" % bad_env_profiles)
 
         units = [str(item["name"]) + ".service" for item in profile["services"]]
         residue = profile["residue"]

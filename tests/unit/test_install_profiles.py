@@ -47,6 +47,7 @@ FIXTURES = (
     "deploy/sdk/units/iraf-runtime-http.service.tmpl",
     "deploy/sdk/units/iraf-runtime-grpc.service.tmpl",
     "deploy/sdk/units/iraf-control-provider.service.tmpl",
+    "deploy/sdk/units/iraf-mcp-http.service.tmpl",
     "deploy/sdk/env/edge-intel.env.tmpl",
     "deploy/sdk/env/sim-x86.env.tmpl",
     "deploy/sdk/units/iraf-provider.service.tmpl",
@@ -268,8 +269,8 @@ class InstallProfileDeclarationTest(unittest.TestCase):
         """同一事实两处（声明 vs deploy/iraf-runtime.env）不一致即拒绝。"""
         data = self._declaration()
         services = self._profile(data, "single-ubuntu2204")["services"]
-        services[0]["ports"] = [8766]
-        self._profile(data, "single-ubuntu2204")["residue"]["ports"] = [8766, 50051]
+        services[0]["ports"] = [8767]
+        self._profile(data, "single-ubuntu2204")["residue"]["ports"] = [8767, 50051]
         self._write_declaration(data)
         self.assertIn("端口：声明与 deploy/iraf-runtime.env 一致", self._failed_names())
 
