@@ -157,6 +157,8 @@ profiles:
       - protobuf
       - mujoco
       - numpy
+    # 仿真 Provider 必须有调用方 token；缺则服务 fail-closed。
+    credential_keys: [IRAF_PROVIDER_TOKEN]
     backend_entrypoint: iraf_adapters.mujoco.mujoco_backend:MujocoBackend
     # 仿真装配（2026-10-26「装完 SDK 就有 Provider」）：
     #   每套场景由**服务实例**自己声明（services[].scene）—— 不再有"角色级唯一场景"，
@@ -246,6 +248,8 @@ profiles:
       - jsonschema
       - grpcio
       - protobuf
+    # 本角色跨机调 Provider（出站 token）+ 本域 gRPC 服务端（入站 token）都必须有。
+    credential_keys: [IRAF_PROVIDER_TOKEN, IRAF_GRPC_TOKEN]
     # 2026-10-16：本域 runtime 的 Capability Provider 经跨机 gRPC 调 **x86 仿真 Provider**
     # （板上跑 TaskFlow/Skill/Policy，x86 只把能力执行出来并显示）。
     # 设计见 .hermes/plans/2026-10-16-agentos-semantic-mcp-bridge.md；

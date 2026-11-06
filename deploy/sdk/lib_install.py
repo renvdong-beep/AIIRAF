@@ -140,7 +140,7 @@ def effective_layout(repo_root: Path, profile_id: str) -> dict:
     effective["target_glibc_min"] = target.get("glibc_min")
     for key in ("min_free_mb", "python_bin", "run_user", "robot_profile", "safety_policy",
                 "backend_config", "runtime_subject", "runtime_dependencies", "python_stubs_dir",
-                "sim_scene", "env_template", "provider_display"):
+                "sim_scene", "env_template", "provider_display", "credential_keys"):
         # **角色级优先**：仿真档声明仿真机型/仿真策略，真机档留空待运控域 —— 不能让真机档继承仿真档的
         # safety_policy（那会把 simulation_only=true 的策略带到真机路径上）。
         if key in profile:
@@ -267,6 +267,29 @@ def read_record(effective: dict, version_dir: Path) -> dict:
         raise InstallError("安装记录属于角色 %r，与本次角色 %r 不符"
                            % (record.get("profile"), effective["id"]), EXIT_MISMATCH)
     return record
+
+
+def record_drift(record: dict) -> list:
+    """只读比对安装记录里的**版本目录外配置文件**与落盘事实（env/凭据）。
+
+    为什么只比 config_files（2026-11-06 实测）：受控卸载最先炸的就是这一路 ——
+    运维手工改过 /etc/iraf/*.env 后，记录里的 sha256 过期，卸载会被拒绝；
+    如果等到卸载时才发现，现场已经无法判断"改了什么、该保哪份"。
+    版本目录内的 9000+ 文件也校验会慢，但它们是安装器自己写的，先不在这里做。
+    """
+    drift = []
+    for item in record.get("config_files") or []:
+        path = Path(str(item.get("path") or ""))
+        expected = str(item.get("sha256") or "")
+        if not path.is_file():
+            drift.append({"path": str(path), "kind": "missing",
+                          "expected_sha256": expected, "actual_sha256": None})
+            continue
+        actual = _sha256(path)
+        if actual != expected:
+            drift.append({"path": str(path), "kind": "sha256-mismatch",
+                          "expected_sha256": expected, "actual_sha256": actual})
+    return drift
 
 
 def resolve_version_dir(effective: dict, root: Path, *, version: str | None = None) -> Path:
@@ -1264,6 +1287,18 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
             if not lines:
                 raise InstallError("--secrets-file 没有任何有效键：%s（允许：%s）"
                                    % (src, ", ".join(allowed)), EXIT_IO)
+            # 声明要求本角色必须有哪些凭据键：缺一个就拒绝安装。
+            # 实测（2026-11-06）：edge-intel 的 runtime.secrets 只带 IRAF_GRPC_TOKEN，
+            # 缺 IRAF_PROVIDER_TOKEN ⇒ 服务起得来、提交任务报"token 必填"；这类
+            # "装完才炸"的缺口必须在写盘前拦下。
+            required_keys = [str(item) for item in (effective.get("credential_keys") or [])]
+            missing_keys = [key for key in required_keys if key not in seen]
+            if missing_keys:
+                raise InstallError(
+                    "角色 %s 声明了必需凭据键，但 --secrets-file 缺：%s\n"
+                    "  文件：%s\n"
+                    "  处置：把缺失键补进 --secrets-file（值不要进命令行/日志）后重试"
+                    % (effective["id"], ", ".join(missing_keys), src), EXIT_DECLARATION)
             secrets_path = config_dir / "runtime.secrets"
             secrets_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
             try:
@@ -1274,12 +1309,14 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
             secrets_written = secrets_path
             plan["secrets_file"] = str(secrets_path)
             info("凭据已落地：%s（600，键=%s；值不打印）" % (secrets_path, ",".join(seen)))
-        elif any(str(s.get("name") or "").startswith("iraf-runtime") for s in effective["services"]):
+        elif any(str(s.get("name") or "").startswith("iraf-runtime") for s in effective["services"]) \
+                or effective.get("credential_keys"):
             # 不 fail（x86 开发档可能用本地 backend，不需要跨机凭据），但必须显式提示，
             # 否则就是 2026-10-22 那种"装完才发现 runtime 起不来"的静默状态。
+            required_hint = ", ".join(str(item) for item in (effective.get("credential_keys") or [])) or "-"
             print("[install][警告] 未提供 --secrets-file：%s/runtime.secrets 不存在，"
-                  "runtime 会因缺 IRAF_PROVIDER_TOKEN / IRAF_GRPC_TOKEN fail-closed（起不来）"
-                  % config_dir, file=sys.stderr)
+                  "本角色声明的必需凭据键 %s 均未落地；相关服务会 fail-closed（起不来）"
+                  % (config_dir, required_hint), file=sys.stderr)
 
         unit_dir_path = unit_dir(root, str(effective["systemd_scope"]))
         if not unit_dir_path.exists():
@@ -1471,6 +1508,15 @@ def main(argv=None) -> int:
     p_rs.add_argument("--profile", required=True)
     p_rs.add_argument("--installed-dir", type=Path, required=True)
 
+    p_rc = sub.add_parser("record-check",
+                          help="只读检查安装记录与落盘配置是否漂移（env/凭据 sha256）；漂移退出 4",
+                          parents=[common])
+    p_rc.add_argument("--profile", required=True)
+    p_rc.add_argument("--root", type=Path, default=Path("/"))
+    p_rc.add_argument("--installed-dir", type=Path, default=None,
+                      help="直接指定已装版本目录（默认按 current 链接解析）")
+    p_rc.add_argument("--json", action="store_true")
+
     args = parser.parse_args(argv)
     try:
         effective = effective_layout(args.repo_root, args.profile)
@@ -1529,6 +1575,24 @@ def main(argv=None) -> int:
                          ("schema_version", "profile", "version", "installed_at_utc",
                           "version_dir", "units", "ports", "file_count", "note")})
             return EXIT_OK
+
+        if args.command == "record-check":
+            version_dir = args.installed_dir or resolve_version_dir(effective, args.root)
+            record = read_record(effective, version_dir)
+            drift = record_drift(record)
+            report = {"profile": effective["id"], "version_dir": str(version_dir),
+                      "clean": not drift, "drift": drift,
+                      "checked": [item.get("path") for item in record.get("config_files") or []]}
+            if args.json:
+                _print_json(report)
+            else:
+                info("安装记录漂移检查：角色=%s 版本目录=%s" % (effective["id"], version_dir))
+                for item in report["checked"]:
+                    print("  ? %s" % item)
+                for item in drift:
+                    print("  ✗ %s（%s）" % (item["path"], item["kind"]))
+                print("结果：%s" % ("一致" if not drift else "**漂移**（受控卸载会被拒绝）"))
+            return EXIT_OK if not drift else EXIT_MISMATCH
 
         if args.command == "residue":
             # 与 uninstall 的区别：残留核验**必须能在"什么都没装"时正常工作** —— 卸载之后正是

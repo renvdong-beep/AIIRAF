@@ -604,6 +604,14 @@
           },
           "description": "角色级运行期依赖覆盖（例如仿真档要 mujoco/numpy/pillow）。"
         },
+        "credential_keys": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^IRAF_[A-Z0-9_]+$"
+          },
+          "description": "本角色运行期**必须**提供的凭据键（部署期 --secrets-file 的键集合必须覆盖它）。缺任一键即拒绝安装，避免\"装完服务因缺 token 起不来\"。"
+        },
         "python_bin": {
           "type": "string",
           "pattern": "^/",

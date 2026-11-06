@@ -72,6 +72,11 @@ CANONICAL_STUB_DIR = Path("build/generated/python")
 #: runtime bundle 的成员目录（步骤 06「步骤 4」声明，顺序即 tar 顺序来源）。
 # scenes 进 bundle：handoff_lab 联合世界的场景声明随 SDK 交付（供 x86 仿真复跑与 MCP examples 引用）。
 BUNDLE_DIRS = ("src", "skills", "profiles", "config", "deploy", "scenes")
+#: 目录之外的必需单文件：安装/卸载/记录检查在**目标端**要独立运行，
+#: 而 `_load_checker()` 需要 `<repo_root>/scripts/install_profile_check.py`。
+#: 实测（2026-11-06）：不随包时，装好的 `uninstall-iraf.sh` / `verify_record.sh`
+#: 直接跑会报"缺少声明解析实现"，只能依赖 board_deploy 的临时 staging 目录。
+BUNDLE_EXTRA_FILES = ("scripts/install_profile_check.py", "pyproject.toml")
 #: 打包时排除的目录名/后缀：编辑器备份与字节码不是运行时内容。
 #: 排除不是"静默过滤"——被排掉的路径会写进 manifest 的 `bundle.excluded`。
 EXCLUDE_DIR_NAMES = frozenset({"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"})
@@ -568,6 +573,15 @@ def iter_bundle_files(repo_root: Path, dirs=BUNDLE_DIRS) -> tuple[list[str], lis
             if path.suffix in EXCLUDE_FILE_SUFFIXES or path.name.endswith("~"):
                 excluded.append({"path": rel, "reason": "编辑器备份/字节码文件"})
                 continue
+            members.append(rel)
+    for rel in BUNDLE_EXTRA_FILES:
+        path = repo_root / rel
+        if not path.is_file():
+            raise ManifestError(
+                f"bundle 必需单文件不存在：{rel}（目标端安装/卸载会缺声明解析实现）",
+                ExitCode.PRECHECK,
+            )
+        if rel not in members:
             members.append(rel)
     members.sort()
     return members, excluded

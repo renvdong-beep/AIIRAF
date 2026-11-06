@@ -33,12 +33,12 @@
 
 ```text
 build/sdk/iraf_sdk-0.5.0-py3-none-any.whl
-  sha256 = 7bd7180944f96e1049525b70df616ef3c8694b90b394f68d3c447150bd4761cc
+  sha256 = 4aedf401e9718465e92a0e8db1aeb498867b774f9f9b9cbfd5208be710b0f0b4
   成员：iraf_sdk/{__init__,client,errors,mcp,provider}.py + dist-info
   元数据：Provides-Extra: mcp / provider（基础安装零第三方依赖）
 
-build/sdk/iraf-runtime-0.5.0-aarch64.tar.gz
-  sha256 = 4599b203ea3e3afd46b494cf8fead06040ddaac66444458b3a50bc9b4ecde69a
+build/sdk/iraf-runtime-0.5.0.tar.gz
+  sha256 = f0317efd3557333e05adcf1b6b4b9fdd2d337a8ff0bf5c3b197c67ff9bbd12e5
 ```
 
 重新构建（改了 `src/iraf_sdk/**` 后必须重建，否则交付的是旧代码）：

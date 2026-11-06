@@ -23,6 +23,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PYTHON="${PYTHON:-python3}"
 LIB="${SCRIPT_DIR}/lib_install.py"
+# 目标端安装树自带 pyyaml/jsonschema（runtime_dependencies），直接跑本入口时
+# 不必依赖 board_deploy 的临时 pylib；仓库开发态没有 <repo>/lib，属无害追加。
+export PYTHONPATH="${REPO_ROOT}/lib:${REPO_ROOT}/src:${PYTHONPATH:-}"
 PASSTHROUGH=()
 DRY_RUN="0"
 

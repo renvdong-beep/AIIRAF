@@ -254,6 +254,7 @@ if [ "${UNINSTALL}" = "1" ]; then
   remote "mkdir -p ${REMOTE_SDK_DIR}/units ${REMOTE_DIR}/scripts ${REMOTE_DIR}/config/install" \
     || { err "远端目录准备失败"; exit 3; }
   copy "${SCRIPT_DIR}/lib_install.py" "${SCRIPT_DIR}/uninstall-iraf.sh" "${SCRIPT_DIR}/verify_residue.sh" \
+       "${SCRIPT_DIR}/verify_record.sh" \
        "${TARGET}:${REMOTE_SDK_DIR}/" || { err "脚本传输失败"; exit 3; }
   copy "${REPO_ROOT}/scripts/install_profile_check.py" "${TARGET}:${REMOTE_DIR}/scripts/" || { err "校验器传输失败"; exit 3; }
   # 必须 -r：config/install 下除声明文件外还有目录（如 deploy_values/），非递归 scp 会报
@@ -332,6 +333,7 @@ fi
 log "② 推送脚本与声明（按角色通道所需的最小集）"
 copy "${SCRIPT_DIR}/install-iraf.sh" "${SCRIPT_DIR}/lib_install.py" "${SCRIPT_DIR}/verify_residue.sh" \
      "${SCRIPT_DIR}/uninstall-iraf.sh" "${SCRIPT_DIR}/rehearse_install_chain.sh" \
+     "${SCRIPT_DIR}/verify_record.sh" \
      "${TARGET}:${REMOTE_SDK_DIR}/" || { err "脚本传输失败"; exit 3; }
 copy "${SCRIPT_DIR}/units/"*.tmpl "${TARGET}:${REMOTE_SDK_DIR}/units/" || { err "单元模板传输失败"; exit 3; }
 # 运行装配单模板（2026-10-19 补）：edge-intel / edge-linux-standalone 的 env_template 指向

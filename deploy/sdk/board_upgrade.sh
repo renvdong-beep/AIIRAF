@@ -149,7 +149,7 @@ if [ "$KEEP_SECRETS" = "1" ] && [ "$APPLY" = "1" ]; then
   if run_remote "test -f /etc/iraf/runtime.secrets" >/dev/null 2>&1; then
     TMP_SECRETS="$(mktemp /tmp/iraf-secrets.XXXXXX)"
     sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "root@${IRAF_BOARD_HOST}" \
-      "cat /etc/iraf/runtime.secrets" > "${TMP_SECRETS}" 2>/dev/null
+      "{ cat /etc/iraf/runtime.secrets; if ! grep -q '^IRAF_PROVIDER_TOKEN=' /etc/iraf/runtime.secrets && [ -s /etc/iraf/provider.token ]; then printf 'IRAF_PROVIDER_TOKEN=%s\\n' \"\$(cat /etc/iraf/provider.token)\"; fi; }" > "${TMP_SECRETS}" 2>/dev/null
     chmod 600 "${TMP_SECRETS}"
     if [ -s "${TMP_SECRETS}" ]; then
       SECRETS_ARG=(--secrets-file "${TMP_SECRETS}")

@@ -356,6 +356,35 @@ class InstallActionTest(unittest.TestCase):
         self.assertIn("IRAF_MCP_PORT=8766", text)
         self.assertIn("IRAF_ENV_FILE=%s/iraf-mcp-piper.env" % config_dir, text)
 
+    def test_secrets_file_missing_declared_credential_key_is_rejected(self):
+        """声明了 credential_keys 就 fail-closed：只给 IRAF_GRPC_TOKEN 不能装 edge-intel。
+
+        实测缺陷（2026-11-06）：服务能起、提交任务才报 token 必填。必须在写盘前拦。
+        """
+        secrets = self.root / "secrets.partial"
+        secrets.write_text("IRAF_GRPC_TOKEN=probe-grpc-token\n", encoding="utf-8")
+        secrets.chmod(0o600)
+        with self.assertRaises(lib.InstallError) as ctx:
+            self._install(secrets_file=secrets)
+        message = str(ctx.exception)
+        self.assertIn("IRAF_PROVIDER_TOKEN", message)
+        self.assertIn("必需凭据键", message)
+
+    def test_record_check_detects_env_drift(self):
+        """装完后手工改 env ⇒ record-check 必须报漂移（否则卸载时才炸，现场无法判断）。"""
+        plan = self._install()
+        self.assertTrue(plan["ok"])
+        env_path = Path(plan["env_file"])
+        original = env_path.read_text(encoding="utf-8")
+        env_path.write_text(original + "\n# operator edit\n", encoding="utf-8")
+
+        version_dir = self._version_dir()
+        record = lib.read_record(self.effective, version_dir)
+        drift = lib.record_drift(record)
+        self.assertEqual(len(drift), 1, drift)
+        self.assertEqual(drift[0]["kind"], "sha256-mismatch")
+        self.assertEqual(drift[0]["path"], str(env_path))
+
     def test_dry_run_writes_nothing(self):
         plan = self._install(dry_run=True)
         self.assertTrue(plan["dry_run"])

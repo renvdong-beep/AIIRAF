@@ -216,22 +216,40 @@ agentos-worker-2.tools   OK（5 个工具）
 
 验证记录：`/etc/iraf/agentos-mcp-binding-iraf-task.json`（600）。
 
-### 7.5 多场景端点（代码已落地，待上板）
+### 7.5 多场景端点（0.5.0 已上板，2026-11-06）
 
-0.4.1 安装声明新增 `iraf-mcp-piper.service`（8766），并为两个 MCP 实例分别渲染：
+0.4.1 只监听 8765（UR5）。0.5.0 安装后 `.147` 实际状态：
 
 ```
-/etc/iraf/edge-intel.env          ← 基础装配单（runtime-grpc/板侧脚本读回端点）
+/opt/iraf-sdk/current -> 0.5.0
+iraf-mcp-http.service   active/enabled  0.0.0.0:8765  profile=profiles/ur5_mujoco.yaml
+iraf-mcp-piper.service  active/enabled  0.0.0.0:8766  profile=profiles/piper_mujoco.yaml
+```
+
+实例级装配单（由安装器渲染，不是手工改）：
+
+```
+/etc/iraf/edge-intel.env          ← 基础装配单（板侧脚本读回端点）
 /etc/iraf/iraf-mcp-http.env       ← ur5：PROFILE=profiles/ur5_mujoco.yaml
 /etc/iraf/iraf-mcp-piper.env      ← piper：PROFILE=profiles/piper_mujoco.yaml
 ```
 
-端口来源是 `install_profiles.yaml` 的 `services[].ports`（ur5 8765、piper 8766），
-不是在 unit 里写死；`board_mcp_enable.sh` 会逐个 enable/自检两个端口。
+实测（2026-11-06）：
 
-⚠ 当前 `.147` 仍是**单端点 8765（UR5）**；多端点代码尚未重新构建/上板。
-上板前必须先 `scene_supervisor.py up piper` 让 x86 的 50052 就绪，否则 8766 端点
-虽在监听，提交任务会如实返回 `IRAF-TRANSPORT-FAILED`。
+```
+8765 healthz=200  POST 无 token=401
+8766 healthz=200  POST 无 token=401
+8765 → MODE robot_dev profile=profiles/ur5_mujoco.yaml skills=15 simulation=True
+8766 → MODE robot_dev profile=profiles/piper_mujoco.yaml skills=15 simulation=True
+
+ur5  : execution_id=480ecb67-a982-5ff2-8476-2b79139de0aa status=SUCCEEDED
+       lift_delta_m=0.07633 center_distance_m=0.00011855145570256166
+piper: execution_id=4b1ed285-a655-5114-9fd0-4d07853c61cd status=SUCCEEDED
+       lift_delta_m=0.083308 center_distance_m=0.0000514227433
+```
+
+⚠ AgentOS 侧绑定尚未通过：宿主 dashboard 凭据 401、worker 镜像缺 `mcp` 包。
+边缘 MCP 本身正常（上面的工具发现与抓取都是有效 token 直连证据），但 chat 仍看不到工具。
 
 宿主日志（2026-11-05 03:42:33）：
 
