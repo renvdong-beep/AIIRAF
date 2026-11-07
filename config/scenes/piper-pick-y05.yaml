@@ -1,0 +1,14 @@
+schema: iraf.scene/v1
+scene_id: piper-pick-y05
+provider_id: iraf/piper-pick-y05
+profile: profiles/piper_mujoco.yaml
+safety_policy: profiles/safety/simulation_lab.yaml
+simulation: true
+max_concurrency: 1
+lease_ttl_s: 60
+description: piper 抓取；目标块沿 Y 偏移 +5mm（可靠工作域内）
+resources:
+  - id: piper
+    profile: profiles/piper_mujoco.yaml
+    capabilities: [move_joint, pick_object, visual_pick, place_object, stop, reset_scene]
+digest: sha256:859eb6606411fa4c4bc3f00ce2cefc9bdc0c3312602df150e575c93af503147d

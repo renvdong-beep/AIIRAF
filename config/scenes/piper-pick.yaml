@@ -1,0 +1,13 @@
+schema: iraf.scene/v1
+scene_id: piper-pick
+provider_id: iraf/piper-pick
+profile: profiles/piper_mujoco.yaml
+safety_policy: profiles/safety/simulation_lab.yaml
+simulation: true
+max_concurrency: 1
+lease_ttl_s: 60
+resources:
+  - id: piper
+    profile: profiles/piper_mujoco.yaml
+    capabilities: [move_joint, pick_object, visual_pick, place_object, stop, reset_scene]
+digest: sha256:f533ec07a1493ff018e38e66ed797d8b7c1a2e422d8919a3f6ce83a39a6668a2
