@@ -148,6 +148,7 @@ def iraf_exit_robot_mode() -> str:
 
 from iraf_adapters.mcp.hints import (  # noqa: E402  (内容与 server 解耦，便于单测)
     FILTERED_EXAMPLE as _FILTERED_EXAMPLE,
+    HANDOFF_LAB_EXAMPLE as _HANDOFF_LAB_EXAMPLE,
     WORKED_EXAMPLE as _WORKED_EXAMPLE,
     enter_next_steps as _enter_next_steps,
     next_steps as _next_steps,
@@ -164,6 +165,12 @@ def _resource_pick_example() -> str:
 def _resource_filtered_example() -> str:
     """被 IRAF 过滤掉的请求长什么样（平台据此回退到自己的处理）。"""
     return json.dumps(_FILTERED_EXAMPLE, ensure_ascii=False, indent=2)
+
+
+@app.resource("iraf://examples/handoff_lab")
+def _resource_handoff_lab_example() -> str:
+    """handoff_lab 联合世界（Go2 + Piper + UR5e）演示入口与判据（在 x86 仿真上运行）。"""
+    return json.dumps(_HANDOFF_LAB_EXAMPLE, ensure_ascii=False, indent=2)
 
 
 @app.resource("iraf://skills/catalog")
@@ -330,6 +337,12 @@ def iraf_submit_task(text: str, deadline_seconds: int = 120) -> str:
     except ValueError as exc:
         return json.dumps({"status": "FAILED", "error_code": "IRAF-INPUT-INVALID",
                            "reason": str(exc)}, ensure_ascii=False)
+    _reject = _reject_foreign_host()
+    if _reject:
+        return _reject
+    _scene = (__import__("os").environ.get("IRAF_LOCAL_SCENE") or "").strip()
+    if _scene:
+        _ensure_scene(_scene)
     result = bridge.execute_intent(request, context)
     # 把模式一并回传：平台据此知道"现在处理的是机器人任务域"，也便于审计
     # （不在模式里时给一句 hint，但不阻断执行——模式是提示性约定，不是安全边界）。
@@ -340,6 +353,157 @@ def iraf_submit_task(text: str, deadline_seconds: int = 120) -> str:
                execution_id=(result or {}).get("execution_id"),
                status=(result or {}).get("status"))
     return json.dumps(result, ensure_ascii=False)
+
+
+def _ensure_scene(scene: str) -> str:
+    """确保本端点对应的 Provider 在线（幂等）：端口通就不动，不通就切场景。"""
+    import json as _json
+    import os as _os
+    import socket as _sock
+    import subprocess as _sp
+
+    raw = _os.environ.get("IRAF_BACKEND_CONFIG", "")
+    endpoint = ""
+    try:
+        endpoint = str(_json.loads(raw).get("endpoint") or "")
+    except Exception:
+        return "no-endpoint"
+    host, _, port_s = endpoint.rpartition(":")
+    if not host or not port_s.isdigit():
+        return "bad-endpoint"
+    try:
+        with _sock.create_connection((host, int(port_s)), timeout=2):
+            return "already-up"
+    except Exception:
+        pass
+    try:
+        proc = _sp.run(["bash", "/root/iraf-instance/scripts/switch_scene.sh", scene],
+                       capture_output=True, text=True, timeout=300)
+    except Exception as exc:
+        return "switch-error:%s" % exc
+    if proc.returncode == 0:
+        return "switched"
+    return "switch-failed:%s" % ((proc.stderr or proc.stdout or "")[-200:])
+
+
+def _endpoint_host() -> str:
+    import json as _json
+    import os as _os
+    try:
+        return str(_json.loads(_os.environ.get("IRAF_BACKEND_CONFIG", "")).get("endpoint") or "")
+    except Exception:
+        return ""
+
+
+def _reject_foreign_host() -> str:
+    """返回错误 JSON（若 endpoint 主机不在白名单），否则返回空串。"""
+    import json as _json
+    import os as _os
+    endpoint = _endpoint_host()
+    host, _, _port = endpoint.rpartition(":")
+    allowed = [h.strip() for h in (_os.environ.get("IRAF_PROVIDER_ALLOWED_HOSTS") or "10.203.247.121").split(",") if h.strip()]
+    if host and host not in allowed:
+        return _json.dumps({
+            "status": "FAILED",
+            "error_code": "IRAF-PROVIDER-HOST-REJECTED",
+            "reason": "endpoint 主机 %s 不在允许列表 %s（本系统 Provider 只允许 .121）" % (host, allowed),
+            "endpoint": endpoint,
+        }, ensure_ascii=False)
+    return ""
+
+
+@app.tool()
+def iraf_switch_scene(scene: str) -> str:
+    """切换仿真场景（只允许一个 Provider 在线）：piper / piper-y05 / ur5 / joint。"""
+    import json as _json
+    import subprocess as _sp
+    from iraf_adapters.mcp import auth as _auth
+
+    allowed = ("piper", "piper-y05", "ur5", "joint")
+    try:
+        principal = _principal()
+        _auth.require_scope(principal, "task.submit")
+    except _auth.AuthError as exc:
+        return _auth_error(exc)
+    if scene not in allowed:
+        return _json.dumps({"status": "FAILED", "error_code": "IRAF-INPUT-INVALID",
+                            "reason": "scene must be one of %s" % ", ".join(allowed)},
+                           ensure_ascii=False)
+    try:
+        proc = _sp.run(["bash", "/root/iraf-instance/scripts/switch_scene.sh", scene],
+                       capture_output=True, text=True, timeout=240)
+    except Exception as exc:
+        return _json.dumps({"status": "FAILED", "error_code": "IRAF-SCENE-SWITCH-FAILED",
+                            "reason": "%s: %s" % (type(exc).__name__, exc)}, ensure_ascii=False)
+    ok = proc.returncode == 0
+    _auth.audit("tool_call", principal, tool="iraf_switch_scene", scene=scene,
+                status="OK" if ok else "FAILED")
+    return _json.dumps({"status": "OK" if ok else "FAILED", "scene": scene,
+                        "exit": proc.returncode,
+                        "output": (proc.stdout or "")[-600:] + (proc.stderr or "")[-300:]},
+                       ensure_ascii=False)
+
+
+@app.tool()
+def iraf_run_scenario(scenario: str = "nominal", display: str = "window", hold_s: int = 60) -> str:
+    """跑 handoff_lab 全量链路（联合世界 9 步：verify→dock→pick→place_in_tray→confirm→
+    dock_station_b→confirm_at_b→unload→place_at_b）。内部调官方链路脚本，返回逐步 status。
+
+    这是"全量演示"的唯一入口；不要用 terminal/SSH 自己跑 run_joint_chain.py。
+    单次约 3 分钟（仿真本身的时间），期间不要重复调用。
+    """
+    import json as _json
+    import os as _os
+    import subprocess as _sp
+    from iraf_adapters.mcp import auth as _auth
+
+    allowed_scen = ("nominal", "stand_stop", "fault_sensor_unavailable")
+    try:
+        principal = _principal()
+        _auth.require_scope(principal, "task.submit")
+    except _auth.AuthError as exc:
+        return _auth_error(exc)
+    if scenario not in allowed_scen:
+        return _json.dumps({"status": "FAILED", "error_code": "IRAF-INPUT-INVALID",
+                            "reason": "scenario 必须是 %s 之一" % ", ".join(allowed_scen)},
+                           ensure_ascii=False)
+    host = _os.environ.get("IRAF_SCENARIO_HOST", "10.203.247.121")
+    allow = [h.strip() for h in (_os.environ.get("IRAF_PROVIDER_ALLOWED_HOSTS") or "10.203.247.121").split(",") if h.strip()]
+    if host not in allow:
+        return _json.dumps({"status": "FAILED", "error_code": "IRAF-PROVIDER-HOST-REJECTED",
+                            "reason": "scenario 主机 %s 不在允许列表 %s" % (host, allow)},
+                           ensure_ascii=False)
+    mode = "window" if str(display).lower() in ("window", "interactive", "viewer") else "none"
+    try:
+        hold = max(0, min(int(hold_s), 600))
+    except Exception:
+        hold = 60
+    cmd = "bash /home/coretek/iraf-instance/scripts/run_full_scenario.sh %s %s %d" % (scenario, mode, hold)
+    try:
+        proc = _sp.run(["ssh", "-n", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
+                        "coretek@%s" % host, cmd],
+                       capture_output=True, text=True, timeout=420)
+    except Exception as exc:
+        return _json.dumps({"status": "FAILED", "error_code": "IRAF-SCENARIO-ERROR",
+                            "reason": "%s: %s" % (type(exc).__name__, exc)}, ensure_ascii=False)
+    payload = {}
+    for line in reversed((proc.stdout or "").strip().splitlines()):
+        if line.startswith("{"):
+            try:
+                payload = _json.loads(line); break
+            except Exception:
+                continue
+    ok = bool(payload.get("passed")) and int(payload.get("rc", 1)) == 0
+    _auth.audit("tool_call", principal, tool="iraf_run_scenario", scene=scenario,
+                status="SUCCEEDED" if ok else "FAILED")
+    return _json.dumps({
+        "status": "SUCCEEDED" if ok else "FAILED",
+        "scenario": scenario, "world": "joint", "display": mode,
+        "passed": payload.get("passed"), "steps": payload.get("steps") or [],
+        "rc": payload.get("rc"), "error": payload.get("error"),
+        "log": "%s:/tmp/iraf-scenario.log" % host,
+        "note": "全量链路在 x86 进程内跑（多机器人同一世界），不经单机 Provider",
+    }, ensure_ascii=False)
 
 
 @app.tool()
