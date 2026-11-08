@@ -129,7 +129,7 @@ def _bridge():
 
 
 @app.tool()
-def iraf_enter_robot_mode() -> str:
+def iraf_enter_robot_mode(scene_id: str = "") -> str:
     """进入「机器人开发模式」（用户说"开始机器人开发模式"时必须调用本工具）。
 
     零参数、名字即语义：模型不需要在 enum 里选 action，听到这句中文就调它。
@@ -137,7 +137,7 @@ def iraf_enter_robot_mode() -> str:
     安全策略 / 后端端点 / simulation 标记 / next_steps（进入后照做的固定顺序）。
     调用后**只做盘点并报告**，不要为了验证链路先提交一条任务（会弄脏仿真场景）。
     """
-    return iraf_robot_mode(action="enter")
+    return iraf_robot_mode(action="enter", scene_id=scene_id)
 
 
 @app.tool()
@@ -183,8 +183,75 @@ def _resource_skill_catalog() -> str:
                        "simulation": facts.get("simulation")}, ensure_ascii=False, indent=2)
 
 
+# ------------------------------------------------------------ 场景注册表（A3）---
+#: 会话默认场景（按 principal.subject）。与 robot mode 一样是"会话级提示"，不是安全边界。
+_SESSION_SCENE: dict = {}
+_SCENE_REGISTRY = None
+
+
+def _registry_mode() -> str:
+    """off（默认，旧行为）/ shadow（只解析并审计）/ on（解析 + 与 env 路由一致性校验）。"""
+    mode = (os.environ.get("IRAF_SCENE_REGISTRY_MODE") or "off").strip().lower()
+    # 未知取值一律回落到 off：宁可退回旧行为，也不要"半个开关"生效
+    return mode if mode in ("off", "shadow", "on") else "off"
+
+
+def _registry():
+    global _SCENE_REGISTRY
+    if _SCENE_REGISTRY is None:
+        from iraf_core.scene_registry import SceneRegistry
+
+        root = os.environ.get("IRAF_SCENE_ROOT") or "/etc/iraf"
+        prof = os.environ.get("IRAF_PROFILES_ROOT") or "/opt/iraf-sdk/current/profiles"
+        _SCENE_REGISTRY = SceneRegistry(root=root, profiles_root=prof)
+    return _SCENE_REGISTRY
+
+
+def _resolve_scene(principal, scene_id=None, resource_id=None):
+    """按档位解析场景。返回 (resolved|None, error_json|None)；off 模式恒为 (None, None)。"""
+    from iraf_adapters.mcp import auth
+    from iraf_core.scene_registry import E_REGISTRY_INVALID, RegistryError
+
+    mode = _registry_mode()
+    if mode == "off":
+        return None, None
+    reg = _registry()
+    try:
+        reg.reload_if_changed()
+        sid = ((scene_id or "").strip()
+               or _SESSION_SCENE.get(getattr(principal, "subject", ""), "")
+               or (os.environ.get("IRAF_DEFAULT_SCENE") or ""))
+        resolved = reg.resolve(sid, resource_id=(resource_id or None))
+    except RegistryError as exc:
+        return None, json.dumps({"status": "FAILED", "error_code": exc.code,
+                                 "reason": exc.detail}, ensure_ascii=False)
+    except Exception as exc:  # 注册表本身坏掉也不能静默放过
+        return None, json.dumps({"status": "FAILED", "error_code": E_REGISTRY_INVALID,
+                                 "reason": "%s: %s" % (type(exc).__name__, exc)},
+                                ensure_ascii=False)
+    auth.audit("resolved_scene", principal, mode=mode, scene=resolved.scene.scene_id,
+               resource=resolved.resource.id, host=resolved.host.id,
+               endpoint=resolved.host.endpoint)
+    if mode == "shadow":
+        return resolved, None
+    # on：注册表与 env 路由必须一致；真正的"注册表决定路由"在阶段 B 落地
+    try:
+        cfg = json.loads(os.environ.get("IRAF_BACKEND_CONFIG") or "{}")
+    except Exception:
+        cfg = {}
+    env_ep = str(cfg.get("endpoint") or "")
+    if env_ep and env_ep != resolved.host.endpoint:
+        return None, json.dumps({
+            "status": "FAILED", "error_code": "IRAF-REGISTRY-MISMATCH",
+            "reason": "env endpoint %s != registry %s（scene=%s）"
+                      % (env_ep, resolved.host.endpoint, resolved.scene.scene_id)},
+            ensure_ascii=False)
+    return resolved, None
+
+
 @app.tool()
-def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800) -> str:
+def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800,
+                    scene_id: str = "") -> str:
     """机器人开发模式的开关与状态（语义触发：用户说"开始机器人开发模式"时调用）。
 
     action: enter = 打开（后续任务默认按机器人任务域处理）；exit = 关闭；status = 只看状态。
@@ -212,6 +279,16 @@ def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800) -> str:
     act = (action or "status").strip().lower()
     st = mode_mod.state_for(principal.subject)
     auth.audit("tool_call", principal, tool="iraf_robot_mode", action=act)
+    _scene_payload: dict = {}
+    if (scene_id or "").strip() and act != "status":
+        _resolved, _scene_err = _resolve_scene(principal, scene_id)
+        if _scene_err:
+            return _scene_err
+        if act == "enter":
+            _SESSION_SCENE[principal.subject] = _resolved.scene.scene_id
+        _scene_payload = {"scene_id": _resolved.scene.scene_id,
+                          "resource_id": _resolved.resource.id}
+
     if act == "enter":
         granted = st.enter(int(ttl_seconds))
         extra = {"entered": True, "ttl_s": granted}
@@ -225,6 +302,7 @@ def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800) -> str:
                           ensure_ascii=False)
     payload: dict = {"status": "SUCCEEDED"}
     payload.update(extra)
+    payload.update(_scene_payload)
     payload.update(st.snapshot())
     payload.update(_robot_facts())
     # 把"进入之后照做什么"直接写进返回：实机证据（2026-10-22）是模型自己设计了
@@ -307,7 +385,8 @@ def robot_dev_mode() -> str:
 
 
 @app.tool()
-def iraf_submit_task(text: str, deadline_seconds: int = 120) -> str:
+def iraf_submit_task(text: str, deadline_seconds: int = 120,
+                     scene_id: str = "", resource_id: str = "") -> str:
     """提交一条**任务**给 IRAF（自然语言语义）。技能选择由 IRAF Skill Manager 完成。
 
     ⚠ 这是机器人动作的**唯一受支持入口**：
@@ -331,6 +410,9 @@ def iraf_submit_task(text: str, deadline_seconds: int = 120) -> str:
         context = _context(principal)
     except auth.AuthError as exc:
         return _auth_error(exc)
+    _resolved, _scene_err = _resolve_scene(principal, scene_id, resource_id or None)
+    if _scene_err:
+        return _scene_err
     try:
         request = build_request(text, deadline_seconds=int(deadline_seconds),
                                 controller="agentos-mcp-task")
@@ -445,7 +527,8 @@ def iraf_switch_scene(scene: str) -> str:
 
 
 @app.tool()
-def iraf_run_scenario(scenario: str = "nominal", display: str = "window", hold_s: int = 60) -> str:
+def iraf_run_scenario(scenario: str = "nominal", display: str = "window",
+                      hold_s: int = 60, scene_id: str = "") -> str:
     """跑 handoff_lab 全量链路（联合世界 9 步：verify→dock→pick→place_in_tray→confirm→
     dock_station_b→confirm_at_b→unload→place_at_b）。内部调官方链路脚本，返回逐步 status。
 
@@ -463,6 +546,9 @@ def iraf_run_scenario(scenario: str = "nominal", display: str = "window", hold_s
         _auth.require_scope(principal, "task.submit")
     except _auth.AuthError as exc:
         return _auth_error(exc)
+    _resolved, _scene_err = _resolve_scene(principal, scene_id)
+    if _scene_err:
+        return _scene_err
     if scenario not in allowed_scen:
         return _json.dumps({"status": "FAILED", "error_code": "IRAF-INPUT-INVALID",
                             "reason": "scenario 必须是 %s 之一" % ", ".join(allowed_scen)},
