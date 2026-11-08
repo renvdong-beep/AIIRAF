@@ -477,13 +477,30 @@ def _endpoint_host() -> str:
         return ""
 
 
+def _allowed_hosts() -> list:
+    """允许的 Provider 主机：env 显式值优先；否则由注册表汇总；都没有则只允许 .121。"""
+    env = (os.environ.get("IRAF_PROVIDER_ALLOWED_HOSTS") or "").strip()
+    if env:
+        return [h.strip() for h in env.split(",") if h.strip()]
+    if _registry_mode() != "off":
+        try:
+            reg = _registry()
+            reg.reload_if_changed()
+            hosts = sorted({h for p in reg.providers.values() for h in p.allowed_hosts})
+            if hosts:
+                return hosts
+        except Exception:
+            pass
+    return ["10.203.247.121"]
+
+
 def _reject_foreign_host() -> str:
     """返回错误 JSON（若 endpoint 主机不在白名单），否则返回空串。"""
     import json as _json
     import os as _os
     endpoint = _endpoint_host()
     host, _, _port = endpoint.rpartition(":")
-    allowed = [h.strip() for h in (_os.environ.get("IRAF_PROVIDER_ALLOWED_HOSTS") or "10.203.247.121").split(",") if h.strip()]
+    allowed = _allowed_hosts()
     if host and host not in allowed:
         return _json.dumps({
             "status": "FAILED",
@@ -590,6 +607,47 @@ def iraf_run_scenario(scenario: str = "nominal", display: str = "window",
         "log": "%s:/tmp/iraf-scenario.log" % host,
         "note": "全量链路在 x86 进程内跑（多机器人同一世界），不经单机 Provider",
     }, ensure_ascii=False)
+
+
+@app.tool()
+def iraf_scene_status(scene_id: str = "") -> str:
+    """只读：场景 / Provider / 主机 / 注册表状态（排障的唯一入口，不要用 ss/nc 猜）。
+
+    scene_id 为空时返回全部场景；给定则只返回该场景解析结果（含将使用的 host/endpoint）。
+    不发起任何网络探测，不在本工具里做健康检查（健康由 Provider 的 Health 接口负责）。
+    """
+    from iraf_adapters.mcp import auth
+
+    try:
+        principal = _principal()
+        auth.require_scope(principal, "task.read")
+    except auth.AuthError as exc:
+        return _auth_error(exc)
+    mode = _registry_mode()
+    payload: dict = {"status": "SUCCEEDED", "mode": mode,
+                     "allowed_hosts": _allowed_hosts()}
+    if mode == "off":
+        payload["note"] = "注册表未启用（IRAF_SCENE_REGISTRY_MODE=off），仅报告 env 事实"
+        payload["provider_endpoint"] = _endpoint_host() or None
+        auth.audit("tool_call", principal, tool="iraf_scene_status", mode=mode)
+        return json.dumps(payload, ensure_ascii=False)
+    try:
+        reg = _registry()
+        reg.reload_if_changed()
+        if (scene_id or "").strip():
+            resolved = reg.resolve(scene_id)
+            payload["resolved"] = resolved.as_dict()
+        payload.update(reg.status())
+    except Exception as exc:
+        from iraf_core.scene_registry import RegistryError
+
+        code = exc.code if isinstance(exc, RegistryError) else "IRAF-REGISTRY-INVALID"
+        detail = exc.detail if isinstance(exc, RegistryError) else "%s: %s" % (type(exc).__name__, exc)
+        auth.audit("tool_call", principal, tool="iraf_scene_status", status="FAILED")
+        return json.dumps({"status": "FAILED", "error_code": code, "reason": detail},
+                          ensure_ascii=False)
+    auth.audit("tool_call", principal, tool="iraf_scene_status", mode=mode)
+    return json.dumps(payload, ensure_ascii=False)
 
 
 @app.tool()

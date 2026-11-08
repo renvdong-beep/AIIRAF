@@ -22,7 +22,7 @@ FORWARDER = REPO / "scripts/iraf_mcp_server.py"
 #:   · iraf_run_scenario：触发场景验收链路（内部走 scenario.py，不经技能级直连）
 ALLOWED = {"iraf_submit_task", "iraf_get_task", "iraf_robot_mode",
            "iraf_enter_robot_mode", "iraf_exit_robot_mode",
-           "iraf_switch_scene", "iraf_run_scenario"}
+           "iraf_switch_scene", "iraf_run_scenario", "iraf_scene_status"}
 #: 明确禁止的（技能级 / 能力级直连）
 FORBIDDEN = {"iraf_execute_skill", "iraf_list_skills", "iraf_run_skill"}
 

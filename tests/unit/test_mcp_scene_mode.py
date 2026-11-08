@@ -104,5 +104,56 @@ class RegistryModeTest(unittest.TestCase):
         self.assertLess(idx_resolve, idx_build, "解析必须在 build_request 之前")
 
 
+class AllowedHostsTest(unittest.TestCase):
+    """A4：白名单单一来源 = env 显式值 > 注册表汇总 > 默认 .121。"""
+
+    def test_helper_exists(self):
+        self.assertIn("def _allowed_hosts()", SRC)
+
+    def test_env_has_priority(self):
+        body = SRC.split("def _allowed_hosts()")[1].split("def ")[0]
+        i_env = body.find("IRAF_PROVIDER_ALLOWED_HOSTS")
+        i_reg = body.find("_registry_mode()")
+        self.assertGreaterEqual(i_env, 0, "必须先读 env")
+        self.assertGreater(i_reg, i_env, "env 显式值优先于注册表")
+
+    def test_default_is_local_host(self):
+        body = SRC.split("def _allowed_hosts()")[1].split("def ")[0]
+        self.assertIn('return ["10.203.247.121"]', body)
+
+    def test_reject_uses_helper_not_hardcoded(self):
+        body = SRC.split("def _reject_foreign_host()")[1].split("def ")[0]
+        self.assertIn("allowed = _allowed_hosts()", body)
+        self.assertNotIn('or "10.203.247.121"', body, "不允许在拒绝逻辑里再硬编码一份")
+
+
+class SceneStatusToolTest(unittest.TestCase):
+    """A5：iraf_scene_status 只读、给定 scene_id 时给解析结果。"""
+
+    def test_tool_defined_with_optional_scene(self):
+        args = _func_args("iraf_scene_status")
+        self.assertIn("scene_id", args)
+        self.assertEqual(args["scene_id"], "")
+
+    def test_requires_read_scope(self):
+        body = SRC.split("def iraf_scene_status(")[1].split("@app.tool()")[0]
+        self.assertIn('auth.require_scope(principal, "task.read")', body)
+
+    def test_reports_mode_and_allowed_hosts(self):
+        body = SRC.split("def iraf_scene_status(")[1].split("@app.tool()")[0]
+        self.assertIn('"mode": mode', body)
+        self.assertIn("_allowed_hosts()", body)
+
+    def test_resolves_scene_when_given(self):
+        body = SRC.split("def iraf_scene_status(")[1].split("@app.tool()")[0]
+        self.assertIn("reg.resolve(scene_id)", body)
+        self.assertIn("as_dict()", body)
+
+    def test_off_mode_reports_env_facts_only(self):
+        body = SRC.split("def iraf_scene_status(")[1].split("@app.tool()")[0]
+        self.assertIn('if mode == "off":', body)
+        self.assertIn("_endpoint_host()", body)
+
+
 if __name__ == "__main__":
     unittest.main()
