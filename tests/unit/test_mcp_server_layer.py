@@ -23,7 +23,7 @@ FORWARDER = REPO / "scripts/iraf_mcp_server.py"
 ALLOWED = {"iraf_submit_task", "iraf_get_task", "iraf_robot_mode",
            "iraf_enter_robot_mode", "iraf_exit_robot_mode",
            "iraf_switch_scene", "iraf_run_scenario", "iraf_scene_status",
-           "iraf_lease"}
+           "iraf_lease", "iraf_get_run"}
 #: 明确禁止的（技能级 / 能力级直连）
 FORBIDDEN = {"iraf_execute_skill", "iraf_list_skills", "iraf_run_skill"}
 

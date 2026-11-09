@@ -772,18 +772,133 @@ def iraf_switch_scene(scene: str) -> str:
                         "result": result}, ensure_ascii=False)
 
 
+def _execute_scenario(scenario, display, hold, host):
+    """同步执行全量链路（阻塞）；返回与工具响应同构的 dict，供同步/异步两条路径复用。"""
+    import json as _json
+    import subprocess as _sp
+
+    mode = "window" if str(display).lower() in ("window", "interactive", "viewer") else "none"
+    if _supervisor_url():
+        r = _supervisor_call("/scenario", {"scenario": scenario, "display": mode, "hold": hold},
+                             timeout=900)
+        ok = r.get("status") == "SUCCEEDED"
+        if not ok:
+            return {"status": "FAILED",
+                    "error_code": r.get("error_code") or "IRAF-SCENARIO-ERROR",
+                    "reason": r.get("reason") or r.get("error") or "链路失败",
+                    "steps": r.get("steps") or [], "log": r.get("log"), "via": "supervisor"}
+        return {"status": "SUCCEEDED", "scenario": scenario, "world": "joint", "display": mode,
+                "passed": r.get("passed"), "steps": r.get("steps") or [], "rc": r.get("rc"),
+                "wall_s": r.get("wall_s"), "log": r.get("log"), "via": "supervisor",
+                "note": "全量链路在 x86 supervisor 本机执行，板卡不再 SSH"}
+
+    cmd = "bash /home/coretek/iraf-instance/scripts/run_full_scenario.sh %s %s %d" % (scenario, mode, hold)
+    try:
+        proc = _sp.run(["ssh", "-n", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
+                        "coretek@%s" % host, cmd],
+                       capture_output=True, text=True, timeout=420)
+    except Exception as exc:
+        return {"status": "FAILED", "error_code": "IRAF-SCENARIO-ERROR",
+                "reason": "%s: %s" % (type(exc).__name__, exc)}
+    payload = {}
+    for line in reversed((proc.stdout or "").strip().splitlines()):
+        if line.startswith("{"):
+            try:
+                payload = _json.loads(line)
+                break
+            except Exception:
+                continue
+    ok = bool(payload.get("passed")) and int(payload.get("rc", 1)) == 0
+    return {"status": "SUCCEEDED" if ok else "FAILED", "scenario": scenario, "world": "joint",
+            "display": mode, "passed": payload.get("passed"),
+            "steps": payload.get("steps") or [], "rc": payload.get("rc"),
+            "error": payload.get("error"), "log": "%s:/tmp/iraf-scenario.log" % host,
+            "note": "全量链路在 x86 进程内跑（多机器人同一世界），不经单机 Provider"}
+
+
+def _run_store():
+    """异步运行记录存储（与事件库同库）。"""
+    if "run_store" in _STATE:
+        return _STATE["run_store"]
+    from iraf_core.runs import RunStore
+
+    db = os.environ.get("IRAF_EVENT_STORE") or "/var/lib/iraf/iraf-runtime.db"
+    _STATE["run_store"] = RunStore(db)
+    return _STATE["run_store"]
+
+
+def _run_scenario_bg(run_id, scenario, display, hold, subject, scene_id):
+    """后台跑全量链路：本线程持租约，结束释放；任何失败都写进 runs 表（不伪造成功）。"""
+    from iraf_core.leases import LeaseConflict
+
+    store = _run_store()
+    store.start(run_id)
+    lease = None
+    try:
+        resolved = None
+        if scene_id:
+            reg = _registry()
+            reg.reload_if_changed()
+            resolved = reg.resolve(scene_id)
+            lease = _lease_store().acquire(
+                "host:%s" % resolved.host.id, "__world__", "%s/async" % subject,
+                ttl_s=max(int(hold) + 300, resolved.scene.lease_ttl_s))
+        host = (resolved.host.host if resolved is not None
+                else (os.environ.get("IRAF_SCENARIO_HOST") or "10.203.247.121"))
+        r = _execute_scenario(scenario, display, hold, host)
+        ok = r.get("status") == "SUCCEEDED"
+        store.finish(run_id, status="succeeded" if ok else "failed",
+                     passed=r.get("passed"), rc=r.get("rc"), wall_s=r.get("wall_s"),
+                     steps=r.get("steps") or [],
+                     error="" if ok else (r.get("reason") or r.get("error") or "链路失败"),
+                     via=r.get("via") or "")
+    except LeaseConflict as exc:
+        store.finish(run_id, status="failed", passed=False, rc=-1, error=str(exc))
+    except Exception as exc:
+        store.finish(run_id, status="failed", passed=False, rc=-1,
+                     error="%s: %s" % (type(exc).__name__, exc))
+    finally:
+        if lease is not None:
+            _lease_store().release(lease.lease_id, "async-done")
+
+
+@app.tool()
+def iraf_get_run(run_id: str) -> str:
+    """查异步全量链路的进度/结果（E1）。`iraf_run_scenario(async_mode=True)` 返回的 run_id 用它查。"""
+    from iraf_adapters.mcp import auth
+
+    try:
+        principal = _principal()
+        auth.require_scope(principal, "task.read")
+    except auth.AuthError as exc:
+        return _auth_error(exc)
+    rid = (run_id or "").strip()
+    if not rid:
+        return json.dumps({"status": "FAILED", "error_code": "IRAF-INPUT-INVALID",
+                           "reason": "需要 run_id"}, ensure_ascii=False)
+    run = _run_store().get(rid)
+    if run is None:
+        return json.dumps({"status": "FAILED", "error_code": "IRAF-INPUT-INVALID",
+                           "reason": "run 不存在：%s" % rid}, ensure_ascii=False)
+    auth.audit("tool_call", principal, tool="iraf_get_run", run_id=rid, state=run.get("status"))
+    return json.dumps({"status": "SUCCEEDED", "run": run}, ensure_ascii=False)
+
+
 @app.tool()
 def iraf_run_scenario(scenario: str = "nominal", display: str = "window",
-                      hold_s: int = 60, scene_id: str = "") -> str:
+                      hold_s: int = 60, scene_id: str = "",
+                      async_mode: bool = False) -> str:
     """跑 handoff_lab 全量链路（联合世界 9 步：verify→dock→pick→place_in_tray→confirm→
-    dock_station_b→confirm_at_b→unload→place_at_b）。内部调官方链路脚本，返回逐步 status。
+    dock_station_b→confirm_at_b→unload→place_at_b），返回逐步 status。
 
+    两种模式：
+      · 默认同步（阻塞最多约 3 分钟，期间客户端要留足超时）；
+      · `async_mode=True`：立即返回 `run_id`，后台执行，用 `iraf_get_run(run_id)` 查进度/结果。
     这是"全量演示"的唯一入口；不要用 terminal/SSH 自己跑 run_joint_chain.py。
-    单次约 3 分钟（仿真本身的时间），期间不要重复调用。
     """
     import json as _json
     import os as _os
-    import subprocess as _sp
+    import threading
     from iraf_adapters.mcp import auth as _auth
 
     allowed_scen = ("nominal", "stand_stop", "fault_sensor_unavailable")
@@ -799,7 +914,8 @@ def iraf_run_scenario(scenario: str = "nominal", display: str = "window",
         return _json.dumps({"status": "FAILED", "error_code": "IRAF-INPUT-INVALID",
                             "reason": "scenario 必须是 %s 之一" % ", ".join(allowed_scen)},
                            ensure_ascii=False)
-    host = _resolved.host.host if _resolved is not None else _os.environ.get("IRAF_SCENARIO_HOST", "10.203.247.121")
+    host = (_resolved.host.host if _resolved is not None
+            else _os.environ.get("IRAF_SCENARIO_HOST", "10.203.247.121"))
     allow = _allowed_hosts()
     if host not in allow:
         return _json.dumps({"status": "FAILED", "error_code": "IRAF-PROVIDER-HOST-REJECTED",
@@ -810,6 +926,20 @@ def iraf_run_scenario(scenario: str = "nominal", display: str = "window",
         hold = max(0, min(int(hold_s), 600))
     except Exception:
         hold = 60
+
+    if async_mode:
+        run_id = _run_store().create(scenario, mode, hold)
+        threading.Thread(target=_run_scenario_bg,
+                         args=(run_id, scenario, mode, hold, principal.subject,
+                               _resolved.scene.scene_id if _resolved is not None else ""),
+                         daemon=True, name="scenario-%s" % run_id[:8]).start()
+        _auth.audit("tool_call", principal, tool="iraf_run_scenario", action="async",
+                    run_id=run_id, scene=scenario)
+        return _json.dumps({"status": "QUEUED", "run_id": run_id, "poll": "iraf_get_run",
+                            "scenario": scenario, "display": mode, "hold_s": hold,
+                            "note": "后台执行；用 iraf_get_run(run_id) 查进度/结果"},
+                           ensure_ascii=False)
+
     _lease = None
     if _resolved is not None:
         from iraf_core.leases import LeaseConflict
@@ -821,64 +951,18 @@ def iraf_run_scenario(scenario: str = "nominal", display: str = "window",
             return _json.dumps({"status": "FAILED", "error_code": "IRAF-RESOURCE-BUSY",
                                 "reason": str(exc), "lease": exc.lease.as_dict()},
                                ensure_ascii=False)
-
-    def _rel(reason="done"):
-        if _lease is not None:
-            try:
-                _lease_store().release(_lease.lease_id, reason)
-            except Exception:
-                pass
-
-    if _supervisor_url():
-        r = _supervisor_call("/scenario", {"scenario": scenario, "display": mode,
-                                           "hold": hold}, timeout=900)
+    try:
+        r = _execute_scenario(scenario, mode, hold, host)
         ok = r.get("status") == "SUCCEEDED"
         _auth.audit("tool_call", principal, tool="iraf_run_scenario", scene=scenario,
-                    status="SUCCEEDED" if ok else "FAILED", via="supervisor")
-        if not ok:
-            _rel("scenario-failed")
-            return _json.dumps({"status": "FAILED",
-                                "error_code": r.get("error_code") or "IRAF-SCENARIO-ERROR",
-                                "reason": r.get("reason") or r.get("error") or "链路失败",
-                                "steps": r.get("steps") or [],
-                                "log": r.get("log")}, ensure_ascii=False)
-        _rel("scenario-done")
-        return _json.dumps({"status": "SUCCEEDED", "scenario": scenario, "world": "joint",
-                            "display": mode, "passed": r.get("passed"),
-                            "steps": r.get("steps") or [], "rc": r.get("rc"),
-                            "wall_s": r.get("wall_s"), "log": r.get("log"),
-                            "via": "supervisor",
-                            "note": "全量链路在 x86 supervisor 本机执行，板卡不再 SSH"},
-                           ensure_ascii=False)
-
-    cmd = "bash /home/coretek/iraf-instance/scripts/run_full_scenario.sh %s %s %d" % (scenario, mode, hold)
-    try:
-        proc = _sp.run(["ssh", "-n", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
-                        "coretek@%s" % host, cmd],
-                       capture_output=True, text=True, timeout=420)
-    except Exception as exc:
-        return _json.dumps({"status": "FAILED", "error_code": "IRAF-SCENARIO-ERROR",
-                            "reason": "%s: %s" % (type(exc).__name__, exc)}, ensure_ascii=False)
-    payload = {}
-    for line in reversed((proc.stdout or "").strip().splitlines()):
-        if line.startswith("{"):
+                    status="SUCCEEDED" if ok else "FAILED", via=r.get("via") or "ssh")
+        return _json.dumps(r, ensure_ascii=False)
+    finally:
+        if _lease is not None:
             try:
-                payload = _json.loads(line); break
+                _lease_store().release(_lease.lease_id, "scenario-done")
             except Exception:
-                continue
-    ok = bool(payload.get("passed")) and int(payload.get("rc", 1)) == 0
-    _auth.audit("tool_call", principal, tool="iraf_run_scenario", scene=scenario,
-                status="SUCCEEDED" if ok else "FAILED")
-    _rel("scenario-done" if ok else "scenario-failed")
-    return _json.dumps({
-        "status": "SUCCEEDED" if ok else "FAILED",
-        "scenario": scenario, "world": "joint", "display": mode,
-        "passed": payload.get("passed"), "steps": payload.get("steps") or [],
-        "rc": payload.get("rc"), "error": payload.get("error"),
-        "log": "%s:/tmp/iraf-scenario.log" % host,
-        "note": "全量链路在 x86 进程内跑（多机器人同一世界），不经单机 Provider",
-    }, ensure_ascii=False)
-
+                pass
 
 @app.tool()
 def iraf_scene_status(scene_id: str = "", probe: bool = False) -> str:

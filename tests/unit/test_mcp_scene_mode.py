@@ -152,7 +152,36 @@ class RegistryRoutingTest(unittest.TestCase):
         self.assertIn("resolved.host.endpoint", body)
 
     def test_run_scenario_routes_by_resolved_host(self):
-        self.assertIn("host = _resolved.host.host", SRC)
+        self.assertIn("_resolved.host.host if _resolved is not None", SRC)
+
+
+class AsyncScenarioTest(unittest.TestCase):
+    """E1：async_mode 立即返回 run_id；iraf_get_run 只读查询。"""
+
+    def test_run_scenario_has_async_mode(self):
+        args = _func_args("iraf_run_scenario")
+        self.assertIn("async_mode", args)
+        self.assertEqual(args["async_mode"], False)
+
+    def test_async_returns_queued_with_run_id(self):
+        body = SRC.split("def iraf_run_scenario(")[1].split("\ndef ")[0]
+        self.assertIn('"status": "QUEUED"', body)
+        self.assertIn('"run_id": run_id', body)
+        self.assertIn("_run_store().create(", body)
+        self.assertIn("threading.Thread(", body)
+
+    def test_background_worker_marks_runs(self):
+        body = SRC.split("def _run_scenario_bg(")[1].split("\ndef ")[0]
+        self.assertIn("store.start(run_id)", body)
+        self.assertIn('status="succeeded" if ok else "failed"', body)
+        self.assertIn("LeaseConflict", body)
+
+    def test_get_run_tool(self):
+        args = _func_args("iraf_get_run")
+        self.assertIn("run_id", args)
+        body = SRC.split("def iraf_get_run(")[1].split("@app.tool()")[0]
+        self.assertIn("_run_store().get(", body)
+        self.assertIn("task.read", body)
 
 
 class HostLoadProbeTest(unittest.TestCase):
