@@ -45,6 +45,30 @@ class ResponseError(ValueError):
     """响应不合契约（跨边界拒收）。"""
 
 
+def _as_list_ndarray(x, name, where):
+    """numpy 数组的**等价快路径**（E2）；返回 None 表示交给慢路径。
+
+    等价性：NaN 拒收、±inf 转 `inf`/`-inf` 记号、其余转 float —— 与逐元素实现完全一致。
+    只处理数值 dtype；对象/字符串数组仍走慢路径（其中可能含记号字符串）。
+    """
+    try:
+        import numpy as _np
+    except Exception:  # numpy 不可用时退回慢路径
+        return None
+    if not isinstance(x, _np.ndarray):
+        return None
+    if x.dtype.kind not in "fiub":
+        return None
+    f = x.astype(_np.float64, copy=False).ravel(order="C")
+    if f.size:
+        if _np.isnan(f).any():
+            raise ValueError("%s：%s 含 NaN ⇒ 拒收（NaN 会让求解行为未定义）" % (where, name))
+        if _np.isinf(f).any():
+            return [_INF_TO_TOKEN[v] if v in (float("inf"), float("-inf")) else v
+                    for v in f.tolist()]
+    return f.tolist()
+
+
 def _as_list(x, name, where):
     """把入参规约为"数字列表"；**拒绝**非 JSON 可序列化类型（numpy 标量、DM 等）。"""
     if x is None:
@@ -52,6 +76,10 @@ def _as_list(x, name, where):
     if isinstance(x, (str, bytes)) or isinstance(x, (dict,)):
         raise ValueError("%s：%s 类型非法（%s）⇒ 边界上只允许数字列表"
                          % (where, name, type(x).__name__))
+    # 快路径：numpy 数值数组（E2 实测占 MPC 编码 25s/162s，且放大 place/dock）
+    fast = _as_list_ndarray(x, name, where)
+    if fast is not None:
+        return fast
     try:
         seq = list(x)
     except TypeError:

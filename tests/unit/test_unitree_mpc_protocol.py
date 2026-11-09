@@ -93,3 +93,34 @@ def test_response_rejects_bad_decision_and_version():
     bad = {"version": "iraf.mpc.v0", "decision": "ok", "reason": "x", "z": [0.0]}
     with pytest.raises(pr.ResponseError):
         pr.validate_response(bad)
+
+
+def test_fast_path_equivalent_to_slow_path():
+    arrays = [
+        np.array([0.0, -0.0, 1.5, -2.25]),
+        np.array([1, 2, 3], dtype=np.int64),
+        np.array([True, False], dtype=bool),
+        np.array([], dtype=float),
+        np.array([[1.0, 2.0], [3.0, 4.0]]),
+    ]
+    for arr in arrays:
+        fast = pr._as_list(arr, "g", "请求")
+        slow = pr._as_list(list(np.asarray(arr).ravel(order="C")), "g", "请求")
+        assert fast == slow, (arr, fast, slow)
+
+
+def test_fast_path_inf_tokens():
+    arr = np.array([float("inf"), float("-inf"), 1.0])
+    assert pr._as_list(arr, "lba", "请求") == ["inf", "-inf", 1.0]
+
+
+def test_fast_path_rejects_nan_like_slow_path():
+    with pytest.raises(ValueError):
+        pr._as_list(np.array([1.0, float("nan")]), "g", "请求")
+    with pytest.raises(ValueError):
+        pr._as_list([1.0, float("nan")], "g", "请求")
+
+
+def test_object_array_falls_back_to_slow_path():
+    arr = np.array(["inf", 1.0], dtype=object)
+    assert pr._as_list(arr, "g", "请求") == ["inf", 1.0]
