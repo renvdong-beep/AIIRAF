@@ -511,6 +511,46 @@ def iraf_submit_task(text: str, deadline_seconds: int = 120,
     return json.dumps(result, ensure_ascii=False)
 
 
+def _supervisor_url() -> str:
+    """控制面地址；未配置时回落到旧的 SSH 路径（阶段 C 过渡）。"""
+    return (os.environ.get("IRAF_SUPERVISOR_URL") or "").strip().rstrip("/")
+
+
+def _supervisor_call(path: str, params: dict, timeout: int = 120) -> dict:
+    """调 x86 supervisor 控制面（带 X-IRAF-Token）。失败返回标准错误 JSON。"""
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    base = _supervisor_url()
+    if not base:
+        return {"status": "FAILED", "error_code": "IRAF-PROVIDER-UNAVAILABLE",
+                "reason": "未配置 IRAF_SUPERVISOR_URL"}
+    url = base + path
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, method="POST", data=b"")
+    token_file = os.environ.get("IRAF_SUPERVISOR_TOKEN_FILE") or "/etc/iraf/supervisor.token"
+    try:
+        token = open(token_file, encoding="utf-8").read().strip()
+    except Exception:
+        token = ""
+    if token:
+        req.add_header("X-IRAF-Token", token)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode() or "{}")
+    except urllib.error.HTTPError as exc:
+        try:
+            return json.loads(exc.read().decode() or "{}")
+        except Exception:
+            return {"status": "FAILED", "error_code": "IRAF-PROVIDER-UNAVAILABLE",
+                    "reason": "supervisor HTTP %s" % exc.code}
+    except Exception as exc:
+        return {"status": "FAILED", "error_code": "IRAF-PROVIDER-UNAVAILABLE",
+                "reason": "supervisor 不可达：%s: %s" % (type(exc).__name__, exc)}
+
+
 def _ensure_scene(scene: str, endpoint: str = "") -> str:
     """确保本端点对应的 Provider 在线（幂等）：端口通就不动，不通就切场景。"""
     import json as _json
@@ -518,6 +558,11 @@ def _ensure_scene(scene: str, endpoint: str = "") -> str:
     import socket as _sock
     import subprocess as _sp
 
+    if _supervisor_url():
+        r = _supervisor_call("/ensure", {"scene": scene}, timeout=150)
+        if r.get("status") == "OK":
+            return "switched(supervisor)"
+        return "switch-failed:%s" % (r.get("reason") or "supervisor 拒绝")
     if not endpoint:
         raw = _os.environ.get("IRAF_BACKEND_CONFIG", "")
         try:
@@ -606,21 +651,14 @@ def iraf_switch_scene(scene: str) -> str:
         return _json.dumps({"status": "FAILED", "error_code": "IRAF-INPUT-INVALID",
                             "reason": "scene must be one of %s" % ", ".join(allowed)},
                            ensure_ascii=False)
-    try:
-        proc = _sp.run(["bash", "/root/iraf-instance/scripts/switch_scene.sh", scene],
-                       capture_output=True, text=True, timeout=240)
-    except Exception as exc:
-        return _json.dumps({"status": "FAILED", "error_code": "IRAF-SCENE-SWITCH-FAILED",
-                            "reason": "%s: %s" % (type(exc).__name__, exc)}, ensure_ascii=False)
-    ok = proc.returncode == 0
+    result = _ensure_scene(scene)
+    ok = result in ("already-up", "switched", "switched(supervisor)")
     _auth.audit("tool_call", principal, tool="iraf_switch_scene", scene=scene,
                 status="OK" if ok else "FAILED")
     return _json.dumps({"status": "OK" if ok else "FAILED", "scene": scene,
                         "deprecated": True,
                         "use": "iraf_submit_task(text=..., scene_id=...)",
-                        "exit": proc.returncode,
-                        "output": (proc.stdout or "")[-600:] + (proc.stderr or "")[-300:]},
-                       ensure_ascii=False)
+                        "result": result}, ensure_ascii=False)
 
 
 @app.tool()
@@ -661,6 +699,26 @@ def iraf_run_scenario(scenario: str = "nominal", display: str = "window",
         hold = max(0, min(int(hold_s), 600))
     except Exception:
         hold = 60
+    if _supervisor_url():
+        r = _supervisor_call("/scenario", {"scenario": scenario, "display": mode,
+                                           "hold": hold}, timeout=900)
+        ok = r.get("status") == "SUCCEEDED"
+        _auth.audit("tool_call", principal, tool="iraf_run_scenario", scene=scenario,
+                    status="SUCCEEDED" if ok else "FAILED", via="supervisor")
+        if not ok:
+            return _json.dumps({"status": "FAILED",
+                                "error_code": r.get("error_code") or "IRAF-SCENARIO-ERROR",
+                                "reason": r.get("reason") or r.get("error") or "链路失败",
+                                "steps": r.get("steps") or [],
+                                "log": r.get("log")}, ensure_ascii=False)
+        return _json.dumps({"status": "SUCCEEDED", "scenario": scenario, "world": "joint",
+                            "display": mode, "passed": r.get("passed"),
+                            "steps": r.get("steps") or [], "rc": r.get("rc"),
+                            "wall_s": r.get("wall_s"), "log": r.get("log"),
+                            "via": "supervisor",
+                            "note": "全量链路在 x86 supervisor 本机执行，板卡不再 SSH"},
+                           ensure_ascii=False)
+
     cmd = "bash /home/coretek/iraf-instance/scripts/run_full_scenario.sh %s %s %d" % (scenario, mode, hold)
     try:
         proc = _sp.run(["ssh", "-n", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
