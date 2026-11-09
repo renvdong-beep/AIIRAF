@@ -26,6 +26,65 @@ class ClientError(RuntimeError):
     """协议或进程层面的错误（对外一律映射为显式失败）。"""
 
 
+class MpcInlineClient:
+    """同进程内联求解（实验开关 `IRAF_MPC_INLINE=1`，默认关）。
+
+    与 `MpcProcessClient` **同契约**（`call(request) -> (response, err)`），区别只是不走子进程：
+    省掉一次 encode/validate/decode 往返。求解器与 worker 完全一致（`IRAF_MPC_SOLVER` / 默认
+    `osqp_native:solve_native`）。
+    """
+
+    def __init__(self, cmd=None, timeout_ms=200.0):
+        import os as _os
+
+        from .provider_core import ProviderCore
+        from .worker import DEFAULT_SOLVER, load_solver
+
+        spec = _os.environ.get("IRAF_MPC_SOLVER", DEFAULT_SOLVER)
+        self._core = ProviderCore(load_solver(spec))
+        self.stats = {"calls": 0, "timeouts": 0, "crashes": 0, "protocol_errors": 0, "restarts": 0}
+
+    def start(self):
+        return self
+
+    def close(self, timeout_s=2.0):
+        return None
+
+    def __enter__(self):
+        return self.start()
+
+    def __exit__(self, *exc):
+        self.close()
+        return False
+
+    def call(self, request_msg, timeout_ms=None):
+        import contextlib
+        import sys as _sys
+
+        self.stats["calls"] += 1
+        try:
+            req = pr.validate_request(request_msg)
+        except (TypeError, ValueError) as exc:
+            self.stats["protocol_errors"] += 1
+            return pr.build_response("damped_hold", "请求不满足协议：%s" % exc, z=None,
+                                     status_class="exception"), "请求不满足协议"
+        try:
+            # 与 worker 相同的 stdout 卫生：osqp 会把迭代信息打到 stdout
+            with contextlib.redirect_stdout(_sys.stderr):
+                out = self._core.step(req)
+            resp = pr.build_response(out["decision"], out["reason"], z=out["z"],
+                                     status_class=out["status_class"], iter_=out["iter"],
+                                     solve_ms=out["solve_ms"], age_ms=out["age_ms"],
+                                     flags=out["flags"])
+        except Exception as exc:  # noqa: BLE001
+            self.stats["crashes"] += 1
+            return pr.build_response("damped_hold", "内核异常：%s" % exc, z=None,
+                                     status_class="exception"), "内核异常"
+        if resp["decision"] != "ok":
+            return resp, "内联报告失败"
+        return resp, None
+
+
 class MpcProcessClient:
     """常驻子进程客户端：一次 `call` = 写一行请求、读一行响应。
 

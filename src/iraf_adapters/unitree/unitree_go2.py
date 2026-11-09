@@ -2310,8 +2310,12 @@ class UnitreeGo2Adapter(QuadrupedAdapter):
 
         state_holder = {"pos_des_world": None, "t0": None}
         samples = []
-        client = mpc_client.MpcProcessClient(deployment.worker_command(sys.executable),
-                                             timeout_ms=deployment.call_timeout_ms)
+        if os.environ.get("IRAF_MPC_INLINE", "").strip().lower() in ("1", "true", "yes"):
+            # 实验（E2 实验5）：同进程内联求解，省 IPC/序列化；默认关闭
+            client = mpc_client.MpcInlineClient(timeout_ms=deployment.call_timeout_ms)
+        else:
+            client = mpc_client.MpcProcessClient(deployment.worker_command(sys.executable),
+                                                 timeout_ms=deployment.call_timeout_ms)
         runtime = ProviderRuntime(client, ticks_per_update=deployment.ticks_per_update)
         index_map = {
             code: tuple(self.joint_order.index(geometry[code]["joints"][key])
