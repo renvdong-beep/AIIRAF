@@ -150,9 +150,13 @@ class LeaseStore:
                 ttl_s: int = 60, execution_id: str = "") -> Lease:
         """获取租约；冲突抛 LeaseConflict。enforce=False 时只记录（返回新租约，不拦）。"""
         ttl_s = max(1, int(ttl_s))
-        self.expire_stale()
         now = time.time()
         with self._conn() as c:
+            # 关键：把「过期回收 + 冲突检查 + 插入」放进同一个 IMMEDIATE 事务，
+            # 否则并发 acquire 会各自 SELECT 到空集、双写成功（2026-11-09 实测踩到）。
+            c.execute("BEGIN IMMEDIATE")
+            c.execute("UPDATE leases SET released_at=?, release_reason='expired' "
+                      "WHERE released_at IS NULL AND (renewed_at + ttl_s) <= ?", (now, now))
             if self.enforce:
                 row = c.execute(
                     "SELECT * FROM leases WHERE scene_id=? AND resource_id=? AND released_at IS NULL "
