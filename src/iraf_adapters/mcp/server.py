@@ -469,11 +469,25 @@ def iraf_submit_task(text: str, deadline_seconds: int = 120,
     _resolved, _scene_err = _resolve_scene(principal, scene_id, resource_id or None)
     if _scene_err:
         return _scene_err
+    _lease = None
+    if _resolved is not None:
+        from iraf_core.leases import LeaseConflict
+
+        try:
+            _lease = _world_lease(
+                _resolved.scene, _resolved.host, principal.subject,
+                ttl_s=max(int(deadline_seconds) + 60, _resolved.scene.lease_ttl_s))
+        except LeaseConflict as exc:
+            return json.dumps({"status": "FAILED", "error_code": "IRAF-RESOURCE-BUSY",
+                               "reason": str(exc), "lease": exc.lease.as_dict()},
+                              ensure_ascii=False)
     try:
         bridge = _bridge() if _resolved is None else _bridge_for_resolved(_resolved)
         auth.require_resource(principal, bridge.dispatcher.resource_id)
         context = _context(principal)
     except auth.AuthError as exc:
+        if _lease is not None:
+            _lease_store().release(_lease.lease_id, "auth-error")
         return _auth_error(exc)
     try:
         request = build_request(text, deadline_seconds=int(deadline_seconds),
@@ -496,7 +510,20 @@ def iraf_submit_task(text: str, deadline_seconds: int = 120,
         _scene = (os.environ.get("IRAF_LOCAL_SCENE") or "").strip()
         if _scene:
             _ensure_scene(_scene)
-    result = bridge.execute_intent(request, context)
+    try:
+        result = bridge.execute_intent(request, context)
+    except Exception:
+        if _lease is not None:
+            _lease_store().release(_lease.lease_id, "error")
+        raise
+    if _lease is not None:
+        try:
+            if isinstance(result, dict) and result.get("execution_id"):
+                _lease_store().renew(_lease.lease_id, execution_id=str(result["execution_id"]))
+        except Exception:
+            pass
+        finally:
+            _lease_store().release(_lease.lease_id, str((result or {}).get("status") or "done").lower())
     # 把模式一并回传：平台据此知道"现在处理的是机器人任务域"，也便于审计
     # （不在模式里时给一句 hint，但不阻断执行——模式是提示性约定，不是安全边界）。
     if isinstance(result, dict):
@@ -509,6 +536,24 @@ def iraf_submit_task(text: str, deadline_seconds: int = 120,
                execution_id=(result or {}).get("execution_id"),
                status=(result or {}).get("status"))
     return json.dumps(result, ensure_ascii=False)
+
+
+def _lease_store():
+    """租约存储：与事件库同库不同表；MCP 重启后租约仍在。"""
+    if "lease_store" in _STATE:
+        return _STATE["lease_store"]
+    from iraf_core.leases import LeaseStore
+
+    db = os.environ.get("IRAF_EVENT_STORE") or "/var/lib/iraf/iraf-runtime.db"
+    raw = (os.environ.get("IRAF_LEASE_ENFORCE") or "1").strip().lower()
+    enforce = raw not in ("0", "false", "off", "no")
+    _STATE["lease_store"] = LeaseStore(db, enforce=enforce)
+    return _STATE["lease_store"]
+
+
+def _world_lease(scene, host, holder: str, ttl_s: int):
+    """获取 host 级世界租约；冲突抛 LeaseConflict（由调用方转成 IRAF-RESOURCE-BUSY）。"""
+    return _lease_store().acquire("host:%s" % host.id, "__world__", holder, ttl_s=ttl_s)
 
 
 def _supervisor_url(host=None) -> str:
@@ -712,6 +757,25 @@ def iraf_run_scenario(scenario: str = "nominal", display: str = "window",
         hold = max(0, min(int(hold_s), 600))
     except Exception:
         hold = 60
+    _lease = None
+    if _resolved is not None:
+        from iraf_core.leases import LeaseConflict
+
+        try:
+            _lease = _world_lease(_resolved.scene, _resolved.host, principal.subject,
+                                  ttl_s=max(int(hold) + 300, _resolved.scene.lease_ttl_s))
+        except LeaseConflict as exc:
+            return _json.dumps({"status": "FAILED", "error_code": "IRAF-RESOURCE-BUSY",
+                                "reason": str(exc), "lease": exc.lease.as_dict()},
+                               ensure_ascii=False)
+
+    def _rel(reason="done"):
+        if _lease is not None:
+            try:
+                _lease_store().release(_lease.lease_id, reason)
+            except Exception:
+                pass
+
     if _supervisor_url():
         r = _supervisor_call("/scenario", {"scenario": scenario, "display": mode,
                                            "hold": hold}, timeout=900)
@@ -719,11 +783,13 @@ def iraf_run_scenario(scenario: str = "nominal", display: str = "window",
         _auth.audit("tool_call", principal, tool="iraf_run_scenario", scene=scenario,
                     status="SUCCEEDED" if ok else "FAILED", via="supervisor")
         if not ok:
+            _rel("scenario-failed")
             return _json.dumps({"status": "FAILED",
                                 "error_code": r.get("error_code") or "IRAF-SCENARIO-ERROR",
                                 "reason": r.get("reason") or r.get("error") or "链路失败",
                                 "steps": r.get("steps") or [],
                                 "log": r.get("log")}, ensure_ascii=False)
+        _rel("scenario-done")
         return _json.dumps({"status": "SUCCEEDED", "scenario": scenario, "world": "joint",
                             "display": mode, "passed": r.get("passed"),
                             "steps": r.get("steps") or [], "rc": r.get("rc"),
@@ -750,6 +816,7 @@ def iraf_run_scenario(scenario: str = "nominal", display: str = "window",
     ok = bool(payload.get("passed")) and int(payload.get("rc", 1)) == 0
     _auth.audit("tool_call", principal, tool="iraf_run_scenario", scene=scenario,
                 status="SUCCEEDED" if ok else "FAILED")
+    _rel("scenario-done" if ok else "scenario-failed")
     return _json.dumps({
         "status": "SUCCEEDED" if ok else "FAILED",
         "scenario": scenario, "world": "joint", "display": mode,
