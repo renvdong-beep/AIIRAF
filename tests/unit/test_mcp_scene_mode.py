@@ -140,7 +140,9 @@ class RegistryRoutingTest(unittest.TestCase):
 
     def test_ensure_scene_uses_resolved_endpoint(self):
         self.assertIn("def _ensure_scene(scene: str, endpoint: str = \"\")", SRC)
-        self.assertIn("_ensure_scene(_resolved.scene.scene_id, _resolved.host.endpoint)", SRC)
+        self.assertIn("_ensure_scene(_resolved.scene.switch_name or _resolved.scene.scene_id,", SRC)
+        self.assertIn("_resolved.host.endpoint)", SRC)
+        self.assertIn("IRAF-PROVIDER-UNAVAILABLE", SRC, "启停失败必须显式失败")
 
     def test_robot_facts_prefers_resolved(self):
         body = SRC.split("def _robot_facts(")[1].split("\ndef ")[0]
@@ -149,6 +151,20 @@ class RegistryRoutingTest(unittest.TestCase):
 
     def test_run_scenario_routes_by_resolved_host(self):
         self.assertIn("host = _resolved.host.host", SRC)
+
+
+class PhaseBContractTest(unittest.TestCase):
+    """B3：switch_scene 降级；submit 回传 scene/resolved。"""
+
+    def test_switch_scene_marked_deprecated(self):
+        body = SRC.split("def iraf_switch_scene(")[1].split("@app.tool()")[0]
+        self.assertIn("deprecated", body)
+        self.assertIn("iraf_submit_task", body)
+
+    def test_submit_echoes_resolved_scene(self):
+        body = SRC.split("def iraf_submit_task")[1].split("def _ensure_scene")[0]
+        self.assertIn('result.setdefault("scene_id", _resolved.scene.scene_id)', body)
+        self.assertIn('result.setdefault("resolved", _resolved.as_dict())', body)
 
 
 class AllowedHostsTest(unittest.TestCase):

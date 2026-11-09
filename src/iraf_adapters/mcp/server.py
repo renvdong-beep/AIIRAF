@@ -485,7 +485,13 @@ def iraf_submit_task(text: str, deadline_seconds: int = 120,
     if _reject:
         return _reject
     if _resolved is not None:
-        _ensure_scene(_resolved.scene.scene_id, _resolved.host.endpoint)
+        _sw = _ensure_scene(_resolved.scene.switch_name or _resolved.scene.scene_id,
+                            _resolved.host.endpoint)
+        if _sw.startswith(("switch-failed", "switch-error", "bad-endpoint", "no-endpoint")):
+            return json.dumps({"status": "FAILED", "error_code": "IRAF-PROVIDER-UNAVAILABLE",
+                               "reason": "Provider 启停失败（%s）：%s"
+                                         % (_resolved.scene.scene_id, _sw)},
+                              ensure_ascii=False)
     else:
         _scene = (os.environ.get("IRAF_LOCAL_SCENE") or "").strip()
         if _scene:
@@ -496,6 +502,9 @@ def iraf_submit_task(text: str, deadline_seconds: int = 120,
     if isinstance(result, dict):
         result.setdefault("robot_mode", mode_mod.state_for(principal.subject).name())
         result.setdefault("next_steps", _next_steps(result))
+    if isinstance(result, dict) and _resolved is not None:
+        result.setdefault("scene_id", _resolved.scene.scene_id)
+        result.setdefault("resolved", _resolved.as_dict())
     auth.audit("tool_call", principal, tool="iraf_submit_task",
                execution_id=(result or {}).get("execution_id"),
                status=(result or {}).get("status"))
@@ -578,7 +587,11 @@ def _reject_foreign_host() -> str:
 
 @app.tool()
 def iraf_switch_scene(scene: str) -> str:
-    """切换仿真场景（只允许一个 Provider 在线）：piper / piper-y05 / ur5 / joint。"""
+    """（deprecated，阶段 B 起）显式切换场景：piper / piper-y05 / ur5 / joint。
+
+    单端点后不需要"切场景"：提交时用 scene_id 即可（注册表解析 + 自动确保 Provider 在线）。
+    本工具仅保留用于排障与过渡期兼容。
+    """
     import json as _json
     import subprocess as _sp
     from iraf_adapters.mcp import auth as _auth
@@ -603,6 +616,8 @@ def iraf_switch_scene(scene: str) -> str:
     _auth.audit("tool_call", principal, tool="iraf_switch_scene", scene=scene,
                 status="OK" if ok else "FAILED")
     return _json.dumps({"status": "OK" if ok else "FAILED", "scene": scene,
+                        "deprecated": True,
+                        "use": "iraf_submit_task(text=..., scene_id=...)",
                         "exit": proc.returncode,
                         "output": (proc.stdout or "")[-600:] + (proc.stderr or "")[-300:]},
                        ensure_ascii=False)
