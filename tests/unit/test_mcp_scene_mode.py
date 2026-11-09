@@ -155,6 +155,32 @@ class RegistryRoutingTest(unittest.TestCase):
         self.assertIn("host = _resolved.host.host", SRC)
 
 
+class HostLoadProbeTest(unittest.TestCase):
+    """D4：hosts[].load —— probe 时才联网，默认离线。"""
+
+    def test_scene_status_has_probe_param(self):
+        args = _func_args("iraf_scene_status")
+        self.assertIn("probe", args)
+        self.assertEqual(args["probe"], False)
+
+    def test_probe_helper_exists(self):
+        body = SRC.split("def _probe_host(")[1].split("\ndef ")[0]
+        self.assertIn('base + "/status"', body)
+        self.assertIn("timeout=timeout", body)
+        self.assertIn('return {"error"', body)
+
+    def test_probe_merges_runtime(self):
+        body = SRC.split("def iraf_scene_status(")[1].split("@app.tool()")[0]
+        self.assertIn("if probe:", body)
+        self.assertIn('hst["runtime"] = _probe_host(_h)', body)
+
+    def test_default_offline(self):
+        body = SRC.split("def iraf_scene_status(")[1].split("@app.tool()")[0]
+        i_probe = body.find("if probe:")
+        i_off = body.find("if mode == \"off\":")
+        self.assertGreater(i_off, i_probe, "off 模式仍应提前返回，不因 probe 而联网")
+
+
 class InflightAndRoutingTest(unittest.TestCase):
     """D4：scene_status 的 inflight/world_key；D2：failover=next 时的改路由。"""
 

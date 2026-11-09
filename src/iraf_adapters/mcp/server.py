@@ -558,6 +558,32 @@ def iraf_submit_task(text: str, deadline_seconds: int = 120,
     return json.dumps(result, ensure_ascii=False)
 
 
+def _probe_host(host, timeout: float = 2.0) -> dict:
+    """读某台 host 的 supervisor /status（只读、短超时；失败只标记，不阻塞）。"""
+    import urllib.error
+    import urllib.request
+
+    base = _supervisor_url(host)
+    if not base:
+        return {"error": "no-control-url"}
+    req = urllib.request.Request(base + "/status")
+    token_file = os.environ.get("IRAF_SUPERVISOR_TOKEN_FILE") or "/etc/iraf/supervisor.token"
+    try:
+        token = open(token_file, encoding="utf-8").read().strip()
+    except Exception:
+        token = ""
+    if token:
+        req.add_header("X-Iraf-Token", token)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode() or "{}")
+    except Exception as exc:
+        return {"error": "%s: %s" % (type(exc).__name__, exc)}
+    h = data.get("host") or {}
+    return {"load_1m": h.get("load_1m"), "loadavg": h.get("loadavg"),
+            "cores": h.get("cores"), "active_scene": data.get("active_scene")}
+
+
 def _lease_store():
     """租约存储：与事件库同库不同表；MCP 重启后租约仍在。"""
     if "lease_store" in _STATE:
@@ -855,11 +881,12 @@ def iraf_run_scenario(scenario: str = "nominal", display: str = "window",
 
 
 @app.tool()
-def iraf_scene_status(scene_id: str = "") -> str:
+def iraf_scene_status(scene_id: str = "", probe: bool = False) -> str:
     """只读：场景 / Provider / 主机 / 注册表状态（排障的唯一入口，不要用 ss/nc 猜）。
 
     scene_id 为空时返回全部场景；给定则只返回该场景解析结果（含将使用的 host/endpoint）。
-    不发起任何网络探测，不在本工具里做健康检查（健康由 Provider 的 Health 接口负责）。
+    默认**不发起网络探测**；`probe=True` 时才去每台 host 的 supervisor 读 `load_1m/cores/active_scene`
+    （2s 超时，失败只标记 error，不阻塞返回）。
     """
     from iraf_adapters.mcp import auth
 
@@ -891,6 +918,11 @@ def iraf_scene_status(scene_id: str = "") -> str:
             payload["resolved"] = resolved.as_dict()
             payload["resolved"]["world_key"] = "host:%s/__world__" % resolved.host.id
         payload.update(reg.status())
+        if probe:
+            for prov in payload.get("providers") or []:
+                for hst in prov.get("hosts") or []:
+                    _h = type("H", (), {"id": hst.get("id"), "control_url": hst.get("control_url")})()
+                    hst["runtime"] = _probe_host(_h)
     except Exception as exc:
         from iraf_core.scene_registry import RegistryError
 
