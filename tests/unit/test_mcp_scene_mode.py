@@ -115,6 +115,41 @@ class OffModeSafetyTest(unittest.TestCase):
         self.assertGreater(i_use, i_guard, "解引用必须在判空之后")
 
 
+class RegistryRoutingTest(unittest.TestCase):
+    """B1：on 模式下注册表真正决定路由（A 阶段只做一致性校验）。"""
+
+    def test_bridge_for_resolved_exists_and_caches_by_endpoint(self):
+        body = SRC.split("def _bridge_for_resolved")[1].split("\ndef ")[0]
+        self.assertIn('key = "bridge:" + resolved.host.endpoint', body)
+        self.assertIn("_STATE[key]", body)
+
+    def test_build_injects_and_restores_env(self):
+        body = SRC.split("def _bridge_for_resolved")[1].split("\ndef ")[0]
+        self.assertIn('os.environ["IRAF_PROFILE"] = resolved.scene.profile', body)
+        self.assertIn('os.environ["IRAF_BACKEND_CONFIG"] = json.dumps({"endpoint": resolved.host.endpoint})', body)
+        self.assertIn("finally:", body, "构建后必须恢复 env")
+
+    def test_submit_resolves_before_building_bridge(self):
+        body = SRC.split("def iraf_submit_task")[1].split("@app.tool()")[0]
+        i_resolve = body.find("_resolve_scene(principal, scene_id, resource_id or None)")
+        i_bridge = body.find("_bridge_for_resolved(_resolved)")
+        self.assertNotEqual(i_resolve, -1)
+        self.assertNotEqual(i_bridge, -1)
+        self.assertLess(i_resolve, i_bridge, "必须先解析再选 bridge")
+
+    def test_ensure_scene_uses_resolved_endpoint(self):
+        self.assertIn("def _ensure_scene(scene: str, endpoint: str = \"\")", SRC)
+        self.assertIn("_ensure_scene(_resolved.scene.scene_id, _resolved.host.endpoint)", SRC)
+
+    def test_robot_facts_prefers_resolved(self):
+        body = SRC.split("def _robot_facts(")[1].split("\ndef ")[0]
+        self.assertIn("resolved.scene.profile", body)
+        self.assertIn("resolved.host.endpoint", body)
+
+    def test_run_scenario_routes_by_resolved_host(self):
+        self.assertIn("host = _resolved.host.host", SRC)
+
+
 class AllowedHostsTest(unittest.TestCase):
     """A4：白名单单一来源 = env 显式值 > 注册表汇总 > 默认 .121。"""
 

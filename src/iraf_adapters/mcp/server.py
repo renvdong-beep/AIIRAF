@@ -109,6 +109,44 @@ def _auth_error(exc) -> str:
                       ensure_ascii=False)
 
 
+def _bridge_for_resolved(resolved):
+    """on 模式：用注册表解析出的 profile/endpoint 构造 bridge，按 endpoint 缓存。
+
+    装配单（env）在阶段 B 不再写场景绑定；这里在**构建期**临时注入两个键，
+    构建完成立即恢复，避免并发请求互相污染。
+    """
+    import threading
+
+    key = "bridge:" + resolved.host.endpoint
+    if key in _STATE:
+        return _STATE[key]
+    from iraf_adapters.agentos.bridge import AgentOSBridge
+    from iraf_adapters.agentos.cli import build_intent_provider
+    from iraf_adapters.agentos.dispatcher import TaskDispatcher
+    from iraf_adapters.bootstrap import build_runtime_from_env
+
+    provider = build_intent_provider()
+    if provider is None:
+        raise RuntimeError(
+            "IRAF 侧意图 Provider 未配置（需要 IRAF_AGENTOS_MODEL_URL + IRAF_AGENTOS_MODEL）")
+    lock = _STATE.setdefault("_env_lock", threading.Lock())
+    with lock:
+        saved = {k: os.environ.get(k) for k in ("IRAF_PROFILE", "IRAF_BACKEND_CONFIG")}
+        try:
+            os.environ["IRAF_PROFILE"] = resolved.scene.profile
+            os.environ["IRAF_BACKEND_CONFIG"] = json.dumps({"endpoint": resolved.host.endpoint})
+            dispatcher = TaskDispatcher(build_runtime_from_env())
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+    bridge = AgentOSBridge(provider, dispatcher)
+    _STATE[key] = bridge
+    return bridge
+
+
 def _bridge():
     """惰性构建 TaskFlow 入口（bridge = 意图解析 + 任务分派），失败即抛。"""
     if "bridge" in _STATE:
@@ -280,6 +318,7 @@ def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800,
     st = mode_mod.state_for(principal.subject)
     auth.audit("tool_call", principal, tool="iraf_robot_mode", action=act)
     _scene_payload: dict = {}
+    _resolved = None
     if (scene_id or "").strip() and act != "status":
         _resolved, _scene_err = _resolve_scene(principal, scene_id)
         if _scene_err:
@@ -305,7 +344,10 @@ def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800,
     payload.update(extra)
     payload.update(_scene_payload)
     payload.update(st.snapshot())
-    payload.update(_robot_facts())
+    if _resolved is None and _registry_mode() == "on":
+        _r, _e = _resolve_scene(principal, "")
+        _resolved = _r
+    payload.update(_robot_facts(_resolved))
     # 把"进入之后照做什么"直接写进返回：实机证据（2026-10-22）是模型自己设计了
     # "只读自检 + 冒烟提交"两段式，冒烟那次把仿真场景弄脏。规则写在返回值里比写在文档里有效。
     payload["next_steps"] = _enter_next_steps()
@@ -315,8 +357,12 @@ def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800,
     return json.dumps(payload, ensure_ascii=False)
 
 
-def _robot_facts() -> dict:
-    """把装配单里的事实读出来（只读；失败就给 unverified，不猜）。"""
+def _robot_facts(resolved=None) -> dict:
+    """把装配单里的事实读出来（只读；失败就给 unverified，不猜）。
+
+    resolved 非空时（on 模式）：profile/endpoint 以注册表解析结果为准，
+    因为装配单里已不再写场景绑定（阶段 B）。
+    """
     import os as _os
     from pathlib import Path as _Path
 
@@ -343,15 +389,19 @@ def _robot_facts() -> dict:
             facts["skill_triggers"] = triggers
         except Exception as exc:
             facts["skills_error"] = str(exc)[:200]
-    facts["profile"] = _os.environ.get("IRAF_PROFILE")
+    facts["profile"] = (resolved.scene.profile if resolved is not None
+                        else _os.environ.get("IRAF_PROFILE"))
     facts["safety_policy"] = _os.environ.get("IRAF_SAFETY_POLICY")
     facts["event_store"] = _os.environ.get("IRAF_EVENT_STORE")
-    try:
-        raw = _os.environ.get("IRAF_BACKEND_CONFIG") or "{}"
-        cfg = json.loads(raw)
-        facts["provider_endpoint"] = cfg.get("endpoint")
-    except Exception:
-        pass
+    if resolved is not None:
+        facts["provider_endpoint"] = resolved.host.endpoint
+    else:
+        try:
+            raw = _os.environ.get("IRAF_BACKEND_CONFIG") or "{}"
+            cfg = json.loads(raw)
+            facts["provider_endpoint"] = cfg.get("endpoint")
+        except Exception:
+            pass
     policy_path = _os.environ.get("IRAF_SAFETY_POLICY") or ""
     if policy_path and _Path(policy_path).is_file():
         try:
@@ -406,14 +456,17 @@ def iraf_submit_task(text: str, deadline_seconds: int = 120,
     try:
         principal = _principal()
         auth.require_scope(principal, "task.submit")
-        bridge = _bridge()
-        auth.require_resource(principal, bridge.dispatcher.resource_id)
-        context = _context(principal)
     except auth.AuthError as exc:
         return _auth_error(exc)
     _resolved, _scene_err = _resolve_scene(principal, scene_id, resource_id or None)
     if _scene_err:
         return _scene_err
+    try:
+        bridge = _bridge() if _resolved is None else _bridge_for_resolved(_resolved)
+        auth.require_resource(principal, bridge.dispatcher.resource_id)
+        context = _context(principal)
+    except auth.AuthError as exc:
+        return _auth_error(exc)
     try:
         request = build_request(text, deadline_seconds=int(deadline_seconds),
                                 controller="agentos-mcp-task")
@@ -423,9 +476,12 @@ def iraf_submit_task(text: str, deadline_seconds: int = 120,
     _reject = _reject_foreign_host()
     if _reject:
         return _reject
-    _scene = (__import__("os").environ.get("IRAF_LOCAL_SCENE") or "").strip()
-    if _scene:
-        _ensure_scene(_scene)
+    if _resolved is not None:
+        _ensure_scene(_resolved.scene.scene_id, _resolved.host.endpoint)
+    else:
+        _scene = (os.environ.get("IRAF_LOCAL_SCENE") or "").strip()
+        if _scene:
+            _ensure_scene(_scene)
     result = bridge.execute_intent(request, context)
     # 把模式一并回传：平台据此知道"现在处理的是机器人任务域"，也便于审计
     # （不在模式里时给一句 hint，但不阻断执行——模式是提示性约定，不是安全边界）。
@@ -438,19 +494,19 @@ def iraf_submit_task(text: str, deadline_seconds: int = 120,
     return json.dumps(result, ensure_ascii=False)
 
 
-def _ensure_scene(scene: str) -> str:
+def _ensure_scene(scene: str, endpoint: str = "") -> str:
     """确保本端点对应的 Provider 在线（幂等）：端口通就不动，不通就切场景。"""
     import json as _json
     import os as _os
     import socket as _sock
     import subprocess as _sp
 
-    raw = _os.environ.get("IRAF_BACKEND_CONFIG", "")
-    endpoint = ""
-    try:
-        endpoint = str(_json.loads(raw).get("endpoint") or "")
-    except Exception:
-        return "no-endpoint"
+    if not endpoint:
+        raw = _os.environ.get("IRAF_BACKEND_CONFIG", "")
+        try:
+            endpoint = str(_json.loads(raw).get("endpoint") or "")
+        except Exception:
+            return "no-endpoint"
     host, _, port_s = endpoint.rpartition(":")
     if not host or not port_s.isdigit():
         return "bad-endpoint"
@@ -571,8 +627,8 @@ def iraf_run_scenario(scenario: str = "nominal", display: str = "window",
         return _json.dumps({"status": "FAILED", "error_code": "IRAF-INPUT-INVALID",
                             "reason": "scenario 必须是 %s 之一" % ", ".join(allowed_scen)},
                            ensure_ascii=False)
-    host = _os.environ.get("IRAF_SCENARIO_HOST", "10.203.247.121")
-    allow = [h.strip() for h in (_os.environ.get("IRAF_PROVIDER_ALLOWED_HOSTS") or "10.203.247.121").split(",") if h.strip()]
+    host = _resolved.host.host if _resolved is not None else _os.environ.get("IRAF_SCENARIO_HOST", "10.203.247.121")
+    allow = _allowed_hosts()
     if host not in allow:
         return _json.dumps({"status": "FAILED", "error_code": "IRAF-PROVIDER-HOST-REJECTED",
                             "reason": "scenario 主机 %s 不在允许列表 %s" % (host, allow)},
