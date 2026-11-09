@@ -444,7 +444,7 @@ def robot_dev_mode() -> str:
 
 
 @app.tool()
-def iraf_submit_task(text: str, deadline_seconds: int = 120,
+def iraf_submit_task(text: str, deadline_seconds: int = 180,
                      scene_id: str = "", resource_id: str = "") -> str:
     """提交一条**任务**给 IRAF（自然语言语义）。技能选择由 IRAF Skill Manager 完成。
 
@@ -456,6 +456,9 @@ def iraf_submit_task(text: str, deadline_seconds: int = 120,
 
     返回与 IRAF CLI 同构的 JSON：status / execution_id / error_code / reason / evidence /
     resolved_skill / robot_mode / next_steps。失败不会被包装成成功。
+
+    `deadline_seconds` 默认 180s（2026-11-09 实测：ur5 冷启动 + 高负载时 120s 会触发
+    `任务超过截止时间`；仿真链路本身只有 ~57s，余量给启动与调度抖动）。
     """
     from iraf_adapters.agentos.cli import build_request
     from iraf_adapters.mcp import auth

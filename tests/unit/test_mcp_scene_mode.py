@@ -155,6 +155,14 @@ class RegistryRoutingTest(unittest.TestCase):
         self.assertIn("_resolved.host.host if _resolved is not None", SRC)
 
 
+class DeadlineDefaultTest(unittest.TestCase):
+    """回归：ur5 冷启动 + 高负载时 120s deadline 不够（实测 146.6s 超时）→ 默认 180s。"""
+
+    def test_submit_default_deadline(self):
+        args = _func_args("iraf_submit_task")
+        self.assertEqual(args["deadline_seconds"], 180)
+
+
 class AsyncScenarioTest(unittest.TestCase):
     """E1：async_mode 立即返回 run_id；iraf_get_run 只读查询。"""
 
