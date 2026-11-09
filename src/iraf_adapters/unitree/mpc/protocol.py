@@ -85,15 +85,41 @@ def _as_list(x, name, where):
     except TypeError:
         raise ValueError("%s：%s 不可迭代（%s）⇒ 边界上只允许数字列表"
                          % (where, name, type(x).__name__)) from None
+    return _as_list_seq(seq, name, where)
+
+
+def _as_list_seq(seq, name, where):
+    """逐元素规约（E2 实验3：热路径，按类型分支，避免每元素 float()+dict.get）。"""
     out = []
+    append = out.append
+    inf_tok = _INF_TO_TOKEN
+    pos_inf = float("inf")
+    neg_inf = float("-inf")
     for v in seq:
+        tv = type(v)
+        if tv is float:
+            if v != v:                                  # NaN
+                raise ValueError("%s：%s 含 NaN ⇒ 拒收（NaN 会让求解行为未定义）"
+                                 % (where, name))
+            if v == pos_inf or v == neg_inf:
+                append(inf_tok[v])
+            else:
+                append(v)
+            continue
+        if tv is int:
+            append(float(v))
+            continue
+        if tv is str:
+            token = v.strip().lower()
+            if token in _TOKEN_TO_INF:
+                append(token)
+                continue
+            raise ValueError("%s：%s 含非法字符串 %r（只允许 inf / -inf 记号）"
+                             % (where, name, v))
         if isinstance(v, str):
             token = v.strip().lower()
             if token in _TOKEN_TO_INF:
-                # **保持记号**（不还原成 float）：`validate_request` 的输出正是要送上线的载荷，
-                # 还原成 inf 会让随后的 `encode`(allow_nan=False) 再炸一次（实测踩过）。
-                # 还原只在 `decode(...)` 里做（本地使用）。
-                out.append(token)
+                append(token)
                 continue
             raise ValueError("%s：%s 含非法字符串 %r（只允许 inf / -inf 记号）"
                              % (where, name, v))
@@ -101,9 +127,9 @@ def _as_list(x, name, where):
             f = float(v)
         except (TypeError, ValueError):
             raise ValueError("%s：%s 含非数值元素（%s）" % (where, name, type(v).__name__)) from None
-        if math.isnan(f):
+        if f != f:
             raise ValueError("%s：%s 含 NaN ⇒ 拒收（NaN 会让求解行为未定义）" % (where, name))
-        out.append(_INF_TO_TOKEN.get(f, f))
+        append(inf_tok.get(f, f))
     return out
 
 
@@ -142,11 +168,9 @@ def validate_request(msg, version=PROTOCOL_VERSION):
                              % (k, len(out[k]), len(out["a_rows"])))
     if len(out["lba"]) != len(out["uba"]):
         raise ValueError("lba/uba 长度不一致：%d vs %d" % (len(out["lba"]), len(out["uba"])))
-    for k, v in out.items():
-        if k == "version":
-            continue
-        if any((isinstance(x, float) and (math.isnan(x))) for x in v):
-            raise ValueError("字段 %s 含 NaN ⇒ 拒收（NaN 会让求解行为未定义）" % k)
+    # 说明（E2 实验3）：上面每个字段都经过 `_as_list`，NaN 已在逐值校验里**必然**被拒；
+    # 原先这里还有一遍"逐值再扫 NaN"，属于重复的全量遍历（实测 validate_request 26s/2152 次），
+    # 已移除。行为不变：NaN 仍在 `_as_list` 抛 ValueError（单测覆盖）。
     return out
 
 
