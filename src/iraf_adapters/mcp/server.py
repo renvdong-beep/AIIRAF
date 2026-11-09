@@ -134,7 +134,15 @@ def _bridge_for_resolved(resolved):
         saved = {k: os.environ.get(k) for k in ("IRAF_PROFILE", "IRAF_BACKEND_CONFIG")}
         try:
             os.environ["IRAF_PROFILE"] = resolved.scene.profile
-            os.environ["IRAF_BACKEND_CONFIG"] = json.dumps({"endpoint": resolved.host.endpoint})
+            # 装配单里保留的是"基线配置"（token_file/timeout/subject 等），这里只合并 endpoint，
+            # 不整体覆盖 —— 否则凭据配置丢失，Provider 鉴权直接失败。
+            try:
+                base = json.loads(saved.get("IRAF_BACKEND_CONFIG") or "{}")
+            except Exception:
+                base = {}
+            base = dict(base) if isinstance(base, dict) else {}
+            base["endpoint"] = resolved.host.endpoint
+            os.environ["IRAF_BACKEND_CONFIG"] = json.dumps(base)
             dispatcher = TaskDispatcher(build_runtime_from_env())
         finally:
             for k, v in saved.items():

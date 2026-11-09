@@ -126,7 +126,8 @@ class RegistryRoutingTest(unittest.TestCase):
     def test_build_injects_and_restores_env(self):
         body = SRC.split("def _bridge_for_resolved")[1].split("\ndef ")[0]
         self.assertIn('os.environ["IRAF_PROFILE"] = resolved.scene.profile', body)
-        self.assertIn('os.environ["IRAF_BACKEND_CONFIG"] = json.dumps({"endpoint": resolved.host.endpoint})', body)
+        self.assertIn('base["endpoint"] = resolved.host.endpoint', body)
+        self.assertIn('json.loads(saved.get("IRAF_BACKEND_CONFIG") or "{}")', body)
         self.assertIn("finally:", body, "构建后必须恢复 env")
 
     def test_submit_resolves_before_building_bridge(self):
