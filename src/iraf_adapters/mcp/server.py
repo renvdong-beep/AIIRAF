@@ -595,14 +595,9 @@ def _ensure_scene(scene: str, endpoint: str = "", host=None, provider=None) -> s
             return "already-up"
     except Exception:
         pass
-    try:
-        proc = _sp.run(["bash", "/root/iraf-instance/scripts/switch_scene.sh", scene],
-                       capture_output=True, text=True, timeout=300)
-    except Exception as exc:
-        return "switch-error:%s" % exc
-    if proc.returncode == 0:
-        return "switched"
-    return "switch-failed:%s" % ((proc.stderr or proc.stdout or "")[-200:])
+    # 阶段 C6：板卡侧的 SSH 启停路径已删除（switch_scene.sh 已退役）。
+    # 没有控制面时只能显式失败——不允许回落到任何"板卡自己起进程"的做法。
+    return "switch-failed:supervisor-not-configured（板卡不再自管 Provider）"
 
 
 def _endpoint_host() -> str:
