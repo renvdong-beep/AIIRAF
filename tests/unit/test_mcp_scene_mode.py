@@ -175,10 +175,14 @@ class HostLoadProbeTest(unittest.TestCase):
         self.assertIn('hst["runtime"] = _probe_host(_h)', body)
 
     def test_default_offline(self):
+        """probe 默认 False；且 off 模式在读取注册表/探测之前就返回。"""
         body = SRC.split("def iraf_scene_status(")[1].split("@app.tool()")[0]
+        i_off = body.find('if mode == "off":')
+        i_reg = body.find("reg = _registry()")
         i_probe = body.find("if probe:")
-        i_off = body.find("if mode == \"off\":")
-        self.assertGreater(i_off, i_probe, "off 模式仍应提前返回，不因 probe 而联网")
+        self.assertGreaterEqual(i_off, 0)
+        self.assertGreater(i_reg, i_off, "off 模式必须先返回，不读注册表")
+        self.assertGreater(i_probe, i_reg, "probe 只在注册表分支内")
 
 
 class InflightAndRoutingTest(unittest.TestCase):
