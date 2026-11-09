@@ -177,9 +177,9 @@ class LeaseSurfaceTest(unittest.TestCase):
         self.assertIn('"lease_enforce"', body)
 
     def test_capacity_helper(self):
+        # 规则下沉到 iraf_core.leases.capacity_state，server 只做委托
         body = SRC.split("def _capacity_state(")[1].split("\ndef ")[0]
-        self.assertIn("get_active", body)
-        self.assertIn("sorted(provider.hosts, key=lambda x: x.priority)", body)
+        self.assertIn("capacity_state(provider.hosts, _lease_store())", body)
         self.assertIn("IRAF-CAPACITY-EXHAUSTED", SRC)
 
 
