@@ -4,10 +4,11 @@ provider_id: iraf/piper-pick
 profile: profiles/piper_mujoco.yaml
 safety_policy: profiles/safety/simulation_lab.yaml
 simulation: true
+switch_name: piper
 max_concurrency: 1
 lease_ttl_s: 60
 resources:
   - id: piper
     profile: profiles/piper_mujoco.yaml
     capabilities: [move_joint, pick_object, visual_pick, place_object, stop, reset_scene]
-digest: sha256:f533ec07a1493ff018e38e66ed797d8b7c1a2e422d8919a3f6ce83a39a6668a2
+digest: sha256:391ea0279c51d35f7eeaf3d9bffb271648b36b1c407f136e1e86a60280d0edc6

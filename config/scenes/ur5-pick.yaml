@@ -4,10 +4,11 @@ provider_id: iraf/ur5-pick
 profile: profiles/ur5_mujoco.yaml
 safety_policy: profiles/safety/simulation_lab.yaml
 simulation: true
+switch_name: ur5
 max_concurrency: 1
 lease_ttl_s: 60
 resources:
   - id: ur5
     profile: profiles/ur5_mujoco.yaml
     capabilities: [move_joint, pick_object, visual_pick, place_object, stop, reset_scene]
-digest: sha256:799d0cf3d4e7bcd5f359b8ad3e29b34ebecdef52765eb4137a05b1c5f9a00eb9
+digest: sha256:9c9a82d325c258d73296882651d0d589e596cf913317d61c49a61959d1b18e1d

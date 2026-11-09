@@ -4,6 +4,7 @@ provider_id: iraf/handoff-lab
 profile: profiles/piper_mujoco.yaml
 safety_policy: profiles/safety/simulation_lab.yaml
 simulation: true
+switch_name: joint
 max_concurrency: 1
 lease_ttl_s: 120
 description: 联合世界（Go2 + Piper + UR5e）；9 步交接链路
@@ -24,4 +25,4 @@ resources:
   - id: joint-go2
     profile: profiles/unitree_go2_mujoco.yaml
     capabilities: [stand, locomote, dock_for_handoff, accept_payload, stop]
-digest: sha256:b0bcb563d87dc36e0e8ff0a90b9f8b205020f8b8de04f07930974df0b615bc12
+digest: sha256:90a18ee6a18cab6df168e3ab2fefc8dac915ca04099d9ceb131fa0578982c4ab
