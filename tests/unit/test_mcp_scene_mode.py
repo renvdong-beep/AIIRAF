@@ -155,6 +155,34 @@ class RegistryRoutingTest(unittest.TestCase):
         self.assertIn("host = _resolved.host.host", SRC)
 
 
+class LeaseSurfaceTest(unittest.TestCase):
+    """D3/D4：iraf_lease 工具 + scene_status 暴露租约 + 容量判定。"""
+
+    def test_lease_tool_signature(self):
+        args = _func_args("iraf_lease")
+        for k in ("action", "scene_id", "resource_id", "lease_id", "ttl_s"):
+            self.assertIn(k, args)
+        self.assertEqual(args["action"], "list")
+        self.assertEqual(args["resource_id"], "__world__")
+
+    def test_lease_actions(self):
+        body = SRC.split("def iraf_lease(")[1].split("@app.tool()")[0]
+        for act in ("acquire", "renew", "release", "list"):
+            self.assertIn('"%s"' % act, body)
+        self.assertIn("LeaseConflict", body)
+
+    def test_scene_status_exposes_leases(self):
+        body = SRC.split("def iraf_scene_status(")[1].split("@app.tool()")[0]
+        self.assertIn('"leases"', body)
+        self.assertIn('"lease_enforce"', body)
+
+    def test_capacity_helper(self):
+        body = SRC.split("def _capacity_state(")[1].split("\ndef ")[0]
+        self.assertIn("get_active", body)
+        self.assertIn("sorted(provider.hosts, key=lambda x: x.priority)", body)
+        self.assertIn("IRAF-CAPACITY-EXHAUSTED", SRC)
+
+
 class MultiHostTest(unittest.TestCase):
     """C4：host 级 control_url + 按 priority 的 failover。"""
 

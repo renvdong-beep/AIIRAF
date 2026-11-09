@@ -556,6 +556,23 @@ def _world_lease(scene, host, holder: str, ttl_s: int):
     return _lease_store().acquire("host:%s" % host.id, "__world__", holder, ttl_s=ttl_s)
 
 
+def _capacity_state(provider, holder: str) -> tuple:
+    """返回 (free_hosts, held_hosts)：按 host 级世界租约统计（D2 的容量判定）。
+
+    单主机时 held_hosts 必然包含全部 host；多主机时可用 free_hosts 判断是否需要
+    返回 IRAF-CAPACITY-EXHAUSTED（而不是简单 BUSY）。
+    """
+    free, held = [], []
+    store = _lease_store()
+    for h in sorted(provider.hosts, key=lambda x: x.priority):
+        lease = store.get_active("host:%s" % h.id, "__world__")
+        if lease is None:
+            free.append(h)
+        else:
+            held.append((h, lease))
+    return free, held
+
+
 def _supervisor_url(host=None) -> str:
     """控制面地址：优先用注册表里该 host 的 control_url，其次 IRAF_SUPERVISOR_URL。"""
     host_control_url = getattr(host, "control_url", "") if host is not None else ""
@@ -843,7 +860,9 @@ def iraf_scene_status(scene_id: str = "") -> str:
         return _auth_error(exc)
     mode = _registry_mode()
     payload: dict = {"status": "SUCCEEDED", "mode": mode,
-                     "allowed_hosts": _allowed_hosts()}
+                     "allowed_hosts": _allowed_hosts(),
+                     "lease_enforce": _lease_store().enforce,
+                     "leases": [l.as_dict() for l in _lease_store().list_active()]}
     if mode == "off":
         payload["note"] = "注册表未启用（IRAF_SCENE_REGISTRY_MODE=off），仅报告 env 事实"
         payload["provider_endpoint"] = _endpoint_host() or None
@@ -866,6 +885,79 @@ def iraf_scene_status(scene_id: str = "") -> str:
                           ensure_ascii=False)
     auth.audit("tool_call", principal, tool="iraf_scene_status", mode=mode)
     return json.dumps(payload, ensure_ascii=False)
+
+
+@app.tool()
+def iraf_lease(action: str = "list", scene_id: str = "", resource_id: str = "__world__",
+               lease_id: str = "", ttl_s: int = 0) -> str:
+    """显式租约：acquire / renew / release / list（D3）。
+
+    普通任务由 `iraf_submit_task` 自动加租约，本工具只用于：
+      · 排障时查看"谁占着 world"（list）；
+      · 长任务分步演示时显式持有（acquire/renew/release）。
+    acquire 的资源键默认 `__world__`（host 级）；冲突返回 IRAF-RESOURCE-BUSY。
+    """
+    from iraf_adapters.mcp import auth
+    from iraf_core.leases import LeaseConflict
+
+    try:
+        principal = _principal()
+        need = "task.read" if (action or "list").lower() == "list" else "task.submit"
+        auth.require_scope(principal, need)
+    except auth.AuthError as exc:
+        return _auth_error(exc)
+    act = (action or "list").strip().lower()
+    store = _lease_store()
+
+    if act == "list":
+        return json.dumps({"status": "SUCCEEDED", "enforce": store.enforce,
+                           "leases": [l.as_dict() for l in store.list_active()]},
+                          ensure_ascii=False)
+    if act == "renew":
+        if not lease_id:
+            return json.dumps({"status": "FAILED", "error_code": "IRAF-INPUT-INVALID",
+                               "reason": "renew 需要 lease_id"}, ensure_ascii=False)
+        lease = store.renew(lease_id, ttl_s=(ttl_s or None))
+        if lease is None:
+            return json.dumps({"status": "FAILED", "error_code": "IRAF-INPUT-INVALID",
+                               "reason": "租约不存在或已释放：%s" % lease_id},
+                              ensure_ascii=False)
+        return json.dumps({"status": "SUCCEEDED", "lease": lease.as_dict()},
+                          ensure_ascii=False)
+    if act == "release":
+        if not lease_id:
+            return json.dumps({"status": "FAILED", "error_code": "IRAF-INPUT-INVALID",
+                               "reason": "release 需要 lease_id"}, ensure_ascii=False)
+        ok = store.release(lease_id, "explicit")
+        return json.dumps({"status": "SUCCEEDED" if ok else "FAILED",
+                           "released": ok, "lease_id": lease_id}, ensure_ascii=False)
+    if act != "acquire":
+        return json.dumps({"status": "FAILED", "error_code": "IRAF-INPUT-INVALID",
+                           "reason": "action 只接受 acquire / renew / release / list"},
+                          ensure_ascii=False)
+
+    _resolved, _scene_err = _resolve_scene(principal, scene_id)
+    if _scene_err:
+        return _scene_err
+    if _resolved is None:
+        return json.dumps({"status": "FAILED", "error_code": "IRAF-SCENE-AMBIGUOUS",
+                           "reason": "acquire 需要 scene_id（或默认场景）"}, ensure_ascii=False)
+    ttl = int(ttl_s) if int(ttl_s) > 0 else _resolved.scene.lease_ttl_s
+    key_scene = ("host:%s" % _resolved.host.id) if resource_id == "__world__" else _resolved.scene.scene_id
+    try:
+        lease = store.acquire(key_scene, resource_id, principal.subject, ttl_s=ttl)
+    except LeaseConflict as exc:
+        free, held = _capacity_state(_resolved.provider, principal.subject)
+        # 单主机时"该 host 被占"就是 BUSY；CAPACITY 只在多主机且全部被占时才有意义
+        same_host_held = any(h.id == _resolved.host.id for h, _l in held)
+        code = ("IRAF-RESOURCE-BUSY" if same_host_held or len(_resolved.provider.hosts) == 1
+                else "IRAF-CAPACITY-EXHAUSTED")
+        return json.dumps({"status": "FAILED", "error_code": code, "reason": str(exc),
+                           "lease": exc.lease.as_dict(),
+                           "free_hosts": [h.id for h in free]}, ensure_ascii=False)
+    auth.audit("tool_call", principal, tool="iraf_lease", action="acquire",
+               scene=_resolved.scene.scene_id, resource=resource_id, lease=lease.lease_id)
+    return json.dumps({"status": "SUCCEEDED", "lease": lease.as_dict()}, ensure_ascii=False)
 
 
 @app.tool()
