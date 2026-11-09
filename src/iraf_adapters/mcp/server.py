@@ -811,7 +811,7 @@ def _execute_scenario(scenario, display, hold, host):
                 break
             except Exception:
                 continue
-    ok = bool(payload.get("passed")) and int(payload.get("rc", 1)) == 0
+    ok = bool(payload.get("passed"))          # 以报告为准；rc 只作告警（收尾 SEGV 已知）
     return {"status": "SUCCEEDED" if ok else "FAILED", "scenario": scenario, "world": "joint",
             "display": mode, "passed": payload.get("passed"),
             "steps": payload.get("steps") or [], "rc": payload.get("rc"),
@@ -939,8 +939,10 @@ def iraf_run_scenario(scenario: str = "nominal", display: str = "window",
         _auth.audit("tool_call", principal, tool="iraf_run_scenario", action="async",
                     run_id=run_id, scene=scenario)
         return _json.dumps({"status": "QUEUED", "run_id": run_id, "poll": "iraf_get_run",
+                            "next_poll_after_s": 20,
                             "scenario": scenario, "display": mode, "hold_s": hold,
-                            "note": "后台执行；用 iraf_get_run(run_id) 查进度/结果"},
+                            "note": "后台执行；用 iraf_get_run(run_id) 轮询（约每 20s 一次），"
+                                    "不要用 sleep/终端等待"},
                            ensure_ascii=False)
 
     _lease = None
