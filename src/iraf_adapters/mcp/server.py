@@ -562,6 +562,12 @@ def _ensure_scene(scene: str, endpoint: str = "", host=None, provider=None) -> s
     if _supervisor_url(host):
         # C4：按 priority 尝试 hosts；failover=next 时才顺延
         hosted = [host] if host is not None else []
+        if not hosted:
+            # 无 host 上下文（如 iraf_switch_scene）：退回环境变量里的控制面
+            r = _supervisor_call("/ensure", {"scene": scene}, timeout=150)
+            if r.get("status") == "OK":
+                return "switched(supervisor)"
+            return "switch-failed:%s" % (r.get("reason") or "supervisor 拒绝")
         failover = str((getattr(provider, "health", {}) or {}).get("failover") or "")
         if failover == "next" and provider is not None:
             hosted += [h for h in sorted(provider.hosts, key=lambda x: x.priority)
