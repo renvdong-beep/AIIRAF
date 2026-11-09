@@ -486,7 +486,7 @@ def iraf_submit_task(text: str, deadline_seconds: int = 120,
         return _reject
     if _resolved is not None:
         _sw = _ensure_scene(_resolved.scene.switch_name or _resolved.scene.scene_id,
-                            _resolved.host.endpoint)
+                            _resolved.host.endpoint, _resolved.host, _resolved.provider)
         if _sw.startswith(("switch-failed", "switch-error", "bad-endpoint", "no-endpoint")):
             return json.dumps({"status": "FAILED", "error_code": "IRAF-PROVIDER-UNAVAILABLE",
                                "reason": "Provider 启停失败（%s）：%s"
@@ -511,18 +511,19 @@ def iraf_submit_task(text: str, deadline_seconds: int = 120,
     return json.dumps(result, ensure_ascii=False)
 
 
-def _supervisor_url() -> str:
-    """控制面地址；未配置时回落到旧的 SSH 路径（阶段 C 过渡）。"""
-    return (os.environ.get("IRAF_SUPERVISOR_URL") or "").strip().rstrip("/")
+def _supervisor_url(host=None) -> str:
+    """控制面地址：优先用注册表里该 host 的 control_url，其次 IRAF_SUPERVISOR_URL。"""
+    host_control_url = getattr(host, "control_url", "") if host is not None else ""
+    return (host_control_url or os.environ.get("IRAF_SUPERVISOR_URL") or "").strip().rstrip("/")
 
 
-def _supervisor_call(path: str, params: dict, timeout: int = 120) -> dict:
-    """调 x86 supervisor 控制面（带 X-IRAF-Token）。失败返回标准错误 JSON。"""
+def _supervisor_call(path: str, params: dict, timeout: int = 120, host=None) -> dict:
+    """调 x86 supervisor 控制面（带 X-Iraf-Token）。失败返回标准错误 JSON。"""
     import urllib.error
     import urllib.parse
     import urllib.request
 
-    base = _supervisor_url()
+    base = _supervisor_url(host)
     if not base:
         return {"status": "FAILED", "error_code": "IRAF-PROVIDER-UNAVAILABLE",
                 "reason": "未配置 IRAF_SUPERVISOR_URL"}
@@ -536,7 +537,7 @@ def _supervisor_call(path: str, params: dict, timeout: int = 120) -> dict:
     except Exception:
         token = ""
     if token:
-        req.add_header("X-IRAF-Token", token)
+        req.add_header("X-Iraf-Token", token)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode() or "{}")
@@ -551,18 +552,29 @@ def _supervisor_call(path: str, params: dict, timeout: int = 120) -> dict:
                 "reason": "supervisor 不可达：%s: %s" % (type(exc).__name__, exc)}
 
 
-def _ensure_scene(scene: str, endpoint: str = "") -> str:
+def _ensure_scene(scene: str, endpoint: str = "", host=None, provider=None) -> str:
     """确保本端点对应的 Provider 在线（幂等）：端口通就不动，不通就切场景。"""
     import json as _json
     import os as _os
     import socket as _sock
     import subprocess as _sp
 
-    if _supervisor_url():
-        r = _supervisor_call("/ensure", {"scene": scene}, timeout=150)
-        if r.get("status") == "OK":
-            return "switched(supervisor)"
-        return "switch-failed:%s" % (r.get("reason") or "supervisor 拒绝")
+    if _supervisor_url(host):
+        # C4：按 priority 尝试 hosts；failover=next 时才顺延
+        hosted = [host] if host is not None else []
+        failover = str((getattr(provider, "health", {}) or {}).get("failover") or "")
+        if failover == "next" and provider is not None:
+            hosted += [h for h in sorted(provider.hosts, key=lambda x: x.priority)
+                       if host is None or h.id != host.id]
+        last = ""
+        for h in hosted:
+            if not _supervisor_url(h):
+                continue
+            r = _supervisor_call("/ensure", {"scene": scene}, timeout=150, host=h)
+            if r.get("status") == "OK":
+                return "switched(supervisor)" if h is host else "switched(supervisor:%s)" % h.id
+            last = "%s(%s)" % (r.get("reason") or "supervisor 拒绝", h.id)
+        return "switch-failed:%s" % (last or "no-supervisor")
     if not endpoint:
         raw = _os.environ.get("IRAF_BACKEND_CONFIG", "")
         try:

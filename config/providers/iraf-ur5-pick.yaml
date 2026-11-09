@@ -3,11 +3,18 @@ provider_id: iraf/ur5-pick
 scene_id: ur5-pick
 token_env: IRAF_PROVIDER_TOKEN
 hosts:
-  - id: x86-1
-    endpoint: 10.203.247.121:50053
-    capacity: {cores: 4, gpu: none}
-    priority: 10
+- id: x86-1
+  endpoint: 10.203.247.121:50053
+  capacity:
+    cores: 4
+    gpu: none
+  priority: 10
+  control_url: http://10.203.247.121:8770
 schedule: static
-health: {interval_s: 5, timeout_s: 2, failover: next}
-allowed_hosts: [10.203.247.121]
-digest: sha256:7336655b60db72ea158c5e94095b6b34fe5e55f222ebe9b22009efa0b3a6b49f
+health:
+  interval_s: 5
+  timeout_s: 2
+  failover: next
+allowed_hosts:
+- 10.203.247.121
+digest: sha256:dbeb6965ec79f74f21e89ecf9e2d69cf3112e8c6d3476c448c3f935fe6352303

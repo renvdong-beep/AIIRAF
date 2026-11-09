@@ -3,11 +3,18 @@ provider_id: iraf/piper-pick
 scene_id: piper-pick
 token_env: IRAF_PROVIDER_TOKEN
 hosts:
-  - id: x86-1
-    endpoint: 10.203.247.121:50052
-    capacity: {cores: 4, gpu: none}
-    priority: 10
+- id: x86-1
+  endpoint: 10.203.247.121:50052
+  capacity:
+    cores: 4
+    gpu: none
+  priority: 10
+  control_url: http://10.203.247.121:8770
 schedule: static
-health: {interval_s: 5, timeout_s: 2, failover: next}
-allowed_hosts: [10.203.247.121]
-digest: sha256:4d642bb37c2a287228dae74841bd2e6dfbb38f26cd4e840dd13478455f8c92fc
+health:
+  interval_s: 5
+  timeout_s: 2
+  failover: next
+allowed_hosts:
+- 10.203.247.121
+digest: sha256:a3b99d10f8d335649d76f2fee17074234c46dad0503cef83931d271964fc624c

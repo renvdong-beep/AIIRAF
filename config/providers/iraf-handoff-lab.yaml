@@ -3,11 +3,18 @@ provider_id: iraf/handoff-lab
 scene_id: joint-handoff
 token_env: IRAF_PROVIDER_TOKEN
 hosts:
-  - id: x86-1
-    endpoint: 10.203.247.121:50054
-    capacity: {cores: 4, gpu: none}
-    priority: 10
+- id: x86-1
+  endpoint: 10.203.247.121:50054
+  capacity:
+    cores: 4
+    gpu: none
+  priority: 10
+  control_url: http://10.203.247.121:8770
 schedule: static
-health: {interval_s: 5, timeout_s: 2, failover: next}
-allowed_hosts: [10.203.247.121]
-digest: sha256:759c2ffc2906a088382fc0f4060d5c9b212788749bc8e42ffbf73884a988260f
+health:
+  interval_s: 5
+  timeout_s: 2
+  failover: next
+allowed_hosts:
+- 10.203.247.121
+digest: sha256:4eff098e4e2cc2b9bc3292ad3ee72586224fdc2de44015bdc7834c52db9eb30a

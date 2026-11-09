@@ -70,6 +70,7 @@ class Scene:
     simulation: bool
     max_concurrency: int
     lease_ttl_s: int
+    switch_name: str = ""   # Provider 侧场景名（switch_scene.sh / supervisor 用）
     resources: List[Resource] = field(default_factory=list)
     scenario: Dict[str, Any] = field(default_factory=dict)
     display: Dict[str, Any] = field(default_factory=dict)
@@ -82,6 +83,7 @@ class Host:
     endpoint: str
     priority: int
     capacity: Dict[str, Any] = field(default_factory=dict)
+    control_url: str = ""       # supervisor 控制面（阶段 C4；空则用 IRAF_SUPERVISOR_URL）
 
     @property
     def host(self) -> str:
@@ -299,6 +301,7 @@ class SceneRegistry:
             simulation=data.get("simulation") is True,
             max_concurrency=mc,
             lease_ttl_s=ttl,
+            switch_name=str(data.get("switch_name") or ""),
             resources=resources,
             scenario=data.get("scenario") or {},
             display=data.get("display") or {},
@@ -356,8 +359,13 @@ class SceneRegistry:
             elif host_part not in allowed:
                 errors.append("%s[%s]: endpoint 主机 %r 不在 allowed_hosts %s"
                               % (path.name, hid, host_part, allowed))
+            control_url = str((item or {}).get("control_url") or "")
+            if control_url and not control_url.startswith(("http://", "https://")):
+                errors.append("%s[%s]: control_url 必须是 http(s)://：%r"
+                              % (path.name, hid, control_url))
             hosts.append(Host(id=hid, endpoint=endpoint, priority=int(prio),
-                              capacity=(item or {}).get("capacity") or {}))
+                              capacity=(item or {}).get("capacity") or {},
+                              control_url=control_url))
         if not hosts:
             errors.append("%s: hosts 必须是非空列表" % path.name)
         sched = data.get("schedule", "static")
@@ -409,7 +417,7 @@ class SceneRegistry:
             "scenes": [
                 {"scene_id": s.scene_id, "provider_id": s.provider_id, "profile": s.profile,
                  "simulation": s.simulation, "max_concurrency": s.max_concurrency,
-                 "lease_ttl_s": s.lease_ttl_s,
+                 "lease_ttl_s": s.lease_ttl_s, "switch_name": s.switch_name,
                  "resources": [{"id": r.id, "capabilities": r.capabilities} for r in s.resources],
                  "scenario": s.scenario, "display": s.display}
                 for s in sorted(self.scenes.values(), key=lambda x: x.scene_id)
@@ -418,7 +426,8 @@ class SceneRegistry:
                 {"provider_id": p.provider_id, "scene_id": p.scene_id, "schedule": p.schedule,
                  "allowed_hosts": p.allowed_hosts,
                  "hosts": [{"id": h.id, "endpoint": h.endpoint, "priority": h.priority,
-                            "capacity": h.capacity} for h in p.hosts]}
+                            "capacity": h.capacity, "control_url": h.control_url}
+                           for h in p.hosts]}
                 for p in sorted(self.providers.values(), key=lambda x: x.provider_id)
             ],
         }

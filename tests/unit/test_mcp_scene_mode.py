@@ -16,6 +16,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 SERVER = REPO / "src/iraf_adapters/mcp/server.py"
 SRC = SERVER.read_text(encoding="utf-8")
+REGISTRY = REPO / "src/iraf_core/scene_registry.py"
+SRC_REGISTRY = REGISTRY.read_text(encoding="utf-8")
 
 
 def _func_args(name: str) -> dict:
@@ -139,9 +141,9 @@ class RegistryRoutingTest(unittest.TestCase):
         self.assertLess(i_resolve, i_bridge, "必须先解析再选 bridge")
 
     def test_ensure_scene_uses_resolved_endpoint(self):
-        self.assertIn("def _ensure_scene(scene: str, endpoint: str = \"\")", SRC)
+        self.assertIn("def _ensure_scene(scene: str, endpoint: str = \"\", host=None, provider=None)", SRC)
         self.assertIn("_ensure_scene(_resolved.scene.switch_name or _resolved.scene.scene_id,", SRC)
-        self.assertIn("_resolved.host.endpoint)", SRC)
+        self.assertIn("_resolved.host.endpoint, _resolved.host, _resolved.provider", SRC)
         self.assertIn("IRAF-PROVIDER-UNAVAILABLE", SRC, "启停失败必须显式失败")
 
     def test_robot_facts_prefers_resolved(self):
@@ -151,6 +153,28 @@ class RegistryRoutingTest(unittest.TestCase):
 
     def test_run_scenario_routes_by_resolved_host(self):
         self.assertIn("host = _resolved.host.host", SRC)
+
+
+class MultiHostTest(unittest.TestCase):
+    """C4：host 级 control_url + 按 priority 的 failover。"""
+
+    def test_control_url_preferred_over_env(self):
+        # 看实现行（docstring 里也会出现同名 env，不能按首次出现位置判）
+        self.assertIn('return (host_control_url or os.environ.get("IRAF_SUPERVISOR_URL") or "")', SRC)
+
+    def test_ensure_passes_host_and_provider(self):
+        self.assertIn("_resolved.host.endpoint, _resolved.host, _resolved.provider", SRC)
+
+    def test_failover_only_when_declared(self):
+        body = SRC.split("def _ensure_scene(")[1].split("\ndef ")[0]
+        self.assertIn('failover == "next"', body)
+        self.assertIn("sorted(provider.hosts, key=lambda x: x.priority)", body)
+
+    def test_failover_reports_host(self):
+        self.assertIn('"switched(supervisor:%s)" % h.id', SRC)
+
+    def test_control_url_validation(self):
+        self.assertIn("control_url 必须是 http(s)://", SRC_REGISTRY)
 
 
 class PhaseBContractTest(unittest.TestCase):
