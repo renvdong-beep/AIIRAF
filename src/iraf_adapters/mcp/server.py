@@ -478,9 +478,29 @@ def iraf_submit_task(text: str, deadline_seconds: int = 120,
                 _resolved.scene, _resolved.host, principal.subject,
                 ttl_s=max(int(deadline_seconds) + 60, _resolved.scene.lease_ttl_s))
         except LeaseConflict as exc:
-            return json.dumps({"status": "FAILED", "error_code": "IRAF-RESOURCE-BUSY",
-                               "reason": str(exc), "lease": exc.lease.as_dict()},
-                              ensure_ascii=False)
+            # D2：failover=next 时，若还有空闲 host，就把请求改路由到那台（不排队、不静默重试）
+            free, held = _capacity_state(_resolved.provider, principal.subject)
+            failover = str((_resolved.provider.health or {}).get("failover") or "")
+            if failover == "next" and free:
+                _next = free[0]
+                try:
+                    _lease = _world_lease(_resolved.scene, _next, principal.subject,
+                                          ttl_s=max(int(deadline_seconds) + 60,
+                                                    _resolved.scene.lease_ttl_s))
+                except LeaseConflict:
+                    _lease = None
+                if _lease is not None:
+                    _resolved.host = _next          # 改路由到空闲 host
+                    auth.audit("tool_call", principal, tool="iraf_submit_task",
+                               rerouted_to=_next.id, endpoint=_next.endpoint)
+                else:
+                    return json.dumps({"status": "FAILED", "error_code": "IRAF-RESOURCE-BUSY",
+                                       "reason": str(exc), "lease": exc.lease.as_dict()},
+                                      ensure_ascii=False)
+            else:
+                return json.dumps({"status": "FAILED", "error_code": "IRAF-RESOURCE-BUSY",
+                                   "reason": str(exc), "lease": exc.lease.as_dict()},
+                                  ensure_ascii=False)
     try:
         bridge = _bridge() if _resolved is None else _bridge_for_resolved(_resolved)
         auth.require_resource(principal, bridge.dispatcher.resource_id)
@@ -849,10 +869,15 @@ def iraf_scene_status(scene_id: str = "") -> str:
     except auth.AuthError as exc:
         return _auth_error(exc)
     mode = _registry_mode()
+    _active_leases = _lease_store().list_active()
     payload: dict = {"status": "SUCCEEDED", "mode": mode,
                      "allowed_hosts": _allowed_hosts(),
                      "lease_enforce": _lease_store().enforce,
-                     "leases": [l.as_dict() for l in _lease_store().list_active()]}
+                     "leases": [l.as_dict() for l in _active_leases],
+                     "inflight": [{"execution_id": l.execution_id, "scene_id": l.scene_id,
+                                   "resource_id": l.resource_id, "holder": l.holder,
+                                   "remaining_s": round(l.remaining_s(), 1)}
+                                  for l in _active_leases if l.execution_id]}
     if mode == "off":
         payload["note"] = "注册表未启用（IRAF_SCENE_REGISTRY_MODE=off），仅报告 env 事实"
         payload["provider_endpoint"] = _endpoint_host() or None
@@ -864,6 +889,7 @@ def iraf_scene_status(scene_id: str = "") -> str:
         if (scene_id or "").strip():
             resolved = reg.resolve(scene_id)
             payload["resolved"] = resolved.as_dict()
+            payload["resolved"]["world_key"] = "host:%s/__world__" % resolved.host.id
         payload.update(reg.status())
     except Exception as exc:
         from iraf_core.scene_registry import RegistryError

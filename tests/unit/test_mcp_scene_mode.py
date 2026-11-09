@@ -155,6 +155,32 @@ class RegistryRoutingTest(unittest.TestCase):
         self.assertIn("host = _resolved.host.host", SRC)
 
 
+class InflightAndRoutingTest(unittest.TestCase):
+    """D4：scene_status 的 inflight/world_key；D2：failover=next 时的改路由。"""
+
+    def test_scene_status_has_inflight(self):
+        body = SRC.split("def iraf_scene_status(")[1].split("@app.tool()")[0]
+        self.assertIn('"inflight"', body)
+        self.assertIn("l.execution_id", body)
+
+    def test_resolved_world_key(self):
+        body = SRC.split("def iraf_scene_status(")[1].split("@app.tool()")[0]
+        self.assertIn('"world_key"', body)
+        self.assertIn('"host:%s/__world__" % resolved.host.id', body)
+
+    def test_submit_reroutes_on_conflict_when_failover(self):
+        body = SRC.split("def iraf_submit_task")[1].split("def _ensure_scene")[0]
+        self.assertIn('failover == "next" and free', body)
+        self.assertIn("_resolved.host = _next", body)
+        self.assertIn("rerouted_to", body)
+
+    def test_reroute_only_when_declared(self):
+        body = SRC.split("def iraf_submit_task")[1].split("def _ensure_scene")[0]
+        i_fail = body.find('failover == "next" and free')
+        i_assign = body.find("_resolved.host = _next")
+        self.assertGreater(i_assign, i_fail, "先判定声明再改路由")
+
+
 class LeaseSurfaceTest(unittest.TestCase):
     """D3/D4：iraf_lease 工具 + scene_status 暴露租约 + 容量判定。"""
 
