@@ -557,20 +557,10 @@ def _world_lease(scene, host, holder: str, ttl_s: int):
 
 
 def _capacity_state(provider, holder: str) -> tuple:
-    """返回 (free_hosts, held_hosts)：按 host 级世界租约统计（D2 的容量判定）。
+    """host 级世界租约的容量统计（规则在 iraf_core.leases.capacity_state，避免两套实现）。"""
+    from iraf_core.leases import capacity_state
 
-    单主机时 held_hosts 必然包含全部 host；多主机时可用 free_hosts 判断是否需要
-    返回 IRAF-CAPACITY-EXHAUSTED（而不是简单 BUSY）。
-    """
-    free, held = [], []
-    store = _lease_store()
-    for h in sorted(provider.hosts, key=lambda x: x.priority):
-        lease = store.get_active("host:%s" % h.id, "__world__")
-        if lease is None:
-            free.append(h)
-        else:
-            held.append((h, lease))
-    return free, held
+    return capacity_state(provider.hosts, _lease_store())
 
 
 def _supervisor_url(host=None) -> str:

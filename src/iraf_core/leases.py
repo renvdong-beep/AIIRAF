@@ -204,3 +204,19 @@ class LeaseStore:
                 "UPDATE leases SET released_at=?, release_reason=? "
                 "WHERE execution_id=? AND released_at IS NULL", (time.time(), reason, execution_id))
             return cur.rowcount
+
+
+def capacity_state(hosts, store: "LeaseStore", resource_id: str = "__world__"):
+    """按 host 级世界租约统计容量：返回 (free_hosts, held[(host, lease)])。
+
+    hosts 只需要有 `.id` 与 `.priority`（Host 或同名属性对象均可），便于单测。
+    多主机时 free 非空 ⇒ 还可以调度到别的 world（不必 BUSY）；free 为空 ⇒ CAPACITY-EXHAUSTED。
+    """
+    free, held = [], []
+    for h in sorted(hosts, key=lambda x: getattr(x, "priority", 0)):
+        lease = store.get_active("host:%s" % getattr(h, "id"), resource_id)
+        if lease is None:
+            free.append(h)
+        else:
+            held.append((h, lease))
+    return free, held

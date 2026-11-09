@@ -16,6 +16,7 @@ from iraf_core.leases import (  # noqa: E402
     E_RESOURCE_BUSY,
     LeaseConflict,
     LeaseStore,
+    capacity_state,
 )
 
 
@@ -105,3 +106,38 @@ def test_conflict_message_has_code(tmp_path):
     with pytest.raises(LeaseConflict) as ei:
         s.acquire("piper-pick", "piper", "bob")
     assert E_RESOURCE_BUSY in str(ei.value)
+
+
+class _Host:
+    def __init__(self, hid, prio):
+        self.id = hid
+        self.priority = prio
+
+
+def test_capacity_state_single_host(tmp_path):
+    s = store(tmp_path)
+    hosts = [_Host("x86-1", 10)]
+    free, held = capacity_state(hosts, s)
+    assert [h.id for h in free] == ["x86-1"] and not held
+    s.acquire("host:x86-1", "__world__", "alice")
+    free, held = capacity_state(hosts, s)
+    assert not free and [h.id for h, _ in held] == ["x86-1"]
+
+
+def test_capacity_state_multi_host_independent(tmp_path):
+    """D2：不同 host 的 world 租约互不影响（跨 world 可并行）。"""
+    s = store(tmp_path)
+    hosts = [_Host("x86-1", 10), _Host("x86-2", 20)]
+    s.acquire("host:x86-1", "__world__", "alice")          # 只占第一台
+    free, held = capacity_state(hosts, s)
+    assert [h.id for h in free] == ["x86-2"], "第二台应可用"
+    assert [h.id for h, _ in held] == ["x86-1"]
+
+
+def test_capacity_state_exhausted(tmp_path):
+    s = store(tmp_path)
+    hosts = [_Host("x86-1", 10), _Host("x86-2", 20)]
+    s.acquire("host:x86-1", "__world__", "alice")
+    s.acquire("host:x86-2", "__world__", "bob")
+    free, held = capacity_state(hosts, s)
+    assert free == [] and len(held) == 2
