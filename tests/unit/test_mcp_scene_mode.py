@@ -104,6 +104,17 @@ class RegistryModeTest(unittest.TestCase):
         self.assertLess(idx_resolve, idx_build, "解析必须在 build_request 之前")
 
 
+class OffModeSafetyTest(unittest.TestCase):
+    """回归：off 模式下 _resolve_scene 返回 None，不能直接解引用（曾导致 robot_mode 报错）。"""
+
+    def test_robot_mode_guards_none(self):
+        body = SRC.split("def iraf_robot_mode(")[1].split("@app.tool()")[0]
+        self.assertIn("if _resolved is not None", body, "off 模式必须先判空")
+        i_guard = body.find("if _resolved is not None")
+        i_use = body.find("_resolved.scene.scene_id")
+        self.assertGreater(i_use, i_guard, "解引用必须在判空之后")
+
+
 class AllowedHostsTest(unittest.TestCase):
     """A4：白名单单一来源 = env 显式值 > 注册表汇总 > 默认 .121。"""
 

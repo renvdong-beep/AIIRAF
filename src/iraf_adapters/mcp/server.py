@@ -284,10 +284,11 @@ def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800,
         _resolved, _scene_err = _resolve_scene(principal, scene_id)
         if _scene_err:
             return _scene_err
-        if act == "enter":
-            _SESSION_SCENE[principal.subject] = _resolved.scene.scene_id
-        _scene_payload = {"scene_id": _resolved.scene.scene_id,
-                          "resource_id": _resolved.resource.id}
+        if _resolved is not None:  # off 模式下注册表不介入：忽略 scene_id，保持旧行为
+            if act == "enter":
+                _SESSION_SCENE[principal.subject] = _resolved.scene.scene_id
+            _scene_payload = {"scene_id": _resolved.scene.scene_id,
+                              "resource_id": _resolved.resource.id}
 
     if act == "enter":
         granted = st.enter(int(ttl_seconds))
