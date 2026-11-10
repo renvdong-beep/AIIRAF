@@ -157,6 +157,9 @@ profiles:
       - protobuf
       - mujoco
       - numpy
+      # MCP 宿主（FastMCP）——2026-11-10 实证：sim-x86 上跑 iraf_adapters.mcp.server
+      # 缺这个包会 ModuleNotFoundError；且必须 <2（mcp 2.x 把 FastMCP 改名为 MCPServer）。
+      - mcp<2
     backend_entrypoint: iraf_adapters.mujoco.mujoco_backend:MujocoBackend
     # 仿真装配（2026-10-26「装完 SDK 就有 Provider」）：
     #   每套场景由**服务实例**自己声明（services[].scene）—— 不再有"角色级唯一场景"，

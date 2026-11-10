@@ -516,15 +516,22 @@ def iraf_submit_task(text: str, deadline_seconds: int = 180,
         request = build_request(text, deadline_seconds=int(deadline_seconds),
                                 controller="agentos-mcp-task")
     except ValueError as exc:
+        # 租约已拿但请求非法：必须释放，否则下一次提交会一直 BUSY 到 TTL。
+        if _lease is not None:
+            _lease_store().release(_lease.lease_id, "input-invalid")
         return json.dumps({"status": "FAILED", "error_code": "IRAF-INPUT-INVALID",
                            "reason": str(exc)}, ensure_ascii=False)
     _reject = _reject_foreign_host()
     if _reject:
+        if _lease is not None:
+            _lease_store().release(_lease.lease_id, "host-rejected")
         return _reject
     if _resolved is not None:
         _sw = _ensure_scene(_resolved.scene.switch_name or _resolved.scene.scene_id,
                             _resolved.host.endpoint, _resolved.host, _resolved.provider)
         if _sw.startswith(("switch-failed", "switch-error", "bad-endpoint", "no-endpoint")):
+            if _lease is not None:
+                _lease_store().release(_lease.lease_id, "provider-unavailable")
             return json.dumps({"status": "FAILED", "error_code": "IRAF-PROVIDER-UNAVAILABLE",
                                "reason": "Provider 启停失败（%s）：%s"
                                          % (_resolved.scene.scene_id, _sw)},

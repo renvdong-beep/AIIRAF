@@ -30,6 +30,33 @@ FILTERED_EXAMPLE = {
 }
 
 
+#: 联合世界（Go2 + Piper + UR5e）9 步交接链路的入口示例。
+#: 为什么单独给一个常量：piper/ur5 是"单技能"语义（iraf_submit_task），而 handoff_lab 是
+#: **场景级链路**（iraf_run_scenario，9 步、100–170s、必须异步轮询），调用姿势不同，
+#: 平台容易把它当成一次抓取来问。把入口、异步语义、判据口径一起写进资源返回。
+HANDOFF_LAB_EXAMPLE = {
+    "text": "跑 handoff_lab 全量演示",
+    "purpose": "联合世界 9 步交接链路（verify → dock → pick → place_in_tray → confirm → "
+               "dock_station_b → unload → place_at_b_table）的语义入口：应交给 iraf_run_scenario。",
+    "call": {
+        "tool": "iraf_run_scenario",
+        "arguments": {"scenario": "nominal", "display": "none",
+                      "scene_id": "joint-handoff", "async_mode": True},
+        "why_async": "整链约 100–170s；同步调用会让客户端超时。异步返回 run_id 后按 "
+                     "next_poll_after_s（20s）轮询 iraf_get_run。",
+    },
+    "expected": {"status": "SUCCEEDED", "passed": True, "steps": 9,
+                 "wall_seconds": "约 100–170s（x86 本地仿真；开窗更慢 10–30%）"},
+    "verify_with": "iraf_get_run(run_id)；或用 iraf_get_task(execution_id) 读事件库",
+    "notes": [
+        "判定以**报告**为准（report.passed）；链路进程 rc≠0 只作 warning（收尾段 SEGV 已知）。",
+        "display=window 需要 X 可用（本机 :1）；演示用 window，验收/回归用 none 更快。",
+        "场景有状态：跑完会搬动物体；再次演示前先复位（重启 Provider 或 ensure 对应场景）。",
+        "不要用 execute_code/terminal 自己驱动 MuJoCo；也不要把它退化成一次 pick_object 提交。",
+    ],
+}
+
+
 #: 进入机器人开发模式后的**固定动作顺序**（给平台读）。
 #: 实机教训（2026-10-22 dashboard /chat）：模型把"进入模式"理解成"先做全链路自检"，
 #: 于是自行加了一段**冒烟提交**（用户当场拒绝）。而 MuJoCo 场景有状态，一次成功抓取
