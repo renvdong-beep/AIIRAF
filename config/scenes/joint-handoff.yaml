@@ -4,7 +4,7 @@ provider_id: iraf/handoff-lab
 profile: profiles/piper_mujoco.yaml
 safety_policy: profiles/safety/simulation_lab.yaml
 simulation: true
-switch_name: joint
+switch_name: handoff_lab_joint
 max_concurrency: 1
 lease_ttl_s: 120
 description: 联合世界（Go2 + Piper + UR5e）；9 步交接链路
