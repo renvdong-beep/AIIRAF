@@ -2372,11 +2372,18 @@ class MujocoBackend:
                 for name in sorted(gripper.get("open_positions") or {}):
                     joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT,
                                                  self._model_name(str(name)))
-                    if joint_id < 0:
-                        continue
-                    actuator = next((index for index in range(int(self.model.nu))
-                                     if int(self.model.actuator_trnid[index, 0]) == int(joint_id)),
-                                    -1)
+                    actuator = -1
+                    if joint_id >= 0:
+                        actuator = next((index for index in range(int(self.model.nu))
+                                         if int(self.model.actuator_trnid[index, 0]) == int(joint_id)),
+                                        -1)
+                    if actuator < 0:
+                        # UR5e 的 Robotiq 2F-85 是**单个 tendon 执行器**，声明里的键就是执行器名
+                        # （`ur5e_rq2f85_fingers_actuator`）。只按 joint 查会 -1 ⇒ hold 静默失效
+                        # ⇒ 每段把 ctrl 从 0 插值到 163、释放再归 0（2026-11-10 实测：
+                        # 564 个采样里 ctrl 变化 551 次，即用户看到的"夹爪一直在开合"）。
+                        actuator = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR,
+                                                    self._model_name(str(name)))
                     if actuator < 0:
                         continue
                     held = float(self.data.ctrl[actuator])
@@ -2684,10 +2691,16 @@ class MujocoBackend:
                     descend, _cumulative_delta, pad_points, arm_joints, _wrist_body_td,
                     pose_correction_declaration,
                     "descend_touchdown_%d" % _index)
+                # 纠偏只走**几毫米**：按声明步长比例缩短本段时长与落稳窗。
+                # 原实现整段重放 `phase_ms`（含 4×settle）⇒ 每轮 3~4s，7 轮就把 s04 拖到 32.7s
+                # （2026-11-10 实测）。这里用 `touchdown_step_fraction`（声明值）缩放，不引入新常量。
+                _corr_ms = max(1, int(phase_ms * _step_fraction))
+                _corr_settle = max(1, min(16000, _corr_ms * 4))
                 self._move_trajectory(
-                    _carry_goal(_goal_td, "descend"), phase_ms,
+                    _carry_goal(_goal_td, "descend"), _corr_ms,
                     ctrl_offsets=self._pick_ctrl_offsets("grasp") or None,
                     sampler=_segment_sampler("place_descend_touchdown_positions", segment_samples),
+                    settle_ms=_corr_settle,
                     **carry_anchor_kwargs)
                 after_descend = _snapshot()
                 _trace("after_touchdown_%d" % _index, after_descend,
