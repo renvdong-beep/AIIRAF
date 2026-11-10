@@ -593,7 +593,7 @@ render:
   # 窗口 3D 视口几乎不亮（固定相机 mean=22.2、自由相机 mean=36.4），使用者反馈"看不到 Go2、只有红方块"；
   # 强制软件渲染后同一场景正常（固定相机 mean=95.1/非黑 68.3%、自由相机 mean=42.5）。
   # 该开关只影响**交互窗口**（离屏渲染 `render.camera` 走的路径一直正常）；关掉即回到默认 GL。
-  software_gl: true
+  software_gl: false
 
 # 速度指令 `locomote` 的接线声明（A6a-④ ⑤；Provider 配置与默认时长必须来自声明，铁律 5.3）。
 # 语义：`locomote` 的能力声明**不在这里** —— Profile 的 `capabilities` 仍只有 [stand, stop]，
