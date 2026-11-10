@@ -28,7 +28,7 @@ EnvironmentFile=-@CONFIG_DIR@/@ENV_FILE@
 # 不会静默提供一个"看似可用"的 Provider。
 EnvironmentFile=-@CONFIG_DIR@/runtime.secrets
 ExecStartPre=/bin/mkdir -p @LOG_DIR@ @DATA_DIR@
-ExecStart=@PYTHON_BIN@ -m iraf_adapters.remote.provider_cli
+ExecStart=/bin/bash @PREFIX@/@CURRENT_LINK@/deploy/sdk/scripts/provider_launch.sh
 Restart=on-failure
 RestartSec=3
 # 独立资源限额（AGENTS 6.11）：角色未声明时渲染器整行删除（x86 开发档通常不限额）。
