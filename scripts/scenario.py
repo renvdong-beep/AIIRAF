@@ -1526,9 +1526,46 @@ def _start_plant_residency(runtimes, bindings, world):
             if status != "SUCCEEDED":
                 break
 
+    # 调试采样（IRAF_DEBUG_PLANT=1）：以固定频率记录 base 自由关节 z，量"上下晃动"的幅度与频率。
+    z_samples = []
+    if os.environ.get("IRAF_DEBUG_PLANT") == "1":
+        def _z_loop():
+            backend = state.get("backend")
+            model = getattr(backend, "model", None)
+            data = getattr(backend, "data", None)
+            lock = getattr(backend, "_data_lock", None)
+            if model is None or data is None:
+                return
+            free = next((i for i in range(int(model.njnt))
+                         if int(model.jnt_type[i]) == 0), None)  # mjJNT_FREE == 0
+            if free is None:
+                return
+            adr = int(model.jnt_qposadr[free])
+            dump = os.environ.get("IRAF_DEBUG_PLANT_FILE") or ""
+            handle = open(dump, "w", encoding="utf-8") if dump else None
+            try:
+                while not stop_event.is_set():
+                    try:
+                        if lock is not None:
+                            with lock:
+                                z = float(data.qpos[adr + 2])
+                        else:
+                            z = float(data.qpos[adr + 2])
+                        z_samples.append((time.monotonic(), z))
+                        if handle is not None:
+                            handle.write("%.6f,%.9f\n" % (time.monotonic(), z))
+                            handle.flush()
+                    except Exception:
+                        return
+                    time.sleep(0.02)
+            finally:
+                if handle is not None:
+                    handle.close()
+        threading.Thread(target=_z_loop, name="plant-z-sampler", daemon=True).start()
+
     thread = threading.Thread(target=loop, name="plant-residency", daemon=True)
     thread.start()
-    return {"owner": owner_id, "skill": skill, "duration_ms": int(duration_ms),
+    return {"owner": owner_id, "skill": skill, "duration_ms": int(duration_ms), "z_samples": z_samples,
             "stop_event": stop_event, "pause_event": pause_event, "idle_event": idle_event,
             "thread": thread, "records": records, "state": state,
             "paused_steps": [], "paused_seconds": 0.0}

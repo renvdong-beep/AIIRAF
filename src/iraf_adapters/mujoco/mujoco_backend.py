@@ -2387,8 +2387,16 @@ class MujocoBackend:
                     if actuator < 0:
                         continue
                     held = float(self.data.ctrl[actuator])
+                    _before = goal.get(str(name))
                     goal[str(name)] = held
                     carry_targets.setdefault(segment, {})[str(name)] = round(held, 9)
+                    if os.environ.get("IRAF_DEBUG_GRIPPER") == "1":
+                        builtin = _before
+                        print("CARRY_HOLD " + json.dumps(
+                            {"segment": segment, "key": str(name), "actuator": int(actuator),
+                             "held_ctrl": held, "goal_before": builtin,
+                             "model_name": self._model_name(str(name))}, ensure_ascii=False),
+                            flush=True)
             return goal
         snapshot = _snapshot()
         start_row = _trace("start", snapshot, "进入放置段（应仍在夹持中）")
@@ -4510,7 +4518,16 @@ class MujocoBackend:
                 if actuator is None:
                     raise ValueError("actuator not found: " + name)
                 joint_id = int(self.model.actuator_trnid[actuator, 0])
-                starts.append(float(self.data.qpos[self.model.jnt_qposadr[joint_id]]))
+                # 初值口径按**执行器类型**区分：
+                #   · 关节位置伺服（Piper 的 joint7/8）：ctrl 与 qpos 同空间，取 qpos（历史行为）；
+                #   · **tendon 执行器**（UR5e 的 Robotiq 2F-85）：qpos 是腱长（~0.15 m），
+                #     ctrl 是 0..163 的指令 ⇒ 用 qpos 当起点会让每段把指令从 0.15 线性拉到 163
+                #     （2026-11-10 实测：564 采样 ctrl 变化 551 次 = 用户看到的"夹爪一直在开合"）。
+                #     tendon 通道的插值起点必须是**当前指令**。
+                if int(self.model.actuator_trntype[actuator]) == int(mujoco.mjtTrn.mjTRN_TENDON):
+                    starts.append(float(self.data.ctrl[actuator]))
+                else:
+                    starts.append(float(self.data.qpos[self.model.jnt_qposadr[joint_id]]))
         steps = max(1, int(math.ceil((int(duration_ms) / 1000.0) / self.model.opt.timestep)))
         pin = None
         if pin_body is not None:
