@@ -34,7 +34,7 @@ robot:
     # duration_ms 是**单次**执行时长（仿真毫秒，技能入参口径）；缺声明即拒绝跑联合世界（不猜）。
     hold:
       skill: stand
-      duration_ms: 8000
+      duration_ms: 24000
 
 model:
   # 被测模型 = 场景构建产物（步骤 13）：保证"演示与验收走同一条链路"。
