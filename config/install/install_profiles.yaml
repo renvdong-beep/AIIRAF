@@ -187,6 +187,17 @@ profiles:
           sim_scene: build/models/ur5-pick-scene.xml
           # 演示口径：按真实时间推进，动作看得见（12 s 的抓取就是 12 s，不是 2.6 s 一闪而过）。
           realtime: true
+      # 联合世界（Go2 + Piper + UR5e）的 9 步交接链路。原先只手工装过、未进声明，
+      # 导致干净安装后 handoff_lab 整链缺 Provider（2026-11-10 实证）。
+      - name: iraf-provider@handoff_lab_joint
+        template: deploy/sdk/units/iraf-provider.service.tmpl
+        scope: user
+        ports: [50054]
+        optional: false
+        scene:
+          robot_profile: profiles/piper_mujoco.yaml
+          sim_scene: build/scenes/handoff_lab/handoff_lab_joint.xml
+          realtime: false
     cross_domain:
       role: upstream
       peers: ["edge-intel"]
@@ -195,8 +206,8 @@ profiles:
     residue:
       scan_roots: ["{prefix}", "{config_dir}", "{log_dir}", "{data_dir}"]
       # 单元/端口必须与服务清单一致（install_profile_check 会逐项比对），否则卸载必留残留。
-      units: ["iraf-provider@piper.service", "iraf-provider@ur5.service"]
-      ports: [50052, 50053]
+      units: ["iraf-provider@piper.service", "iraf-provider@ur5.service", "iraf-provider@handoff_lab_joint.service"]
+      ports: [50052, 50053, 50054]
       processes: ["iraf_provider_cli", "scenario.py", "view_mujoco.py"]
 
   - id: edge-intel

@@ -130,6 +130,7 @@ def main(argv=None) -> int:
             "provider_id": data.get("provider_id"),
             "scene_id": scene_id,
             "switch_name": (scenes.get(scene_id) or {}).get("switch_name") or "",
+            "aliases": [str(a) for a in ((scenes.get(scene_id) or {}).get("aliases") or [])],
             "endpoint": host.get("endpoint"),
             "port": port,
             "unit": "iraf-provider@%s.service" % unit_name,

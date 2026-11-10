@@ -79,7 +79,9 @@ mkdir -p "${SANDBOX}" "${ART}/wheelhouse"
 # 构建目标 id **从声明取**（2026-10-19 修）：原先写死 cp311 ⇒ 换上 cp310 角色时安装预检
 # 正确地拒绝（wheelhouse 构建目标不一致），但现象看起来像"安装坏了"。演练件必须跟着声明走。
 LAYOUT_EARLY="$("${PYTHON}" "${SCRIPT_DIR}/lib_install.py" layout --profile "${PROFILE}")"
-REHEARSAL_TARGET_ID="$(printf '%s' "${LAYOUT_EARLY}" | "${PYTHON}" -c 'import json,sys;print(json.load(sys.stdin)["dependency_source"]["target_id"])')"
+# index 模式（sim-x86 等）没有 wheelhouse target_id：回退到 py3-none-any，避免演练在
+# 与"演练目的"无关的地方崩溃（2026-11-10 实测 KeyError: target_id）。
+REHEARSAL_TARGET_ID="$(printf '%s' "${LAYOUT_EARLY}" | "${PYTHON}" -c 'import json,sys;d=json.load(sys.stdin);print((d.get("dependency_source") or {}).get("target_id") or "py3-none-any")')"
 WHEEL="$("${PYTHON}" - "${ART}/wheelhouse" "${REHEARSAL_TARGET_ID}" <<'PY'
 import sys, zipfile
 from pathlib import Path

@@ -5,6 +5,7 @@ profile: profiles/piper_mujoco.yaml
 safety_policy: profiles/safety/simulation_lab.yaml
 simulation: true
 switch_name: handoff_lab_joint
+aliases: [joint]   # 板卡注册表尚未改名，保留旧名过渡
 max_concurrency: 1
 lease_ttl_s: 120
 description: 联合世界（Go2 + Piper + UR5e）；9 步交接链路
