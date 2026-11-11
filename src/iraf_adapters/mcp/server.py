@@ -455,7 +455,7 @@ def robot_dev_mode() -> str:
 
 @app.tool()
 def iraf_submit_task(text: str, deadline_seconds: int = 180,
-                     scene_id: str = "", resource_id: str = "") -> str:
+                     scene_id: str = "", resource_id: str = "", detail: bool = False) -> str:
     """提交一条**任务**给 IRAF（自然语言语义）。技能选择由 IRAF Skill Manager 完成。
 
     ⚠ 这是机器人动作的**唯一受支持入口**：
@@ -603,7 +603,55 @@ def iraf_submit_task(text: str, deadline_seconds: int = 180,
     auth.audit("tool_call", principal, tool="iraf_submit_task",
                execution_id=(result or {}).get("execution_id"),
                status=(result or {}).get("status"))
-    return json.dumps(result, ensure_ascii=False)
+    payload = result if detail else _compact_result(result, tool="iraf_submit_task")
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _compact_result(result: dict, *, tool: str) -> dict:
+    """把工具结果压成"给模型读"的最小形态（默认返回）。
+
+    为什么（2026-11-11 实测）：完整结果约 3.2k tokens（evidence/resolved/next_steps 占大头），
+    而板卡本地 Qwen3.5-9B 处理 12.4k token 输入需要 ~11.1s；chat 一轮常有多条工具消息，
+    叠加后用户要等数分钟才看到"成功"。证据不能丢，但**不必每轮都塞进上下文**：
+    默认只给结论 + 4 个关键指标 + 一句提示，需要细节时用 `detail=true` 或 `iraf_get_task`。
+    """
+    if not isinstance(result, dict):
+        return {"status": "FAILED", "reason": str(result)[:200]}
+    status = str(result.get("status") or "")
+    out = {"status": status}
+    for key in ("execution_id", "run_id", "resolved_skill", "robot_mode", "scene_id",
+                "error_code", "lease_id"):
+        if result.get(key) not in (None, "", []):
+            out[key] = result[key]
+    if result.get("reason"):
+        out["reason"] = str(result["reason"])[:240]
+    ev = result.get("evidence")
+    if not isinstance(ev, dict) or not ev:
+        inner = result.get("result")
+        ev = (inner.get("evidence") if isinstance(inner, dict) else None) or {}
+    metrics = {}
+    if isinstance(ev, dict):
+        for key, label in (("center_distance_m", "center_mm"), ("max_offset_from_tray_center_m", "offset_mm"),
+                           ("lift_delta_m", "lift_mm"), ("min_lift_delta_m", "lift_mm"),
+                           ("payload_in_tray", "payload_in_tray"), ("released", "released")):
+            if key in ev and isinstance(ev[key], (int, float)):
+                metrics[label] = round(float(ev[key]) * (1000.0 if label.endswith("_mm") else 1.0), 2)
+            elif key in ev and isinstance(ev[key], bool):
+                metrics[label] = ev[key]
+    if metrics:
+        out["metrics"] = metrics
+    if status == "SUCCEEDED":
+        out["summary"] = "%s 成功%s" % (result.get("resolved_skill") or "执行",
+                                       ("（" + ", ".join("%s=%s" % (k, v) for k, v in metrics.items()) + "）")
+                                       if metrics else "")
+        out["hint"] = "详情/证据：iraf_get_task(execution_id, detail=true)；运行态：iraf_scene_status()"
+    else:
+        out["hint"] = "失败原因见 reason；需要证据：iraf_get_task(execution_id, detail=true)"
+    steps = ((result.get("result") or {}).get("steps") if isinstance(result.get("result"), dict) else None)         or result.get("steps")
+    if isinstance(steps, list) and steps:
+        out["steps_total"] = len(steps)
+        out["steps_failed"] = [str(x.get("id")) for x in steps if isinstance(x, dict) and x.get("status") != "SUCCEEDED"][:5]
+    return out
 
 
 def _probe_host(host, timeout: float = 2.0) -> dict:
@@ -1143,7 +1191,7 @@ def iraf_lease(action: str = "list", scene_id: str = "", resource_id: str = "__w
 
 
 @app.tool()
-def iraf_get_task(execution_id: str) -> str:
+def iraf_get_task(execution_id: str, detail: bool = False) -> str:
     """按 execution_id 查询 IRAF 事件库里的执行事实（权威来源，不是缓存）。
 
     只返回**本调用方自己提交**的执行；别人的 execution_id 一律按 NOT_FOUND 处理，
@@ -1170,7 +1218,8 @@ def iraf_get_task(execution_id: str) -> str:
                           ensure_ascii=False)
     auth.audit("tool_call", principal, tool="iraf_get_task",
                execution_id=execution_id, status=result.get("status"))
-    return json.dumps(result, ensure_ascii=False)
+    payload = result if detail else _compact_result(result, tool="iraf_get_task")
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def main() -> int:
