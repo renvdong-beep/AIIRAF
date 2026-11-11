@@ -372,7 +372,7 @@ def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800,
     # 自带"正确用法示范"：模型不必自己摸索该怎么调，也减少它去翻源码/重写实现的动机。
     # 注意：examples 是**语义映射说明**，不是验收脚本；purpose 字段已明示"不要求执行"。
     payload["examples"] = {"robot_task": _WORKED_EXAMPLE, "non_robot": _FILTERED_EXAMPLE}
-    if not detail:
+    if not (detail or _verbose_output()):
         # 紧凑模式（2026-11-11 实测）：完整返回 4.3k 字符 ≈1.45k tokens，其中 skill_triggers/intents/
         # routing_policy 与工具描述、系统提示重复；板卡本地 Qwen 生成仅 13.7 tok/s，模型读得越多、
         # 回得越长，用户等得越久。默认只给"能立刻做决定"的最小集，细节用 detail=true。
@@ -612,8 +612,18 @@ def iraf_submit_task(text: str, deadline_seconds: int = 180,
     auth.audit("tool_call", principal, tool="iraf_submit_task",
                execution_id=(result or {}).get("execution_id"),
                status=(result or {}).get("status"))
-    payload = result if detail else _compact_result(result, tool="iraf_submit_task")
+    payload = result if (detail or _verbose_output()) else _compact_result(result, tool="iraf_submit_task")
     return json.dumps(payload, ensure_ascii=False)
+
+
+def _verbose_output() -> bool:
+    """返回 True 表示**关闭紧凑模式**（恢复全量工具输出）。
+
+    用途（2026-11-11）：板卡用本地 Qwen3.5-9B（实测 13.7 tok/s）时，工具输出必须精简；
+    换回更快/更大的模型后，只要在装配单里加 `IRAF_MCP_VERBOSE=1` 并重启 MCP，
+    所有工具自动回到全量输出，**不需要改代码**。
+    """
+    return (os.environ.get("IRAF_MCP_VERBOSE") or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _compact_result(result: dict, *, tool: str) -> dict:
@@ -1227,7 +1237,7 @@ def iraf_get_task(execution_id: str, detail: bool = False) -> str:
                           ensure_ascii=False)
     auth.audit("tool_call", principal, tool="iraf_get_task",
                execution_id=execution_id, status=result.get("status"))
-    payload = result if detail else _compact_result(result, tool="iraf_get_task")
+    payload = result if (detail or _verbose_output()) else _compact_result(result, tool="iraf_get_task")
     return json.dumps(payload, ensure_ascii=False)
 
 
