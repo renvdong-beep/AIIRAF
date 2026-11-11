@@ -487,7 +487,10 @@ def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800,
         # 结果模型自己补了"抓取桌上的红色球"这类不存在的示例（2026-11-11 实测）。
         # 结论：护栏不能省；省的是与系统提示重复的路由表（skill_triggers/intents/routing_policy）。
         try:
-            if _registry_mode() == "on":
+            if _plan_only():
+                # 计划模式只呈现端侧可算的场景；不要列 joint-handoff（跑不了 9 步链路）
+                payload["scenes"] = ["ur5-pick-planned", "piper-pick-planned"]
+            elif _registry_mode() == "on":
                 _reg = _registry()
                 _reg.reload_if_changed()
                 payload["scenes"] = sorted(_reg.scenes)
