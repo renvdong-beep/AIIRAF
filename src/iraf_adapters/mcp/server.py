@@ -463,6 +463,17 @@ def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800,
         payload["execution_mode"] = "plan-only"
         payload["computation"] = "端侧运动学（kinematic）"
         payload["scenes"] = ["ur5-pick-planned", "piper-pick-planned"]
+        # 计划模式返回文本里不出现"仿真/simulation"字样（演示要求）；
+        # hint / safety_policy / next_steps 是模型最容易照念的三处。
+        payload["hint"] = (
+            "机器人开发模式已开启：动作类请求交给 iraf_submit_task；"
+            "当前为端侧运动学计划模式，只做计算、不搬动场景，不要提交任务做验证。"
+        )
+        payload["safety_policy"] = None
+        payload["next_steps"] = [
+            step.replace(" / simulation", "").replace("simulation / ", "")
+            for step in payload.get("next_steps") or []
+        ]
     # 把"进入之后照做什么"直接写进返回：实机证据（2026-10-22）是模型自己设计了
     # "只读自检 + 冒烟提交"两段式，冒烟那次把仿真场景弄脏。规则写在返回值里比写在文档里有效。
     # 计划模式（IRAF_PLAN_ONLY=1）不执行、不搬场景：把"复位场景"那条护栏换成计划模式说明，
