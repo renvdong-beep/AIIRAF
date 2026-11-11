@@ -1585,6 +1585,12 @@ def _yield_residency_to_step(residency, robot_id):
         return {"paused": False}
     started = time.monotonic()
     residency["pause_event"].set()
+    if os.environ.get("IRAF_DEBUG_PLANT_FILE"):
+        try:
+            with open(os.environ["IRAF_DEBUG_PLANT_FILE"] + ".pause", "a", encoding="utf-8") as fh:
+                fh.write("pause %s %.6f\n" % (robot_id, started))
+        except Exception:
+            pass
     if not residency["idle_event"].wait(timeout=60.0):
         raise ScenarioError(
             "植物驻留未在 60 s 内让位（owner 上一轮 hold 未结束）：owner=%s"
@@ -1598,6 +1604,12 @@ def _resume_residency_after_step(residency, yield_record, step_id):
     if residency and yield_record and yield_record.get("paused"):
         residency["paused_steps"].append(str(step_id))
         residency["pause_event"].clear()
+        if os.environ.get("IRAF_DEBUG_PLANT_FILE"):
+            try:
+                with open(os.environ["IRAF_DEBUG_PLANT_FILE"] + ".pause", "a", encoding="utf-8") as fh:
+                    fh.write("resume %s %.6f\n" % (step_id, time.monotonic()))
+            except Exception:
+                pass
 
 
 def _apply_plant_demand_gate(scene, runtimes, world):
