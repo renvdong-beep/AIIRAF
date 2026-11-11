@@ -457,7 +457,15 @@ def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800,
     payload.update(_robot_facts(_resolved))
     # 把"进入之后照做什么"直接写进返回：实机证据（2026-10-22）是模型自己设计了
     # "只读自检 + 冒烟提交"两段式，冒烟那次把仿真场景弄脏。规则写在返回值里比写在文档里有效。
-    payload["next_steps"] = _enter_next_steps()
+    # 计划模式（IRAF_PLAN_ONLY=1）不执行、不搬场景：把"复位场景"那条护栏换成计划模式说明，
+    # 否则模型会反复提醒"一次抓取会搬走目标、需 reset_scene"，既误导又拖慢回复。
+    _steps = list(_enter_next_steps())
+    if _plan_only():
+        _steps = [step for step in _steps if not step.startswith("⑤")] + [
+            "⑤ 当前为端侧计划模式（IRAF_PLAN_ONLY=1）：只做运动学计算，不搬动场景、无需 reset_scene；"
+            "要真实执行需关闭该开关并确保 x86 在线"
+        ]
+    payload["next_steps"] = _steps
     # 自带"正确用法示范"：模型不必自己摸索该怎么调，也减少它去翻源码/重写实现的动机。
     # 注意：examples 是**语义映射说明**，不是验收脚本；purpose 字段已明示"不要求执行"。
     payload["examples"] = {"robot_task": _WORKED_EXAMPLE, "non_robot": _FILTERED_EXAMPLE}
@@ -477,6 +485,7 @@ def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800,
                 payload["scenes"] = sorted(_reg.scenes)
         except Exception:
             pass
+        _handoff = "跑 handoff_lab 的 nominal（场景 joint-handoff）"
         payload["allowed_task_examples"] = [
             "抓取 box_01（场景 ur5-pick）",
             "piper 抓取 box_01（场景 piper-pick）",
@@ -484,6 +493,10 @@ def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800,
             "算一下 piper 抓取计划（端侧，不跑仿真）",
             "算一下 ur5 抓取计划（端侧，不跑仿真）",
         ]
+        if _plan_only():
+            # 计划模式跑不了 9 步联合链路，别让模型把它当可选项提出来
+            payload["allowed_task_examples"] = [
+                x for x in payload["allowed_task_examples"] if x != _handoff]
         # 端侧计划计算（不跑 MuJoCo 物理、不需要 x86）：与真实执行明确分流，避免模型把
         # "算计划"也丢给 iraf_submit_task（那会去连 provider）。
         payload["planning_tool"] = {
