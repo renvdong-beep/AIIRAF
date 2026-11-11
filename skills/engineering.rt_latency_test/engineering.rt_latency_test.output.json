@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["status"],
+  "additionalProperties": true,
+  "properties": {
+    "status": {"type": "string", "enum": ["SUCCEEDED", "FAILED"]},
+    "target": {"type": "string"},
+    "command": {"type": "string"},
+    "per_core": {"type": "array", "items": {
+      "type": "object",
+      "required": ["cpu", "min_us", "max_us"],
+      "properties": {"cpu": {"type": "integer"}, "min_us": {"type": "integer"},
+                     "avg_us": {"type": ["integer", "null"]}, "max_us": {"type": "integer"}}}},
+    "summary": {"type": "object"},
+    "verdict": {"type": "object"},
+    "report": {"type": "object"},
+    "error_code": {"type": "string"},
+    "reason": {"type": "string"}
+  }
+}

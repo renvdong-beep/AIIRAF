@@ -1,0 +1,23 @@
+apiVersion: iraf.intewell.io/v1
+kind: Skill
+metadata: {name: engineering.rt_latency_test, version: 1.0.0}
+spec:
+  verification: development
+  inputSchema: engineering.rt_latency_test.input.json
+  outputSchema: engineering.rt_latency_test.output.json
+  # 诊断类能力：**不动机械臂、不申请运动租约**，与 move_joint/pick_object 等运动能力隔离。
+  # RTOS/运控域内**不安装任何 IRAF 进程**（会干扰实时性）：本 skill 由边缘侧 Provider 通过 SSH
+  # 在 RTOS 上执行固定命令 cyclictest，只解析输出并出报告。
+  requires: [engineering.rt_latency_test]
+  preconditions: []
+  intentExamples: [测试实时性能, 测一下实时延迟, 跑 cyclictest, 实时系统延迟测试, rt latency test]
+  timeoutSeconds: 360
+  cancellation: not_applicable
+  recovery: [request_handover]
+  safetyClass: build_tooling
+  providers:
+    - name: engineering_rt_latency_test
+      type: python_adapter
+      entrypoint: "iraf_skills.engineering.rt_latency:RtLatencyProvider"
+      selector: {mode: simulation}
+      priority: 100

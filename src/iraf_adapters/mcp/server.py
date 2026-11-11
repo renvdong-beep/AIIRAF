@@ -187,6 +187,52 @@ def iraf_enter_robot_mode(scene_id: str = "", detail: bool = False) -> str:
 
 
 @app.tool()
+def iraf_rt_latency(duration_s: int = 10, interval_us: int = 200,
+                    priority: int = 240, histogram_us: int = 100,
+                    target_host: str = "") -> str:
+    """测试实时系统（RTOS/运控域）的实时性能：SSH 执行 cyclictest 并出报告。
+
+    **RTOS 内不安装任何 IRAF 进程**（会干扰实时性）；本工具在边缘侧编排 SSH，
+    只执行固定命令并解析输出：
+        cyclictest --mlockall --smp --priority=<P> --interval=<I> --distance=0 -n -h <H> -q -D <D>s
+
+    目标地址来自装配单 `IRAF_RT_TARGET_HOST`（可用 target_host 临时覆盖），账号/密钥同理。
+    参数有界：duration_s 1..300、interval_us 50..100000、priority 1..255；
+    报告写入 `IRAF_RT_REPORT_DIR`（JSON + Markdown）。
+    失败显式返回 error_code：TARGET-UNCONFIGURED / SSH-FAILED / CYCLICTEST-MISSING /
+    PERMISSION / TIMEOUT / PARSE-FAILED —— 不会把失败包装成成功。
+    """
+    from iraf_adapters.mcp import auth
+    from iraf_adapters.tooling.rt_latency import RtTarget, RtTestError, run_test
+
+    try:
+        principal = _principal()
+        auth.require_scope(principal, "task.read")
+    except auth.AuthError as exc:
+        return _auth_error(exc)
+    auth.audit("tool_call", principal, tool="iraf_rt_latency",
+               target=target_host or None, duration_s=int(duration_s))
+    tgt = RtTarget.from_env()
+    if (target_host or "").strip():
+        tgt.host = target_host.strip()
+    try:
+        result = run_test(duration_s=int(duration_s), interval_us=int(interval_us),
+                          priority=int(priority), histogram_us=int(histogram_us), target=tgt)
+        result["kind"] = "diagnostic"
+        return json.dumps(result, ensure_ascii=False)
+    except RtTestError as exc:
+        hint = {
+            "TARGET-UNCONFIGURED": "设置 IRAF_RT_TARGET_HOST=<RTOS IP>（装配单 /etc/iraf/edge-intel.env）后重试",
+            "CYCLICTEST-MISSING": "在 RTOS 上安装 rt-tests（dnf install -y rt-tests）",
+            "PERMISSION": "需要 root；或设 IRAF_RT_TARGET_SUDO=1",
+            "SSH-FAILED": "检查 RTOS 可达性与 SSH 凭据（IRAF_RT_TARGET_USER/IDENTITY/KNOWN_HOSTS）",
+        }.get(exc.code, "")
+        return json.dumps({"status": "FAILED", "error_code": exc.code,
+                           "reason": exc.detail, "hint": hint, "kind": "diagnostic"},
+                          ensure_ascii=False)
+
+
+@app.tool()
 def iraf_exit_robot_mode() -> str:
     """退出「机器人开发模式」（用户说"结束/退出机器人开发模式"时调用）。等价于 action="exit"。"""
     return iraf_robot_mode(action="exit")

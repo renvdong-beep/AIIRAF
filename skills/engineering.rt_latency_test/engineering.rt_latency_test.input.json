@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "duration_s": {"type": "integer", "minimum": 1, "maximum": 300, "default": 10,
+                   "description": "测试时长（秒）"},
+    "interval_us": {"type": "integer", "minimum": 50, "maximum": 100000, "default": 200,
+                    "description": "线程周期（微秒），与使用者命令 --interval=200 一致"},
+    "priority": {"type": "integer", "minimum": 1, "maximum": 255, "default": 240,
+                 "description": "SCHED_FIFO 优先级；Intewell RT 常用 240，Linux rt-tests 上限 99"},
+    "histogram_us": {"type": "integer", "minimum": 0, "maximum": 100000, "default": 100,
+                     "description": "直方图上限（-h），同时启用汇总行输出"},
+    "target_host": {"type": "string", "description": "RTOS 地址（缺省取 IRAF_RT_TARGET_HOST）"},
+    "target_user": {"type": "string", "description": "SSH 用户（缺省 root）"}
+  }
+}
