@@ -19,9 +19,10 @@
 
 | 模式 | 结果 | 墙钟 |
 |---|---|---|
-| MCP 异步 + `display=none` | **9/9、passed=true、rc=0** | **117.2s**（总 120s） |
-| 窗口 `display=window`（GPU） | 9/9 | 130–155s（另有 1 次 `DOCK_DRIFTED` 偶发） |
-| 本地脚本 headless | 9/9 | 108s |
+| MCP 异步 + `display=none` | **9/9、passed=true、rc=0** | **117.2s**（总 120s，改造前） |
+| 本地脚本 headless（改造后） | 9/9 | 报告 **82.6–91.9s**，墙钟约 97–102s |
+| 窗口 `display=window`（GPU） | 9/9 | 墙钟 102s，报告 82.6s |
+| 连跑（`joint_stability_probe.py --runs 3`） | **3/3 通过** | 总 296s |
 
 GPU 期间利用率 37–53%；无窗口时 0%（链路由物理推进主导，渲染不在关键路径）。
 
@@ -50,3 +51,12 @@ bash /home/coretek/iraf-instance/scripts/run_full_scenario.sh nominal none 60   
 2. `mcp` 必须 `<2`：2.x 把 FastMCP 改名，`iraf_adapters.mcp.server` 起不来。
 3. `submit` 的提前返回曾泄漏世界租约 → 后续提交 `IRAF-RESOURCE-BUSY` 到 TTL；已在三条路径上释放。
 4. `software_gl: true` 会把窗口压回 llvmpipe；A4000 就位后应设 false。
+## 6. 2026-11-11 优化记录（三个观感问题）
+
+| 现象 | 根因 | 修复 | 效果 |
+|---|---|---|---|
+| piper 放 box 太久 | 触地纠偏每轮整段重放 `phase_ms`（含 4×settle），7 轮 | 纠偏时长/落稳窗按 `touchdown_step_fraction` 缩放 | s04 **32.7s → 14.4–15.8s** |
+| ur5 夹爪一直开合 | tendon 执行器插值初值误用 qpos（0.15m）而指令是 0–163 | tendon 通道初值取当前 ctrl；`_carry_goal` 支持执行器名 | ctrl 变化 **551 次 → 1 次** |
+| go2 站立上下晃 | 驻留每 8s 重发 stand，周期边界产生 0.7Hz 抖动 | 驻留周期 8s→24s（增益被停靠判据锁死，不动） | 主频 0.70Hz→**0.10Hz**，std -37% |
+
+残余：停靠走 MPC（站姿 z≈0.290）、站立走 PD（≈0.280），每次停靠结束有约 1cm 的站姿切换（事件型，不是持续抖动）。
