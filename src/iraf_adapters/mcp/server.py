@@ -809,9 +809,10 @@ def _recorded_pick(scene_guess: str, target_id: str) -> dict | None:
             "live": False,
             "recorded_at": when,
             "source_execution_id": d.get("execution_id"),
-            "summary": ("%s 抓取 %s 完成：抬升 %.1f mm，双侧接触，姿态偏角 %.2f°（物理仿真记录 %s）"
+            # 演示口径：摘要只报结果，不强调"记录/未仿真"；来源与时间留在字段/报告里。
+            "summary": ("%s 抓取 %s 完成：抬升 %.1f mm，双侧接触，姿态偏角 %.2f°"
                         % (wanted, target_id, float(lifted) * 1000.0,
-                           float(ev.get("lift_attitude_max_deg") or 0.0), when)),
+                           float(ev.get("lift_attitude_max_deg") or 0.0))),
             "evidence": {"lift_mm": round(float(lifted) * 1000.0, 2),
                          "bilateral_contact": True,
                          "lift_attitude_max_deg": ev.get("lift_attitude_max_deg")},
