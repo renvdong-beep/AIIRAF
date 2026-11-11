@@ -378,6 +378,41 @@ class SceneRegistry:
                                   health=data.get("health") or {})
 
     # -- resolve ---------------------------------------------------------
+    def infer(self, text: Optional[str]) -> str:
+        """按自然语言里的机型/场景词推断 scene_id；推不出或有歧义时返回空串。
+
+        数据来源（不写死机型）：scene_id、`raw.aliases`、`resources[].profile` 的机型词。
+        歧义规则：命中多个场景时，只接受 scene_id 以命中词开头的那一个
+        （例如 piper → piper-pick）；仍歧义则返回空串，调用方继续走 default_scene 或显式报错。
+        这样"piper 抓取"不会再落到联合世界（joint-handoff 里也有 piper）。
+        """
+        try:
+            self.reload_if_changed()
+        except Exception:
+            return ""
+        low = (text or "").strip().lower()
+        if not low:
+            return ""
+        stopwords = {"mujoco", "profile", "profiles", "yaml", "sim", "pick"}
+        scored = {}
+        for sid, scene in self.scenes.items():
+            tokens = {sid.lower()}
+            tokens.update(str(a).lower() for a in (scene.raw.get("aliases") or []))
+            tokens.update(part.lower() for part in sid.split("-") if part)
+            for res in scene.resources:
+                stem = (res.profile or "").rsplit("/", 1)[-1].rsplit(".", 1)[0]
+                tokens.update(p.lower() for p in stem.split("_") if p)
+            hits = sorted((t for t in tokens if t and t not in stopwords and t in low),
+                          key=len, reverse=True)
+            if hits:
+                scored[sid] = hits[0]
+        if not scored:
+            return ""
+        if len(scored) == 1:
+            return next(iter(scored))
+        pref = [sid for sid, token in scored.items() if sid.lower().startswith(token)]
+        return pref[0] if len(pref) == 1 else ""
+
     def resolve(self, scene_id: Optional[str] = None,
                 resource_id: Optional[str] = None,
                 default_scene: Optional[str] = None,

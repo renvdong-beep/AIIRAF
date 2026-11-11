@@ -253,6 +253,16 @@ def _registry():
     return _SCENE_REGISTRY
 
 
+def _infer_scene_from_text(text: str) -> str:
+    """注册表 off 模式返回空；异常不阻断提交（推断只是优化，不改变显式语义）。"""
+    try:
+        if _registry_mode() == "off":
+            return ""
+        return _registry().infer(text)
+    except Exception:
+        return ""
+
+
 def _resolve_scene(principal, scene_id=None, resource_id=None):
     """按档位解析场景。返回 (resolved|None, error_json|None)；off 模式恒为 (None, None)。"""
     from iraf_adapters.mcp import auth
@@ -469,6 +479,10 @@ def iraf_submit_task(text: str, deadline_seconds: int = 180,
         auth.require_scope(principal, "task.submit")
     except auth.AuthError as exc:
         return _auth_error(exc)
+    if not (scene_id or "").strip():
+        # 未显式给场景时，先从用户原话里推机型（piper/ur5/go2…），
+        # 避免"piper 抓取"落到联合世界；推不出才走 default_scene。
+        scene_id = _infer_scene_from_text(text)
     _resolved, _scene_err = _resolve_scene(principal, scene_id, resource_id or None)
     if _scene_err:
         return _scene_err
@@ -512,6 +526,14 @@ def iraf_submit_task(text: str, deadline_seconds: int = 180,
         if _lease is not None:
             _lease_store().release(_lease.lease_id, "auth-error")
         return _auth_error(exc)
+    except BaseException:
+        # 未预期异常也要释放世界租约（2026-11-11 实测：否则 BUSY 到 TTL）
+        if _lease is not None:
+            try:
+                _lease_store().release(_lease.lease_id, "pre-exec-error")
+            except Exception:
+                pass
+        raise
     try:
         request = build_request(text, deadline_seconds=int(deadline_seconds),
                                 controller="agentos-mcp-task")
@@ -521,14 +543,30 @@ def iraf_submit_task(text: str, deadline_seconds: int = 180,
             _lease_store().release(_lease.lease_id, "input-invalid")
         return json.dumps({"status": "FAILED", "error_code": "IRAF-INPUT-INVALID",
                            "reason": str(exc)}, ensure_ascii=False)
+    except BaseException:
+        # 非 ValueError（如 RuntimeError: 缺配置）同样要释放租约后再上抛
+        if _lease is not None:
+            try:
+                _lease_store().release(_lease.lease_id, "pre-exec-error")
+            except Exception:
+                pass
+        raise
     _reject = _reject_foreign_host()
     if _reject:
         if _lease is not None:
             _lease_store().release(_lease.lease_id, "host-rejected")
         return _reject
     if _resolved is not None:
-        _sw = _ensure_scene(_resolved.scene.switch_name or _resolved.scene.scene_id,
-                            _resolved.host.endpoint, _resolved.host, _resolved.provider)
+        try:
+            _sw = _ensure_scene(_resolved.scene.switch_name or _resolved.scene.scene_id,
+                                _resolved.host.endpoint, _resolved.host, _resolved.provider)
+        except BaseException:
+            if _lease is not None:
+                try:
+                    _lease_store().release(_lease.lease_id, "provider-error")
+                except Exception:
+                    pass
+            raise
         if _sw.startswith(("switch-failed", "switch-error", "bad-endpoint", "no-endpoint")):
             if _lease is not None:
                 _lease_store().release(_lease.lease_id, "provider-unavailable")

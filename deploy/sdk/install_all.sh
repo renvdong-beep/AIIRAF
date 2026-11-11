@@ -75,7 +75,7 @@ else
 fi
 for a in "${ALLOW[@]:-}"; do [ -n "$a" ] && CP_ARGS+=(--allow "$a"); done
 
-bash "${SCRIPT_DIR}/install_control_plane.sh" "${CP_ARGS[@]}" || {
+bash "${SCRIPT_DIR}/../install_control_plane.sh" "${CP_ARGS[@]}" || {
   rc=$?; echo "控制面安装失败（rc=${rc}）" >&2; exit 7; }
 
 echo "== 完成：运行时 + Provider + 控制面均已安装"

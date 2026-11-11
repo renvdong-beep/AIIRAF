@@ -26,4 +26,4 @@ resources:
   - id: joint-go2
     profile: profiles/unitree_go2_mujoco.yaml
     capabilities: [stand, locomote, dock_for_handoff, accept_payload, stop]
-digest: sha256:90a18ee6a18cab6df168e3ab2fefc8dac915ca04099d9ceb131fa0578982c4ab
+digest: sha256:310ad45211aacc40f32d2a3dbab1250375d0839135ba065517791f0edee87787
