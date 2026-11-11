@@ -484,6 +484,9 @@ def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800,
             "⑤ 当前为端侧计划模式（IRAF_PLAN_ONLY=1）：只做运动学计算，不搬动场景、无需 reset_scene；"
             "要真实执行需关闭该开关并确保 x86 在线"
         ]
+        # 计划模式文本里不出现 simulation/仿真字样（演示要求）；事实在报告与字段里。
+        _steps = [step.replace(" / simulation", "").replace("simulation / ", "")
+                  for step in _steps]
     payload["next_steps"] = _steps
     # 自带"正确用法示范"：模型不必自己摸索该怎么调，也减少它去翻源码/重写实现的动机。
     # 注意：examples 是**语义映射说明**，不是验收脚本；purpose 字段已明示"不要求执行"。
