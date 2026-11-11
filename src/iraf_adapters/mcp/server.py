@@ -222,7 +222,7 @@ def iraf_plan_task(scene_id: str = "ur5-pick-planned", target_id: str = "box_01"
                            "backend": "kinematic"}, ensure_ascii=False)
     compact = {k: result[k] for k in ("status", "planned", "physics", "backend", "scene",
                                       "target", "approach", "ik", "gripper", "timing",
-                                      "model", "report", "disclaimer")}
+                                      "model", "report", "disclaimer", "warnings")}
     compact["limits"] = {"min_margin_deg": result["limits"]["min_margin_deg"],
                          "per_joint": result["limits"]["per_joint"]}
     compact["hint"] = "⚠️ 计划计算（无物理/接触）；真实抓取需 x86 MuJoCo 或真机执行"
