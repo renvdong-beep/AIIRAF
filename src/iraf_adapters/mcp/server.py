@@ -481,7 +481,16 @@ def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800,
             "抓取 box_01（场景 ur5-pick）",
             "piper 抓取 box_01（场景 piper-pick）",
             "跑 handoff_lab 的 nominal（场景 joint-handoff）",
+            "算一下 piper 抓取计划（端侧，不跑仿真）",
+            "算一下 ur5 抓取计划（端侧，不跑仿真）",
         ]
+        # 端侧计划计算（不跑 MuJoCo 物理、不需要 x86）：与真实执行明确分流，避免模型把
+        # "算计划"也丢给 iraf_submit_task（那会去连 provider）。
+        payload["planning_tool"] = {
+            "tool": "iraf_plan_task",
+            "when": "用户要'计划/预估/不跑仿真/端侧算一下'时使用；它只算运动学，不执行、不开窗",
+            "scenes": {"ur5-pick-planned": "UR5 抓取计划", "piper-pick-planned": "Piper 抓取计划"},
+        }
         payload["reply_hint"] = ("用不超过 5 行汇报：模式 / 场景列表 / 技能数；"
                                  "示例只能逐字取自 allowed_task_examples，"
                                  "**禁止编造场景名或任务示例**；不确定就先问用户。")
