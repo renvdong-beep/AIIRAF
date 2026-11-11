@@ -107,16 +107,24 @@ provider:
 
 ## 3. 任务清单（按顺序执行）
 
-- [ ] **T0 计划 MD 入库**（本文件同时放到仓库 `docs/plans/`）
-- [ ] **T1 冻结 0.4.5**：bump → 构建 wheel+bundle（universal）→ `git tag v0.4.5` → `dist/0.4.5/` + sha256 记录
-- [ ] **T2 kinematic 引擎**：`KinematicBackend`（IK/FK、轨迹、限位、时序）+ 单测
-- [ ] **T3 场景/Provider 声明**：`ur5-pick-planned`、`piper-pick-planned`；schema 增加 `backend` 字段
-- [ ] **T4 MCP 本地路由**：`backend: kinematic` 走进程内 Runtime/Provider；不连 supervisor
-- [ ] **T5 端侧验证（板卡）**：装 mujoco aarch64（离线 wheelhouse）→ 跑 `ur5-pick-planned`/`piper-pick-planned`
+- [x] **T0 计划 MD 入库**（本文件同时放到仓库 `docs/plans/`）
+- [x] **T1 冻结 0.4.5**：bump → 构建 wheel+bundle（universal）→ `git tag v0.4.5` → `dist/0.4.5/` + sha256 记录
+- [x] **T2 kinematic 引擎**：`KinematicBackend`（IK/FK、轨迹、限位、时序）+ 单测
+- [x] **T3 场景/Provider 声明**：`ur5-pick-planned`、`piper-pick-planned`；schema 增加 `backend` 字段
+- [x] **T4 MCP 本地路由**：`backend: kinematic` 走进程内 Runtime/Provider；不连 supervisor
+- [x] **T5 端侧验证（板卡）**：装 mujoco aarch64（离线 wheelhouse）→ 跑 `ur5-pick-planned`/`piper-pick-planned`
       - 记录：IK 迭代次数/耗时、轨迹时长、限位余量、夹爪开口、报告路径
       - 与 x86 MuJoCo **规划输入**对照（同一 IK 契约，终点应一致）
-- [ ] **T6 口径检查**：报告/返回值/chat 文案三处都有 `planned/physics` 标记
-- [ ] **T7 发布 0.4.6**：bump → 构建 → `git tag v0.4.6` → `dist/0.4.6/` + 文档更新
+- [x] **T6 口径检查**：报告/返回值/chat 文案三处都有 `planned/physics` 标记
+- [x] **T7 发布 0.4.6**：bump → 构建 → `git tag v0.4.6` → `dist/0.4.6/` + 文档更新
+
+### 实施修正（2026-11-11，落地时发现）
+
+原计划写"实现 pick_object/place_object 的计划路径"，但现有 `PickObjectProvider` 的门禁要求
+`grasped=true` 且 evidence `bilateral_contact=true`（物理接触证据）。运动学没有接触，
+满足它就只能伪造 —— 违反铁律 5。**落地改为独立 planning skill**：
+`engineering.plan_task` + MCP `iraf_plan_task`，输出 `planned=true, physics=false`，
+不冒充抓取成功。这样既保留 TaskFlow→Skill→Policy→Provider 链路，也不改造运动 skill 契约。
 
 ---
 
@@ -148,6 +156,8 @@ provider:
 | 时间 | 版本 | 事件 | 产物/证据 |
 |---|---|---|---|
 | 2026-11-11 17:35 | — | 计划创建，goal 启动 | 本文件 |
+| 2026-11-11 17:37 | 0.4.5 | 冻结备份（tag v0.4.5） | wheel 53028516 / bundle 85216dd0 |
+| 2026-11-11 17:45 | 0.4.6 | 端侧验证双场景（板卡，无 x86） | ur5 0.71s、piper 0.24s；IK 6/33 次；报告 /var/lib/iraf/reports/planned |
 | 2026-11-11 | 0.4.5 | iraf_sdk-0.4.5-py3-none-any.whl | `53028516b40cf8a9` |
 | 2026-11-11 | 0.4.5 | iraf-runtime-0.4.5-universal.tar.gz | `85216dd096e7c162` |
 | 2026-11-11 | 0.4.6 | T5 端侧验证（板卡，无 x86） | ur5 wall=0.71s/IK 6 次/7.47e-07；piper wall=0.24s/IK 33 次/7.82e-06；报告 /var/lib/iraf/reports/planned |
