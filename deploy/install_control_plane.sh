@@ -22,6 +22,8 @@ REPO="${HOME}/AIIRAF"
 SUP_DIR="${HOME}/iraf-instance/scripts"
 TOKEN_FILE="${HOME}/.config/iraf/supervisor.token"
 PORT=8770
+DRY="0"
+ALLOW_FILE="${HOME}/.config/iraf/control-plane.allow"
 ALLOW=("127.0.0.1")
 
 while [ $# -gt 0 ]; do
@@ -34,12 +36,42 @@ while [ $# -gt 0 ]; do
     --token-file) TOKEN_FILE="$2"; shift 2 ;;
     --port) PORT="$2"; shift 2 ;;
     --allow) ALLOW+=("$2"); shift 2 ;;
+    --allow-file) ALLOW_FILE="$2"; shift 2 ;;
+    --dry-run) DRY="1"; shift ;;
     -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "未知参数：$1" >&2; exit 1 ;;
   esac
 done
 
 say() { echo "[control-plane] $*"; }
+
+# 允许调用本控制面的**板卡侧**地址。优先级：--allow > IRAF_CONTROL_ALLOW_HOSTS
+# > 允许文件（默认 ~/.config/iraf/control-plane.allow，一行一个）> 仅 loopback。
+# 为什么不写死：板卡 IP 随部署环境变化（多网卡时还会有多个出口地址）。
+if [ "${#ALLOW[@]}" -le 1 ]; then
+  if [ -n "${IRAF_CONTROL_ALLOW_HOSTS:-}" ]; then
+    IFS=', ' read -r -a _env_allow <<< "${IRAF_CONTROL_ALLOW_HOSTS}"
+    for a in "${_env_allow[@]}"; do [ -n "$a" ] && ALLOW+=("$a"); done
+    say "允许列表来自环境变量 IRAF_CONTROL_ALLOW_HOSTS"
+  elif [ -f "$ALLOW_FILE" ]; then
+    while IFS= read -r line; do
+      case "$line" in ''|\#*) continue ;; esac
+      ALLOW+=("$line")
+    done < "$ALLOW_FILE"
+    say "允许列表来自文件 $ALLOW_FILE"
+  fi
+fi
+if [ "${#ALLOW[@]}" -le 1 ]; then
+  say "warn: 允许列表只有 127.0.0.1 ⇒ 板卡将无法调用本控制面"
+  say "      设置方式（三选一）：--allow <板卡IP> / export IRAF_CONTROL_ALLOW_HOSTS=<IP> / 写入 $ALLOW_FILE"
+fi
+ALLOW_CSV="$(IFS=,; echo "${ALLOW[*]}")"
+
+if [ "$DRY" = "1" ]; then
+  say "dry-run 计划：host_id=$HOST_ID port=$PORT allow=$ALLOW_CSV token=$TOKEN_FILE"
+  say "  manifest 目标 /etc/iraf-agent/manifest.yaml（不会写入）"
+  exit 0
+fi
 
 say "1/6 前置检查"
 command -v python3 >/dev/null || { echo "  缺 python3"; exit 2; }
@@ -80,7 +112,6 @@ if [ ! -f "$TOKEN_FILE" ]; then
   exit 5
 fi
 chmod 600 "$TOKEN_FILE"
-ALLOW_CSV="$(IFS=,; echo "${ALLOW[*]}")"
 cat > "${HOME}/.config/systemd/user/iraf-provider-supervisor.service" <<UNIT
 [Unit]
 Description=IRAF Provider Supervisor (${HOST_ID})
