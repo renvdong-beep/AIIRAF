@@ -23,7 +23,7 @@
 |---|---|---|
 | `iraf_submit_task` | `status / execution_id / resolved_skill / metrics / summary / hint` | 全量（含 evidence、resolved、next_steps） |
 | `iraf_get_task` | 同上 | 全量执行事实 |
-| `iraf_enter_robot_mode` / `iraf_robot_mode` | 剔除 `skill_triggers / intents / routing_policy / examples`，`next_steps` 只留 2 条，附 `reply_hint`（≤3 行汇报） | 全量技能清单 |
+| `iraf_enter_robot_mode` / `iraf_robot_mode` | 剔除 `skill_triggers / intents / routing_policy / examples`；**保留完整 next_steps**（行为护栏），另给 `scenes`（真实场景清单）与 `allowed_task_examples`（逐字可用示例），附 `reply_hint`（禁止编造） | 全量技能清单 |
 
 实测收缩：submit **3,253 → 89 tokens（-97%）**；enter mode **1,450 → 393 tokens（-73%）**。
 

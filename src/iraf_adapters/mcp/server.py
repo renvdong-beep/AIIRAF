@@ -378,9 +378,24 @@ def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800,
         # 回得越长，用户等得越久。默认只给"能立刻做决定"的最小集，细节用 detail=true。
         for key in ("skill_triggers", "intents", "routing_policy", "examples"):
             payload.pop(key, None)
-        payload["next_steps"] = list(_enter_next_steps())[:2]
-        payload["reply_hint"] = ("用不超过 3 行汇报：已进入模式 / 有哪些场景 / 可用技能数；"
-                                 "不要复述字段；需要清单细节再调用 iraf_robot_mode(detail=true)。")
+        # next_steps 是**行为护栏**（"不要编造场景名/示例"），此前为省 token 只留前 2 条，
+        # 结果模型自己补了"抓取桌上的红色球"这类不存在的示例（2026-11-11 实测）。
+        # 结论：护栏不能省；省的是与系统提示重复的路由表（skill_triggers/intents/routing_policy）。
+        try:
+            if _registry_mode() == "on":
+                _reg = _registry()
+                _reg.reload_if_changed()
+                payload["scenes"] = sorted(_reg.scenes)
+        except Exception:
+            pass
+        payload["allowed_task_examples"] = [
+            "抓取 box_01（场景 ur5-pick）",
+            "piper 抓取 box_01（场景 piper-pick）",
+            "跑 handoff_lab 的 nominal（场景 joint-handoff）",
+        ]
+        payload["reply_hint"] = ("用不超过 5 行汇报：模式 / 场景列表 / 技能数；"
+                                 "示例只能逐字取自 allowed_task_examples，"
+                                 "**禁止编造场景名或任务示例**；不确定就先问用户。")
     return json.dumps(payload, ensure_ascii=False)
 
 
