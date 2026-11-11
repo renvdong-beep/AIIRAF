@@ -1,0 +1,583 @@
+<mujoco model="go2">
+  <compiler angle="radian" />
+
+  <option impratio="100" cone="elliptic" />
+
+  <size nkey="2" nuser_actuator="1" />
+
+  <default>
+    <default class="go2">
+      <joint armature="0.01" damping="0.1" frictionloss="0.2" />
+      <geom condim="1" friction="0.4" margin="0.001" />
+      <general ctrlrange="-23.7 23.7" />
+      <default class="abduction">
+        <joint range="-1.0472 1.0472" />
+      </default>
+      <default class="hip">
+        <default class="front_hip">
+          <joint range="-1.5708 3.4907" />
+        </default>
+        <default class="back_hip">
+          <joint range="-0.5236 4.5379" />
+        </default>
+      </default>
+      <default class="knee">
+        <joint range="-2.7227 -0.83776" />
+        <general ctrlrange="-45.43 45.43" />
+      </default>
+      <default class="visual">
+        <geom type="mesh" contype="0" conaffinity="0" group="2" />
+      </default>
+      <default class="collision">
+        <geom group="3" />
+        <default class="foot">
+          <geom size="0.022 0 0" condim="6" priority="1" friction="0.4 0.02 0.01" />
+        </default>
+      </default>
+    </default>
+    <default class="piper_main" />
+    <default class="ur5e_main">
+      <default class="ur5e_ur5e">
+        <material shininess="0.25" />
+        <joint range="-6.28319 6.28319" armature="0.1" />
+        <site size="0.001 0.005 0.005" group="4" rgba="0.5 0.5 0.5 0.3" />
+        <general ctrlrange="-6.2831 6.2831" forcerange="-150 150" biastype="affine" gainprm="2000" biasprm="0 -2000 -400" />
+        <default class="ur5e_size3">
+          <default class="ur5e_size3_limited">
+            <joint range="-3.1415 3.1415" />
+            <general ctrlrange="-3.1415 3.1415" />
+          </default>
+        </default>
+        <default class="ur5e_size1">
+          <general forcerange="-28 28" gainprm="500" biasprm="0 -500 -100" />
+        </default>
+        <default class="ur5e_visual">
+          <geom type="mesh" contype="0" conaffinity="0" group="2" />
+        </default>
+        <default class="ur5e_collision">
+          <geom type="capsule" group="3" />
+          <default class="ur5e_eef_collision">
+            <geom type="cylinder" />
+          </default>
+        </default>
+      </default>
+      <default class="ur5e_rq2f85_2f85">
+        <mesh scale="0.001 0.001 0.001" />
+        <general biastype="affine" />
+        <default class="ur5e_rq2f85_driver">
+          <joint solreflimit="0.005" solimplimit="0.95 0.99" range="0 0.8" armature="0.005" damping="0.1" />
+        </default>
+        <default class="ur5e_rq2f85_follower">
+          <joint solreflimit="0.005" solimplimit="0.95 0.99" range="-0.872664 0.872664" armature="0.001" />
+        </default>
+        <default class="ur5e_rq2f85_spring_link">
+          <joint springref="2.62" stiffness="0.05" range="-0.296706 0.8" armature="0.001" damping="0.00125" />
+        </default>
+        <default class="ur5e_rq2f85_coupler">
+          <joint solreflimit="0.005" solimplimit="0.95 0.99" range="-1.57 0" armature="0.001" />
+        </default>
+        <default class="ur5e_rq2f85_visual">
+          <geom type="mesh" contype="0" conaffinity="0" group="2" />
+        </default>
+        <default class="ur5e_rq2f85_collision">
+          <geom type="mesh" group="3" />
+          <default class="ur5e_rq2f85_pad_box1">
+            <geom size="0.011 0.004 0.009375" type="box" priority="1" friction="0.7" solref="0.004" solimp="0.95 0.99" rgba="0.55 0.55 0.55 1" />
+          </default>
+          <default class="ur5e_rq2f85_pad_box2">
+            <geom size="0.011 0.004 0.009375" type="box" priority="1" friction="0.6" solref="0.004" solimp="0.95 0.99" rgba="0.45 0.45 0.45 1" />
+          </default>
+        </default>
+      </default>
+    </default>
+  </default>
+
+  <asset>
+    <material name="metal" rgba="0.9 0.95 0.95 1" />
+    <material name="black" rgba="0 0 0 1" />
+    <material name="white" />
+    <material name="gray" rgba="0.671705 0.692426 0.77427 1" />
+    <material name="box_01_material" rgba="0.82 0.22 0.12 1" />
+    <material name="tray_01_material" rgba="0.25 0.3 0.35 1" />
+    <material name="arm_pedestal_material" rgba="0.45 0.45 0.5 1" />
+    <material name="place_pad_b_material" rgba="0.35 0.45 0.3 1" />
+    <material name="ur5e_black" class="ur5e_ur5e" rgba="0.033 0.033 0.033 1" />
+    <material name="ur5e_jointgray" class="ur5e_ur5e" rgba="0.278 0.278 0.278 1" />
+    <material name="ur5e_linkgray" class="ur5e_ur5e" rgba="0.82 0.82 0.82 1" />
+    <material name="ur5e_urblue" class="ur5e_ur5e" rgba="0.49 0.678 0.8 1" />
+    <material name="ur5e_rq2f85_metal" rgba="0.58 0.58 0.58 1" />
+    <material name="ur5e_rq2f85_silicone" rgba="0.1882 0.1882 0.1882 1" />
+    <material name="ur5e_rq2f85_gray" rgba="0.4627 0.4627 0.4627 1" />
+    <material name="ur5e_rq2f85_black" rgba="0.149 0.149 0.149 1" />
+    <mesh name="base_0" file="handoff_lab_joint_assets/handoff_lab_joint_1_base_0.obj" />
+    <mesh name="base_1" file="handoff_lab_joint_assets/handoff_lab_joint_1_base_1.obj" />
+    <mesh name="base_2" file="handoff_lab_joint_assets/base_2.obj" />
+    <mesh name="base_3" file="handoff_lab_joint_assets/base_3.obj" />
+    <mesh name="base_4" file="handoff_lab_joint_assets/base_4.obj" />
+    <mesh name="hip_0" file="handoff_lab_joint_assets/hip_0.obj" />
+    <mesh name="hip_1" file="handoff_lab_joint_assets/hip_1.obj" />
+    <mesh name="thigh_0" file="handoff_lab_joint_assets/thigh_0.obj" />
+    <mesh name="thigh_1" file="handoff_lab_joint_assets/thigh_1.obj" />
+    <mesh name="thigh_mirror_0" file="handoff_lab_joint_assets/thigh_mirror_0.obj" />
+    <mesh name="thigh_mirror_1" file="handoff_lab_joint_assets/thigh_mirror_1.obj" />
+    <mesh name="calf_0" file="handoff_lab_joint_assets/calf_0.obj" />
+    <mesh name="calf_1" file="handoff_lab_joint_assets/calf_1.obj" />
+    <mesh name="calf_mirror_0" file="handoff_lab_joint_assets/calf_mirror_0.obj" />
+    <mesh name="calf_mirror_1" file="handoff_lab_joint_assets/calf_mirror_1.obj" />
+    <mesh name="foot" file="handoff_lab_joint_assets/foot.obj" />
+    <mesh name="piper_base_link" content_type="model/stl" file="handoff_lab_joint_assets/base_link.STL" />
+    <mesh name="piper_link1" content_type="model/stl" file="handoff_lab_joint_assets/link1.STL" />
+    <mesh name="piper_link2" content_type="model/stl" file="handoff_lab_joint_assets/link2.STL" />
+    <mesh name="piper_link3" content_type="model/stl" file="handoff_lab_joint_assets/link3.STL" />
+    <mesh name="piper_link4" content_type="model/stl" file="handoff_lab_joint_assets/link4.STL" />
+    <mesh name="piper_link5" content_type="model/stl" file="handoff_lab_joint_assets/link5.STL" />
+    <mesh name="piper_link6" content_type="model/stl" file="handoff_lab_joint_assets/link6.STL" />
+    <mesh name="piper_gripper_base" content_type="model/stl" file="handoff_lab_joint_assets/gripper_base.STL" />
+    <mesh name="piper_link7" content_type="model/stl" file="handoff_lab_joint_assets/link7.STL" />
+    <mesh name="piper_link8" content_type="model/stl" file="handoff_lab_joint_assets/link8.STL" />
+    <mesh name="ur5e_base_0" content_type="model/obj" file="handoff_lab_joint_assets/base_0.obj" />
+    <mesh name="ur5e_base_1" content_type="model/obj" file="handoff_lab_joint_assets/base_1.obj" />
+    <mesh name="ur5e_shoulder_0" content_type="model/obj" file="handoff_lab_joint_assets/shoulder_0.obj" />
+    <mesh name="ur5e_shoulder_1" content_type="model/obj" file="handoff_lab_joint_assets/shoulder_1.obj" />
+    <mesh name="ur5e_shoulder_2" content_type="model/obj" file="handoff_lab_joint_assets/shoulder_2.obj" />
+    <mesh name="ur5e_upperarm_0" content_type="model/obj" file="handoff_lab_joint_assets/upperarm_0.obj" />
+    <mesh name="ur5e_upperarm_1" content_type="model/obj" file="handoff_lab_joint_assets/upperarm_1.obj" />
+    <mesh name="ur5e_upperarm_2" content_type="model/obj" file="handoff_lab_joint_assets/upperarm_2.obj" />
+    <mesh name="ur5e_upperarm_3" content_type="model/obj" file="handoff_lab_joint_assets/upperarm_3.obj" />
+    <mesh name="ur5e_forearm_0" content_type="model/obj" file="handoff_lab_joint_assets/forearm_0.obj" />
+    <mesh name="ur5e_forearm_1" content_type="model/obj" file="handoff_lab_joint_assets/forearm_1.obj" />
+    <mesh name="ur5e_forearm_2" content_type="model/obj" file="handoff_lab_joint_assets/forearm_2.obj" />
+    <mesh name="ur5e_forearm_3" content_type="model/obj" file="handoff_lab_joint_assets/forearm_3.obj" />
+    <mesh name="ur5e_wrist1_0" content_type="model/obj" file="handoff_lab_joint_assets/wrist1_0.obj" />
+    <mesh name="ur5e_wrist1_1" content_type="model/obj" file="handoff_lab_joint_assets/wrist1_1.obj" />
+    <mesh name="ur5e_wrist1_2" content_type="model/obj" file="handoff_lab_joint_assets/wrist1_2.obj" />
+    <mesh name="ur5e_wrist2_0" content_type="model/obj" file="handoff_lab_joint_assets/wrist2_0.obj" />
+    <mesh name="ur5e_wrist2_1" content_type="model/obj" file="handoff_lab_joint_assets/wrist2_1.obj" />
+    <mesh name="ur5e_wrist2_2" content_type="model/obj" file="handoff_lab_joint_assets/wrist2_2.obj" />
+    <mesh name="ur5e_wrist3" content_type="model/obj" file="handoff_lab_joint_assets/wrist3.obj" />
+    <mesh name="ur5e_rq2f85_base_mount.stl" class="ur5e_rq2f85_2f85" content_type="model/stl" file="handoff_lab_joint_assets/rq2f85_base_mount.stl" />
+    <mesh name="ur5e_rq2f85_base.stl" class="ur5e_rq2f85_2f85" content_type="model/stl" file="handoff_lab_joint_assets/rq2f85_base.stl" />
+    <mesh name="ur5e_rq2f85_driver.stl" class="ur5e_rq2f85_2f85" content_type="model/stl" file="handoff_lab_joint_assets/rq2f85_driver.stl" />
+    <mesh name="ur5e_rq2f85_coupler.stl" class="ur5e_rq2f85_2f85" content_type="model/stl" file="handoff_lab_joint_assets/rq2f85_coupler.stl" />
+    <mesh name="ur5e_rq2f85_follower.stl" class="ur5e_rq2f85_2f85" content_type="model/stl" file="handoff_lab_joint_assets/rq2f85_follower.stl" />
+    <mesh name="ur5e_rq2f85_pad.stl" class="ur5e_rq2f85_2f85" content_type="model/stl" file="handoff_lab_joint_assets/rq2f85_pad.stl" />
+    <mesh name="ur5e_rq2f85_silicone_pad.stl" class="ur5e_rq2f85_2f85" content_type="model/stl" file="handoff_lab_joint_assets/rq2f85_silicone_pad.stl" />
+    <mesh name="ur5e_rq2f85_spring_link.stl" class="ur5e_rq2f85_2f85" content_type="model/stl" file="handoff_lab_joint_assets/rq2f85_spring_link.stl" />
+  </asset>
+
+  <worldbody>
+    <geom name="workbench" size="1.5 1.5 0.025" pos="0 0 -0.025" type="box" friction="1 0.02 0.001" rgba="0.35 0.35 0.38 1" />
+    <site name="handoff_station_frame" pos="0.45 0 0" />
+    <site name="handoff_station_frame_b" pos="0.15 0.45 0" />
+    <camera name="overhead_camera" pos="0.28 -0.72 0.72" quat="0.960445 0.278468 0 0" fovy="78" />
+    <light name="key" pos="0 0 0" dir="-0.156055 0.156055 -0.975343" type="directional" diffuse="0.85 0.84 0.82" specular="0.25 0.25 0.25" />
+    <light name="fill" pos="0 0 0" dir="0.704664 -0.29361 -0.645942" type="directional" diffuse="0.3 0.3 0.3" specular="0.05 0.05 0.05" />
+    <light name="rim" pos="0 0 0" dir="0.296174 0.829288 -0.473879" type="directional" diffuse="0.22 0.22 0.24" specular="0 0 0" />
+    <body name="base_link" childclass="go2" pos="0 0 0.445">
+      <inertial pos="0.021112 0 -0.005366" quat="-0.000543471 0.713435 -0.00173769 0.700719" mass="6.921" diaginertia="0.107027 0.0980771 0.0244531" />
+      <joint type="free" limited="false" actuatorfrclimited="false" armature="0" damping="0" frictionloss="0" />
+      <geom class="visual" material="black" mesh="base_0" />
+      <geom class="visual" material="black" mesh="base_1" />
+      <geom class="visual" material="black" mesh="base_2" />
+      <geom class="visual" material="white" mesh="base_3" />
+      <geom class="visual" material="gray" mesh="base_4" />
+      <geom class="collision" size="0.1881 0.04675 0.057" type="box" />
+      <geom class="collision" size="0.05 0.045" pos="0.285 0 0.01" type="cylinder" />
+      <geom class="collision" size="0.047" pos="0.293 0 -0.06" />
+      <site name="imu" pos="-0.02557 0 0.04232" />
+      <site name="tray_frame" pos="0 0 0.057" />
+      <site name="payload_lidar_site" pos="0 0 0.12" />
+      <body name="FL_hip" pos="0.1934 0.0465 0">
+        <inertial pos="-0.0054 0.00194 -0.000105" quat="0.497014 0.499245 0.505462 0.498237" mass="0.678" diaginertia="0.00088403 0.000596003 0.000479967" />
+        <joint name="FL_hip_joint" class="abduction" pos="0 0 0" axis="1 0 0" />
+        <geom class="visual" material="metal" mesh="hip_0" />
+        <geom class="visual" material="gray" mesh="hip_1" />
+        <geom class="collision" size="0.046 0.02" pos="0 0.08 0" quat="0.707107 0.707107 0 0" type="cylinder" />
+        <body name="FL_thigh" pos="0 0.0955 0">
+          <inertial pos="-0.00374 -0.0223 -0.0327" quat="0.829533 0.0847635 -0.0200632 0.551623" mass="1.152" diaginertia="0.00594973 0.00584149 0.000878787" />
+          <joint name="FL_thigh_joint" class="front_hip" pos="0 0 0" axis="0 1 0" />
+          <geom class="visual" material="metal" mesh="thigh_0" />
+          <geom class="visual" material="gray" mesh="thigh_1" />
+          <geom class="collision" size="0.1065 0.01225 0.017" pos="0 0 -0.1065" quat="0.707107 0 0.707107 0" type="box" />
+          <body name="FL_calf" pos="0 0 -0.213">
+            <inertial pos="0.00629595 -0.000622121 -0.141417" quat="0.710672 0.00154099 -0.00450087 0.703508" mass="0.241352" diaginertia="0.0014901 0.00146356 5.31397e-05" />
+            <joint name="FL_calf_joint" class="knee" pos="0 0 0" axis="0 1 0" />
+            <geom class="visual" material="gray" mesh="calf_0" />
+            <geom class="visual" material="black" mesh="calf_1" />
+            <geom class="collision" size="0.012 0.06" pos="0.008 0 -0.06" quat="0.994493 0 -0.104807 0" type="cylinder" />
+            <geom class="collision" size="0.011 0.0325" pos="0.02 0 -0.148" quat="0.999688 0 0.0249974 0" type="cylinder" />
+            <geom class="visual" pos="0 0 -0.213" quat="1 0 0 0" material="black" mesh="foot" />
+            <geom name="FL" class="foot" pos="-0.002 0 -0.213" />
+            <body name="FL_foot" pos="0 0 -0.213" />
+          </body>
+        </body>
+      </body>
+      <body name="FR_hip" pos="0.1934 -0.0465 0">
+        <inertial pos="-0.0054 -0.00194 -0.000105" quat="0.498237 0.505462 0.499245 0.497014" mass="0.678" diaginertia="0.00088403 0.000596003 0.000479967" />
+        <joint name="FR_hip_joint" class="abduction" pos="0 0 0" axis="1 0 0" />
+        <geom class="visual" quat="4.63268e-05 1 0 0" material="metal" mesh="hip_0" />
+        <geom class="visual" quat="4.63268e-05 1 0 0" material="gray" mesh="hip_1" />
+        <geom class="collision" size="0.046 0.02" pos="0 -0.08 0" quat="0.707107 0.707107 0 0" type="cylinder" />
+        <body name="FR_thigh" pos="0 -0.0955 0">
+          <inertial pos="-0.00374 0.0223 -0.0327" quat="0.551623 -0.0200632 0.0847635 0.829533" mass="1.152" diaginertia="0.00594973 0.00584149 0.000878787" />
+          <joint name="FR_thigh_joint" class="front_hip" pos="0 0 0" axis="0 1 0" />
+          <geom class="visual" material="metal" mesh="thigh_mirror_0" />
+          <geom class="visual" material="gray" mesh="thigh_mirror_1" />
+          <geom class="collision" size="0.1065 0.01225 0.017" pos="0 0 -0.1065" quat="0.707107 0 0.707107 0" type="box" />
+          <body name="FR_calf" pos="0 0 -0.213">
+            <inertial pos="0.00629595 0.000622121 -0.141417" quat="0.703508 -0.00450087 0.00154099 0.710672" mass="0.241352" diaginertia="0.0014901 0.00146356 5.31397e-05" />
+            <joint name="FR_calf_joint" class="knee" pos="0 0 0" axis="0 1 0" />
+            <geom class="visual" material="gray" mesh="calf_mirror_0" />
+            <geom class="visual" material="black" mesh="calf_mirror_1" />
+            <geom class="collision" size="0.013 0.06" pos="0.01 0 -0.06" quat="0.995004 0 -0.0998334 0" type="cylinder" />
+            <geom class="collision" size="0.011 0.0325" pos="0.02 0 -0.148" quat="0.999688 0 0.0249974 0" type="cylinder" />
+            <geom class="visual" pos="0 0 -0.213" quat="1 0 0 0" material="black" mesh="foot" />
+            <geom name="FR" class="foot" pos="-0.002 0 -0.213" />
+            <body name="FR_foot" pos="0 0 -0.213" />
+          </body>
+        </body>
+      </body>
+      <body name="RL_hip" pos="-0.1934 0.0465 0">
+        <inertial pos="0.0054 0.00194 -0.000105" quat="0.505462 0.498237 0.497014 0.499245" mass="0.678" diaginertia="0.00088403 0.000596003 0.000479967" />
+        <joint name="RL_hip_joint" class="abduction" pos="0 0 0" axis="1 0 0" />
+        <geom class="visual" quat="4.63268e-05 0 1 0" material="metal" mesh="hip_0" />
+        <geom class="visual" quat="4.63268e-05 0 1 0" material="gray" mesh="hip_1" />
+        <geom class="collision" size="0.046 0.02" pos="0 0.08 0" quat="0.707107 0.707107 0 0" type="cylinder" />
+        <body name="RL_thigh" pos="0 0.0955 0">
+          <inertial pos="-0.00374 -0.0223 -0.0327" quat="0.829533 0.0847635 -0.0200632 0.551623" mass="1.152" diaginertia="0.00594973 0.00584149 0.000878787" />
+          <joint name="RL_thigh_joint" class="back_hip" pos="0 0 0" axis="0 1 0" />
+          <geom class="visual" material="metal" mesh="thigh_0" />
+          <geom class="visual" material="gray" mesh="thigh_1" />
+          <geom class="collision" size="0.1065 0.01225 0.017" pos="0 0 -0.1065" quat="0.707107 0 0.707107 0" type="box" />
+          <body name="RL_calf" pos="0 0 -0.213">
+            <inertial pos="0.00629595 -0.000622121 -0.141417" quat="0.710672 0.00154099 -0.00450087 0.703508" mass="0.241352" diaginertia="0.0014901 0.00146356 5.31397e-05" />
+            <joint name="RL_calf_joint" class="knee" pos="0 0 0" axis="0 1 0" />
+            <geom class="visual" material="gray" mesh="calf_0" />
+            <geom class="visual" material="black" mesh="calf_1" />
+            <geom class="collision" size="0.013 0.06" pos="0.01 0 -0.06" quat="0.995004 0 -0.0998334 0" type="cylinder" />
+            <geom class="collision" size="0.011 0.0325" pos="0.02 0 -0.148" quat="0.999688 0 0.0249974 0" type="cylinder" />
+            <geom class="visual" pos="0 0 -0.213" quat="1 0 0 0" material="black" mesh="foot" />
+            <geom name="RL" class="foot" pos="-0.002 0 -0.213" />
+            <body name="RL_foot" pos="0 0 -0.213" />
+          </body>
+        </body>
+      </body>
+      <body name="RR_hip" pos="-0.1934 -0.0465 0">
+        <inertial pos="0.0054 -0.00194 -0.000105" quat="0.499245 0.497014 0.498237 0.505462" mass="0.678" diaginertia="0.00088403 0.000596003 0.000479967" />
+        <joint name="RR_hip_joint" class="abduction" pos="0 0 0" axis="1 0 0" />
+        <geom class="visual" quat="2.14617e-09 4.63268e-05 4.63268e-05 -1" material="metal" mesh="hip_0" />
+        <geom class="visual" quat="2.14617e-09 4.63268e-05 4.63268e-05 -1" material="gray" mesh="hip_1" />
+        <geom class="collision" size="0.046 0.02" pos="0 -0.08 0" quat="0.707107 0.707107 0 0" type="cylinder" />
+        <body name="RR_thigh" pos="0 -0.0955 0">
+          <inertial pos="-0.00374 0.0223 -0.0327" quat="0.551623 -0.0200632 0.0847635 0.829533" mass="1.152" diaginertia="0.00594973 0.00584149 0.000878787" />
+          <joint name="RR_thigh_joint" class="back_hip" pos="0 0 0" axis="0 1 0" />
+          <geom class="visual" material="metal" mesh="thigh_mirror_0" />
+          <geom class="visual" material="gray" mesh="thigh_mirror_1" />
+          <geom class="collision" size="0.1065 0.01225 0.017" pos="0 0 -0.1065" quat="0.707107 0 0.707107 0" type="box" />
+          <body name="RR_calf" pos="0 0 -0.213">
+            <inertial pos="0.00629595 0.000622121 -0.141417" quat="0.703508 -0.00450087 0.00154099 0.710672" mass="0.241352" diaginertia="0.0014901 0.00146356 5.31397e-05" />
+            <joint name="RR_calf_joint" class="knee" pos="0 0 0" axis="0 1 0" />
+            <geom class="visual" material="gray" mesh="calf_mirror_0" />
+            <geom class="visual" material="black" mesh="calf_mirror_1" />
+            <geom class="collision" size="0.013 0.06" pos="0.01 0 -0.06" quat="0.995004 0 -0.0998334 0" type="cylinder" />
+            <geom class="collision" size="0.011 0.0325" pos="0.02 0 -0.148" quat="0.999688 0 0.0249974 0" type="cylinder" />
+            <geom class="visual" pos="0 0 -0.213" quat="1 0 0 0" material="black" mesh="foot" />
+            <geom name="RR" class="foot" pos="-0.002 0 -0.213" />
+            <body name="RR_foot" pos="0 0 -0.213" />
+          </body>
+        </body>
+      </body>
+      <body name="tray_01" pos="0 0 0.057">
+        <geom name="tray_01_geom" size="0.12 0.08 0.01" type="box" friction="1.4 0.03 0.001" margin="0" mass="0.35" material="tray_01_material" />
+      </body>
+    </body>
+    <body name="box_01" pos="0.28 -0.28 0.025">
+      <joint name="box_01_free" type="free" limited="false" actuatorfrclimited="false" />
+      <geom name="box_01_geom" size="0.025 0.025 0.025" type="box" friction="2 0.05 0.001" mass="0.04" material="box_01_material" />
+    </body>
+    <body name="arm_pedestal" pos="0.45 -0.45 0.057">
+      <geom name="arm_pedestal_geom" size="0.09 0.09 0.057" type="box" mass="5" material="arm_pedestal_material" />
+    </body>
+    <body name="place_pad_b" pos="0.88 0.7 -0.005">
+      <geom name="place_pad_b_geom" size="0.18 0.18 0.01" type="box" friction="1.4 0.03 0.001" mass="0.05" material="place_pad_b_material" />
+    </body>
+    <geom pos="0.45 -0.45 0.12" quat="0.382683 0 0 0.92388" type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="piper_base_link" />
+    <body name="piper_link1" pos="0.45 -0.45 0.243" quat="0.382683 0 0 0.92388">
+      <inertial pos="0.000121505 0.000104632 -0.00438597" quat="0.486797 0.49897 -0.50059 0.513292" mass="0.215052" diaginertia="0.000116369 0.00010964 9.9555e-05" />
+      <joint name="piper_joint1" pos="0 0 0" axis="0 0 1" limited="true" range="-2.618 2.168" damping="300" armature="0.5" />
+      <geom type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="piper_link1" />
+      <body name="piper_link2" quat="0.0356735 -0.0356786 -0.706207 -0.706205">
+        <inertial pos="0.198666 -0.0109269 0.00142122" quat="0.0189031 0.705267 -0.0456298 0.707219" mass="0.463914" diaginertia="0.00104423 0.0010069 0.000207486" />
+        <joint name="piper_joint2" pos="0 0 0" axis="0 0 1" limited="true" range="0 3.14" damping="100" armature="0.5" />
+        <geom type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="piper_link2" />
+        <body name="piper_link3" pos="0.28503 0 0" quat="0.637536 0 0 -0.77042">
+          <inertial pos="-0.0202738 -0.133915 -0.000458683" quat="0.528127 0.491307 -0.505056 0.473938" mass="0.219942" diaginertia="0.000201238 0.000190068 7.08709e-05" />
+          <joint name="piper_joint3" pos="0 0 0" axis="0 0 1" limited="true" range="-2.967 0" damping="20" armature="0.5" />
+          <geom type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="piper_link3" />
+          <body name="piper_link4" pos="-0.021984 -0.25075 0" quat="0.707105 0.707108 0 0">
+            <inertial pos="-9.66636e-05 0.000876064 -0.00496881" quat="0.512749 0.48584 0.481646 0.518714" mass="0.131814" diaginertia="5.1333e-05 4.14831e-05 3.96892e-05" />
+            <joint name="piper_joint4" pos="0 0 0" axis="0 0 1" limited="true" range="-1.745 1.745" damping="5" armature="0.5" />
+            <geom type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="piper_link4" />
+            <body name="piper_link5" quat="0.707105 -0.707108 0 0">
+              <inertial pos="-4.10554e-05 -0.0566487 -0.00372058" quat="0.492375 0.506639 0.49332 0.507463" mass="0.134101" diaginertia="5.27778e-05 4.60364e-05 4.10994e-05" />
+              <joint name="piper_joint5" pos="0 0 0" axis="0 0 1" limited="true" range="-1.22 1.22" damping="2" armature="0.5" />
+              <geom type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="piper_link5" />
+              <body name="piper_link6" pos="8.8259e-05 -0.091 0" quat="0.707105 0.707108 0 0">
+                <inertial pos="-0.000179422 7.72241e-05 0.0305765" quat="0.498967 0.497649 -0.502223 0.501147" mass="0.152309" diaginertia="0.000119759 0.000110059 4.99704e-05" />
+                <joint name="piper_joint6" pos="0 0 0" axis="0 0 1" limited="true" range="-2.0944 2.0944" damping="0.1" armature="0.5" />
+                <geom type="mesh" rgba="0.898039 0.917647 0.929412 1" mesh="piper_link6" />
+                <geom type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="piper_gripper_base" />
+                <body name="piper_link7" pos="0 0 0.1358" quat="0.707105 0.707108 0 0">
+                  <inertial pos="0.000651232 -0.049193 0.00972259" quat="0.519774 0.479905 -0.436488 0.555881" mass="0.0303535" diaginertia="1.60353e-05 1.14217e-05 5.97329e-06" />
+                  <joint name="piper_joint7" pos="0 0 0" axis="0 0 1" type="slide" limited="true" range="0 0.035" damping="100" armature="0.5" />
+                  <geom name="piper_left_finger" type="mesh" friction="2 0.05 0.001" rgba="0.792157 0.819608 0.933333 1" mesh="piper_link7" />
+                </body>
+                <body name="piper_link8" pos="0 0 0.1358" quat="-2.59734e-06 -2.59735e-06 -0.707108 -0.707105">
+                  <inertial pos="0.000651232 -0.049193 0.00972259" quat="0.519774 0.479905 -0.436488 0.555881" mass="0.0303535" diaginertia="1.60353e-05 1.14217e-05 5.97329e-06" />
+                  <joint name="piper_joint8" pos="0 0 0" axis="0 0 -1" type="slide" limited="true" range="-0.035 0" damping="100" armature="0.5" />
+                  <geom name="piper_right_finger" type="mesh" friction="2 0.05 0.001" rgba="0.792157 0.819608 0.933333 1" mesh="piper_link8" />
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+    <light name="ur5e_spotlight" target="ur5e_wrist_2_link" pos="1.45 0.9 2" dir="0 0 -1" mode="targetbodycom" />
+    <body name="ur5e_base" childclass="ur5e_ur5e" pos="0.45 0.9 0" quat="0.707107 0 0 -0.707107">
+      <inertial pos="0 0 0" mass="4" diaginertia="0.00443333 0.00443333 0.0072" />
+      <geom class="ur5e_visual" material="ur5e_black" mesh="ur5e_base_0" />
+      <geom class="ur5e_visual" material="ur5e_jointgray" mesh="ur5e_base_1" />
+      <body name="ur5e_shoulder_link" pos="0 0 0.163">
+        <inertial pos="0 0 0" mass="3.7" diaginertia="0.0102675 0.0102675 0.00666" />
+        <joint name="ur5e_shoulder_pan_joint" class="ur5e_size3" pos="0 0 0" axis="0 0 1" damping="2" armature="0.5" />
+        <geom class="ur5e_visual" material="ur5e_urblue" mesh="ur5e_shoulder_0" />
+        <geom class="ur5e_visual" material="ur5e_black" mesh="ur5e_shoulder_1" />
+        <geom class="ur5e_visual" material="ur5e_jointgray" mesh="ur5e_shoulder_2" />
+        <geom class="ur5e_collision" size="0.06 0.06" pos="0 0 -0.04" />
+        <body name="ur5e_upper_arm_link" pos="0 0.138 0" quat="0.707107 0 0.707107 0">
+          <inertial pos="0 0 0.2125" mass="8.393" diaginertia="0.133886 0.133886 0.0151074" />
+          <joint name="ur5e_shoulder_lift_joint" class="ur5e_size3" pos="0 0 0" axis="0 1 0" damping="2" armature="0.5" />
+          <geom class="ur5e_visual" material="ur5e_linkgray" mesh="ur5e_upperarm_0" />
+          <geom class="ur5e_visual" material="ur5e_black" mesh="ur5e_upperarm_1" />
+          <geom class="ur5e_visual" material="ur5e_jointgray" mesh="ur5e_upperarm_2" />
+          <geom class="ur5e_visual" material="ur5e_urblue" mesh="ur5e_upperarm_3" />
+          <geom class="ur5e_collision" size="0.06 0.06" pos="0 -0.04 0" quat="0.707107 0.707107 0 0" />
+          <geom class="ur5e_collision" size="0.05 0.2" pos="0 0 0.2" />
+          <body name="ur5e_forearm_link" pos="0 -0.131 0.425">
+            <inertial pos="0 0 0.196" mass="2.275" diaginertia="0.0311796 0.0311796 0.004095" />
+            <joint name="ur5e_elbow_joint" class="ur5e_size3_limited" pos="0 0 0" axis="0 1 0" damping="2" armature="0.5" />
+            <geom class="ur5e_visual" material="ur5e_urblue" mesh="ur5e_forearm_0" />
+            <geom class="ur5e_visual" material="ur5e_linkgray" mesh="ur5e_forearm_1" />
+            <geom class="ur5e_visual" material="ur5e_black" mesh="ur5e_forearm_2" />
+            <geom class="ur5e_visual" material="ur5e_jointgray" mesh="ur5e_forearm_3" />
+            <geom class="ur5e_collision" size="0.055 0.06" pos="0 0.08 0" quat="0.707107 0.707107 0 0" />
+            <geom class="ur5e_collision" size="0.038 0.19" pos="0 0 0.2" />
+            <body name="ur5e_wrist_1_link" pos="0 0 0.392" quat="0.707107 0 0.707107 0">
+              <inertial pos="0 0.127 0" mass="1.219" diaginertia="0.0025599 0.0025599 0.0021942" />
+              <joint name="ur5e_wrist_1_joint" class="ur5e_size1" pos="0 0 0" axis="0 1 0" damping="2" armature="0.5" />
+              <geom class="ur5e_visual" material="ur5e_black" mesh="ur5e_wrist1_0" />
+              <geom class="ur5e_visual" material="ur5e_urblue" mesh="ur5e_wrist1_1" />
+              <geom class="ur5e_visual" material="ur5e_jointgray" mesh="ur5e_wrist1_2" />
+              <geom class="ur5e_collision" size="0.04 0.07" pos="0 0.05 0" quat="0.707107 0.707107 0 0" />
+              <body name="ur5e_wrist_2_link" pos="0 0.127 0">
+                <inertial pos="0 0 0.1" mass="1.219" diaginertia="0.0025599 0.0025599 0.0021942" />
+                <joint name="ur5e_wrist_2_joint" class="ur5e_size1" pos="0 0 0" axis="0 0 1" damping="2" armature="0.5" />
+                <geom class="ur5e_visual" material="ur5e_black" mesh="ur5e_wrist2_0" />
+                <geom class="ur5e_visual" material="ur5e_urblue" mesh="ur5e_wrist2_1" />
+                <geom class="ur5e_visual" material="ur5e_jointgray" mesh="ur5e_wrist2_2" />
+                <geom class="ur5e_collision" size="0.04 0.06" pos="0 0 0.04" />
+                <geom class="ur5e_collision" size="0.04 0.04" pos="0 0.02 0.1" quat="0.707107 0.707107 0 0" />
+                <body name="ur5e_wrist_3_link" pos="0 0 0.1">
+                  <inertial pos="0 0.0771683 0" quat="0.707107 0 0 0.707107" mass="0.1889" diaginertia="0.000132134 9.90863e-05 9.90863e-05" />
+                  <joint name="ur5e_wrist_3_joint" class="ur5e_size1" pos="0 0 0" axis="0 1 0" damping="2" armature="0.5" />
+                  <geom class="ur5e_visual" material="ur5e_linkgray" mesh="ur5e_wrist3" />
+                  <geom class="ur5e_eef_collision" size="0.04 0.02" pos="0 0.08 0" quat="0.707107 0.707107 0 0" />
+                  <site name="ur5e_attachment_site" pos="0 0.1 0" quat="-0.707107 0.707107 0 0" />
+                  <body name="ur5e_rq2f85_base_mount" childclass="ur5e_rq2f85_2f85" pos="0 0.1 0" quat="-0.707107 0.707107 0 0">
+                    <geom class="ur5e_rq2f85_visual" material="ur5e_rq2f85_black" mesh="ur5e_rq2f85_base_mount.stl" />
+                    <geom class="ur5e_rq2f85_collision" mesh="ur5e_rq2f85_base_mount.stl" />
+                    <body name="ur5e_rq2f85_base" pos="0 0 0.0038" quat="0.707107 0 0 -0.707107">
+                      <inertial pos="0 -2.70394e-05 0.0354675" quat="0.999999 -0.00152849 0 0" mass="0.777441" diaginertia="0.000260285 0.000225381 0.000152708" />
+                      <geom class="ur5e_rq2f85_visual" material="ur5e_rq2f85_black" mesh="ur5e_rq2f85_base.stl" />
+                      <geom class="ur5e_rq2f85_collision" mesh="ur5e_rq2f85_base.stl" />
+                      <site name="ur5e_rq2f85_pinch" pos="0 0 0.145" group="5" rgba="0.9 0.9 0.9 1" />
+                      <site name="ur5e_pinch" pos="0 0 0.145" group="5" rgba="0.9 0.9 0.9 1" />
+                      <body name="ur5e_rq2f85_right_driver" pos="0 0.0306011 0.054904">
+                        <inertial pos="2.96931e-12 0.0177547 0.00107314" quat="0.681301 0.732003 0 0" mass="0.00899563" diaginertia="1.72352e-06 1.60906e-06 3.22006e-07" />
+                        <joint name="ur5e_rq2f85_right_driver_joint" class="ur5e_rq2f85_driver" pos="0 0 0" axis="1 0 0" armature="0.5" />
+                        <geom class="ur5e_rq2f85_visual" material="ur5e_rq2f85_gray" mesh="ur5e_rq2f85_driver.stl" />
+                        <geom class="ur5e_rq2f85_collision" mesh="ur5e_rq2f85_driver.stl" />
+                        <body name="ur5e_rq2f85_right_coupler" pos="0 0.0315 -0.0041">
+                          <inertial pos="0 0.00301209 0.0232175" quat="0.705636 -0.0455904 0.0455904 0.705636" mass="0.0140974" diaginertia="4.16206e-06 3.52216e-06 8.88131e-07" />
+                          <joint name="ur5e_rq2f85_right_coupler_joint" class="ur5e_rq2f85_coupler" pos="0 0 0" axis="1 0 0" armature="0.5" />
+                          <geom class="ur5e_rq2f85_visual" material="ur5e_rq2f85_black" mesh="ur5e_rq2f85_coupler.stl" />
+                          <geom class="ur5e_rq2f85_collision" mesh="ur5e_rq2f85_coupler.stl" />
+                        </body>
+                      </body>
+                      <body name="ur5e_rq2f85_right_spring_link" pos="0 0.0132 0.0609">
+                        <inertial pos="-8.65005e-09 0.0181624 0.0212658" quat="0.663403 -0.244737 0.244737 0.663403" mass="0.0221642" diaginertia="8.96853e-06 6.71733e-06 2.63931e-06" />
+                        <joint name="ur5e_rq2f85_right_spring_link_joint" class="ur5e_rq2f85_spring_link" pos="0 0 0" axis="1 0 0" springref="2.62" armature="0.5" />
+                        <geom class="ur5e_rq2f85_visual" material="ur5e_rq2f85_black" mesh="ur5e_rq2f85_spring_link.stl" />
+                        <geom class="ur5e_rq2f85_collision" mesh="ur5e_rq2f85_spring_link.stl" />
+                        <body name="ur5e_rq2f85_right_follower" pos="0 0.055 0.0375">
+                          <inertial pos="0 -0.011046 0.0124786" quat="0.986437 0.164143 0 0" mass="0.0125222" diaginertia="2.67415e-06 2.4559e-06 6.02031e-07" />
+                          <joint name="ur5e_rq2f85_right_follower_joint" class="ur5e_rq2f85_follower" pos="0 -0.018 0.0065" axis="1 0 0" armature="0.5" />
+                          <geom class="ur5e_rq2f85_visual" material="ur5e_rq2f85_black" mesh="ur5e_rq2f85_follower.stl" />
+                          <geom class="ur5e_rq2f85_collision" mesh="ur5e_rq2f85_follower.stl" />
+                          <body name="ur5e_rq2f85_right_pad" pos="0 -0.0189 0.01352">
+                            <inertial pos="0 -0.0025 0.0185" quat="0.707107 0 0 0.707107" mass="0.0035" diaginertia="4.73958e-07 3.64583e-07 1.23958e-07" />
+                            <geom name="rq2f85_right_pad1" class="ur5e_rq2f85_pad_box1" pos="0 -0.0026 0.028125" friction="2 0.05 0.001" mass="0" />
+                            <geom name="ur5e_rq2f85_right_pad2" class="ur5e_rq2f85_pad_box2" pos="0 -0.0026 0.009375" mass="0" />
+                            <geom class="ur5e_rq2f85_visual" mesh="ur5e_rq2f85_pad.stl" />
+                            <body name="ur5e_rq2f85_right_silicone_pad">
+                              <geom class="ur5e_rq2f85_visual" material="ur5e_rq2f85_black" mesh="ur5e_rq2f85_silicone_pad.stl" />
+                            </body>
+                          </body>
+                        </body>
+                      </body>
+                      <body name="ur5e_rq2f85_left_driver" pos="0 -0.0306011 0.054904" quat="0 0 0 1">
+                        <inertial pos="0 0.0177547 0.00107314" quat="0.681301 0.732003 0 0" mass="0.00899563" diaginertia="1.72352e-06 1.60906e-06 3.22006e-07" />
+                        <joint name="ur5e_rq2f85_left_driver_joint" class="ur5e_rq2f85_driver" pos="0 0 0" axis="1 0 0" armature="0.5" />
+                        <geom class="ur5e_rq2f85_visual" material="ur5e_rq2f85_gray" mesh="ur5e_rq2f85_driver.stl" />
+                        <geom class="ur5e_rq2f85_collision" mesh="ur5e_rq2f85_driver.stl" />
+                        <body name="ur5e_rq2f85_left_coupler" pos="0 0.0315 -0.0041">
+                          <inertial pos="0 0.00301209 0.0232175" quat="0.705636 -0.0455904 0.0455904 0.705636" mass="0.0140974" diaginertia="4.16206e-06 3.52216e-06 8.88131e-07" />
+                          <joint name="ur5e_rq2f85_left_coupler_joint" class="ur5e_rq2f85_coupler" pos="0 0 0" axis="1 0 0" armature="0.5" />
+                          <geom class="ur5e_rq2f85_visual" material="ur5e_rq2f85_black" mesh="ur5e_rq2f85_coupler.stl" />
+                          <geom class="ur5e_rq2f85_collision" mesh="ur5e_rq2f85_coupler.stl" />
+                        </body>
+                      </body>
+                      <body name="ur5e_rq2f85_left_spring_link" pos="0 -0.0132 0.0609" quat="0 0 0 1">
+                        <inertial pos="-8.65005e-09 0.0181624 0.0212658" quat="0.663403 -0.244737 0.244737 0.663403" mass="0.0221642" diaginertia="8.96853e-06 6.71733e-06 2.63931e-06" />
+                        <joint name="ur5e_rq2f85_left_spring_link_joint" class="ur5e_rq2f85_spring_link" pos="0 0 0" axis="1 0 0" springref="2.62" armature="0.5" />
+                        <geom class="ur5e_rq2f85_visual" material="ur5e_rq2f85_black" mesh="ur5e_rq2f85_spring_link.stl" />
+                        <geom class="ur5e_rq2f85_collision" mesh="ur5e_rq2f85_spring_link.stl" />
+                        <body name="ur5e_rq2f85_left_follower" pos="0 0.055 0.0375">
+                          <inertial pos="0 -0.011046 0.0124786" quat="0.986437 0.164143 0 0" mass="0.0125222" diaginertia="2.67415e-06 2.4559e-06 6.02031e-07" />
+                          <joint name="ur5e_rq2f85_left_follower_joint" class="ur5e_rq2f85_follower" pos="0 -0.018 0.0065" axis="1 0 0" armature="0.5" />
+                          <geom class="ur5e_rq2f85_visual" material="ur5e_rq2f85_black" mesh="ur5e_rq2f85_follower.stl" />
+                          <geom class="ur5e_rq2f85_collision" mesh="ur5e_rq2f85_follower.stl" />
+                          <body name="ur5e_rq2f85_left_pad" pos="0 -0.0189 0.01352">
+                            <inertial pos="0 -0.0025 0.0185" quat="0.707107 0 0 0.707107" mass="0.0035" diaginertia="4.73958e-07 3.64583e-07 1.23958e-07" />
+                            <geom name="rq2f85_left_pad1" class="ur5e_rq2f85_pad_box1" pos="0 -0.0026 0.028125" friction="2 0.05 0.001" mass="0" />
+                            <geom name="ur5e_rq2f85_left_pad2" class="ur5e_rq2f85_pad_box2" pos="0 -0.0026 0.009375" mass="0" />
+                            <geom class="ur5e_rq2f85_visual" mesh="ur5e_rq2f85_pad.stl" />
+                            <body name="ur5e_rq2f85_left_silicone_pad">
+                              <geom class="ur5e_rq2f85_visual" material="ur5e_rq2f85_black" mesh="ur5e_rq2f85_silicone_pad.stl" />
+                            </body>
+                          </body>
+                        </body>
+                      </body>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  <body name="grasp_anchor" pos="0.280000000 -0.280000000 0.025000000" mocap="true" /></worldbody>
+
+  <contact>
+    <exclude body1="ur5e_rq2f85_base" body2="ur5e_rq2f85_right_driver" />
+    <exclude body1="ur5e_rq2f85_base" body2="ur5e_rq2f85_right_spring_link" />
+    <exclude body1="ur5e_rq2f85_base" body2="ur5e_rq2f85_left_driver" />
+    <exclude body1="ur5e_rq2f85_base" body2="ur5e_rq2f85_left_spring_link" />
+    <exclude body1="ur5e_rq2f85_right_coupler" body2="ur5e_rq2f85_right_follower" />
+    <exclude body1="ur5e_rq2f85_left_coupler" body2="ur5e_rq2f85_left_follower" />
+  <exclude body1="world" body2="piper_link1" /></contact>
+
+  <equality>
+    <connect body1="ur5e_rq2f85_right_follower" body2="ur5e_rq2f85_right_coupler" anchor="0 0 0" solref="0.005" solimp="0.95 0.99" />
+    <connect body1="ur5e_rq2f85_left_follower" body2="ur5e_rq2f85_left_coupler" anchor="0 0 0" solref="0.005" solimp="0.95 0.99" />
+    <joint joint1="ur5e_rq2f85_right_driver_joint" joint2="ur5e_rq2f85_left_driver_joint" polycoef="0 1 0 0 0" solref="0.005" solimp="0.95 0.99" />
+  <weld name="box_01_lift_constraint" body1="grasp_anchor" body2="box_01" active="false" solref="0.010000000 1.000000000" solimp="0.900000000 0.950000000 0.010000000" anchor="0 0 0" /></equality>
+
+  <tendon>
+    <fixed name="ur5e_rq2f85_split">
+      <joint joint="ur5e_rq2f85_right_driver_joint" coef="0.5" />
+      <joint joint="ur5e_rq2f85_left_driver_joint" coef="0.5" />
+    </fixed>
+  </tendon>
+
+  <actuator>
+    <general name="FR_hip" class="abduction" joint="FR_hip_joint" />
+    <general name="FR_thigh" class="hip" joint="FR_thigh_joint" />
+    <general name="FR_calf" class="knee" joint="FR_calf_joint" />
+    <general name="FL_hip" class="abduction" joint="FL_hip_joint" />
+    <general name="FL_thigh" class="hip" joint="FL_thigh_joint" />
+    <general name="FL_calf" class="knee" joint="FL_calf_joint" />
+    <general name="RR_hip" class="abduction" joint="RR_hip_joint" />
+    <general name="RR_thigh" class="hip" joint="RR_thigh_joint" />
+    <general name="RR_calf" class="knee" joint="RR_calf_joint" />
+    <general name="RL_hip" class="abduction" joint="RL_hip_joint" />
+    <general name="RL_thigh" class="hip" joint="RL_thigh_joint" />
+    <general name="RL_calf" class="knee" joint="RL_calf_joint" />
+    <general name="piper_joint1" joint="piper_joint1" ctrllimited="true" ctrlrange="-2.618 2.618" forcelimited="true" forcerange="-20000 20000" biastype="affine" gainprm="450" biasprm="0 -450" user="1" />
+    <general name="piper_joint2" joint="piper_joint2" ctrllimited="true" ctrlrange="0 3.14158" forcelimited="true" forcerange="-20000 20000" biastype="affine" gainprm="200" biasprm="0 -200" user="1" />
+    <general name="piper_joint3" joint="piper_joint3" ctrllimited="true" ctrlrange="-2.697 0" forcelimited="true" forcerange="-1000 1000" biastype="affine" gainprm="200" biasprm="0 -200" user="1" />
+    <general name="piper_joint4" joint="piper_joint4" ctrllimited="true" ctrlrange="-1.832 1.832" forcelimited="true" forcerange="-70 70" biastype="affine" gainprm="200" biasprm="0 -200" user="1" />
+    <general name="piper_joint5" joint="piper_joint5" ctrllimited="true" ctrlrange="-1.22 1.22" forcelimited="true" forcerange="-50 50" biastype="affine" gainprm="200" biasprm="0 -200" user="1" />
+    <general name="piper_joint6" joint="piper_joint6" ctrllimited="true" ctrlrange="-3.14158 3.14158" forcelimited="true" forcerange="-6 6" biastype="affine" gainprm="200" biasprm="0 -200" user="1" />
+    <general name="piper_joint7" joint="piper_joint7" ctrllimited="true" ctrlrange="0 0.0475" forcelimited="true" forcerange="-100 100" biastype="affine" gainprm="10000" biasprm="0 -10000" user="1" />
+    <general name="piper_joint8" joint="piper_joint8" ctrllimited="true" ctrlrange="-0.0475 0" forcelimited="true" forcerange="-100 100" biastype="affine" gainprm="10000" biasprm="0 -10000" user="1" />
+    <general name="ur5e_shoulder_pan" class="ur5e_size3" joint="ur5e_shoulder_pan_joint" />
+    <general name="ur5e_shoulder_lift" class="ur5e_size3" joint="ur5e_shoulder_lift_joint" />
+    <general name="ur5e_elbow" class="ur5e_size3_limited" joint="ur5e_elbow_joint" />
+    <general name="ur5e_wrist_1" class="ur5e_size1" joint="ur5e_wrist_1_joint" />
+    <general name="ur5e_wrist_2" class="ur5e_size1" joint="ur5e_wrist_2_joint" />
+    <general name="ur5e_wrist_3" class="ur5e_size1" joint="ur5e_wrist_3_joint" />
+    <general name="ur5e_rq2f85_fingers_actuator" class="ur5e_rq2f85_2f85" tendon="ur5e_rq2f85_split" ctrlrange="0 255" forcerange="-5 5" gainprm="0.313725" biasprm="0 -100 -10" />
+  </actuator>
+
+  <sensor>
+    <jointpos joint="FR_hip_joint" name="FR_hip_pos" />
+    <jointpos joint="FR_thigh_joint" name="FR_thigh_pos" />
+    <jointpos joint="FR_calf_joint" name="FR_calf_pos" />
+    <jointpos joint="FL_hip_joint" name="FL_hip_pos" />
+    <jointpos joint="FL_thigh_joint" name="FL_thigh_pos" />
+    <jointpos joint="FL_calf_joint" name="FL_calf_pos" />
+    <jointpos joint="RR_hip_joint" name="RR_hip_pos" />
+    <jointpos joint="RR_thigh_joint" name="RR_thigh_pos" />
+    <jointpos joint="RR_calf_joint" name="RR_calf_pos" />
+    <jointpos joint="RL_hip_joint" name="RL_hip_pos" />
+    <jointpos joint="RL_thigh_joint" name="RL_thigh_pos" />
+    <jointpos joint="RL_calf_joint" name="RL_calf_pos" />
+    <jointvel joint="FR_hip_joint" name="FR_hip_vel" />
+    <jointvel joint="FR_thigh_joint" name="FR_thigh_vel" />
+    <jointvel joint="FR_calf_joint" name="FR_calf_vel" />
+    <jointvel joint="FL_hip_joint" name="FL_hip_vel" />
+    <jointvel joint="FL_thigh_joint" name="FL_thigh_vel" />
+    <jointvel joint="FL_calf_joint" name="FL_calf_vel" />
+    <jointvel joint="RR_hip_joint" name="RR_hip_vel" />
+    <jointvel joint="RR_thigh_joint" name="RR_thigh_vel" />
+    <jointvel joint="RR_calf_joint" name="RR_calf_vel" />
+    <jointvel joint="RL_hip_joint" name="RL_hip_vel" />
+    <jointvel joint="RL_thigh_joint" name="RL_thigh_vel" />
+    <jointvel joint="RL_calf_joint" name="RL_calf_vel" />
+    <jointactuatorfrc joint="FR_hip_joint" name="FR_hip_torque" noise="0.01" />
+    <jointactuatorfrc joint="FR_thigh_joint" name="FR_thigh_torque" noise="0.01" />
+    <jointactuatorfrc joint="FR_calf_joint" name="FR_calf_torque" noise="0.01" />
+    <jointactuatorfrc joint="FL_hip_joint" name="FL_hip_torque" noise="0.01" />
+    <jointactuatorfrc joint="FL_thigh_joint" name="FL_thigh_torque" noise="0.01" />
+    <jointactuatorfrc joint="FL_calf_joint" name="FL_calf_torque" noise="0.01" />
+    <jointactuatorfrc joint="RR_hip_joint" name="RR_hip_torque" noise="0.01" />
+    <jointactuatorfrc joint="RR_thigh_joint" name="RR_thigh_torque" noise="0.01" />
+    <jointactuatorfrc joint="RR_calf_joint" name="RR_calf_torque" noise="0.01" />
+    <jointactuatorfrc joint="RL_hip_joint" name="RL_hip_torque" noise="0.01" />
+    <jointactuatorfrc joint="RL_thigh_joint" name="RL_thigh_torque" noise="0.01" />
+    <jointactuatorfrc joint="RL_calf_joint" name="RL_calf_torque" noise="0.01" />
+    <framequat objtype="site" objname="imu" name="imu_quat" />
+    <gyro site="imu" name="imu_gyro" />
+    <accelerometer site="imu" name="imu_acc" />
+    <framepos objtype="site" objname="imu" name="frame_pos" />
+    <framelinvel objtype="site" objname="imu" name="frame_vel" />
+  </sensor>
+
+  <keyframe>
+    <key name="home" qpos="0 0 0.288372 1 0 0 0 0 0.9 -1.8 0 0.9 -1.8 0 0.9 -1.8 0 0.9 -1.8 0.28 -0.28 0.025 1 0 0 0 0 0.65 -1.15 0 0.35 0 0.035 -0.035 -1.5708 -1.5708 1.5708 -1.5708 -1.5708 0 0 0 0 0 0 0 0 0" ctrl="0 0.9 -1.8 0 0.9 -1.8 0 0.9 -1.8 0 0.9 -1.8 0 0.65 -1.15 0 0.35 0 0.035 -0.035 -1.5708 -1.5708 1.5708 -1.5708 -1.5708 0 0" />
+    <key name="ur5e_home" qpos="0 0 0.445 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.28 -0.28 0.025 1 0 0 0 0 0 0 0 0 0 0 0 -1.5708 -1.5708 1.5708 -1.5708 -1.5708 0 0 0 0 0 0 0 0 0" ctrl="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -1.5708 -1.5708 1.5708 -1.5708 -1.5708 0 0" />
+  </keyframe>
+</mujoco>

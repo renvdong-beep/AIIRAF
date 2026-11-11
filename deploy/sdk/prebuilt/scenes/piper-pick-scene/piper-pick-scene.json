@@ -1,0 +1,640 @@
+{
+  "schema_version": "iraf.piper-pick-scene/v1",
+  "source": "/home/coretek/piper_ros/src/piper_description/mujoco_model/piper_description.xml",
+  "output": "/home/coretek/AIIRAF/build/models/piper-pick-scene.xml",
+  "target_id": "box_01",
+  "target_position": {
+    "x": 0.189999426,
+    "y": -0.0,
+    "z": 0.025
+  },
+  "target_half_size_m": 0.025,
+  "targets": [
+    {
+      "id": "box_01",
+      "body": "box_01",
+      "geom": "box_01_geom",
+      "material": "box_01_material",
+      "rgba": [
+        0.82,
+        0.22,
+        0.12,
+        1.0
+      ],
+      "position_m": [
+        0.189999426,
+        -0.0,
+        0.025
+      ],
+      "quaternion_wxyz": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "euler_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "multi_target": false,
+  "workbench_top_z_m": 0.0,
+  "pose_tolerance_m": 0.005,
+  "gravity_fixture": true,
+  "require_friction_lift": false,
+  "arm_position_kp": 200.0,
+  "gripper": {
+    "wrist_body": "link6",
+    "left_finger_body": "link7",
+    "right_finger_body": "link8",
+    "left_finger_geom": "piper_left_finger",
+    "right_finger_geom": "piper_right_finger",
+    "open_positions": {
+      "joint7": 0.035,
+      "joint8": -0.035
+    },
+    "close_hold": "none",
+    "approach_hold": "none",
+    "lift_path": "direct",
+    "lift_gripper": "closed",
+    "require_friction_lift": false,
+    "carry_constraint": {
+      "enabled": true,
+      "type": "weld",
+      "equality_name": "box_01_lift_constraint",
+      "anchor_body": "grasp_anchor",
+      "solref": [
+        0.01,
+        1.0
+      ],
+      "solimp": [
+        0.9,
+        0.95,
+        0.01
+      ],
+      "release_gripper": true,
+      "max_slip_m": 0.005,
+      "max_plant_steps_per_iteration": 64,
+      "source": "piper_simulation_baseline.yaml:grasp.carry_constraint"
+    },
+    "place_settle_ms": 3000,
+    "place_pose_correction": {
+      "mode": "touchdown",
+      "max_lateral_m": 0.07,
+      "touch_clearance_m": 0.0,
+      "max_vertical_m": 0.05,
+      "residual_tolerance_m": 0.001,
+      "touchdown_step_fraction": 0.3,
+      "touchdown_max_iterations": 10,
+      "lateral_tolerance_m": 0.035,
+      "ik_iterations": 800,
+      "ik_step": 0.5,
+      "max_residual_m": 0.0001
+    },
+    "closed_positions": {
+      "joint7": 0.023,
+      "joint8": -0.023
+    },
+    "lift_positions": {
+      "joint1": 8.817883881308324e-06,
+      "joint2": 0.7632632740922249,
+      "joint3": -0.07739575802742535,
+      "joint4": 6.886127597847464e-07,
+      "joint5": -0.11474807960480611,
+      "joint6": 1.086222916722074e-09,
+      "joint7": 0.023,
+      "joint8": -0.023
+    },
+    "min_lift_delta_m": 0.02,
+    "min_normal_force_n": 0.2,
+    "max_force_imbalance_ratio": 4.0,
+    "pad_offset_m": 0.029835769,
+    "pad_offset_axis": [
+      0.0,
+      0.0,
+      1.0
+    ],
+    "lift_constraint": "box_01_lift_constraint",
+    "lift_anchor_body": "grasp_anchor",
+    "home_positions": {
+      "joint1": 0.0,
+      "joint2": 0.0,
+      "joint3": 0.0,
+      "joint4": 0.0,
+      "joint5": 0.0,
+      "joint6": 0.0,
+      "joint7": 0.035,
+      "joint8": -0.035
+    },
+    "approach_positions": {
+      "joint1": 9.470225057716738e-06,
+      "joint2": 0.9866415883704546,
+      "joint3": -0.0857225462089403,
+      "joint4": 5.191999044638938e-07,
+      "joint5": -0.11259747510912314,
+      "joint6": 1.0643648979311e-09,
+      "joint7": 0.035,
+      "joint8": -0.035
+    },
+    "grasp_positions": {
+      "joint1": 1.0124345867849368e-05,
+      "joint2": 1.2590016451859027,
+      "joint3": -0.12395768289358791,
+      "joint4": 3.296684781927198e-07,
+      "joint5": -0.12045255510754514,
+      "joint6": 1.1375993140103378e-09,
+      "joint7": 0.035,
+      "joint8": -0.035
+    },
+    "pre_lift_positions": {
+      "joint1": 9.470179286487661e-06,
+      "joint2": 0.9865417224542643,
+      "joint3": -0.08575404809598433,
+      "joint4": 5.215990998769501e-07,
+      "joint5": -0.1124902675276865,
+      "joint6": 1.063323284571343e-09,
+      "joint7": 0.023,
+      "joint8": -0.023
+    },
+    "regrasp_positions": {
+      "joint1": 9.959080024477178e-06,
+      "joint2": 1.187141803126162,
+      "joint3": -0.11167626522352093,
+      "joint4": 3.8842208859703634e-07,
+      "joint5": -0.11781219676956822,
+      "joint6": 1.1127852258647346e-09,
+      "joint7": 0.023,
+      "joint8": -0.023
+    },
+    "regrasp": {
+      "enabled": true,
+      "pre_lift_m": 0.04,
+      "depth_m": 0.025,
+      "open_m": 0.004,
+      "hold_pre_lift": true,
+      "source": "piper_simulation_baseline.yaml:grasp.regrasp"
+    },
+    "gravity_feedforward": {
+      "home": {
+        "joint1": 0.0,
+        "joint2": 0.005229714,
+        "joint3": -0.009013975,
+        "joint4": -1.8157e-05,
+        "joint5": -0.001802796,
+        "joint6": 5.75e-07
+      },
+      "approach": {
+        "joint1": 0.0,
+        "joint2": -7.3948e-05,
+        "joint3": -0.006934179,
+        "joint4": -1.2517e-05,
+        "joint5": -0.001383364,
+        "joint6": 4.41e-07
+      },
+      "grasp": {
+        "joint1": 0.0,
+        "joint2": -0.002137427,
+        "joint3": -0.005371549,
+        "joint4": -9.102e-06,
+        "joint5": -0.001086334,
+        "joint6": 3.46e-07
+      },
+      "lift": {
+        "joint1": 0.0,
+        "joint2": 0.001417513,
+        "joint3": -0.008050123,
+        "joint4": -1.5056e-05,
+        "joint5": -0.001602308,
+        "joint6": 5.11e-07
+      }
+    }
+  },
+  "vision": {
+    "evidence_file": "build/calibration/piper-vision-target.json",
+    "refresh": "always",
+    "detector": {
+      "command": [
+        "{python}",
+        "scripts/detect_targets.py",
+        "--model",
+        "{model}",
+        "--config",
+        "{config}",
+        "--output",
+        "{evidence}",
+        "--extrinsics",
+        "{calibration}"
+      ],
+      "config_file": "config/piper_multi_target.yaml",
+      "calibration_file": "build/calibration/camera_to_base.json"
+    }
+  },
+  "grasp_pose_validation": {
+    "finger_tip_z_m": 0.00796984,
+    "tip_clearance_m": 0.005,
+    "contact_count": 5,
+    "finger_contacts": []
+  },
+  "model_source_lock": {
+    "source": "/home/coretek/piper_ros/src/piper_description/mujoco_model/piper_description.xml",
+    "lock": "/home/coretek/AIIRAF/vendor/agilex_piper/source-lock.json",
+    "file_count": 11,
+    "mismatches": []
+  },
+  "reference_poses": {
+    "schema_version": "iraf.piper-reference-pose/v1",
+    "source": "/home/coretek/piper_ros/src/piper_description/mujoco_model/piper_description.xml",
+    "gripper_axis_world": [
+      0.599965957,
+      -4.975e-06,
+      -0.800025531
+    ],
+    "approach_direction_world": [
+      0.0,
+      0.0,
+      1.0
+    ],
+    "pregrasp_direction_world": [
+      0.0,
+      0.0,
+      1.0
+    ],
+    "pregrasp_offset_m": 0.04,
+    "regrasp": {
+      "enabled": true,
+      "pre_lift_m": 0.04,
+      "depth_m": 0.025,
+      "open_m": 0.004,
+      "hold_pre_lift": true,
+      "target_mode": "payload_mid",
+      "descend_m": 0.010164230532785808,
+      "self_check": {
+        "pre_lift": {
+          "target_m": [
+            0.19,
+            0.0,
+            0.094835769
+          ],
+          "residual_m": 9.727e-06,
+          "axis_dot": 0.974505,
+          "above_support": true
+        },
+        "regrasp": {
+          "target_m": [
+            0.19,
+            0.0,
+            0.065
+          ],
+          "residual_m": 7.117e-06,
+          "axis_dot": 0.998379,
+          "above_support": true
+        }
+      },
+      "direction_world": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "pre_lift": {
+        "joint_positions": {
+          "joint1": 9.470179286487661e-06,
+          "joint2": 0.9865417224542643,
+          "joint3": -0.08575404809598433,
+          "joint4": 5.215990998769501e-07,
+          "joint5": -0.1124902675276865,
+          "joint6": 1.063323284571343e-09
+        },
+        "finger_center_m": [
+          0.189998983,
+          -0.0,
+          0.094845443
+        ],
+        "target_m": [
+          0.19,
+          0.0,
+          0.094835769
+        ],
+        "position_error_m": 9.727197039854619e-06,
+        "iterations": 13
+      },
+      "regrasp": {
+        "joint_positions": {
+          "joint1": 9.959080024477178e-06,
+          "joint2": 1.187141803126162,
+          "joint3": -0.11167626522352093,
+          "joint4": 3.8842208859703634e-07,
+          "joint5": -0.11781219676956822,
+          "joint6": 1.1127852258647346e-09
+        },
+        "finger_center_m": [
+          0.189999445,
+          -0.0,
+          0.065007095
+        ],
+        "target_m": [
+          0.19,
+          0.0,
+          0.065
+        ],
+        "position_error_m": 7.1171008114996026e-06,
+        "iterations": 13
+      }
+    },
+    "tip_clearance_m": 0.005,
+    "finger_tip_z_m": 0.0079701,
+    "finger_height_correction_m": 0.029835769,
+    "clearance_trace": [
+      {
+        "iteration": 0,
+        "correction_m": 0.0,
+        "tip_z_m": -0.024835769,
+        "deficit_m": 0.029835769,
+        "position_error_m": 5.032e-06,
+        "rotation_error_rad": NaN
+      },
+      {
+        "iteration": 1,
+        "correction_m": 0.029835769,
+        "tip_z_m": 0.0079701,
+        "deficit_m": -0.0029701,
+        "position_error_m": 7.651e-06,
+        "rotation_error_rad": NaN
+      }
+    ],
+    "grasp_point_m": [
+      0.19,
+      0.0,
+      0.025
+    ],
+    "finger_center_m": [
+      0.189999426,
+      -0.0,
+      0.05482814
+    ],
+    "target_z_m": 0.025,
+    "lift_offset_m": 0.08,
+    "home": {
+      "joint1": 0.0,
+      "joint2": 0.0,
+      "joint3": 0.0,
+      "joint4": 0.0,
+      "joint5": 0.0,
+      "joint6": 0.0
+    },
+    "home_solved": null,
+    "home_source": "declared_zero_pose",
+    "approach": {
+      "joint_positions": {
+        "joint1": 9.470225057716738e-06,
+        "joint2": 0.9866415883704546,
+        "joint3": -0.0857225462089403,
+        "joint4": 5.191999044638938e-07,
+        "joint5": -0.11259747510912314,
+        "joint6": 1.0643648979311e-09
+      },
+      "finger_center_m": [
+        0.189999492,
+        -0.0,
+        0.094830702
+      ],
+      "target_m": [
+        0.19,
+        0.0,
+        0.094835769
+      ],
+      "position_error_m": 5.093180743965907e-06,
+      "iterations": 14
+    },
+    "grasp": {
+      "joint_positions": {
+        "joint1": 1.0124345867849368e-05,
+        "joint2": 1.2590016451859027,
+        "joint3": -0.12395768289358791,
+        "joint4": 3.296684781927198e-07,
+        "joint5": -0.12045255510754514,
+        "joint6": 1.1375993140103378e-09
+      },
+      "finger_center_m": [
+        0.189999426,
+        -0.0,
+        0.05482814
+      ],
+      "target_m": [
+        0.19,
+        0.0,
+        0.054835769
+      ],
+      "position_error_m": 7.651260947259611e-06,
+      "iterations": 13
+    },
+    "lift": {
+      "joint_positions": {
+        "joint1": 8.817883881308324e-06,
+        "joint2": 0.7632632740922249,
+        "joint3": -0.07739575802742535,
+        "joint4": 6.886127597847464e-07,
+        "joint5": -0.11474807960480611,
+        "joint6": 1.086222916722074e-09
+      },
+      "finger_center_m": [
+        0.18999898,
+        -0.0,
+        0.134825939
+      ],
+      "target_m": [
+        0.19,
+        0.0,
+        0.134835769
+      ],
+      "position_error_m": 9.883467771917277e-06,
+      "iterations": 13
+    },
+    "pose_evidence": "/home/coretek/AIIRAF/build/calibration/piper-baseline-pose.json",
+    "gravity_feedforward": {
+      "home": {
+        "joint1": 0.0,
+        "joint2": 0.005229714,
+        "joint3": -0.009013975,
+        "joint4": -1.8157e-05,
+        "joint5": -0.001802796,
+        "joint6": 5.75e-07
+      },
+      "approach": {
+        "joint1": 0.0,
+        "joint2": -7.3948e-05,
+        "joint3": -0.006934179,
+        "joint4": -1.2517e-05,
+        "joint5": -0.001383364,
+        "joint6": 4.41e-07
+      },
+      "grasp": {
+        "joint1": 0.0,
+        "joint2": -0.002137427,
+        "joint3": -0.005371549,
+        "joint4": -9.102e-06,
+        "joint5": -0.001086334,
+        "joint6": 3.46e-07
+      },
+      "lift": {
+        "joint1": 0.0,
+        "joint2": 0.001417513,
+        "joint3": -0.008050123,
+        "joint4": -1.5056e-05,
+        "joint5": -0.001602308,
+        "joint6": 5.11e-07
+      }
+    },
+    "gravity_feedforward_evidence": {
+      "home": {
+        "method": "qfrc_bias_static_hold_fixed_point_replace",
+        "passes": 1,
+        "pass_trace": [
+          {
+            "pass": 1,
+            "worst_residual_rad": 2.8763e-05
+          }
+        ],
+        "gravity_torque_nm": {
+          "joint1": 0.0,
+          "joint2": 1.045943,
+          "joint3": -1.802795,
+          "joint4": -0.003631,
+          "joint5": -0.360559,
+          "joint6": 0.000115
+        },
+        "actuator_gain": {
+          "joint1": 450.0,
+          "joint2": 200.0,
+          "joint3": 200.0,
+          "joint4": 200.0,
+          "joint5": 200.0,
+          "joint6": 200.0
+        },
+        "hold_ms": 4000,
+        "residual_joint_rad": {
+          "joint1": -2.8763e-05,
+          "joint2": 0.0,
+          "joint3": -0.0,
+          "joint4": -0.0,
+          "joint5": -0.0,
+          "joint6": -0.0
+        },
+        "worst_residual_rad": 2.8763e-05,
+        "tolerance_rad": 0.001
+      },
+      "approach": {
+        "method": "qfrc_bias_static_hold_fixed_point_replace",
+        "passes": 1,
+        "pass_trace": [
+          {
+            "pass": 1,
+            "worst_residual_rad": 2.9097e-05
+          }
+        ],
+        "gravity_torque_nm": {
+          "joint1": 0.0,
+          "joint2": -0.01479,
+          "joint3": -1.386836,
+          "joint4": -0.002503,
+          "joint5": -0.276673,
+          "joint6": 8.8e-05
+        },
+        "actuator_gain": {
+          "joint1": 450.0,
+          "joint2": 200.0,
+          "joint3": 200.0,
+          "joint4": 200.0,
+          "joint5": 200.0,
+          "joint6": 200.0
+        },
+        "hold_ms": 4000,
+        "residual_joint_rad": {
+          "joint1": -2.9097e-05,
+          "joint2": 0.0,
+          "joint3": 0.0,
+          "joint4": 0.0,
+          "joint5": 0.0,
+          "joint6": -0.0
+        },
+        "worst_residual_rad": 2.9097e-05,
+        "tolerance_rad": 0.001
+      },
+      "grasp": {
+        "method": "qfrc_bias_static_hold_fixed_point_replace",
+        "passes": 1,
+        "pass_trace": [
+          {
+            "pass": 1,
+            "worst_residual_rad": 2.9551e-05
+          }
+        ],
+        "gravity_torque_nm": {
+          "joint1": 0.0,
+          "joint2": -0.427485,
+          "joint3": -1.07431,
+          "joint4": -0.00182,
+          "joint5": -0.217267,
+          "joint6": 6.9e-05
+        },
+        "actuator_gain": {
+          "joint1": 450.0,
+          "joint2": 200.0,
+          "joint3": 200.0,
+          "joint4": 200.0,
+          "joint5": 200.0,
+          "joint6": 200.0
+        },
+        "hold_ms": 4000,
+        "residual_joint_rad": {
+          "joint1": -2.9551e-05,
+          "joint2": -2.387e-06,
+          "joint3": -2.699e-06,
+          "joint4": -3.225e-06,
+          "joint5": -1.0357e-05,
+          "joint6": -1.733e-06
+        },
+        "worst_residual_rad": 2.9551e-05,
+        "tolerance_rad": 0.001
+      },
+      "lift": {
+        "method": "qfrc_bias_static_hold_fixed_point_replace",
+        "passes": 1,
+        "pass_trace": [
+          {
+            "pass": 1,
+            "worst_residual_rad": 2.8926e-05
+          }
+        ],
+        "gravity_torque_nm": {
+          "joint1": 0.0,
+          "joint2": 0.283503,
+          "joint3": -1.610025,
+          "joint4": -0.003011,
+          "joint5": -0.320462,
+          "joint6": 0.000102
+        },
+        "actuator_gain": {
+          "joint1": 450.0,
+          "joint2": 200.0,
+          "joint3": 200.0,
+          "joint4": 200.0,
+          "joint5": 200.0,
+          "joint6": 200.0
+        },
+        "hold_ms": 4000,
+        "residual_joint_rad": {
+          "joint1": -2.8926e-05,
+          "joint2": 0.0,
+          "joint3": 0.0,
+          "joint4": 0.0,
+          "joint5": 0.0,
+          "joint6": -0.0
+        },
+        "worst_residual_rad": 2.8926e-05,
+        "tolerance_rad": 0.001
+      }
+    }
+  }
+}

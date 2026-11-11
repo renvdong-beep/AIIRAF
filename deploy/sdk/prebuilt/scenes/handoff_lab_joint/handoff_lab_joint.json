@@ -1,0 +1,5278 @@
+{
+  "world_physics": {
+    "declared": {
+      "cone": "elliptic",
+      "impratio": 100
+    },
+    "source": "scene.yaml:world_physics",
+    "note": "\u7269\u7406\u53e3\u5f84\u5fc5\u987b\u58f0\u660e\u800c\u4e0d\u662f\u7ee7\u627f\uff1a\u5408\u6210\u4ea7\u7269\u7684 <option> \u6765\u81ea\u4e3b\u6a21\u578b\uff08\u5382\u5546\u56db\u8db3\u6a21\u578b\uff09\uff0c\u4e0e\u9644\u52a0\u672c\u4f53\u81ea\u5df1\u4e16\u754c\u7684\u9ed8\u8ba4\u503c\u4e0d\u540c \u21d2 \u7ed3\u8bba\u4e0d\u53ef\u8de8\u4e16\u754c\u5f15\u7528\uff08\u00a711.23\uff09",
+    "effective": {
+      "cone": "elliptic",
+      "cone_name": "elliptic",
+      "impratio": 100.0,
+      "timestep": 0.002,
+      "gravity": [
+        0.0,
+        0.0,
+        -9.81
+      ]
+    },
+    "mismatch": {}
+  },
+  "carry_constraint": {
+    "equality_name": "box_01_lift_constraint",
+    "anchor_body": "grasp_anchor",
+    "type": "weld",
+    "solref": [
+      0.01,
+      1.0
+    ],
+    "solimp": [
+      0.9,
+      0.95,
+      0.01
+    ],
+    "anchor_pos_m": [
+      0.28,
+      -0.28,
+      0.025
+    ],
+    "active": false,
+    "source": "gripper.carry_constraint\uff08\u81c2\u4fa7\u62a5\u544a\u58f0\u660e\uff09"
+  },
+  "schema_version": "iraf.robot-pick-scene/v1",
+  "report_kind": "scene_model",
+  "source": "/home/coretek/AIIRAF/vendor/unitree_go2/unitree_robots/go2/go2.xml",
+  "output": "/home/coretek/AIIRAF/build/scenes/handoff_lab/handoff_lab_joint.xml",
+  "scene": {
+    "id": "handoff_lab",
+    "path": "scenes/handoff_lab/scene.yaml",
+    "baseline": "scenes/handoff_lab/baseline.yaml",
+    "robot": "unitree_go2",
+    "simulation": true
+  },
+  "robot": {
+    "id": "unitree_go2",
+    "kind": "quadruped",
+    "role": "carrier",
+    "capabilities": [
+      "stand",
+      "stop",
+      "locomote",
+      "dock_for_handoff",
+      "accept_payload"
+    ],
+    "profile": "profiles/unitree_go2_mujoco.yaml",
+    "profile_source": "scene.robots[].profile",
+    "profile_reference_in_scene": "profiles/unitree_go2_mujoco.yaml",
+    "trunk_body": "base_link"
+  },
+  "target_id": "box_01",
+  "targets": [
+    {
+      "id": "box_01",
+      "body": "box_01",
+      "geom": "box_01_geom",
+      "material": "box_01_material",
+      "rgba": [
+        0.82,
+        0.22,
+        0.12,
+        1.0
+      ],
+      "position_m": [
+        0.28,
+        -0.28,
+        0.025
+      ],
+      "quaternion_wxyz": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "euler_deg": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "pose_source": "joint_model_fk"
+    }
+  ],
+  "gripper": {
+    "wrist_body": "piper_link6",
+    "left_finger_body": "piper_link7",
+    "right_finger_body": "piper_link8",
+    "left_finger_geom": "piper_left_finger",
+    "right_finger_geom": "piper_right_finger",
+    "open_positions": {
+      "piper_joint7": 0.035,
+      "piper_joint8": -0.035
+    },
+    "close_hold": "none",
+    "approach_hold": "none",
+    "lift_path": "direct",
+    "lift_gripper": "closed",
+    "require_friction_lift": false,
+    "carry_constraint": {
+      "enabled": true,
+      "type": "weld",
+      "equality_name": "box_01_lift_constraint",
+      "anchor_body": "grasp_anchor",
+      "solref": [
+        0.01,
+        1.0
+      ],
+      "solimp": [
+        0.9,
+        0.95,
+        0.01
+      ],
+      "release_gripper": true,
+      "max_slip_m": 0.005,
+      "max_plant_steps_per_iteration": 64,
+      "source": "piper_simulation_baseline.yaml:grasp.carry_constraint"
+    },
+    "place_settle_ms": 3000,
+    "place_pose_correction": {
+      "mode": "touchdown",
+      "max_lateral_m": 0.07,
+      "touch_clearance_m": 0.0,
+      "max_vertical_m": 0.05,
+      "residual_tolerance_m": 0.001,
+      "touchdown_step_fraction": 0.3,
+      "touchdown_max_iterations": 10,
+      "lateral_tolerance_m": 0.035,
+      "ik_iterations": 800,
+      "ik_step": 0.5,
+      "max_residual_m": 0.0001
+    },
+    "closed_positions": {
+      "piper_joint7": 0.023,
+      "piper_joint8": -0.023
+    },
+    "lift_positions": {
+      "piper_joint7": 0.023,
+      "piper_joint8": -0.023,
+      "piper_joint1": 1.0094766005987682e-05,
+      "piper_joint2": 1.6776642438080362,
+      "piper_joint3": -0.29509470498155954,
+      "piper_joint4": 7.007759554699875e-07,
+      "piper_joint5": -0.27765588217511483,
+      "piper_joint6": 2.6288514045922467e-09
+    },
+    "min_lift_delta_m": 0.02,
+    "min_normal_force_n": 0.2,
+    "max_force_imbalance_ratio": 4.0,
+    "pad_offset_m": 0.032016224,
+    "pad_offset_axis": [
+      0.0,
+      0.0,
+      1.0
+    ],
+    "lift_constraint": "box_01_lift_constraint",
+    "lift_anchor_body": "grasp_anchor",
+    "home_positions": {
+      "piper_joint7": 0.035,
+      "piper_joint8": -0.035,
+      "piper_joint1": 0.0,
+      "piper_joint2": 0.0,
+      "piper_joint3": 0.0,
+      "piper_joint4": 0.0,
+      "piper_joint5": 0.0,
+      "piper_joint6": 0.0
+    },
+    "approach_positions": {
+      "piper_joint7": 0.035,
+      "piper_joint8": -0.035,
+      "piper_joint1": 1.0561985282408195e-05,
+      "piper_joint2": 1.8858112356447498,
+      "piper_joint3": -0.36068514980298955,
+      "piper_joint4": 3.8285962018863633e-07,
+      "piper_joint5": -0.2786527209679332,
+      "piper_joint6": 2.637587298662197e-09
+    },
+    "grasp_positions": {
+      "piper_joint7": 0.035,
+      "piper_joint8": -0.035,
+      "piper_joint1": 1.103227571376021e-05,
+      "piper_joint2": 2.085906397708839,
+      "piper_joint3": -0.43802574669425504,
+      "piper_joint4": 8.046024414943407e-08,
+      "piper_joint5": -0.2858938702912799,
+      "piper_joint6": 2.7058844758982656e-09
+    },
+    "pre_lift_positions": {
+      "piper_joint1": 1.0561706676010121e-05,
+      "piper_joint2": 1.8856837092701462,
+      "piper_joint3": -0.3608380347298768,
+      "piper_joint4": 3.8310829944668194e-07,
+      "piper_joint5": -0.2781486919416916,
+      "piper_joint6": 2.6327603049166123e-09,
+      "piper_joint7": 0.023,
+      "piper_joint8": -0.023
+    },
+    "regrasp_positions": {
+      "piper_joint1": 1.0938468725650603e-05,
+      "piper_joint2": 2.0467133481045323,
+      "piper_joint3": -0.4219726662565226,
+      "piper_joint4": 1.414126628953339e-07,
+      "piper_joint5": -0.28335346216946883,
+      "piper_joint6": 2.681772286636526e-09,
+      "piper_joint7": 0.023,
+      "piper_joint8": -0.023
+    },
+    "regrasp": {
+      "enabled": true,
+      "pre_lift_m": 0.04,
+      "depth_m": 0.025,
+      "open_m": 0.004,
+      "hold_pre_lift": true,
+      "source": "piper_simulation_baseline.yaml:grasp.regrasp"
+    },
+    "gravity_feedforward": {
+      "home": {
+        "piper_joint1": 0.0,
+        "piper_joint2": 0.005229714,
+        "piper_joint3": -0.009013975,
+        "piper_joint4": -1.8157e-05,
+        "piper_joint5": -0.001802795,
+        "piper_joint6": 5.75e-07
+      },
+      "approach": {
+        "piper_joint1": 0.0,
+        "piper_joint2": -0.007969139,
+        "piper_joint3": -0.002421817,
+        "piper_joint4": -2.412e-06,
+        "piper_joint5": -0.000724626,
+        "piper_joint6": 2.31e-07
+      },
+      "grasp": {
+        "piper_joint1": 0.0,
+        "piper_joint2": -0.009393652,
+        "piper_joint3": -0.001338674,
+        "piper_joint4": -1.82e-07,
+        "piper_joint5": -0.000528663,
+        "piper_joint6": 1.68e-07
+      },
+      "lift": {
+        "piper_joint1": 0.0,
+        "piper_joint2": -0.006351278,
+        "piper_joint3": -0.003645894,
+        "piper_joint4": -4.954e-06,
+        "piper_joint5": -0.000951348,
+        "piper_joint6": 3.03e-07
+      }
+    },
+    "pregrasp_offset_m": 0.04,
+    "reference_pose_source": "resolved_for_joint_model",
+    "carry_gripper": {
+      "mode": "hold",
+      "source": "piper_simulation_baseline.yaml:grasp.carry_gripper"
+    },
+    "place_above_positions": {
+      "piper_joint7": 0.023,
+      "piper_joint8": -0.023,
+      "piper_joint1": -0.7878298801821781,
+      "piper_joint2": 1.5662898195288726,
+      "piper_joint3": -1.2487740887586334,
+      "piper_joint4": -0.09252315757295275,
+      "piper_joint5": -0.06813008750763862,
+      "piper_joint6": -3.7061338150033595e-07
+    },
+    "place_descend_positions": {
+      "piper_joint7": 0.023,
+      "piper_joint8": -0.023,
+      "piper_joint1": -0.7867707449671322,
+      "piper_joint2": 1.6032333614904697,
+      "piper_joint3": -1.1795386807904207,
+      "piper_joint4": -0.0851274415089868,
+      "piper_joint5": -0.0420706619209055,
+      "piper_joint6": -3.6057853400701517e-07
+    },
+    "place_retreat_positions": {
+      "piper_joint7": 0.023,
+      "piper_joint8": -0.023,
+      "piper_joint1": -0.7878298801821781,
+      "piper_joint2": 1.5662898195288726,
+      "piper_joint3": -1.2487740887586334,
+      "piper_joint4": -0.09252315757295275,
+      "piper_joint5": -0.06813008750763862,
+      "piper_joint6": -3.7061338150033595e-07
+    },
+    "place_transit_positions": {
+      "piper_joint7": 0.023,
+      "piper_joint8": -0.023,
+      "piper_joint1": 7.1328149108774505e-06,
+      "piper_joint2": 0.8216643129578108,
+      "piper_joint3": -0.8479250255542766,
+      "piper_joint4": -1.059037050189553e-06,
+      "piper_joint5": 0.4499183532763018,
+      "piper_joint6": -4.909590701520376e-10
+    },
+    "place_selfcheck": {
+      "descend_pad_mid_z_m": 0.41237474,
+      "grip_height_m": 0.032008225,
+      "predicted_payload_low_m": 0.355366514,
+      "bearing_surface_z_m": 0.355372,
+      "touch_clearance_m": 0.0,
+      "allowed_low_m": 0.360372,
+      "gap_above_bearing_m": -5.486e-06,
+      "tolerance_m": 0.005,
+      "grip_height_evidence": {
+        "grip_height_m": 0.03200822517632923,
+        "pad_mid_z_m": 0.05700822517632923,
+        "payload_center_z_m": 0.025,
+        "pad_geoms": [
+          "piper_left_finger",
+          "piper_right_finger"
+        ],
+        "grip_channels_skipped": [],
+        "source": "FK@\u62a5\u544a gripper.grasp_positions\uff08\u8054\u5408\u6a21\u578b\uff09",
+        "replaces": "pick \u4fa7 pad_offset_m\uff08\u542b\u4e49\u4e0d\u540c\uff0c\u5dee 13.3 mm\uff09"
+      }
+    }
+  },
+  "vision": {
+    "evidence_file": "build/calibration/piper-vision-target.json",
+    "refresh": "always",
+    "detector": {
+      "command": [
+        "{python}",
+        "scripts/detect_targets.py",
+        "--model",
+        "{model}",
+        "--config",
+        "{config}",
+        "--output",
+        "{evidence}",
+        "--extrinsics",
+        "{calibration}"
+      ],
+      "config_file": "config/piper_multi_target.yaml",
+      "calibration_file": "build/calibration/camera_to_base.json"
+    }
+  },
+  "manipulation_absent_reason": null,
+  "gravity_fixture": false,
+  "require_friction_lift": false,
+  "arm_joints": [],
+  "finger_geoms": null,
+  "workbench_top_z_m": 0.0,
+  "acceptance": {
+    "pose_tolerance_m": 0.005,
+    "min_lift_delta_m": 0.02,
+    "dock_translation_error_max_m": 0.03,
+    "dock_yaw_error_max_deg": 2.0,
+    "min_stable_hold_s": 3.0,
+    "max_speed_m_s": 0.0,
+    "timeout_s": 180.0
+  },
+  "simulation": true,
+  "vendor_source": {
+    "path": "vendor/unitree_go2/unitree_robots/go2/go2.xml",
+    "sha256": "2014a3d76e30f17ab9447d8a67bd015291f74fa4d71ae30d005f1a32bd693d4b",
+    "locked_sha256": "2014a3d76e30f17ab9447d8a67bd015291f74fa4d71ae30d005f1a32bd693d4b",
+    "blob_sha1": "d970540c8295b2614b043ae282d1804d317edc77",
+    "lock_schema": "iraf.vendor-source-lock/v1",
+    "path_key": "path",
+    "host_specific": false,
+    "lock": "vendor/unitree_go2/source-lock.json",
+    "match": true
+  },
+  "initial_alignment": {
+    "enabled": true,
+    "mode": "lift_lowest_geom_to_support_plane",
+    "applied": true,
+    "support_plane_z_m": 0.0,
+    "support_plane_source": "terrain.workbench.top_z_m",
+    "geometry_scope": "collision",
+    "tolerance_m": 0.0001,
+    "trunk_body": "base_link",
+    "base_joint_qpos_address": 0,
+    "keyframes": [
+      {
+        "name": "home",
+        "lowest_z_before_m": -0.01837250030255797,
+        "lowest_geom": "FL",
+        "lowest_geom_type": "mjGEOM_SPHERE",
+        "base_z_before_m": 0.27,
+        "lift_m": 0.01837250030255797,
+        "base_z_after_m": 0.288372500302558,
+        "residual_after_m": -3.025580133653172e-10,
+        "lowest_geom_after": "FL",
+        "lowest_geom_type_after": "mjGEOM_SPHERE"
+      }
+    ],
+    "max_abs_residual_m": 3.025580133653172e-10,
+    "method": "\u7f16\u8bd1\u540e\u6a21\u578b + \u5173\u952e\u5e27 + mj_forward \u5b9e\u6d4b\u6700\u4f4e\u70b9\uff0c\u5355\u6b21\u5e73\u79fb\u57fa\u5ea7 z"
+  },
+  "injections": {
+    "lights": [
+      "key",
+      "fill",
+      "rim"
+    ],
+    "workbench": {
+      "top_z_m": 0.0,
+      "half_size_m": 1.5,
+      "half_thickness_m": 0.025,
+      "friction": "1.0 0.02 0.001"
+    },
+    "props": [
+      {
+        "id": "box_01",
+        "body": "box_01",
+        "kind": "box",
+        "material": "box_01_material",
+        "rgba": [
+          0.82,
+          0.22,
+          0.12,
+          1.0
+        ],
+        "mass_kg": 0.04,
+        "friction": "2.0 0.05 0.001",
+        "geometry": {
+          "type": "box"
+        },
+        "pose_source": "world",
+        "has_free_joint": true,
+        "position_m": [
+          0.28,
+          -0.28,
+          0.025
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "id": "tray_01",
+        "body": "tray_01",
+        "kind": "tray",
+        "material": "tray_01_material",
+        "rgba": [
+          0.25,
+          0.3,
+          0.35,
+          1.0
+        ],
+        "mass_kg": 0.35,
+        "friction": "1.4 0.03 0.001",
+        "geometry": {
+          "type": "box"
+        },
+        "mount": {
+          "frame": "tray_frame",
+          "entity": "unitree_go2",
+          "body": "tray_01"
+        },
+        "pose_source": "mount_frame",
+        "has_free_joint": false,
+        "position_m": [
+          0.0,
+          0.0,
+          0.057
+        ]
+      },
+      {
+        "id": "arm_pedestal",
+        "body": "arm_pedestal",
+        "kind": "stand",
+        "material": "arm_pedestal_material",
+        "rgba": [
+          0.45,
+          0.45,
+          0.5,
+          1.0
+        ],
+        "mass_kg": 5.0,
+        "friction": "1.0 0.005 0.0001",
+        "geometry": {
+          "type": "box"
+        },
+        "pose_source": "world_static",
+        "has_free_joint": false,
+        "position_m": [
+          0.45,
+          -0.45,
+          0.057
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "id": "place_pad_b",
+        "body": "place_pad_b",
+        "kind": "box",
+        "material": "place_pad_b_material",
+        "rgba": [
+          0.35,
+          0.45,
+          0.3,
+          1.0
+        ],
+        "mass_kg": 0.05,
+        "friction": "1.4 0.03 0.001",
+        "geometry": {
+          "type": "box"
+        },
+        "pose_source": "world_static",
+        "has_free_joint": false,
+        "position_m": [
+          0.88,
+          0.7,
+          -0.005
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    ],
+    "mount_frames": [
+      "tray_frame"
+    ],
+    "world_frames": [
+      {
+        "id": "handoff_station_frame",
+        "kind": "site",
+        "injected_as": "world_site",
+        "pose_source": "declaration",
+        "pos_m": [
+          0.45,
+          0.0,
+          0.0
+        ],
+        "quat_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "id": "handoff_station_frame_b",
+        "kind": "site",
+        "injected_as": "world_site",
+        "pose_source": "declaration",
+        "pos_m": [
+          0.15,
+          0.45,
+          0.0
+        ],
+        "quat_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    ],
+    "attached_robots": [
+      {
+        "id": "piper",
+        "prefix": "piper_",
+        "source": "vendor/agilex_piper/piper_description/mujoco_model/piper_description.xml",
+        "placement": {
+          "pos_m": [
+            0.45,
+            -0.45,
+            0.12
+          ],
+          "quat_wxyz": [
+            0.38268343236509,
+            0.0,
+            0.0,
+            0.923879532511287
+          ]
+        },
+        "child_meshdir": ".",
+        "child_assetsdir": ".",
+        "declared_names": {
+          "bodies": [
+            "link1",
+            "link2",
+            "link3",
+            "link4",
+            "link5",
+            "link6",
+            "link7",
+            "link8",
+            "world"
+          ],
+          "geoms": [],
+          "sites": [],
+          "joints": [
+            "joint1",
+            "joint2",
+            "joint3",
+            "joint4",
+            "joint5",
+            "joint6",
+            "joint7",
+            "joint8"
+          ],
+          "actuators": [
+            "joint1",
+            "joint2",
+            "joint3",
+            "joint4",
+            "joint5",
+            "joint6",
+            "joint7",
+            "joint8"
+          ]
+        },
+        "position_gain": {
+          "declared": true,
+          "baseline": "/home/coretek/AIIRAF/config/piper_simulation_baseline.yaml",
+          "inject_arm_position_gains": true,
+          "arm_position_kp": 200.0,
+          "arm_position_kp_damping_ratio": 1.5,
+          "rule": "kp := max(arm_position_kp, \u5173\u8282\u963b\u5c3c \u00d7 ratio)\uff08\u4e0e\u81c2\u81ea\u5df1\u573a\u666f\u540c\u4e00\u6761\u89c4\u5219\uff09",
+          "applied": [
+            {
+              "joint": "joint1",
+              "damping": 300.0,
+              "kp_before": 10000.0,
+              "kp_after": 450.0
+            },
+            {
+              "joint": "joint2",
+              "damping": 100.0,
+              "kp_before": 2000.0,
+              "kp_after": 200.0
+            },
+            {
+              "joint": "joint3",
+              "damping": 20.0,
+              "kp_before": 500.0,
+              "kp_after": 200.0
+            },
+            {
+              "joint": "joint4",
+              "damping": 5.0,
+              "kp_before": 50.0,
+              "kp_after": 200.0
+            },
+            {
+              "joint": "joint5",
+              "damping": 2.0,
+              "kp_before": 20.0,
+              "kp_after": 200.0
+            },
+            {
+              "joint": "joint6",
+              "damping": 0.1,
+              "kp_before": 5.0,
+              "kp_after": 200.0
+            }
+          ]
+        },
+        "home_joints": 8,
+        "keyframe_ctrl": [
+          {
+            "actuator": "joint1",
+            "joint": "joint1",
+            "ctrl": 0.0,
+            "gear": 1.0,
+            "source": "declared_home_div_gear"
+          },
+          {
+            "actuator": "joint2",
+            "joint": "joint2",
+            "ctrl": 0.65,
+            "gear": 1.0,
+            "source": "declared_home_div_gear"
+          },
+          {
+            "actuator": "joint3",
+            "joint": "joint3",
+            "ctrl": -1.15,
+            "gear": 1.0,
+            "source": "declared_home_div_gear"
+          },
+          {
+            "actuator": "joint4",
+            "joint": "joint4",
+            "ctrl": 0.0,
+            "gear": 1.0,
+            "source": "declared_home_div_gear"
+          },
+          {
+            "actuator": "joint5",
+            "joint": "joint5",
+            "ctrl": 0.35,
+            "gear": 1.0,
+            "source": "declared_home_div_gear"
+          },
+          {
+            "actuator": "joint6",
+            "joint": "joint6",
+            "ctrl": 0.0,
+            "gear": 1.0,
+            "source": "declared_home_div_gear"
+          },
+          {
+            "actuator": "joint7",
+            "joint": "joint7",
+            "ctrl": 0.035,
+            "gear": 1.0,
+            "source": "declared_home_div_gear"
+          },
+          {
+            "actuator": "joint8",
+            "joint": "joint8",
+            "ctrl": -0.035,
+            "gear": 1.0,
+            "source": "declared_home_div_gear"
+          }
+        ],
+        "keyframes_extended": 1,
+        "assets_copied": 38,
+        "assets_path_style": "absolute_host_path",
+        "assets_note": "\u5408\u6210\u4ea7\u7269\u7684\u8d44\u4ea7\u7528\u7edd\u5bf9\u8def\u5f84\uff08MjSpec \u7684 per-attach meshdir \u4f7f\u4e24\u4e2a\u672c\u4f53\u7684\u8d44\u4ea7\u65e0\u6cd5\u7528\u5355\u4e00\u76f8\u5bf9 meshdir \u8868\u8fbe\uff09\u21d2 \u8be5\u4ea7\u7269\u662f **host-specific**\uff1b\u8fc1\u5230\u76f8\u5bf9\u8868\u8fbe\u9700\u8fdb\u4e00\u6b65\u7814\u7a76 MjSpec \u7684\u8d44\u4ea7\u642c\u8fc1\u8bed\u4e49"
+      },
+      {
+        "id": "ur5e",
+        "prefix": "ur5e_",
+        "source": "build/models/ur5e_2f85/ur5e_2f85.xml",
+        "placement": {
+          "pos_m": [
+            0.45,
+            0.9,
+            0.0
+          ],
+          "quat_wxyz": [
+            0.707106781186548,
+            0.0,
+            0.0,
+            0.707106781186548
+          ]
+        },
+        "child_meshdir": "assets",
+        "child_assetsdir": ".",
+        "declared_names": {
+          "bodies": [
+            "base",
+            "forearm_link",
+            "rq2f85_base",
+            "rq2f85_base_mount",
+            "rq2f85_left_coupler",
+            "rq2f85_left_driver",
+            "rq2f85_left_follower",
+            "rq2f85_left_pad",
+            "rq2f85_left_silicone_pad",
+            "rq2f85_left_spring_link",
+            "rq2f85_right_coupler",
+            "rq2f85_right_driver",
+            "rq2f85_right_follower",
+            "rq2f85_right_pad",
+            "rq2f85_right_silicone_pad",
+            "rq2f85_right_spring_link",
+            "shoulder_link",
+            "upper_arm_link",
+            "world",
+            "wrist_1_link",
+            "wrist_2_link",
+            "wrist_3_link"
+          ],
+          "geoms": [
+            "rq2f85_left_pad1",
+            "rq2f85_left_pad2",
+            "rq2f85_right_pad1",
+            "rq2f85_right_pad2"
+          ],
+          "sites": [
+            "attachment_site",
+            "pinch",
+            "rq2f85_pinch"
+          ],
+          "joints": [
+            "elbow_joint",
+            "rq2f85_left_coupler_joint",
+            "rq2f85_left_driver_joint",
+            "rq2f85_left_follower_joint",
+            "rq2f85_left_spring_link_joint",
+            "rq2f85_right_coupler_joint",
+            "rq2f85_right_driver_joint",
+            "rq2f85_right_follower_joint",
+            "rq2f85_right_spring_link_joint",
+            "shoulder_lift_joint",
+            "shoulder_pan_joint",
+            "wrist_1_joint",
+            "wrist_2_joint",
+            "wrist_3_joint"
+          ],
+          "actuators": [
+            "elbow",
+            "rq2f85_fingers_actuator",
+            "shoulder_lift",
+            "shoulder_pan",
+            "wrist_1",
+            "wrist_2",
+            "wrist_3"
+          ]
+        },
+        "position_gain": {
+          "declared": true,
+          "baseline": "/home/coretek/AIIRAF/config/ur5_simulation_baseline.yaml",
+          "inject_arm_position_gains": false,
+          "note": "\u58f0\u660e\u91cc inject_arm_position_gains=false \u21d2 \u6cbf\u7528\u5382\u5546\u6267\u884c\u5668\u53e3\u5f84\uff08\u4e0d\u6ce8\u5165\uff09"
+        },
+        "home_joints": 14,
+        "keyframe_ctrl": [
+          {
+            "actuator": "shoulder_pan",
+            "joint": "shoulder_pan_joint",
+            "ctrl": -1.5708,
+            "gear": 1.0,
+            "source": "declared_home_div_gear"
+          },
+          {
+            "actuator": "shoulder_lift",
+            "joint": "shoulder_lift_joint",
+            "ctrl": -1.5708,
+            "gear": 1.0,
+            "source": "declared_home_div_gear"
+          },
+          {
+            "actuator": "elbow",
+            "joint": "elbow_joint",
+            "ctrl": 1.5708,
+            "gear": 1.0,
+            "source": "declared_home_div_gear"
+          },
+          {
+            "actuator": "wrist_1",
+            "joint": "wrist_1_joint",
+            "ctrl": -1.5708,
+            "gear": 1.0,
+            "source": "declared_home_div_gear"
+          },
+          {
+            "actuator": "wrist_2",
+            "joint": "wrist_2_joint",
+            "ctrl": -1.5708,
+            "gear": 1.0,
+            "source": "declared_home_div_gear"
+          },
+          {
+            "actuator": "wrist_3",
+            "joint": "wrist_3_joint",
+            "ctrl": 0.0,
+            "gear": 1.0,
+            "source": "declared_home_div_gear"
+          },
+          {
+            "actuator": "rq2f85_fingers_actuator",
+            "joint": null,
+            "ctrl": 0.0,
+            "gear": 1.0,
+            "source": "no_joint_transmission_zero"
+          }
+        ],
+        "keyframes_extended": 1,
+        "assets_copied": 38,
+        "assets_path_style": "absolute_host_path",
+        "assets_note": "\u5408\u6210\u4ea7\u7269\u7684\u8d44\u4ea7\u7528\u7edd\u5bf9\u8def\u5f84\uff08MjSpec \u7684 per-attach meshdir \u4f7f\u4e24\u4e2a\u672c\u4f53\u7684\u8d44\u4ea7\u65e0\u6cd5\u7528\u5355\u4e00\u76f8\u5bf9 meshdir \u8868\u8fbe\uff09\u21d2 \u8be5\u4ea7\u7269\u662f **host-specific**\uff1b\u8fc1\u5230\u76f8\u5bf9\u8868\u8fbe\u9700\u8fdb\u4e00\u6b65\u7814\u7a76 MjSpec \u7684\u8d44\u4ea7\u642c\u8fc1\u8bed\u4e49"
+      }
+    ],
+    "self_collision_excludes": {
+      "pairs": [
+        [
+          "world",
+          "piper_link1"
+        ]
+      ],
+      "source": "Profile spec.model.self_collision_excludes"
+    },
+    "attached_armature": {
+      "declared_min_kg_m2": 0.5,
+      "rule": "armature := max(\u5382\u5546\u503c, \u58f0\u660e\u4e0b\u9650)\uff0c\u53ea\u5bf9\u9644\u52a0\u672c\u4f53",
+      "source": "scene.yaml:model.attached_actuator",
+      "changed": [
+        {
+          "joint": "piper_joint1",
+          "before_kg_m2": 0.0,
+          "after_kg_m2": 0.5
+        },
+        {
+          "joint": "piper_joint2",
+          "before_kg_m2": 0.0,
+          "after_kg_m2": 0.5
+        },
+        {
+          "joint": "piper_joint3",
+          "before_kg_m2": 0.0,
+          "after_kg_m2": 0.5
+        },
+        {
+          "joint": "piper_joint4",
+          "before_kg_m2": 0.0,
+          "after_kg_m2": 0.5
+        },
+        {
+          "joint": "piper_joint5",
+          "before_kg_m2": 0.0,
+          "after_kg_m2": 0.5
+        },
+        {
+          "joint": "piper_joint6",
+          "before_kg_m2": 0.0,
+          "after_kg_m2": 0.5
+        },
+        {
+          "joint": "piper_joint7",
+          "before_kg_m2": 0.0,
+          "after_kg_m2": 0.5
+        },
+        {
+          "joint": "piper_joint8",
+          "before_kg_m2": 0.0,
+          "after_kg_m2": 0.5
+        },
+        {
+          "joint": "ur5e_shoulder_pan_joint",
+          "before_kg_m2": 0.1,
+          "after_kg_m2": 0.5
+        },
+        {
+          "joint": "ur5e_shoulder_lift_joint",
+          "before_kg_m2": 0.1,
+          "after_kg_m2": 0.5
+        },
+        {
+          "joint": "ur5e_elbow_joint",
+          "before_kg_m2": 0.1,
+          "after_kg_m2": 0.5
+        },
+        {
+          "joint": "ur5e_wrist_1_joint",
+          "before_kg_m2": 0.1,
+          "after_kg_m2": 0.5
+        },
+        {
+          "joint": "ur5e_wrist_2_joint",
+          "before_kg_m2": 0.1,
+          "after_kg_m2": 0.5
+        },
+        {
+          "joint": "ur5e_wrist_3_joint",
+          "before_kg_m2": 0.1,
+          "after_kg_m2": 0.5
+        },
+        {
+          "joint": "ur5e_rq2f85_right_driver_joint",
+          "before_kg_m2": 0.005,
+          "after_kg_m2": 0.5
+        },
+        {
+          "joint": "ur5e_rq2f85_right_coupler_joint",
+          "before_kg_m2": 0.001,
+          "after_kg_m2": 0.5
+        },
+        {
+          "joint": "ur5e_rq2f85_right_spring_link_joint",
+          "before_kg_m2": 0.001,
+          "after_kg_m2": 0.5
+        },
+        {
+          "joint": "ur5e_rq2f85_right_follower_joint",
+          "before_kg_m2": 0.001,
+          "after_kg_m2": 0.5
+        },
+        {
+          "joint": "ur5e_rq2f85_left_driver_joint",
+          "before_kg_m2": 0.005,
+          "after_kg_m2": 0.5
+        },
+        {
+          "joint": "ur5e_rq2f85_left_coupler_joint",
+          "before_kg_m2": 0.001,
+          "after_kg_m2": 0.5
+        },
+        {
+          "joint": "ur5e_rq2f85_left_spring_link_joint",
+          "before_kg_m2": 0.001,
+          "after_kg_m2": 0.5
+        },
+        {
+          "joint": "ur5e_rq2f85_left_follower_joint",
+          "before_kg_m2": 0.001,
+          "after_kg_m2": 0.5
+        }
+      ]
+    }
+  },
+  "sensors": {
+    "injected": [
+      {
+        "id": "overhead_camera",
+        "kind": "camera",
+        "object_kind": "camera",
+        "name": "overhead_camera",
+        "entity": "piper",
+        "injected_as": "world_camera",
+        "pos_m": [
+          0.28,
+          -0.72,
+          0.72
+        ],
+        "look_at_m": [
+          0.28,
+          -0.28,
+          0.025
+        ],
+        "fovy_deg": 78.0,
+        "note": "\u4e16\u754c\u56fa\u5b9a\u76f8\u673a\uff1a\u4f4d\u59ff\u662f\u573a\u666f\u7edd\u5bf9\u5750\u6807\uff1banchor.entity \u767b\u8bb0\u5f52\u5c5e\uff0c\u4e0d\u8868\u793a\u6302\u5728 body \u4e0a\u3002"
+      },
+      {
+        "id": "payload_lidar",
+        "kind": "lidar",
+        "object_kind": "site",
+        "name": "payload_lidar_site",
+        "entity": "unitree_go2",
+        "injected_as": "trunk_site",
+        "parent_body": "base_link",
+        "mount_height_m": 0.12,
+        "num_rays": 360,
+        "range_m": 8.0,
+        "mujoco_sensor": null,
+        "note": "MuJoCo \u65e0\u96f7\u8fbe\u4f20\u611f\u5668\u7c7b\u578b\uff1a\u672c\u6b65\u9aa4\u53ea\u6ce8\u5165\u53ef\u6302\u8f7d\u7684 site \u4e0e\u626b\u63cf\u5951\u7ea6\uff08\u5c04\u7ebf\u6570/\u91cf\u7a0b\u7531\u8fd0\u884c\u671f\u6309\u58f0\u660e\u505a\u5149\u7ebf\u6295\u5c04\uff0c\u70b9\u4e91\u7edf\u8ba1\u5c5e\u6b65\u9aa4 14\uff09\u3002"
+      }
+    ],
+    "vendor_referenced": [
+      {
+        "id": "base_imu",
+        "kind": "imu",
+        "object_kind": "site",
+        "name": "imu",
+        "entity": "unitree_go2",
+        "rate_hz": 100.0,
+        "injected": false,
+        "note": "\u5382\u5546 MJCF \u81ea\u5e26\uff0c\u573a\u666f\u6784\u5efa\u5668\u53ea\u8bfb\u5f15\u7528\uff0c\u4e0d\u6539\u5199\u5382\u5546\u6587\u4ef6\u3002"
+      }
+    ],
+    "deferred": []
+  },
+  "place_targets": {
+    "targets": [
+      {
+        "id": "tray_01",
+        "body": "tray_01",
+        "geom": "tray_01_geom",
+        "kind": "tray",
+        "mass_kg": 0.35,
+        "mount": {
+          "frame": "tray_frame",
+          "entity": "unitree_go2",
+          "body": "tray_01"
+        },
+        "mount_offset_m": [
+          0.0,
+          0.0,
+          0.057
+        ],
+        "size_m": [
+          0.12,
+          0.08,
+          0.01
+        ],
+        "pose_source": "nominal_docked_station",
+        "runtime_pose_source": "live_fk",
+        "nominal_pose_m": [
+          0.45,
+          0.0,
+          0.345372
+        ],
+        "nominal_quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "id": "place_pad_b",
+        "body": "place_pad_b",
+        "geom": "place_pad_b_geom",
+        "kind": "box",
+        "mass_kg": 0.05,
+        "mount": null,
+        "mount_offset_m": [
+          0.88,
+          0.7,
+          -0.005
+        ],
+        "size_m": [
+          0.18,
+          0.18,
+          0.01
+        ],
+        "pose_source": "scene_declared_pose",
+        "runtime_pose_source": "live_fk",
+        "nominal_pose_m": [
+          0.88,
+          0.7,
+          -0.005
+        ],
+        "nominal_quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    ],
+    "station_frame": "handoff_station_frame",
+    "station_pose_m": [
+      0.45,
+      0.0,
+      0.0
+    ],
+    "nominal_base_height_m": 0.288372,
+    "note": "\u63a5\u6536\u4f53\u6309\u540d\u5b57\u5f15\u7528\uff08\u6258\u76d8\u968f\u8f7d\u4f53\u8fd0\u52a8\uff09\uff1b`nominal_*` \u662f\u300c\u8f7d\u4f53\u505c\u5728\u4ea4\u63a5\u7ad9\u4f4d\u300d\u65f6\u7684 FK\uff0c\u53ea\u4f5c\u6784\u5efa\u57fa\u51c6\uff1b\u8fd0\u884c\u671f\u4ee5\u5b9e\u6d4b\u4f4d\u59ff\u4e3a\u51c6\uff08\u8bc1\u636e\u7ed9\u5b9e\u6d4b\u504f\u79fb\uff09\u3002"
+  },
+  "model_facts": {
+    "nq": 48,
+    "nv": 46,
+    "nu": 27,
+    "nbody": 52,
+    "ncam": 1,
+    "nsite": 8,
+    "nsensor": 41,
+    "njnt": 36,
+    "timestep_s": 0.002,
+    "gravity": [
+      0.0,
+      0.0,
+      -9.81
+    ],
+    "bodies": [
+      "world",
+      "base_link",
+      "FL_hip",
+      "FL_thigh",
+      "FL_calf",
+      "FL_foot",
+      "FR_hip",
+      "FR_thigh",
+      "FR_calf",
+      "FR_foot",
+      "RL_hip",
+      "RL_thigh",
+      "RL_calf",
+      "RL_foot",
+      "RR_hip",
+      "RR_thigh",
+      "RR_calf",
+      "RR_foot",
+      "tray_01",
+      "box_01",
+      "arm_pedestal",
+      "place_pad_b",
+      "piper_link1",
+      "piper_link2",
+      "piper_link3",
+      "piper_link4",
+      "piper_link5",
+      "piper_link6",
+      "piper_link7",
+      "piper_link8",
+      "ur5e_base",
+      "ur5e_shoulder_link",
+      "ur5e_upper_arm_link",
+      "ur5e_forearm_link",
+      "ur5e_wrist_1_link",
+      "ur5e_wrist_2_link",
+      "ur5e_wrist_3_link",
+      "ur5e_rq2f85_base_mount",
+      "ur5e_rq2f85_base",
+      "ur5e_rq2f85_right_driver",
+      "ur5e_rq2f85_right_coupler",
+      "ur5e_rq2f85_right_spring_link",
+      "ur5e_rq2f85_right_follower",
+      "ur5e_rq2f85_right_pad",
+      "ur5e_rq2f85_right_silicone_pad",
+      "ur5e_rq2f85_left_driver",
+      "ur5e_rq2f85_left_coupler",
+      "ur5e_rq2f85_left_spring_link",
+      "ur5e_rq2f85_left_follower",
+      "ur5e_rq2f85_left_pad",
+      "ur5e_rq2f85_left_silicone_pad",
+      "grasp_anchor"
+    ],
+    "cameras": [
+      "overhead_camera"
+    ],
+    "sites": [
+      "handoff_station_frame",
+      "handoff_station_frame_b",
+      "imu",
+      "tray_frame",
+      "payload_lidar_site",
+      "ur5e_attachment_site",
+      "ur5e_rq2f85_pinch",
+      "ur5e_pinch"
+    ],
+    "joints": [
+      "FL_hip_joint",
+      "FL_thigh_joint",
+      "FL_calf_joint",
+      "FR_hip_joint",
+      "FR_thigh_joint",
+      "FR_calf_joint",
+      "RL_hip_joint",
+      "RL_thigh_joint",
+      "RL_calf_joint",
+      "RR_hip_joint",
+      "RR_thigh_joint",
+      "RR_calf_joint",
+      "box_01_free",
+      "piper_joint1",
+      "piper_joint2",
+      "piper_joint3",
+      "piper_joint4",
+      "piper_joint5",
+      "piper_joint6",
+      "piper_joint7",
+      "piper_joint8",
+      "ur5e_shoulder_pan_joint",
+      "ur5e_shoulder_lift_joint",
+      "ur5e_elbow_joint",
+      "ur5e_wrist_1_joint",
+      "ur5e_wrist_2_joint",
+      "ur5e_wrist_3_joint",
+      "ur5e_rq2f85_right_driver_joint",
+      "ur5e_rq2f85_right_coupler_joint",
+      "ur5e_rq2f85_right_spring_link_joint",
+      "ur5e_rq2f85_right_follower_joint",
+      "ur5e_rq2f85_left_driver_joint",
+      "ur5e_rq2f85_left_coupler_joint",
+      "ur5e_rq2f85_left_spring_link_joint",
+      "ur5e_rq2f85_left_follower_joint"
+    ],
+    "actuators": [
+      "FR_hip",
+      "FR_thigh",
+      "FR_calf",
+      "FL_hip",
+      "FL_thigh",
+      "FL_calf",
+      "RR_hip",
+      "RR_thigh",
+      "RR_calf",
+      "RL_hip",
+      "RL_thigh",
+      "RL_calf",
+      "piper_joint1",
+      "piper_joint2",
+      "piper_joint3",
+      "piper_joint4",
+      "piper_joint5",
+      "piper_joint6",
+      "piper_joint7",
+      "piper_joint8",
+      "ur5e_shoulder_pan",
+      "ur5e_shoulder_lift",
+      "ur5e_elbow",
+      "ur5e_wrist_1",
+      "ur5e_wrist_2",
+      "ur5e_wrist_3",
+      "ur5e_rq2f85_fingers_actuator"
+    ]
+  },
+  "profile_identity": {
+    "name": "unitree_go2",
+    "joints": [
+      "FL_hip_joint",
+      "FL_thigh_joint",
+      "FL_calf_joint",
+      "FR_hip_joint",
+      "FR_thigh_joint",
+      "FR_calf_joint",
+      "RL_hip_joint",
+      "RL_thigh_joint",
+      "RL_calf_joint",
+      "RR_hip_joint",
+      "RR_thigh_joint",
+      "RR_calf_joint"
+    ],
+    "capabilities": [
+      "stand",
+      "stop",
+      "locomote",
+      "dock_for_handoff",
+      "accept_payload"
+    ],
+    "verification": "unverified",
+    "simulation": true
+  },
+  "manipulation": {
+    "attached_robot": "piper",
+    "declared_primary": "piper",
+    "per_robot": {
+      "piper": {
+        "resolved": true,
+        "prefix": "piper_",
+        "manipulation_report": "build/models/piper-pick-scene.json",
+        "joint_scene_target_m": [
+          0.28,
+          -0.28,
+          0.025
+        ],
+        "joint_scene_target_source": null,
+        "joint_scene_target_quat_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "gripper": {
+          "wrist_body": "piper_link6",
+          "left_finger_body": "piper_link7",
+          "right_finger_body": "piper_link8",
+          "left_finger_geom": "piper_left_finger",
+          "right_finger_geom": "piper_right_finger",
+          "open_positions": {
+            "piper_joint7": 0.035,
+            "piper_joint8": -0.035
+          },
+          "close_hold": "none",
+          "approach_hold": "none",
+          "lift_path": "direct",
+          "lift_gripper": "closed",
+          "require_friction_lift": false,
+          "carry_constraint": {
+            "enabled": true,
+            "type": "weld",
+            "equality_name": "box_01_lift_constraint",
+            "anchor_body": "grasp_anchor",
+            "solref": [
+              0.01,
+              1.0
+            ],
+            "solimp": [
+              0.9,
+              0.95,
+              0.01
+            ],
+            "release_gripper": true,
+            "max_slip_m": 0.005,
+            "max_plant_steps_per_iteration": 64,
+            "source": "piper_simulation_baseline.yaml:grasp.carry_constraint"
+          },
+          "place_settle_ms": 3000,
+          "place_pose_correction": {
+            "mode": "touchdown",
+            "max_lateral_m": 0.07,
+            "touch_clearance_m": 0.0,
+            "max_vertical_m": 0.05,
+            "residual_tolerance_m": 0.001,
+            "touchdown_step_fraction": 0.3,
+            "touchdown_max_iterations": 10,
+            "lateral_tolerance_m": 0.035,
+            "ik_iterations": 800,
+            "ik_step": 0.5,
+            "max_residual_m": 0.0001
+          },
+          "closed_positions": {
+            "piper_joint7": 0.023,
+            "piper_joint8": -0.023
+          },
+          "lift_positions": {
+            "piper_joint7": 0.023,
+            "piper_joint8": -0.023,
+            "piper_joint1": 1.0094766005987682e-05,
+            "piper_joint2": 1.6776642438080362,
+            "piper_joint3": -0.29509470498155954,
+            "piper_joint4": 7.007759554699875e-07,
+            "piper_joint5": -0.27765588217511483,
+            "piper_joint6": 2.6288514045922467e-09
+          },
+          "min_lift_delta_m": 0.02,
+          "min_normal_force_n": 0.2,
+          "max_force_imbalance_ratio": 4.0,
+          "pad_offset_m": 0.032016224,
+          "pad_offset_axis": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "lift_constraint": "box_01_lift_constraint",
+          "lift_anchor_body": "grasp_anchor",
+          "home_positions": {
+            "piper_joint7": 0.035,
+            "piper_joint8": -0.035,
+            "piper_joint1": 0.0,
+            "piper_joint2": 0.0,
+            "piper_joint3": 0.0,
+            "piper_joint4": 0.0,
+            "piper_joint5": 0.0,
+            "piper_joint6": 0.0
+          },
+          "approach_positions": {
+            "piper_joint7": 0.035,
+            "piper_joint8": -0.035,
+            "piper_joint1": 1.0561985282408195e-05,
+            "piper_joint2": 1.8858112356447498,
+            "piper_joint3": -0.36068514980298955,
+            "piper_joint4": 3.8285962018863633e-07,
+            "piper_joint5": -0.2786527209679332,
+            "piper_joint6": 2.637587298662197e-09
+          },
+          "grasp_positions": {
+            "piper_joint7": 0.035,
+            "piper_joint8": -0.035,
+            "piper_joint1": 1.103227571376021e-05,
+            "piper_joint2": 2.085906397708839,
+            "piper_joint3": -0.43802574669425504,
+            "piper_joint4": 8.046024414943407e-08,
+            "piper_joint5": -0.2858938702912799,
+            "piper_joint6": 2.7058844758982656e-09
+          },
+          "pre_lift_positions": {
+            "piper_joint1": 1.0561706676010121e-05,
+            "piper_joint2": 1.8856837092701462,
+            "piper_joint3": -0.3608380347298768,
+            "piper_joint4": 3.8310829944668194e-07,
+            "piper_joint5": -0.2781486919416916,
+            "piper_joint6": 2.6327603049166123e-09,
+            "piper_joint7": 0.023,
+            "piper_joint8": -0.023
+          },
+          "regrasp_positions": {
+            "piper_joint1": 1.0938468725650603e-05,
+            "piper_joint2": 2.0467133481045323,
+            "piper_joint3": -0.4219726662565226,
+            "piper_joint4": 1.414126628953339e-07,
+            "piper_joint5": -0.28335346216946883,
+            "piper_joint6": 2.681772286636526e-09,
+            "piper_joint7": 0.023,
+            "piper_joint8": -0.023
+          },
+          "regrasp": {
+            "enabled": true,
+            "pre_lift_m": 0.04,
+            "depth_m": 0.025,
+            "open_m": 0.004,
+            "hold_pre_lift": true,
+            "source": "piper_simulation_baseline.yaml:grasp.regrasp"
+          },
+          "gravity_feedforward": {
+            "home": {
+              "piper_joint1": 0.0,
+              "piper_joint2": 0.005229714,
+              "piper_joint3": -0.009013975,
+              "piper_joint4": -1.8157e-05,
+              "piper_joint5": -0.001802795,
+              "piper_joint6": 5.75e-07
+            },
+            "approach": {
+              "piper_joint1": 0.0,
+              "piper_joint2": -0.007969139,
+              "piper_joint3": -0.002421817,
+              "piper_joint4": -2.412e-06,
+              "piper_joint5": -0.000724626,
+              "piper_joint6": 2.31e-07
+            },
+            "grasp": {
+              "piper_joint1": 0.0,
+              "piper_joint2": -0.009393652,
+              "piper_joint3": -0.001338674,
+              "piper_joint4": -1.82e-07,
+              "piper_joint5": -0.000528663,
+              "piper_joint6": 1.68e-07
+            },
+            "lift": {
+              "piper_joint1": 0.0,
+              "piper_joint2": -0.006351278,
+              "piper_joint3": -0.003645894,
+              "piper_joint4": -4.954e-06,
+              "piper_joint5": -0.000951348,
+              "piper_joint6": 3.03e-07
+            }
+          },
+          "pregrasp_offset_m": 0.04,
+          "reference_pose_source": "resolved_for_joint_model",
+          "carry_gripper": {
+            "mode": "hold",
+            "source": "piper_simulation_baseline.yaml:grasp.carry_gripper"
+          },
+          "place_above_positions": {
+            "piper_joint7": 0.023,
+            "piper_joint8": -0.023,
+            "piper_joint1": -0.7878298801821781,
+            "piper_joint2": 1.5662898195288726,
+            "piper_joint3": -1.2487740887586334,
+            "piper_joint4": -0.09252315757295275,
+            "piper_joint5": -0.06813008750763862,
+            "piper_joint6": -3.7061338150033595e-07
+          },
+          "place_descend_positions": {
+            "piper_joint7": 0.023,
+            "piper_joint8": -0.023,
+            "piper_joint1": -0.7867707449671322,
+            "piper_joint2": 1.6032333614904697,
+            "piper_joint3": -1.1795386807904207,
+            "piper_joint4": -0.0851274415089868,
+            "piper_joint5": -0.0420706619209055,
+            "piper_joint6": -3.6057853400701517e-07
+          },
+          "place_retreat_positions": {
+            "piper_joint7": 0.023,
+            "piper_joint8": -0.023,
+            "piper_joint1": -0.7878298801821781,
+            "piper_joint2": 1.5662898195288726,
+            "piper_joint3": -1.2487740887586334,
+            "piper_joint4": -0.09252315757295275,
+            "piper_joint5": -0.06813008750763862,
+            "piper_joint6": -3.7061338150033595e-07
+          },
+          "place_transit_positions": {
+            "piper_joint7": 0.023,
+            "piper_joint8": -0.023,
+            "piper_joint1": 7.1328149108774505e-06,
+            "piper_joint2": 0.8216643129578108,
+            "piper_joint3": -0.8479250255542766,
+            "piper_joint4": -1.059037050189553e-06,
+            "piper_joint5": 0.4499183532763018,
+            "piper_joint6": -4.909590701520376e-10
+          },
+          "place_selfcheck": {
+            "descend_pad_mid_z_m": 0.41237474,
+            "grip_height_m": 0.032008225,
+            "predicted_payload_low_m": 0.355366514,
+            "bearing_surface_z_m": 0.355372,
+            "touch_clearance_m": 0.0,
+            "allowed_low_m": 0.360372,
+            "gap_above_bearing_m": -5.486e-06,
+            "tolerance_m": 0.005,
+            "grip_height_evidence": {
+              "grip_height_m": 0.03200822517632923,
+              "pad_mid_z_m": 0.05700822517632923,
+              "payload_center_z_m": 0.025,
+              "pad_geoms": [
+                "piper_left_finger",
+                "piper_right_finger"
+              ],
+              "grip_channels_skipped": [],
+              "source": "FK@\u62a5\u544a gripper.grasp_positions\uff08\u8054\u5408\u6a21\u578b\uff09",
+              "replaces": "pick \u4fa7 pad_offset_m\uff08\u542b\u4e49\u4e0d\u540c\uff0c\u5dee 13.3 mm\uff09"
+            }
+          }
+        },
+        "targets": [
+          {
+            "id": "box_01",
+            "body": "box_01",
+            "geom": "box_01_geom",
+            "material": "box_01_material",
+            "rgba": [
+              0.82,
+              0.22,
+              0.12,
+              1.0
+            ],
+            "position_m": [
+              0.28,
+              -0.28,
+              0.025
+            ],
+            "quaternion_wxyz": [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "euler_deg": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "pose_source": "joint_model_fk"
+          }
+        ],
+        "target_id": "box_01",
+        "vision": {
+          "evidence_file": "build/calibration/piper-vision-target.json",
+          "refresh": "always",
+          "detector": {
+            "command": [
+              "{python}",
+              "scripts/detect_targets.py",
+              "--model",
+              "{model}",
+              "--config",
+              "{config}",
+              "--output",
+              "{evidence}",
+              "--extrinsics",
+              "{calibration}"
+            ],
+            "config_file": "config/piper_multi_target.yaml",
+            "calibration_file": "build/calibration/camera_to_base.json"
+          }
+        },
+        "name_map": {
+          "joint1": "piper_joint1",
+          "joint2": "piper_joint2",
+          "joint3": "piper_joint3",
+          "joint4": "piper_joint4",
+          "joint5": "piper_joint5",
+          "joint6": "piper_joint6",
+          "joint7": "piper_joint7",
+          "joint8": "piper_joint8",
+          "link1": "piper_link1",
+          "link2": "piper_link2",
+          "link3": "piper_link3",
+          "link4": "piper_link4",
+          "link5": "piper_link5",
+          "link6": "piper_link6",
+          "link7": "piper_link7",
+          "link8": "piper_link8"
+        },
+        "name_map_facts": {
+          "rule": "\u58f0\u660e\u540d\u2192\u8054\u5408\u6a21\u578b\u540d\uff1a\u53ea\u5bf9 <prefix>name \u5b58\u5728\u4e14 name \u4e0d\u5b58\u5728\u7684\u60c5\u5f62\u6620\u5c04",
+          "counts": {
+            "mapped": 24,
+            "identical": 1,
+            "conflicts": 0,
+            "missing": 0
+          },
+          "mapped": [
+            {
+              "kind": "bodies",
+              "declared": "link1",
+              "model": "piper_link1"
+            },
+            {
+              "kind": "bodies",
+              "declared": "link2",
+              "model": "piper_link2"
+            },
+            {
+              "kind": "bodies",
+              "declared": "link3",
+              "model": "piper_link3"
+            },
+            {
+              "kind": "bodies",
+              "declared": "link4",
+              "model": "piper_link4"
+            },
+            {
+              "kind": "bodies",
+              "declared": "link5",
+              "model": "piper_link5"
+            },
+            {
+              "kind": "bodies",
+              "declared": "link6",
+              "model": "piper_link6"
+            },
+            {
+              "kind": "bodies",
+              "declared": "link7",
+              "model": "piper_link7"
+            },
+            {
+              "kind": "bodies",
+              "declared": "link8",
+              "model": "piper_link8"
+            },
+            {
+              "kind": "joints",
+              "declared": "joint1",
+              "model": "piper_joint1"
+            },
+            {
+              "kind": "joints",
+              "declared": "joint2",
+              "model": "piper_joint2"
+            },
+            {
+              "kind": "joints",
+              "declared": "joint3",
+              "model": "piper_joint3"
+            },
+            {
+              "kind": "joints",
+              "declared": "joint4",
+              "model": "piper_joint4"
+            },
+            {
+              "kind": "joints",
+              "declared": "joint5",
+              "model": "piper_joint5"
+            },
+            {
+              "kind": "joints",
+              "declared": "joint6",
+              "model": "piper_joint6"
+            },
+            {
+              "kind": "joints",
+              "declared": "joint7",
+              "model": "piper_joint7"
+            },
+            {
+              "kind": "joints",
+              "declared": "joint8",
+              "model": "piper_joint8"
+            },
+            {
+              "kind": "actuators",
+              "declared": "joint1",
+              "model": "piper_joint1"
+            },
+            {
+              "kind": "actuators",
+              "declared": "joint2",
+              "model": "piper_joint2"
+            },
+            {
+              "kind": "actuators",
+              "declared": "joint3",
+              "model": "piper_joint3"
+            },
+            {
+              "kind": "actuators",
+              "declared": "joint4",
+              "model": "piper_joint4"
+            },
+            {
+              "kind": "actuators",
+              "declared": "joint5",
+              "model": "piper_joint5"
+            },
+            {
+              "kind": "actuators",
+              "declared": "joint6",
+              "model": "piper_joint6"
+            },
+            {
+              "kind": "actuators",
+              "declared": "joint7",
+              "model": "piper_joint7"
+            },
+            {
+              "kind": "actuators",
+              "declared": "joint8",
+              "model": "piper_joint8"
+            }
+          ],
+          "identical": [
+            {
+              "kind": "bodies",
+              "declared": "world",
+              "model": "world"
+            }
+          ],
+          "conflicts": [],
+          "missing": [],
+          "declared_names_source": "\u9644\u52a0\u672c\u4f53\u81ea\u8eab\u6a21\u578b\uff08attach \u4e4b\u524d\u91c7\u96c6\uff09",
+          "declared_object_counts": {
+            "bodies": 9,
+            "geoms": 0,
+            "sites": 0,
+            "joints": 8,
+            "actuators": 8
+          },
+          "note": "conflict\uff08\u540c\u540d\u5bf9\u8c61\u5728\u4e3b\u672c\u4f53\u4e0e\u9644\u52a0\u672c\u4f53\u91cc\u90fd\u5b58\u5728\uff09**\u4e0d\u8fdb name_map**\uff1a\u6620\u5c04\u6709\u6b67\u4e49\uff0c\u9700\u4eba\u5de5\u88c1\u5b9a\uff1bmissing \u53ea\u7559\u75d5\uff0c\u88ab manipulation \u76f4\u63a5\u5f15\u7528\u7684\u540d\u5b57\u5df2\u5728 rename() \u91cc\u663e\u5f0f\u5931\u8d25\u3002"
+        },
+        "rename_rule": "\u6539\u5199\u6210 <prefix>name \u5f53\u4e14\u4ec5\u5f53 <prefix>name \u5728\u8054\u5408\u6a21\u578b\u4e8b\u5b9e\u91cc\u3001\u4e14 name \u4e0d\u5728",
+        "inherited_from": "/home/coretek/AIIRAF/build/models/piper-pick-scene.json",
+        "reference_pose_check": {
+          "target_id": "box_01",
+          "target_body": "box_01",
+          "target_center_m": [
+            0.28,
+            -0.28,
+            0.025
+          ],
+          "pad_midpoint_m": [
+            0.280000315,
+            -0.280000708,
+            0.057008225
+          ],
+          "pad_offset_m": 0.032016224,
+          "pad_offset_axis": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "residual_m": [
+            3.15e-07,
+            -7.08e-07,
+            -7.999e-06
+          ],
+          "distance_m": 8.036e-06,
+          "declared_pose_tolerance_m": 0.005,
+          "within_declared_tolerance": true,
+          "note": "\u7ee7\u627f\u7684 `*_positions` \u82e5\u6765\u81ea\u522b\u7684\u57fa\u5ea7\u4f4d\u59ff\uff0c\u672c\u6b8b\u5dee\u4f1a\u663e\u8457\u5927\u4e8e\u58f0\u660e\u5bb9\u5dee \u21d2 \u5fc5\u987b\u5728**\u8054\u5408\u6a21\u578b**\u4e0a\u91cd\u7b97\u53c2\u8003\u59ff\u6001\uff08\u89c1 docs/debug/2026-09-24-joint-model-dog-arm.md \u00a711.4\uff09"
+        },
+        "reference_pose_clearance_check": {
+          "checked": true,
+          "target_body": "box_01",
+          "target_geom": "box_01_geom",
+          "target_pose": {
+            "position_m": [
+              0.28,
+              -0.28,
+              0.025
+            ],
+            "quaternion_wxyz": [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "source": "declaration\uff08\u672c\u81c2\u5728\u672c\u573a\u666f\u7684\u6293\u53d6\u76ee\u6807\uff09"
+          },
+          "commanded_grasp": {
+            "piper_joint7": 0.035,
+            "piper_joint8": -0.035,
+            "piper_joint1": 1.1032e-05,
+            "piper_joint2": 2.085906398,
+            "piper_joint3": -0.438025747,
+            "piper_joint4": 8e-08,
+            "piper_joint5": -0.28589387,
+            "piper_joint6": 3e-09
+          },
+          "arm_geoms_touching_target": [
+            {
+              "geom": "piper_left_finger",
+              "body": "piper_link7",
+              "is_pad": true,
+              "dist_m": -0.035299
+            },
+            {
+              "geom": "piper_right_finger",
+              "body": "piper_link8",
+              "is_pad": true,
+              "dist_m": -0.035291
+            }
+          ],
+          "pad_touching_target": [
+            {
+              "geom": "piper_left_finger",
+              "body": "piper_link7",
+              "is_pad": true,
+              "dist_m": -0.035299
+            },
+            {
+              "geom": "piper_right_finger",
+              "body": "piper_link8",
+              "is_pad": true,
+              "dist_m": -0.035291
+            }
+          ],
+          "non_pad_touching_target": [],
+          "overlapping": true,
+          "phases": {
+            "home": {
+              "positions_key": "home_positions",
+              "checked": true,
+              "command": {
+                "piper_joint7": 0.035,
+                "piper_joint8": -0.035,
+                "piper_joint1": 0.0,
+                "piper_joint2": 0.0,
+                "piper_joint3": 0.0,
+                "piper_joint4": 0.0,
+                "piper_joint5": 0.0,
+                "piper_joint6": 0.0
+              },
+              "arm_geoms_touching_target": [],
+              "pad_touching_target": [],
+              "non_pad_touching_target": [],
+              "ignored_keys": [
+                "piper_joint7",
+                "piper_joint8"
+              ]
+            },
+            "approach": {
+              "positions_key": "approach_positions",
+              "checked": true,
+              "command": {
+                "piper_joint7": 0.035,
+                "piper_joint8": -0.035,
+                "piper_joint1": 1.0562e-05,
+                "piper_joint2": 1.885811236,
+                "piper_joint3": -0.36068515,
+                "piper_joint4": 3.83e-07,
+                "piper_joint5": -0.278652721,
+                "piper_joint6": 3e-09
+              },
+              "arm_geoms_touching_target": [
+                {
+                  "geom": "piper_left_finger",
+                  "body": "piper_link7",
+                  "is_pad": true,
+                  "dist_m": -0.003796
+                },
+                {
+                  "geom": "piper_right_finger",
+                  "body": "piper_link8",
+                  "is_pad": true,
+                  "dist_m": -0.003796
+                }
+              ],
+              "pad_touching_target": [
+                {
+                  "geom": "piper_left_finger",
+                  "body": "piper_link7",
+                  "is_pad": true,
+                  "dist_m": -0.003796
+                },
+                {
+                  "geom": "piper_right_finger",
+                  "body": "piper_link8",
+                  "is_pad": true,
+                  "dist_m": -0.003796
+                }
+              ],
+              "non_pad_touching_target": [],
+              "ignored_keys": [
+                "piper_joint7",
+                "piper_joint8"
+              ]
+            },
+            "grasp": {
+              "positions_key": "grasp_positions",
+              "checked": true,
+              "command": {
+                "piper_joint7": 0.035,
+                "piper_joint8": -0.035,
+                "piper_joint1": 1.1032e-05,
+                "piper_joint2": 2.085906398,
+                "piper_joint3": -0.438025747,
+                "piper_joint4": 8e-08,
+                "piper_joint5": -0.28589387,
+                "piper_joint6": 3e-09
+              },
+              "arm_geoms_touching_target": [
+                {
+                  "geom": "piper_left_finger",
+                  "body": "piper_link7",
+                  "is_pad": true,
+                  "dist_m": -0.035299
+                },
+                {
+                  "geom": "piper_right_finger",
+                  "body": "piper_link8",
+                  "is_pad": true,
+                  "dist_m": -0.035291
+                }
+              ],
+              "pad_touching_target": [
+                {
+                  "geom": "piper_left_finger",
+                  "body": "piper_link7",
+                  "is_pad": true,
+                  "dist_m": -0.035299
+                },
+                {
+                  "geom": "piper_right_finger",
+                  "body": "piper_link8",
+                  "is_pad": true,
+                  "dist_m": -0.035291
+                }
+              ],
+              "non_pad_touching_target": [],
+              "ignored_keys": [
+                "piper_joint7",
+                "piper_joint8"
+              ]
+            },
+            "lift": {
+              "positions_key": "lift_positions",
+              "checked": true,
+              "command": {
+                "piper_joint7": 0.023,
+                "piper_joint8": -0.023,
+                "piper_joint1": 1.0095e-05,
+                "piper_joint2": 1.677664244,
+                "piper_joint3": -0.295094705,
+                "piper_joint4": 7.01e-07,
+                "piper_joint5": -0.277655882,
+                "piper_joint6": 3e-09
+              },
+              "arm_geoms_touching_target": [],
+              "pad_touching_target": [],
+              "non_pad_touching_target": [],
+              "ignored_keys": [
+                "piper_joint7",
+                "piper_joint8"
+              ]
+            }
+          },
+          "note": "\u5f52\u5c5e\u6309 `geom_bodyid` \u2192 \u5bbf\u4e3b body \u7684\u524d\u7f00\u5224\u5b9a\uff08**\u4e0d\u770b geom \u540d**\uff1a\u672c\u573a\u666f\u81c2\u7684 link geom \u65e0\u540d\uff0c\u6309\u540d\u5b57\u8fc7\u6ee4\u4f1a\u6f0f\u6389\u771f\u6b63\u4fb5\u5165\u65b9\u5757\u7684\u90a3\u4e00\u4e2a \u2014\u2014 \u5b9e\u6d4b `<\u672a\u547d\u540d#66>(piper_link6)` \u4e0e `box_01_geom` \u91cd\u53e0 \u22120.014516 m\uff09\u3002\u5224\u636e\u4e0e\u81c2\u81ea\u5df1\u573a\u666f\u4e00\u81f4\uff08`validate_grasp_pose`\uff1a\u5f20\u5f00\u65f6\u624b\u6307\u4e0d\u4e0e\u4efb\u4f55\u7269\u4f53\u63a5\u89e6\uff09\uff1a**\u5b58\u5728\u63a5\u89e6\u5bf9\u5373\u51e0\u4f55\u4fb5\u5165**\uff08\u65e0\u9608\u503c\uff09\u3002\u4fb5\u5165\u4f1a\u628a\u81c2\u9876\u79bb\u59ff\u6001 \u21d2 \u9759\u6001\u4fdd\u6301\u4e0d\u8fbe\u6807\uff0c\u800c\u8fd0\u884c\u671f\u53ea\u8868\u73b0\u4e3a\u300c\u672a\u5230\u8fbe\u6293\u53d6\u4f4d\u59ff / \u672a\u786e\u8ba4\u5df2\u6293\u53d6\u300d\uff1b\u4fee\u6cd5\u5728\u6c42\u89e3\u5668\u5c42\uff08\u671d\u5411\u7ea6\u675f + \u78b0\u649e\u6821\u9a8c\uff09\uff0c\u89c1 docs/debug/2026-09-24-joint-model-dog-arm.md \u00a711.6\u3002\u8f7d\u8377\u6309**\u58f0\u660e\u76ee\u6807**\u6446\u653e\uff08\u4e0d\u662f\u9053\u5177\u521d\u59cb\u4f4d\uff09\uff1a\u5426\u5219\u67e5\u4e0d\u51fa\"\u4f4d\u5f62\u538b\u5728\u6258\u76d8\u8f7d\u8377\u91cc\"\u3002"
+        },
+        "reference_pose_resolution": {
+          "source": "resolved_for_joint_model",
+          "solver": {
+            "module": "/home/coretek/AIIRAF/scripts/build_piper_baseline.py",
+            "entry": "build_reference_poses",
+            "baseline": "/home/coretek/AIIRAF/config/piper_simulation_baseline.yaml",
+            "feedforward_entry": "build_reference_feedforward"
+          },
+          "placement": {
+            "pos_m": [
+              0.45,
+              -0.45,
+              0.12
+            ],
+            "quat_wxyz": [
+              0.38268343236509,
+              0.0,
+              0.0,
+              0.923879532511287
+            ]
+          },
+          "target_world_m": [
+            0.28,
+            -0.28,
+            0.025
+          ],
+          "target_derivation": {
+            "source": null,
+            "value": null,
+            "reason": null
+          },
+          "target_cross_check": {
+            "checked": false,
+            "reason": null
+          },
+          "local_target_m": [
+            0.240416306,
+            0.0,
+            -0.095
+          ],
+          "local_xy_radius_m": 0.240416306,
+          "resolved_pad_offset_m": 0.032016224,
+          "inherited_pad_offset_m": 0.029835769,
+          "place_reference_source": "resolved_for_joint_model",
+          "place_reference": {
+            "source": "resolved_for_joint_model",
+            "solver": {
+              "module": "/home/coretek/AIIRAF/scripts/build_piper_baseline.py",
+              "entry": "build_place_reference_poses",
+              "baseline": "/home/coretek/AIIRAF/config/piper_simulation_baseline.yaml"
+            },
+            "place_target_id": "tray_01",
+            "carrier_frame": null,
+            "seed_positions": {
+              "joint7": 0.023,
+              "joint8": -0.023,
+              "joint1": 1.0095e-05,
+              "joint2": 1.677664244,
+              "joint3": -0.295094705,
+              "joint4": 7.01e-07,
+              "joint5": -0.277655882,
+              "joint6": 3e-09
+            },
+            "gripper_axes": {
+              "above": [
+                0.700537341,
+                -0.69505269,
+                -0.161707118
+              ],
+              "descend": [
+                0.678249018,
+                -0.675066347,
+                -0.290282099
+              ],
+              "retreat": [
+                0.700537341,
+                -0.69505269,
+                -0.161707118
+              ],
+              "transit": [
+                0.943947457,
+                -5.668e-06,
+                -0.330095741
+              ]
+            },
+            "transit_local_m": [
+              0.240415755,
+              2.78e-07,
+              0.342380225
+            ],
+            "transit_height": {
+              "lift_pad_z_m": 0.017011158,
+              "bearing_pad_z_m": 0.342380225,
+              "used_z_m": 0.342380225,
+              "xy_source": "lift",
+              "source": "bearing_approach_height"
+            },
+            "waypoint_contacts": [],
+            "path_contact_count": 0,
+            "path_contacts": [],
+            "lift_axis_world": [
+              -0.371480428,
+              0.371487395,
+              -0.850881547
+            ],
+            "axes_flipped_vs_pick_lift": [
+              {
+                "phase": "above",
+                "dot_with_pick_lift": -0.380846,
+                "axis": [
+                  0.700537341,
+                  -0.69505269,
+                  -0.161707118
+                ]
+              },
+              {
+                "phase": "descend",
+                "dot_with_pick_lift": -0.255739,
+                "axis": [
+                  0.678249018,
+                  -0.675066347,
+                  -0.290282099
+                ]
+              },
+              {
+                "phase": "retreat",
+                "dot_with_pick_lift": -0.380846,
+                "axis": [
+                  0.700537341,
+                  -0.69505269,
+                  -0.161707118
+                ]
+              },
+              {
+                "phase": "transit",
+                "dot_with_pick_lift": -0.069788,
+                "axis": [
+                  0.943947457,
+                  -5.668e-06,
+                  -0.330095741
+                ]
+              }
+            ],
+            "target_local_m": [
+              0.318198052,
+              -0.318198052,
+              0.235372
+            ],
+            "payload_half_m": 0.025,
+            "pad_offset_m": 0.032016224,
+            "clearance_m": 0.05,
+            "written": {
+              "place_above_positions": {
+                "replaced_joints": [
+                  "piper_joint1",
+                  "piper_joint2",
+                  "piper_joint3",
+                  "piper_joint4",
+                  "piper_joint5",
+                  "piper_joint6"
+                ],
+                "position_error_m": 5.690070100765392e-06
+              },
+              "place_descend_positions": {
+                "replaced_joints": [
+                  "piper_joint1",
+                  "piper_joint2",
+                  "piper_joint3",
+                  "piper_joint4",
+                  "piper_joint5",
+                  "piper_joint6"
+                ],
+                "position_error_m": 9.881375755702248e-06
+              },
+              "place_retreat_positions": {
+                "replaced_joints": [
+                  "piper_joint1",
+                  "piper_joint2",
+                  "piper_joint3",
+                  "piper_joint4",
+                  "piper_joint5",
+                  "piper_joint6"
+                ],
+                "position_error_m": 5.690070100765392e-06
+              },
+              "place_transit_positions": {
+                "replaced_joints": [
+                  "piper_joint1",
+                  "piper_joint2",
+                  "piper_joint3",
+                  "piper_joint4",
+                  "piper_joint5",
+                  "piper_joint6"
+                ],
+                "position_error_m": 5.7938256600061645e-06
+              }
+            },
+            "note": "\u653e\u7f6e\u56db\u6bb5\u7684\u5173\u8282\u89e3\u7531**\u58f0\u660e\u7684\u6c42\u89e3\u5668**\u6309\u4e0a\u8ff0\u5c40\u90e8\u76ee\u6807\u89e3\u51fa\uff08\u6784\u5efa\u671f\uff09\uff0c\u540e\u7aef\u53ea\u56de\u653e\uff1b\u8fd0\u884c\u671f\u4ee5\u5b9e\u6d4b\u63a5\u6536\u4f53\u4f4d\u59ff\u5224\u636e\uff08\u89c1 place_object \u8bc1\u636e\uff09\u3002"
+          },
+          "feedforward_source": "resolved_for_joint_model",
+          "feedforward_evidence": {
+            "home": {
+              "method": "qfrc_bias_static_hold_fixed_point_replace",
+              "passes": 1,
+              "pass_trace": [
+                {
+                  "pass": 1,
+                  "worst_residual_rad": 0.0
+                }
+              ],
+              "gravity_torque_nm": {
+                "piper_joint1": 0.0,
+                "piper_joint2": 1.045943,
+                "piper_joint3": -1.802795,
+                "piper_joint4": -0.003631,
+                "piper_joint5": -0.360559,
+                "piper_joint6": 0.000115
+              },
+              "actuator_gain": {
+                "piper_joint1": 450.0,
+                "piper_joint2": 200.0,
+                "piper_joint3": 200.0,
+                "piper_joint4": 200.0,
+                "piper_joint5": 200.0,
+                "piper_joint6": 200.0
+              },
+              "hold_ms": 4000,
+              "residual_joint_rad": {
+                "piper_joint1": 0.0,
+                "piper_joint2": 0.0,
+                "piper_joint3": 0.0,
+                "piper_joint4": -0.0,
+                "piper_joint5": 0.0,
+                "piper_joint6": -0.0
+              },
+              "worst_residual_rad": 0.0,
+              "tolerance_rad": 0.001
+            },
+            "approach": {
+              "method": "qfrc_bias_static_hold_fixed_point_replace",
+              "passes": 1,
+              "pass_trace": [
+                {
+                  "pass": 1,
+                  "worst_residual_rad": 0.0
+                }
+              ],
+              "gravity_torque_nm": {
+                "piper_joint1": 0.0,
+                "piper_joint2": -1.593828,
+                "piper_joint3": -0.484363,
+                "piper_joint4": -0.000482,
+                "piper_joint5": -0.144925,
+                "piper_joint6": 4.6e-05
+              },
+              "actuator_gain": {
+                "piper_joint1": 450.0,
+                "piper_joint2": 200.0,
+                "piper_joint3": 200.0,
+                "piper_joint4": 200.0,
+                "piper_joint5": 200.0,
+                "piper_joint6": 200.0
+              },
+              "hold_ms": 4000,
+              "residual_joint_rad": {
+                "piper_joint1": 0.0,
+                "piper_joint2": 0.0,
+                "piper_joint3": -0.0,
+                "piper_joint4": -0.0,
+                "piper_joint5": 0.0,
+                "piper_joint6": -0.0
+              },
+              "worst_residual_rad": 0.0,
+              "tolerance_rad": 0.001
+            },
+            "grasp": {
+              "method": "qfrc_bias_static_hold_fixed_point_replace",
+              "passes": 1,
+              "pass_trace": [
+                {
+                  "pass": 1,
+                  "worst_residual_rad": 0.000156021
+                }
+              ],
+              "gravity_torque_nm": {
+                "piper_joint1": 0.0,
+                "piper_joint2": -1.87873,
+                "piper_joint3": -0.267735,
+                "piper_joint4": -3.6e-05,
+                "piper_joint5": -0.105733,
+                "piper_joint6": 3.4e-05
+              },
+              "actuator_gain": {
+                "piper_joint1": 450.0,
+                "piper_joint2": 200.0,
+                "piper_joint3": 200.0,
+                "piper_joint4": 200.0,
+                "piper_joint5": 200.0,
+                "piper_joint6": 200.0
+              },
+              "hold_ms": 4000,
+              "residual_joint_rad": {
+                "piper_joint1": -4.3e-08,
+                "piper_joint2": 0.000156021,
+                "piper_joint3": 2.429e-06,
+                "piper_joint4": 8e-09,
+                "piper_joint5": 1.373e-05,
+                "piper_joint6": -8e-09
+              },
+              "worst_residual_rad": 0.000156021,
+              "tolerance_rad": 0.001
+            },
+            "lift": {
+              "method": "qfrc_bias_static_hold_fixed_point_replace",
+              "passes": 1,
+              "pass_trace": [
+                {
+                  "pass": 1,
+                  "worst_residual_rad": 0.0
+                }
+              ],
+              "gravity_torque_nm": {
+                "piper_joint1": 0.0,
+                "piper_joint2": -1.270256,
+                "piper_joint3": -0.729179,
+                "piper_joint4": -0.000991,
+                "piper_joint5": -0.19027,
+                "piper_joint6": 6.1e-05
+              },
+              "actuator_gain": {
+                "piper_joint1": 450.0,
+                "piper_joint2": 200.0,
+                "piper_joint3": 200.0,
+                "piper_joint4": 200.0,
+                "piper_joint5": 200.0,
+                "piper_joint6": 200.0
+              },
+              "hold_ms": 4000,
+              "residual_joint_rad": {
+                "piper_joint1": 0.0,
+                "piper_joint2": 0.0,
+                "piper_joint3": 0.0,
+                "piper_joint4": -0.0,
+                "piper_joint5": 0.0,
+                "piper_joint6": -0.0
+              },
+              "worst_residual_rad": 0.0,
+              "tolerance_rad": 0.001
+            }
+          },
+          "feedforward_alignment": {
+            "checked": true,
+            "source": "resolved_for_joint_model",
+            "phases": {
+              "home": {
+                "positions_key": "home_positions",
+                "channels": 6,
+                "renamed": []
+              },
+              "approach": {
+                "positions_key": "approach_positions",
+                "channels": 6,
+                "renamed": []
+              },
+              "grasp": {
+                "positions_key": "grasp_positions",
+                "channels": 6,
+                "renamed": []
+              },
+              "lift": {
+                "positions_key": "lift_positions",
+                "channels": 6,
+                "renamed": []
+              }
+            },
+            "rule": "\u524d\u9988\u901a\u9053\u540d \u2192 \u8be5\u6bb5\u4f4d\u7f6e\u6307\u4ee4\u7684\u901a\u9053\u540d\uff1a\u4e00\u5f8b\u6309\u6a21\u578b\u81ea\u5df1\u7684 actuator_trnid \u5224\u300c\u540c\u4e00\u6761\u63a7\u5236\u901a\u9053\u300d\uff0c\u4e0d\u731c\u540d\u5b57\u540e\u7f00\uff1b\u5bf9\u4e0d\u4e0a\u5373\u6784\u5efa\u5931\u8d25"
+          },
+          "phase_residuals": {
+            "home": {
+              "residual_m": null,
+              "source": "declared",
+              "declared_home_source": "declared_zero_pose"
+            },
+            "approach": {
+              "residual_m": 5.138e-06,
+              "source": "ik",
+              "declared_home_source": null
+            },
+            "grasp": {
+              "residual_m": 8.122e-06,
+              "source": "ik",
+              "declared_home_source": null
+            },
+            "lift": {
+              "residual_m": 5.122e-06,
+              "source": "ik",
+              "declared_home_source": null
+            }
+          },
+          "phase_residual_tolerance_m": 1e-05,
+          "baseline_overrides": null,
+          "replaced_phases": {
+            "home": {
+              "positions_key": "home_positions",
+              "replaced_joints": [
+                "piper_joint1",
+                "piper_joint2",
+                "piper_joint3",
+                "piper_joint4",
+                "piper_joint5",
+                "piper_joint6"
+              ],
+              "diff_vs_inherited": [
+                {
+                  "joint": "piper_joint1",
+                  "inherited": null,
+                  "resolved": 0.0
+                },
+                {
+                  "joint": "piper_joint2",
+                  "inherited": null,
+                  "resolved": 0.0
+                },
+                {
+                  "joint": "piper_joint3",
+                  "inherited": null,
+                  "resolved": 0.0
+                },
+                {
+                  "joint": "piper_joint4",
+                  "inherited": null,
+                  "resolved": 0.0
+                },
+                {
+                  "joint": "piper_joint5",
+                  "inherited": null,
+                  "resolved": 0.0
+                },
+                {
+                  "joint": "piper_joint6",
+                  "inherited": null,
+                  "resolved": 0.0
+                }
+              ]
+            },
+            "approach": {
+              "positions_key": "approach_positions",
+              "replaced_joints": [
+                "piper_joint1",
+                "piper_joint2",
+                "piper_joint3",
+                "piper_joint4",
+                "piper_joint5",
+                "piper_joint6"
+              ],
+              "diff_vs_inherited": [
+                {
+                  "joint": "piper_joint1",
+                  "inherited": null,
+                  "resolved": 1.0561985282408195e-05
+                },
+                {
+                  "joint": "piper_joint2",
+                  "inherited": null,
+                  "resolved": 1.8858112356447498
+                },
+                {
+                  "joint": "piper_joint3",
+                  "inherited": null,
+                  "resolved": -0.36068514980298955
+                },
+                {
+                  "joint": "piper_joint4",
+                  "inherited": null,
+                  "resolved": 3.8285962018863633e-07
+                },
+                {
+                  "joint": "piper_joint5",
+                  "inherited": null,
+                  "resolved": -0.2786527209679332
+                },
+                {
+                  "joint": "piper_joint6",
+                  "inherited": null,
+                  "resolved": 2.637587298662197e-09
+                }
+              ]
+            },
+            "grasp": {
+              "positions_key": "grasp_positions",
+              "replaced_joints": [
+                "piper_joint1",
+                "piper_joint2",
+                "piper_joint3",
+                "piper_joint4",
+                "piper_joint5",
+                "piper_joint6"
+              ],
+              "diff_vs_inherited": [
+                {
+                  "joint": "piper_joint1",
+                  "inherited": null,
+                  "resolved": 1.103227571376021e-05
+                },
+                {
+                  "joint": "piper_joint2",
+                  "inherited": null,
+                  "resolved": 2.085906397708839
+                },
+                {
+                  "joint": "piper_joint3",
+                  "inherited": null,
+                  "resolved": -0.43802574669425504
+                },
+                {
+                  "joint": "piper_joint4",
+                  "inherited": null,
+                  "resolved": 8.046024414943407e-08
+                },
+                {
+                  "joint": "piper_joint5",
+                  "inherited": null,
+                  "resolved": -0.2858938702912799
+                },
+                {
+                  "joint": "piper_joint6",
+                  "inherited": null,
+                  "resolved": 2.7058844758982656e-09
+                }
+              ]
+            },
+            "lift": {
+              "positions_key": "lift_positions",
+              "replaced_joints": [
+                "piper_joint1",
+                "piper_joint2",
+                "piper_joint3",
+                "piper_joint4",
+                "piper_joint5",
+                "piper_joint6"
+              ],
+              "diff_vs_inherited": [
+                {
+                  "joint": "piper_joint1",
+                  "inherited": null,
+                  "resolved": 1.0094766005987682e-05
+                },
+                {
+                  "joint": "piper_joint2",
+                  "inherited": null,
+                  "resolved": 1.6776642438080362
+                },
+                {
+                  "joint": "piper_joint3",
+                  "inherited": null,
+                  "resolved": -0.29509470498155954
+                },
+                {
+                  "joint": "piper_joint4",
+                  "inherited": null,
+                  "resolved": 7.007759554699875e-07
+                },
+                {
+                  "joint": "piper_joint5",
+                  "inherited": null,
+                  "resolved": -0.27765588217511483
+                },
+                {
+                  "joint": "piper_joint6",
+                  "inherited": null,
+                  "resolved": 2.6288514045922467e-09
+                }
+              ]
+            },
+            "pre_lift": {
+              "positions_key": "pre_lift_positions",
+              "replaced_joints": [
+                "piper_joint1",
+                "piper_joint2",
+                "piper_joint3",
+                "piper_joint4",
+                "piper_joint5",
+                "piper_joint6"
+              ],
+              "diff_vs_inherited": [
+                {
+                  "joint": "piper_joint1",
+                  "inherited": 9.470179286487661e-06,
+                  "resolved": 1.0561706676010121e-05
+                },
+                {
+                  "joint": "piper_joint2",
+                  "inherited": 0.9865417224542643,
+                  "resolved": 1.8856837092701462
+                },
+                {
+                  "joint": "piper_joint3",
+                  "inherited": -0.08575404809598433,
+                  "resolved": -0.3608380347298768
+                },
+                {
+                  "joint": "piper_joint4",
+                  "inherited": 5.215990998769501e-07,
+                  "resolved": 3.8310829944668194e-07
+                },
+                {
+                  "joint": "piper_joint5",
+                  "inherited": -0.1124902675276865,
+                  "resolved": -0.2781486919416916
+                },
+                {
+                  "joint": "piper_joint6",
+                  "inherited": 1.063323284571343e-09,
+                  "resolved": 2.6327603049166123e-09
+                }
+              ]
+            },
+            "regrasp": {
+              "positions_key": "regrasp_positions",
+              "replaced_joints": [
+                "piper_joint1",
+                "piper_joint2",
+                "piper_joint3",
+                "piper_joint4",
+                "piper_joint5",
+                "piper_joint6"
+              ],
+              "diff_vs_inherited": [
+                {
+                  "joint": "piper_joint1",
+                  "inherited": 9.959080024477178e-06,
+                  "resolved": 1.0938468725650603e-05
+                },
+                {
+                  "joint": "piper_joint2",
+                  "inherited": 1.187141803126162,
+                  "resolved": 2.0467133481045323
+                },
+                {
+                  "joint": "piper_joint3",
+                  "inherited": -0.11167626522352093,
+                  "resolved": -0.4219726662565226
+                },
+                {
+                  "joint": "piper_joint4",
+                  "inherited": 3.8842208859703634e-07,
+                  "resolved": 1.414126628953339e-07
+                },
+                {
+                  "joint": "piper_joint5",
+                  "inherited": -0.11781219676956822,
+                  "resolved": -0.28335346216946883
+                },
+                {
+                  "joint": "piper_joint6",
+                  "inherited": 1.1127852258647346e-09,
+                  "resolved": 2.681772286636526e-09
+                }
+              ]
+            }
+          },
+          "note": "\u53c2\u8003\u59ff\u6001\u4e0e pad_offset \u5747\u7531**\u8054\u5408\u6a21\u578b + \u672c placement** \u91cd\u89e3\uff08\u6c42\u89e3\u5668\u6309 `robots[].reference_solver` \u58f0\u660e\u8c03\u7528\uff09\uff1b`resolved` \u7684\u5173\u8282\u89e3\u662f**\u81c2\u57fa\u5ea7\u7cfb**\u4e0b\u7684\u5173\u8282\u89d2\uff0cMJCF qpos \u4e5f\u662f\u5c40\u90e8\u91cf \u21d2 \u53ef\u76f4\u63a5\u547d\u4ee4\u3002"
+        }
+      },
+      "ur5e": {
+        "resolved": true,
+        "prefix": "ur5e_",
+        "manipulation_report": "build/models/ur5-pick-scene.json",
+        "joint_scene_target_m": [
+          0.15,
+          0.45,
+          0.375372
+        ],
+        "joint_scene_target_source": "declared_literal",
+        "joint_scene_target_quat_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "gripper": {
+          "left_finger_body": "ur5e_rq2f85_left_pad",
+          "right_finger_body": "ur5e_rq2f85_right_pad",
+          "wrist_body": "ur5e_wrist_3_link",
+          "open_positions": {
+            "ur5e_rq2f85_fingers_actuator": 0.0
+          },
+          "closed_positions": {
+            "ur5e_rq2f85_fingers_actuator": 163.0
+          },
+          "lift_positions": {
+            "ur5e_rq2f85_fingers_actuator": 163.0,
+            "ur5e_shoulder_pan_joint": -0.8383764100736916,
+            "ur5e_shoulder_lift_joint": -1.4621528622910818,
+            "ur5e_elbow_joint": 1.1927419294915182,
+            "ur5e_wrist_1_joint": -1.3015005267636612,
+            "ur5e_wrist_2_joint": -1.5707962929137287,
+            "ur5e_wrist_3_joint": 0.7324199181012897
+          },
+          "min_lift_delta_m": 0.02,
+          "min_normal_force_n": 0.2,
+          "max_force_imbalance_ratio": 4.0,
+          "pad_offset_m": 0.0,
+          "pad_offset_axis": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "left_finger_geom": "rq2f85_left_pad1",
+          "right_finger_geom": "rq2f85_right_pad1",
+          "pad_boxes": [
+            "rq2f85_left_pad1",
+            "rq2f85_left_pad2",
+            "rq2f85_right_pad1",
+            "rq2f85_right_pad2"
+          ],
+          "lift_constraint": "box_01_lift_constraint",
+          "lift_anchor_body": "grasp_anchor",
+          "lift_anchor_mode": "rigid_follow",
+          "require_contact_at_lift_end": true,
+          "place_settle_ms": 3000,
+          "lift_gripper": "closed",
+          "place_pose_correction": {
+            "mode": "touchdown",
+            "max_lateral_m": 0.07,
+            "touch_clearance_m": 0.0,
+            "max_vertical_m": 0.05,
+            "residual_tolerance_m": 0.005,
+            "touchdown_step_fraction": 0.3,
+            "touchdown_max_iterations": 10,
+            "lateral_tolerance_m": 0.035,
+            "ik_iterations": 800,
+            "ik_step": 0.5,
+            "max_residual_m": 0.0001
+          },
+          "grasp_pose_correction": {
+            "mode": "resolved",
+            "residual_tolerance_m": 0.002,
+            "max_correction_m": 0.07,
+            "ik_iterations": 400,
+            "ik_step": 0.5,
+            "ik_tolerance_m": 0.0005,
+            "align_max_attempts": 3,
+            "descend_splits": 5,
+            "max_axis_deg": 8.0
+          },
+          "approach_hold": "pin_payload",
+          "carry_constraint": {
+            "enabled": true,
+            "type": "weld",
+            "equality_name": "box_01_lift_constraint",
+            "anchor_body": "grasp_anchor",
+            "solref": [
+              0.01,
+              1.0
+            ],
+            "solimp": [
+              0.9,
+              0.95,
+              0.01
+            ],
+            "release_gripper": false,
+            "max_slip_m": 0.0,
+            "max_plant_steps_per_iteration": 64,
+            "source": "ur5_simulation_baseline.yaml:grasp.carry_constraint"
+          },
+          "home_positions": {
+            "ur5e_rq2f85_fingers_actuator": 0.0,
+            "ur5e_shoulder_pan_joint": -0.8383762330320991,
+            "ur5e_shoulder_lift_joint": -1.2800993764857287,
+            "ur5e_elbow_joint": 0.5895503781239498,
+            "ur5e_wrist_1_joint": -0.8800971294492309,
+            "ur5e_wrist_2_joint": -1.5707964008303175,
+            "ur5e_wrist_3_joint": 0.73242009624114
+          },
+          "approach_positions": {
+            "ur5e_rq2f85_fingers_actuator": 0.0,
+            "ur5e_shoulder_pan_joint": -0.8383763562881159,
+            "ur5e_shoulder_lift_joint": -1.3792013382366166,
+            "ur5e_elbow_joint": 0.8742509355566424,
+            "ur5e_wrist_1_joint": -1.0656803802882286,
+            "ur5e_wrist_2_joint": -1.5707962242505238,
+            "ur5e_wrist_3_joint": 0.732419981642881
+          },
+          "grasp_positions": {
+            "ur5e_rq2f85_fingers_actuator": 0.0,
+            "ur5e_shoulder_pan_joint": -0.8384600423332021,
+            "ur5e_shoulder_lift_joint": -1.4939406647566482,
+            "ur5e_elbow_joint": 1.4349949735963274,
+            "ur5e_wrist_1_joint": -1.5118827933488557,
+            "ur5e_wrist_2_joint": -1.5706095060449023,
+            "ur5e_wrist_3_joint": 0.7323364449857219
+          },
+          "gravity_feedforward": {
+            "home": {
+              "ur5e_shoulder_pan_joint": 0.0,
+              "ur5e_shoulder_lift_joint": -0.014412144,
+              "ur5e_elbow_joint": -0.008346965,
+              "ur5e_wrist_1_joint": -0.00482784,
+              "ur5e_wrist_2_joint": 1.264e-06,
+              "ur5e_wrist_3_joint": -0.0
+            },
+            "approach": {
+              "ur5e_shoulder_pan_joint": 0.0,
+              "ur5e_shoulder_lift_joint": -0.013342584,
+              "ur5e_elbow_joint": -0.009312993,
+              "ur5e_wrist_1_joint": -0.004827791,
+              "ur5e_wrist_2_joint": 1.264e-06,
+              "ur5e_wrist_3_joint": -0.0
+            },
+            "grasp": {
+              "ur5e_shoulder_pan_joint": 0.0,
+              "ur5e_shoulder_lift_joint": -0.012077715,
+              "ur5e_elbow_joint": -0.010452969,
+              "ur5e_wrist_1_joint": -0.004828418,
+              "ur5e_wrist_2_joint": 1.856e-06,
+              "ur5e_wrist_3_joint": -0.0
+            },
+            "lift": {
+              "ur5e_shoulder_pan_joint": 0.0,
+              "ur5e_shoulder_lift_joint": -0.012429512,
+              "ur5e_elbow_joint": -0.010135023,
+              "ur5e_wrist_1_joint": -0.004828681,
+              "ur5e_wrist_2_joint": 1.264e-06,
+              "ur5e_wrist_3_joint": 0.0
+            }
+          },
+          "pregrasp_offset_m": 0.16,
+          "reference_pose_source": "resolved_for_joint_model",
+          "carry_gripper": {
+            "mode": "hold",
+            "source": "ur5_simulation_baseline.yaml:grasp.carry_gripper"
+          },
+          "place_above_positions": {
+            "ur5e_rq2f85_fingers_actuator": 163.0,
+            "ur5e_shoulder_pan_joint": 0.25278557265617074,
+            "ur5e_shoulder_lift_joint": -1.1012195460854708,
+            "ur5e_elbow_joint": 2.251651794858814,
+            "ur5e_wrist_1_joint": -1.365144577048908,
+            "ur5e_wrist_2_joint": -0.30883064827018586,
+            "ur5e_wrist_3_joint": 0.7324199181012898
+          },
+          "place_descend_positions": {
+            "ur5e_rq2f85_fingers_actuator": 163.0,
+            "ur5e_shoulder_pan_joint": 0.25233028233454147,
+            "ur5e_shoulder_lift_joint": -0.9662451856491948,
+            "ur5e_elbow_joint": 2.261266395980607,
+            "ur5e_wrist_1_joint": -1.5394227173761383,
+            "ur5e_wrist_2_joint": -0.30693593499292854,
+            "ur5e_wrist_3_joint": 0.7324199181012901
+          },
+          "place_retreat_positions": {
+            "ur5e_rq2f85_fingers_actuator": 163.0,
+            "ur5e_shoulder_pan_joint": 0.25278557265617074,
+            "ur5e_shoulder_lift_joint": -1.1012195460854708,
+            "ur5e_elbow_joint": 2.251651794858814,
+            "ur5e_wrist_1_joint": -1.365144577048908,
+            "ur5e_wrist_2_joint": -0.30883064827018586,
+            "ur5e_wrist_3_joint": 0.7324199181012898
+          },
+          "place_transit_positions": {
+            "ur5e_rq2f85_fingers_actuator": 163.0,
+            "ur5e_shoulder_pan_joint": 0.2711191934139381,
+            "ur5e_shoulder_lift_joint": -1.8535954447667757,
+            "ur5e_elbow_joint": 1.4770535897184833,
+            "ur5e_wrist_1_joint": -0.8336951021050271,
+            "ur5e_wrist_2_joint": -0.3769467597382468,
+            "ur5e_wrist_3_joint": 0.7324199181012899
+          },
+          "place_via_positions": {
+            "ur5e_rq2f85_fingers_actuator": 163.0,
+            "ur5e_shoulder_pan_joint": 0.2711191934139381,
+            "ur5e_shoulder_lift_joint": -1.8535954447667757,
+            "ur5e_elbow_joint": 1.4770535897184833,
+            "ur5e_wrist_1_joint": -0.8336951021050271,
+            "ur5e_wrist_2_joint": -0.3769467597382468,
+            "ur5e_wrist_3_joint": 0.7324199181012899
+          },
+          "place_selfcheck": {
+            "descend_pad_mid_z_m": 0.02062798,
+            "grip_height_m": -0.009375023,
+            "predicted_payload_low_m": 0.005003003,
+            "bearing_surface_z_m": 0.005,
+            "touch_clearance_m": 0.0,
+            "allowed_low_m": 0.01,
+            "gap_above_bearing_m": 3.003e-06,
+            "tolerance_m": 0.005,
+            "grip_height_evidence": {
+              "grip_height_m": -0.009375023404590122,
+              "pad_mid_z_m": 0.36599697659540986,
+              "payload_center_z_m": 0.375372,
+              "pad_geoms": [
+                "rq2f85_left_pad1",
+                "rq2f85_right_pad1"
+              ],
+              "grip_channels_skipped": [
+                {
+                  "channel": "ur5e_rq2f85_fingers_actuator",
+                  "value": 0.0,
+                  "kind": "actuator"
+                }
+              ],
+              "source": "FK@\u62a5\u544a gripper.grasp_positions\uff08\u8054\u5408\u6a21\u578b\uff09",
+              "replaces": "pick \u4fa7 pad_offset_m\uff08\u542b\u4e49\u4e0d\u540c\uff0c\u5dee 13.3 mm\uff09"
+            }
+          }
+        },
+        "targets": [
+          {
+            "id": "box_01",
+            "body": "box_01",
+            "geom": "box_01_geom",
+            "material": "box_01_material",
+            "rgba": [
+              0.82,
+              0.22,
+              0.12,
+              1.0
+            ],
+            "position_m": [
+              0.28,
+              -0.28,
+              0.025
+            ],
+            "quaternion_wxyz": [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "euler_deg": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "pose_source": "joint_model_fk"
+          }
+        ],
+        "target_id": "box_01",
+        "vision": {
+          "evidence_file": "build/calibration/ur5-vision-target.json",
+          "refresh": "always",
+          "detector": {
+            "command": [
+              "{python}",
+              "scripts/detect_targets.py",
+              "--model",
+              "{model}",
+              "--config",
+              "{config}",
+              "--output",
+              "{evidence}",
+              "--extrinsics",
+              "{calibration}"
+            ],
+            "calibration_file": "build/calibration/ur5-camera-to-base.json"
+          }
+        },
+        "name_map": {
+          "attachment_site": "ur5e_attachment_site",
+          "base": "ur5e_base",
+          "elbow": "ur5e_elbow",
+          "elbow_joint": "ur5e_elbow_joint",
+          "forearm_link": "ur5e_forearm_link",
+          "pinch": "ur5e_pinch",
+          "rq2f85_base": "ur5e_rq2f85_base",
+          "rq2f85_base_mount": "ur5e_rq2f85_base_mount",
+          "rq2f85_fingers_actuator": "ur5e_rq2f85_fingers_actuator",
+          "rq2f85_left_coupler": "ur5e_rq2f85_left_coupler",
+          "rq2f85_left_coupler_joint": "ur5e_rq2f85_left_coupler_joint",
+          "rq2f85_left_driver": "ur5e_rq2f85_left_driver",
+          "rq2f85_left_driver_joint": "ur5e_rq2f85_left_driver_joint",
+          "rq2f85_left_follower": "ur5e_rq2f85_left_follower",
+          "rq2f85_left_follower_joint": "ur5e_rq2f85_left_follower_joint",
+          "rq2f85_left_pad": "ur5e_rq2f85_left_pad",
+          "rq2f85_left_pad2": "ur5e_rq2f85_left_pad2",
+          "rq2f85_left_silicone_pad": "ur5e_rq2f85_left_silicone_pad",
+          "rq2f85_left_spring_link": "ur5e_rq2f85_left_spring_link",
+          "rq2f85_left_spring_link_joint": "ur5e_rq2f85_left_spring_link_joint",
+          "rq2f85_pinch": "ur5e_rq2f85_pinch",
+          "rq2f85_right_coupler": "ur5e_rq2f85_right_coupler",
+          "rq2f85_right_coupler_joint": "ur5e_rq2f85_right_coupler_joint",
+          "rq2f85_right_driver": "ur5e_rq2f85_right_driver",
+          "rq2f85_right_driver_joint": "ur5e_rq2f85_right_driver_joint",
+          "rq2f85_right_follower": "ur5e_rq2f85_right_follower",
+          "rq2f85_right_follower_joint": "ur5e_rq2f85_right_follower_joint",
+          "rq2f85_right_pad": "ur5e_rq2f85_right_pad",
+          "rq2f85_right_pad2": "ur5e_rq2f85_right_pad2",
+          "rq2f85_right_silicone_pad": "ur5e_rq2f85_right_silicone_pad",
+          "rq2f85_right_spring_link": "ur5e_rq2f85_right_spring_link",
+          "rq2f85_right_spring_link_joint": "ur5e_rq2f85_right_spring_link_joint",
+          "shoulder_lift": "ur5e_shoulder_lift",
+          "shoulder_lift_joint": "ur5e_shoulder_lift_joint",
+          "shoulder_link": "ur5e_shoulder_link",
+          "shoulder_pan": "ur5e_shoulder_pan",
+          "shoulder_pan_joint": "ur5e_shoulder_pan_joint",
+          "upper_arm_link": "ur5e_upper_arm_link",
+          "wrist_1": "ur5e_wrist_1",
+          "wrist_1_joint": "ur5e_wrist_1_joint",
+          "wrist_1_link": "ur5e_wrist_1_link",
+          "wrist_2": "ur5e_wrist_2",
+          "wrist_2_joint": "ur5e_wrist_2_joint",
+          "wrist_2_link": "ur5e_wrist_2_link",
+          "wrist_3": "ur5e_wrist_3",
+          "wrist_3_joint": "ur5e_wrist_3_joint",
+          "wrist_3_link": "ur5e_wrist_3_link"
+        },
+        "name_map_facts": {
+          "rule": "\u58f0\u660e\u540d\u2192\u8054\u5408\u6a21\u578b\u540d\uff1a\u53ea\u5bf9 <prefix>name \u5b58\u5728\u4e14 name \u4e0d\u5b58\u5728\u7684\u60c5\u5f62\u6620\u5c04",
+          "counts": {
+            "mapped": 47,
+            "identical": 3,
+            "conflicts": 0,
+            "missing": 0
+          },
+          "mapped": [
+            {
+              "kind": "bodies",
+              "declared": "base",
+              "model": "ur5e_base"
+            },
+            {
+              "kind": "bodies",
+              "declared": "forearm_link",
+              "model": "ur5e_forearm_link"
+            },
+            {
+              "kind": "bodies",
+              "declared": "rq2f85_base",
+              "model": "ur5e_rq2f85_base"
+            },
+            {
+              "kind": "bodies",
+              "declared": "rq2f85_base_mount",
+              "model": "ur5e_rq2f85_base_mount"
+            },
+            {
+              "kind": "bodies",
+              "declared": "rq2f85_left_coupler",
+              "model": "ur5e_rq2f85_left_coupler"
+            },
+            {
+              "kind": "bodies",
+              "declared": "rq2f85_left_driver",
+              "model": "ur5e_rq2f85_left_driver"
+            },
+            {
+              "kind": "bodies",
+              "declared": "rq2f85_left_follower",
+              "model": "ur5e_rq2f85_left_follower"
+            },
+            {
+              "kind": "bodies",
+              "declared": "rq2f85_left_pad",
+              "model": "ur5e_rq2f85_left_pad"
+            },
+            {
+              "kind": "bodies",
+              "declared": "rq2f85_left_silicone_pad",
+              "model": "ur5e_rq2f85_left_silicone_pad"
+            },
+            {
+              "kind": "bodies",
+              "declared": "rq2f85_left_spring_link",
+              "model": "ur5e_rq2f85_left_spring_link"
+            },
+            {
+              "kind": "bodies",
+              "declared": "rq2f85_right_coupler",
+              "model": "ur5e_rq2f85_right_coupler"
+            },
+            {
+              "kind": "bodies",
+              "declared": "rq2f85_right_driver",
+              "model": "ur5e_rq2f85_right_driver"
+            },
+            {
+              "kind": "bodies",
+              "declared": "rq2f85_right_follower",
+              "model": "ur5e_rq2f85_right_follower"
+            },
+            {
+              "kind": "bodies",
+              "declared": "rq2f85_right_pad",
+              "model": "ur5e_rq2f85_right_pad"
+            },
+            {
+              "kind": "bodies",
+              "declared": "rq2f85_right_silicone_pad",
+              "model": "ur5e_rq2f85_right_silicone_pad"
+            },
+            {
+              "kind": "bodies",
+              "declared": "rq2f85_right_spring_link",
+              "model": "ur5e_rq2f85_right_spring_link"
+            },
+            {
+              "kind": "bodies",
+              "declared": "shoulder_link",
+              "model": "ur5e_shoulder_link"
+            },
+            {
+              "kind": "bodies",
+              "declared": "upper_arm_link",
+              "model": "ur5e_upper_arm_link"
+            },
+            {
+              "kind": "bodies",
+              "declared": "wrist_1_link",
+              "model": "ur5e_wrist_1_link"
+            },
+            {
+              "kind": "bodies",
+              "declared": "wrist_2_link",
+              "model": "ur5e_wrist_2_link"
+            },
+            {
+              "kind": "bodies",
+              "declared": "wrist_3_link",
+              "model": "ur5e_wrist_3_link"
+            },
+            {
+              "kind": "geoms",
+              "declared": "rq2f85_left_pad2",
+              "model": "ur5e_rq2f85_left_pad2"
+            },
+            {
+              "kind": "geoms",
+              "declared": "rq2f85_right_pad2",
+              "model": "ur5e_rq2f85_right_pad2"
+            },
+            {
+              "kind": "sites",
+              "declared": "attachment_site",
+              "model": "ur5e_attachment_site"
+            },
+            {
+              "kind": "sites",
+              "declared": "pinch",
+              "model": "ur5e_pinch"
+            },
+            {
+              "kind": "sites",
+              "declared": "rq2f85_pinch",
+              "model": "ur5e_rq2f85_pinch"
+            },
+            {
+              "kind": "joints",
+              "declared": "elbow_joint",
+              "model": "ur5e_elbow_joint"
+            },
+            {
+              "kind": "joints",
+              "declared": "rq2f85_left_coupler_joint",
+              "model": "ur5e_rq2f85_left_coupler_joint"
+            },
+            {
+              "kind": "joints",
+              "declared": "rq2f85_left_driver_joint",
+              "model": "ur5e_rq2f85_left_driver_joint"
+            },
+            {
+              "kind": "joints",
+              "declared": "rq2f85_left_follower_joint",
+              "model": "ur5e_rq2f85_left_follower_joint"
+            },
+            {
+              "kind": "joints",
+              "declared": "rq2f85_left_spring_link_joint",
+              "model": "ur5e_rq2f85_left_spring_link_joint"
+            },
+            {
+              "kind": "joints",
+              "declared": "rq2f85_right_coupler_joint",
+              "model": "ur5e_rq2f85_right_coupler_joint"
+            },
+            {
+              "kind": "joints",
+              "declared": "rq2f85_right_driver_joint",
+              "model": "ur5e_rq2f85_right_driver_joint"
+            },
+            {
+              "kind": "joints",
+              "declared": "rq2f85_right_follower_joint",
+              "model": "ur5e_rq2f85_right_follower_joint"
+            },
+            {
+              "kind": "joints",
+              "declared": "rq2f85_right_spring_link_joint",
+              "model": "ur5e_rq2f85_right_spring_link_joint"
+            },
+            {
+              "kind": "joints",
+              "declared": "shoulder_lift_joint",
+              "model": "ur5e_shoulder_lift_joint"
+            },
+            {
+              "kind": "joints",
+              "declared": "shoulder_pan_joint",
+              "model": "ur5e_shoulder_pan_joint"
+            },
+            {
+              "kind": "joints",
+              "declared": "wrist_1_joint",
+              "model": "ur5e_wrist_1_joint"
+            },
+            {
+              "kind": "joints",
+              "declared": "wrist_2_joint",
+              "model": "ur5e_wrist_2_joint"
+            },
+            {
+              "kind": "joints",
+              "declared": "wrist_3_joint",
+              "model": "ur5e_wrist_3_joint"
+            },
+            {
+              "kind": "actuators",
+              "declared": "elbow",
+              "model": "ur5e_elbow"
+            },
+            {
+              "kind": "actuators",
+              "declared": "rq2f85_fingers_actuator",
+              "model": "ur5e_rq2f85_fingers_actuator"
+            },
+            {
+              "kind": "actuators",
+              "declared": "shoulder_lift",
+              "model": "ur5e_shoulder_lift"
+            },
+            {
+              "kind": "actuators",
+              "declared": "shoulder_pan",
+              "model": "ur5e_shoulder_pan"
+            },
+            {
+              "kind": "actuators",
+              "declared": "wrist_1",
+              "model": "ur5e_wrist_1"
+            },
+            {
+              "kind": "actuators",
+              "declared": "wrist_2",
+              "model": "ur5e_wrist_2"
+            },
+            {
+              "kind": "actuators",
+              "declared": "wrist_3",
+              "model": "ur5e_wrist_3"
+            }
+          ],
+          "identical": [
+            {
+              "kind": "bodies",
+              "declared": "world",
+              "model": "world"
+            },
+            {
+              "kind": "geoms",
+              "declared": "rq2f85_left_pad1",
+              "model": "rq2f85_left_pad1"
+            },
+            {
+              "kind": "geoms",
+              "declared": "rq2f85_right_pad1",
+              "model": "rq2f85_right_pad1"
+            }
+          ],
+          "conflicts": [],
+          "missing": [],
+          "declared_names_source": "\u9644\u52a0\u672c\u4f53\u81ea\u8eab\u6a21\u578b\uff08attach \u4e4b\u524d\u91c7\u96c6\uff09",
+          "declared_object_counts": {
+            "bodies": 22,
+            "geoms": 4,
+            "sites": 3,
+            "joints": 14,
+            "actuators": 7
+          },
+          "note": "conflict\uff08\u540c\u540d\u5bf9\u8c61\u5728\u4e3b\u672c\u4f53\u4e0e\u9644\u52a0\u672c\u4f53\u91cc\u90fd\u5b58\u5728\uff09**\u4e0d\u8fdb name_map**\uff1a\u6620\u5c04\u6709\u6b67\u4e49\uff0c\u9700\u4eba\u5de5\u88c1\u5b9a\uff1bmissing \u53ea\u7559\u75d5\uff0c\u88ab manipulation \u76f4\u63a5\u5f15\u7528\u7684\u540d\u5b57\u5df2\u5728 rename() \u91cc\u663e\u5f0f\u5931\u8d25\u3002"
+        },
+        "rename_rule": "\u6539\u5199\u6210 <prefix>name \u5f53\u4e14\u4ec5\u5f53 <prefix>name \u5728\u8054\u5408\u6a21\u578b\u4e8b\u5b9e\u91cc\u3001\u4e14 name \u4e0d\u5728",
+        "inherited_from": "/home/coretek/AIIRAF/build/models/ur5-pick-scene.json",
+        "reference_pose_check": {
+          "skipped": "\u8054\u5408\u6a21\u578b\u91cc\u627e\u4e0d\u5230\u5173\u8282 'ur5e_rq2f85_fingers_actuator'\uff08\u4f4d\u59ff\u952e\u4e0e\u6a21\u578b\u4e0d\u4e00\u81f4\uff09"
+        },
+        "reference_pose_clearance_check": {
+          "checked": true,
+          "target_body": "box_01",
+          "target_geom": "box_01_geom",
+          "target_pose": {
+            "position_m": [
+              0.15,
+              0.45,
+              0.375372
+            ],
+            "quaternion_wxyz": [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "source": "declaration\uff08\u672c\u81c2\u5728\u672c\u573a\u666f\u7684\u6293\u53d6\u76ee\u6807\uff09"
+          },
+          "commanded_grasp": {
+            "ur5e_rq2f85_fingers_actuator": 0.0,
+            "ur5e_shoulder_pan_joint": -0.838460042,
+            "ur5e_shoulder_lift_joint": -1.493940665,
+            "ur5e_elbow_joint": 1.434994974,
+            "ur5e_wrist_1_joint": -1.511882793,
+            "ur5e_wrist_2_joint": -1.570609506,
+            "ur5e_wrist_3_joint": 0.732336445
+          },
+          "arm_geoms_touching_target": [],
+          "pad_touching_target": [],
+          "non_pad_touching_target": [],
+          "overlapping": false,
+          "phases": {
+            "home": {
+              "positions_key": "home_positions",
+              "checked": true,
+              "command": {
+                "ur5e_rq2f85_fingers_actuator": 0.0,
+                "ur5e_shoulder_pan_joint": -0.838376233,
+                "ur5e_shoulder_lift_joint": -1.280099376,
+                "ur5e_elbow_joint": 0.589550378,
+                "ur5e_wrist_1_joint": -0.880097129,
+                "ur5e_wrist_2_joint": -1.570796401,
+                "ur5e_wrist_3_joint": 0.732420096
+              },
+              "arm_geoms_touching_target": [],
+              "pad_touching_target": [],
+              "non_pad_touching_target": [],
+              "ignored_keys": [
+                "ur5e_rq2f85_fingers_actuator"
+              ]
+            },
+            "approach": {
+              "positions_key": "approach_positions",
+              "checked": true,
+              "command": {
+                "ur5e_rq2f85_fingers_actuator": 0.0,
+                "ur5e_shoulder_pan_joint": -0.838376356,
+                "ur5e_shoulder_lift_joint": -1.379201338,
+                "ur5e_elbow_joint": 0.874250936,
+                "ur5e_wrist_1_joint": -1.06568038,
+                "ur5e_wrist_2_joint": -1.570796224,
+                "ur5e_wrist_3_joint": 0.732419982
+              },
+              "arm_geoms_touching_target": [],
+              "pad_touching_target": [],
+              "non_pad_touching_target": [],
+              "ignored_keys": [
+                "ur5e_rq2f85_fingers_actuator"
+              ]
+            },
+            "grasp": {
+              "positions_key": "grasp_positions",
+              "checked": true,
+              "command": {
+                "ur5e_rq2f85_fingers_actuator": 0.0,
+                "ur5e_shoulder_pan_joint": -0.838460042,
+                "ur5e_shoulder_lift_joint": -1.493940665,
+                "ur5e_elbow_joint": 1.434994974,
+                "ur5e_wrist_1_joint": -1.511882793,
+                "ur5e_wrist_2_joint": -1.570609506,
+                "ur5e_wrist_3_joint": 0.732336445
+              },
+              "arm_geoms_touching_target": [],
+              "pad_touching_target": [],
+              "non_pad_touching_target": [],
+              "ignored_keys": [
+                "ur5e_rq2f85_fingers_actuator"
+              ]
+            },
+            "lift": {
+              "positions_key": "lift_positions",
+              "checked": true,
+              "command": {
+                "ur5e_rq2f85_fingers_actuator": 163.0,
+                "ur5e_shoulder_pan_joint": -0.83837641,
+                "ur5e_shoulder_lift_joint": -1.462152862,
+                "ur5e_elbow_joint": 1.192741929,
+                "ur5e_wrist_1_joint": -1.301500527,
+                "ur5e_wrist_2_joint": -1.570796293,
+                "ur5e_wrist_3_joint": 0.732419918
+              },
+              "arm_geoms_touching_target": [],
+              "pad_touching_target": [],
+              "non_pad_touching_target": [],
+              "ignored_keys": [
+                "ur5e_rq2f85_fingers_actuator"
+              ]
+            }
+          },
+          "note": "\u5f52\u5c5e\u6309 `geom_bodyid` \u2192 \u5bbf\u4e3b body \u7684\u524d\u7f00\u5224\u5b9a\uff08**\u4e0d\u770b geom \u540d**\uff1a\u672c\u573a\u666f\u81c2\u7684 link geom \u65e0\u540d\uff0c\u6309\u540d\u5b57\u8fc7\u6ee4\u4f1a\u6f0f\u6389\u771f\u6b63\u4fb5\u5165\u65b9\u5757\u7684\u90a3\u4e00\u4e2a \u2014\u2014 \u5b9e\u6d4b `<\u672a\u547d\u540d#66>(piper_link6)` \u4e0e `box_01_geom` \u91cd\u53e0 \u22120.014516 m\uff09\u3002\u5224\u636e\u4e0e\u81c2\u81ea\u5df1\u573a\u666f\u4e00\u81f4\uff08`validate_grasp_pose`\uff1a\u5f20\u5f00\u65f6\u624b\u6307\u4e0d\u4e0e\u4efb\u4f55\u7269\u4f53\u63a5\u89e6\uff09\uff1a**\u5b58\u5728\u63a5\u89e6\u5bf9\u5373\u51e0\u4f55\u4fb5\u5165**\uff08\u65e0\u9608\u503c\uff09\u3002\u4fb5\u5165\u4f1a\u628a\u81c2\u9876\u79bb\u59ff\u6001 \u21d2 \u9759\u6001\u4fdd\u6301\u4e0d\u8fbe\u6807\uff0c\u800c\u8fd0\u884c\u671f\u53ea\u8868\u73b0\u4e3a\u300c\u672a\u5230\u8fbe\u6293\u53d6\u4f4d\u59ff / \u672a\u786e\u8ba4\u5df2\u6293\u53d6\u300d\uff1b\u4fee\u6cd5\u5728\u6c42\u89e3\u5668\u5c42\uff08\u671d\u5411\u7ea6\u675f + \u78b0\u649e\u6821\u9a8c\uff09\uff0c\u89c1 docs/debug/2026-09-24-joint-model-dog-arm.md \u00a711.6\u3002\u8f7d\u8377\u6309**\u58f0\u660e\u76ee\u6807**\u6446\u653e\uff08\u4e0d\u662f\u9053\u5177\u521d\u59cb\u4f4d\uff09\uff1a\u5426\u5219\u67e5\u4e0d\u51fa\"\u4f4d\u5f62\u538b\u5728\u6258\u76d8\u8f7d\u8377\u91cc\"\u3002"
+        },
+        "reference_pose_resolution": {
+          "source": "resolved_for_joint_model",
+          "solver": {
+            "module": "/home/coretek/AIIRAF/scripts/build_robot_baseline.py",
+            "entry": "build_reference_poses",
+            "baseline": "/home/coretek/AIIRAF/config/ur5_simulation_baseline.yaml",
+            "feedforward_entry": "build_reference_feedforward"
+          },
+          "placement": {
+            "pos_m": [
+              0.45,
+              0.9,
+              0.0
+            ],
+            "quat_wxyz": [
+              0.707106781186548,
+              0.0,
+              0.0,
+              0.707106781186548
+            ]
+          },
+          "target_world_m": [
+            0.15,
+            0.45,
+            0.375372
+          ],
+          "target_derivation": {
+            "source": "declared_literal",
+            "value": [
+              0.15,
+              0.45,
+              0.375372
+            ],
+            "reason": null
+          },
+          "target_cross_check": {
+            "checked": false,
+            "reason": null
+          },
+          "local_target_m": [
+            -0.45,
+            0.3,
+            0.375372
+          ],
+          "local_xy_radius_m": 0.540832691,
+          "resolved_pad_offset_m": 0.0,
+          "inherited_pad_offset_m": 0.0,
+          "place_reference_source": "resolved_for_joint_model",
+          "place_reference": {
+            "source": "resolved_for_joint_model",
+            "solver": {
+              "module": "/home/coretek/AIIRAF/scripts/build_robot_baseline.py",
+              "entry": "build_place_reference_poses",
+              "baseline": "/home/coretek/AIIRAF/config/ur5_simulation_baseline.yaml"
+            },
+            "place_target_id": "place_pad_b",
+            "carrier_frame": "handoff_station_frame_b",
+            "seed_positions": {
+              "rq2f85_fingers_actuator": 163.0,
+              "shoulder_pan_joint": -0.83837641,
+              "shoulder_lift_joint": -1.462152862,
+              "elbow_joint": 1.192741929,
+              "wrist_1_joint": -1.301500527,
+              "wrist_2_joint": -1.570796293,
+              "wrist_3_joint": 0.732419918
+            },
+            "gripper_axes": {
+              "above": [
+                0.525797396,
+                -0.848141018,
+                -0.064760419
+              ],
+              "descend": [
+                0.521869809,
+                -0.849886334,
+                -0.073110332
+              ],
+              "retreat": [
+                0.525797396,
+                -0.848141018,
+                -0.064760419
+              ],
+              "transit": [
+                0.374123159,
+                -0.861051616,
+                -0.344415414
+              ],
+              "via": [
+                0.374123159,
+                -0.861051616,
+                -0.344415414
+              ]
+            },
+            "transit_local_m": [
+              -0.2,
+              -0.43,
+              0.595996915
+            ],
+            "transit_height": {
+              "lift_pad_z_m": 0.445996915,
+              "bearing_pad_z_m": 0.070624977,
+              "used_z_m": 0.595996915,
+              "xy_source": "target",
+              "source": "current_lift_height"
+            },
+            "waypoint_contacts": [],
+            "path_contact_count": 268,
+            "path_contacts": [
+              {
+                "from": "above",
+                "to": "descend",
+                "fraction": 0.5,
+                "arm_body": "ur5e_rq2f85_left_coupler",
+                "other_body": "place_pad_b",
+                "carrier": false,
+                "dist_m": -0.003426
+              },
+              {
+                "from": "above",
+                "to": "descend",
+                "fraction": 0.583,
+                "arm_body": "ur5e_rq2f85_left_coupler",
+                "other_body": "world",
+                "carrier": false,
+                "dist_m": -0.005773
+              },
+              {
+                "from": "above",
+                "to": "descend",
+                "fraction": 0.583,
+                "arm_body": "ur5e_rq2f85_left_follower",
+                "other_body": "world",
+                "carrier": false,
+                "dist_m": -0.001445
+              },
+              {
+                "from": "above",
+                "to": "descend",
+                "fraction": 0.583,
+                "arm_body": "ur5e_rq2f85_left_driver",
+                "other_body": "place_pad_b",
+                "carrier": false,
+                "dist_m": -6.2e-05
+              },
+              {
+                "from": "above",
+                "to": "descend",
+                "fraction": 0.583,
+                "arm_body": "ur5e_rq2f85_left_coupler",
+                "other_body": "place_pad_b",
+                "carrier": false,
+                "dist_m": -0.010773
+              },
+              {
+                "from": "above",
+                "to": "descend",
+                "fraction": 0.583,
+                "arm_body": "ur5e_rq2f85_left_spring_link",
+                "other_body": "place_pad_b",
+                "carrier": false,
+                "dist_m": -0.002522
+              },
+              {
+                "from": "above",
+                "to": "descend",
+                "fraction": 0.583,
+                "arm_body": "ur5e_rq2f85_left_follower",
+                "other_body": "place_pad_b",
+                "carrier": false,
+                "dist_m": -0.006445
+              },
+              {
+                "from": "above",
+                "to": "descend",
+                "fraction": 0.583,
+                "arm_body": "ur5e_rq2f85_left_pad",
+                "other_body": "place_pad_b",
+                "carrier": false,
+                "dist_m": -0.001031
+              },
+              {
+                "from": "above",
+                "to": "descend",
+                "fraction": 0.583,
+                "arm_body": "ur5e_rq2f85_left_pad",
+                "other_body": "place_pad_b",
+                "carrier": false,
+                "dist_m": -0.000372
+              },
+              {
+                "from": "above",
+                "to": "descend",
+                "fraction": 0.583,
+                "arm_body": "ur5e_rq2f85_left_pad",
+                "other_body": "place_pad_b",
+                "carrier": false,
+                "dist_m": -0.000372
+              },
+              {
+                "from": "above",
+                "to": "descend",
+                "fraction": 0.667,
+                "arm_body": "ur5e_rq2f85_left_driver",
+                "other_body": "world",
+                "carrier": false,
+                "dist_m": -0.001601
+              },
+              {
+                "from": "above",
+                "to": "descend",
+                "fraction": 0.667,
+                "arm_body": "ur5e_rq2f85_left_coupler",
+                "other_body": "world",
+                "carrier": false,
+                "dist_m": -0.012296
+              },
+              {
+                "from": "above",
+                "to": "descend",
+                "fraction": 0.667,
+                "arm_body": "ur5e_rq2f85_left_spring_link",
+                "other_body": "world",
+                "carrier": false,
+                "dist_m": -0.004114
+              },
+              {
+                "from": "above",
+                "to": "descend",
+                "fraction": 0.667,
+                "arm_body": "ur5e_rq2f85_left_follower",
+                "other_body": "world",
+                "carrier": false,
+                "dist_m": -0.00796
+              },
+              {
+                "from": "above",
+                "to": "descend",
+                "fraction": 0.667,
+                "arm_body": "ur5e_rq2f85_left_pad",
+                "other_body": "world",
+                "carrier": false,
+                "dist_m": -0.001861
+              },
+              {
+                "from": "above",
+                "to": "descend",
+                "fraction": 0.667,
+                "arm_body": "ur5e_rq2f85_left_pad",
+                "other_body": "world",
+                "carrier": false,
+                "dist_m": -0.001192
+              },
+              {
+                "from": "above",
+                "to": "descend",
+                "fraction": 0.667,
+                "arm_body": "ur5e_rq2f85_left_pad",
+                "other_body": "world",
+                "carrier": false,
+                "dist_m": -0.001192
+              },
+              {
+                "from": "above",
+                "to": "descend",
+                "fraction": 0.667,
+                "arm_body": "ur5e_rq2f85_left_pad",
+                "other_body": "world",
+                "carrier": false,
+                "dist_m": -0.000523
+              },
+              {
+                "from": "above",
+                "to": "descend",
+                "fraction": 0.667,
+                "arm_body": "ur5e_wrist_2_link",
+                "other_body": "place_pad_b",
+                "carrier": false,
+                "dist_m": -0.000861
+              },
+              {
+                "from": "above",
+                "to": "descend",
+                "fraction": 0.667,
+                "arm_body": "ur5e_wrist_3_link",
+                "other_body": "place_pad_b",
+                "carrier": false,
+                "dist_m": -0.003614
+              }
+            ],
+            "lift_axis_world": [
+              -8.5585e-05,
+              -7.7011e-05,
+              -0.999999993
+            ],
+            "axes_flipped_vs_pick_lift": [],
+            "target_local_m": [
+              -0.2,
+              -0.43,
+              0.005
+            ],
+            "payload_half_m": 0.025,
+            "pad_offset_m": 0.0,
+            "clearance_m": 0.05,
+            "written": {
+              "place_above_positions": {
+                "replaced_joints": [
+                  "ur5e_elbow_joint",
+                  "ur5e_shoulder_lift_joint",
+                  "ur5e_shoulder_pan_joint",
+                  "ur5e_wrist_1_joint",
+                  "ur5e_wrist_2_joint",
+                  "ur5e_wrist_3_joint"
+                ],
+                "position_error_m": 9.503850749752913e-06
+              },
+              "place_descend_positions": {
+                "replaced_joints": [
+                  "ur5e_elbow_joint",
+                  "ur5e_shoulder_lift_joint",
+                  "ur5e_shoulder_pan_joint",
+                  "ur5e_wrist_1_joint",
+                  "ur5e_wrist_2_joint",
+                  "ur5e_wrist_3_joint"
+                ],
+                "position_error_m": 5.098289366287969e-06
+              },
+              "place_retreat_positions": {
+                "replaced_joints": [
+                  "ur5e_elbow_joint",
+                  "ur5e_shoulder_lift_joint",
+                  "ur5e_shoulder_pan_joint",
+                  "ur5e_wrist_1_joint",
+                  "ur5e_wrist_2_joint",
+                  "ur5e_wrist_3_joint"
+                ],
+                "position_error_m": 9.503850749752913e-06
+              },
+              "place_transit_positions": {
+                "replaced_joints": [
+                  "ur5e_elbow_joint",
+                  "ur5e_shoulder_lift_joint",
+                  "ur5e_shoulder_pan_joint",
+                  "ur5e_wrist_1_joint",
+                  "ur5e_wrist_2_joint",
+                  "ur5e_wrist_3_joint"
+                ],
+                "position_error_m": 7.5430623459213854e-06
+              },
+              "place_via_positions": {
+                "replaced_joints": [
+                  "ur5e_elbow_joint",
+                  "ur5e_shoulder_lift_joint",
+                  "ur5e_shoulder_pan_joint",
+                  "ur5e_wrist_1_joint",
+                  "ur5e_wrist_2_joint",
+                  "ur5e_wrist_3_joint"
+                ],
+                "position_error_m": 7.5430623459213854e-06
+              }
+            },
+            "note": "\u653e\u7f6e\u56db\u6bb5\u7684\u5173\u8282\u89e3\u7531**\u58f0\u660e\u7684\u6c42\u89e3\u5668**\u6309\u4e0a\u8ff0\u5c40\u90e8\u76ee\u6807\u89e3\u51fa\uff08\u6784\u5efa\u671f\uff09\uff0c\u540e\u7aef\u53ea\u56de\u653e\uff1b\u8fd0\u884c\u671f\u4ee5\u5b9e\u6d4b\u63a5\u6536\u4f53\u4f4d\u59ff\u5224\u636e\uff08\u89c1 place_object \u8bc1\u636e\uff09\u3002"
+          },
+          "feedforward_source": "resolved_for_joint_model",
+          "feedforward_evidence": {
+            "home": {
+              "method": "qfrc_bias_static_hold_fixed_point_replace",
+              "passes": 1,
+              "pass_trace": [
+                {
+                  "pass": 1,
+                  "worst_residual_rad": 0.0
+                }
+              ],
+              "gravity_torque_nm": {
+                "ur5e_shoulder_pan_joint": 0.0,
+                "ur5e_shoulder_lift_joint": -28.824288,
+                "ur5e_elbow_joint": -16.69393,
+                "ur5e_wrist_1_joint": -2.41392,
+                "ur5e_wrist_2_joint": 0.000632,
+                "ur5e_wrist_3_joint": -0.0
+              },
+              "actuator_gain": {
+                "ur5e_shoulder_pan_joint": 2000.0,
+                "ur5e_shoulder_lift_joint": 2000.0,
+                "ur5e_elbow_joint": 2000.0,
+                "ur5e_wrist_1_joint": 500.0,
+                "ur5e_wrist_2_joint": 500.0,
+                "ur5e_wrist_3_joint": 500.0
+              },
+              "hold_ms": 4000,
+              "residual_joint_rad": {
+                "ur5e_shoulder_pan_joint": -0.0,
+                "ur5e_shoulder_lift_joint": 0.0,
+                "ur5e_elbow_joint": 0.0,
+                "ur5e_wrist_1_joint": -0.0,
+                "ur5e_wrist_2_joint": 0.0,
+                "ur5e_wrist_3_joint": -0.0
+              },
+              "worst_residual_rad": 0.0,
+              "tolerance_rad": 0.001
+            },
+            "approach": {
+              "method": "qfrc_bias_static_hold_fixed_point_replace",
+              "passes": 1,
+              "pass_trace": [
+                {
+                  "pass": 1,
+                  "worst_residual_rad": 0.0
+                }
+              ],
+              "gravity_torque_nm": {
+                "ur5e_shoulder_pan_joint": 0.0,
+                "ur5e_shoulder_lift_joint": -26.685168,
+                "ur5e_elbow_joint": -18.625986,
+                "ur5e_wrist_1_joint": -2.413896,
+                "ur5e_wrist_2_joint": 0.000632,
+                "ur5e_wrist_3_joint": -0.0
+              },
+              "actuator_gain": {
+                "ur5e_shoulder_pan_joint": 2000.0,
+                "ur5e_shoulder_lift_joint": 2000.0,
+                "ur5e_elbow_joint": 2000.0,
+                "ur5e_wrist_1_joint": 500.0,
+                "ur5e_wrist_2_joint": 500.0,
+                "ur5e_wrist_3_joint": 500.0
+              },
+              "hold_ms": 4000,
+              "residual_joint_rad": {
+                "ur5e_shoulder_pan_joint": -0.0,
+                "ur5e_shoulder_lift_joint": 0.0,
+                "ur5e_elbow_joint": 0.0,
+                "ur5e_wrist_1_joint": -0.0,
+                "ur5e_wrist_2_joint": 0.0,
+                "ur5e_wrist_3_joint": -0.0
+              },
+              "worst_residual_rad": 0.0,
+              "tolerance_rad": 0.001
+            },
+            "grasp": {
+              "method": "qfrc_bias_static_hold_fixed_point_replace",
+              "passes": 1,
+              "pass_trace": [
+                {
+                  "pass": 1,
+                  "worst_residual_rad": 0.0
+                }
+              ],
+              "gravity_torque_nm": {
+                "ur5e_shoulder_pan_joint": 0.0,
+                "ur5e_shoulder_lift_joint": -24.15543,
+                "ur5e_elbow_joint": -20.905939,
+                "ur5e_wrist_1_joint": -2.414209,
+                "ur5e_wrist_2_joint": 0.000928,
+                "ur5e_wrist_3_joint": -0.0
+              },
+              "actuator_gain": {
+                "ur5e_shoulder_pan_joint": 2000.0,
+                "ur5e_shoulder_lift_joint": 2000.0,
+                "ur5e_elbow_joint": 2000.0,
+                "ur5e_wrist_1_joint": 500.0,
+                "ur5e_wrist_2_joint": 500.0,
+                "ur5e_wrist_3_joint": 500.0
+              },
+              "hold_ms": 4000,
+              "residual_joint_rad": {
+                "ur5e_shoulder_pan_joint": -0.0,
+                "ur5e_shoulder_lift_joint": 0.0,
+                "ur5e_elbow_joint": 0.0,
+                "ur5e_wrist_1_joint": -0.0,
+                "ur5e_wrist_2_joint": 0.0,
+                "ur5e_wrist_3_joint": -0.0
+              },
+              "worst_residual_rad": 0.0,
+              "tolerance_rad": 0.001
+            },
+            "lift": {
+              "method": "qfrc_bias_static_hold_fixed_point_replace",
+              "passes": 1,
+              "pass_trace": [
+                {
+                  "pass": 1,
+                  "worst_residual_rad": 3.14e-07
+                }
+              ],
+              "gravity_torque_nm": {
+                "ur5e_shoulder_pan_joint": 0.0,
+                "ur5e_shoulder_lift_joint": -24.859024,
+                "ur5e_elbow_joint": -20.270045,
+                "ur5e_wrist_1_joint": -2.41434,
+                "ur5e_wrist_2_joint": 0.000632,
+                "ur5e_wrist_3_joint": 0.0
+              },
+              "actuator_gain": {
+                "ur5e_shoulder_pan_joint": 2000.0,
+                "ur5e_shoulder_lift_joint": 2000.0,
+                "ur5e_elbow_joint": 2000.0,
+                "ur5e_wrist_1_joint": 500.0,
+                "ur5e_wrist_2_joint": 500.0,
+                "ur5e_wrist_3_joint": 500.0
+              },
+              "hold_ms": 4000,
+              "residual_joint_rad": {
+                "ur5e_shoulder_pan_joint": -4.7e-08,
+                "ur5e_shoulder_lift_joint": -1.08e-07,
+                "ur5e_elbow_joint": -5.6e-08,
+                "ur5e_wrist_1_joint": -2.58e-07,
+                "ur5e_wrist_2_joint": 3.14e-07,
+                "ur5e_wrist_3_joint": 0.0
+              },
+              "worst_residual_rad": 3.14e-07,
+              "tolerance_rad": 0.001
+            }
+          },
+          "feedforward_alignment": {
+            "checked": true,
+            "source": "resolved_for_joint_model",
+            "phases": {
+              "home": {
+                "positions_key": "home_positions",
+                "channels": 6,
+                "renamed": []
+              },
+              "approach": {
+                "positions_key": "approach_positions",
+                "channels": 6,
+                "renamed": []
+              },
+              "grasp": {
+                "positions_key": "grasp_positions",
+                "channels": 6,
+                "renamed": []
+              },
+              "lift": {
+                "positions_key": "lift_positions",
+                "channels": 6,
+                "renamed": []
+              }
+            },
+            "rule": "\u524d\u9988\u901a\u9053\u540d \u2192 \u8be5\u6bb5\u4f4d\u7f6e\u6307\u4ee4\u7684\u901a\u9053\u540d\uff1a\u4e00\u5f8b\u6309\u6a21\u578b\u81ea\u5df1\u7684 actuator_trnid \u5224\u300c\u540c\u4e00\u6761\u63a7\u5236\u901a\u9053\u300d\uff0c\u4e0d\u731c\u540d\u5b57\u540e\u7f00\uff1b\u5bf9\u4e0d\u4e0a\u5373\u6784\u5efa\u5931\u8d25"
+          },
+          "phase_residuals": {
+            "home": {
+              "residual_m": 4.06e-07,
+              "source": "ik",
+              "declared_home_source": null
+            },
+            "approach": {
+              "residual_m": 2.31e-07,
+              "source": "ik",
+              "declared_home_source": null
+            },
+            "grasp": {
+              "residual_m": 5.1e-08,
+              "source": "ik",
+              "declared_home_source": null
+            },
+            "lift": {
+              "residual_m": 1.02e-07,
+              "source": "ik",
+              "declared_home_source": null
+            }
+          },
+          "phase_residual_tolerance_m": 1e-05,
+          "baseline_overrides": {
+            "grasp": {
+              "home_rise_m": 0.05,
+              "place_transit_extra_z_m": 0.15,
+              "place_via": "midpoint"
+            }
+          },
+          "replaced_phases": {
+            "home": {
+              "positions_key": "home_positions",
+              "replaced_joints": [
+                "ur5e_shoulder_pan_joint",
+                "ur5e_shoulder_lift_joint",
+                "ur5e_elbow_joint",
+                "ur5e_wrist_1_joint",
+                "ur5e_wrist_2_joint",
+                "ur5e_wrist_3_joint"
+              ],
+              "diff_vs_inherited": [
+                {
+                  "joint": "ur5e_shoulder_pan_joint",
+                  "inherited": null,
+                  "resolved": -0.8383762330320991
+                },
+                {
+                  "joint": "ur5e_shoulder_lift_joint",
+                  "inherited": null,
+                  "resolved": -1.2800993764857287
+                },
+                {
+                  "joint": "ur5e_elbow_joint",
+                  "inherited": null,
+                  "resolved": 0.5895503781239498
+                },
+                {
+                  "joint": "ur5e_wrist_1_joint",
+                  "inherited": null,
+                  "resolved": -0.8800971294492309
+                },
+                {
+                  "joint": "ur5e_wrist_2_joint",
+                  "inherited": null,
+                  "resolved": -1.5707964008303175
+                },
+                {
+                  "joint": "ur5e_wrist_3_joint",
+                  "inherited": null,
+                  "resolved": 0.73242009624114
+                }
+              ]
+            },
+            "approach": {
+              "positions_key": "approach_positions",
+              "replaced_joints": [
+                "ur5e_shoulder_pan_joint",
+                "ur5e_shoulder_lift_joint",
+                "ur5e_elbow_joint",
+                "ur5e_wrist_1_joint",
+                "ur5e_wrist_2_joint",
+                "ur5e_wrist_3_joint"
+              ],
+              "diff_vs_inherited": [
+                {
+                  "joint": "ur5e_shoulder_pan_joint",
+                  "inherited": null,
+                  "resolved": -0.8383763562881159
+                },
+                {
+                  "joint": "ur5e_shoulder_lift_joint",
+                  "inherited": null,
+                  "resolved": -1.3792013382366166
+                },
+                {
+                  "joint": "ur5e_elbow_joint",
+                  "inherited": null,
+                  "resolved": 0.8742509355566424
+                },
+                {
+                  "joint": "ur5e_wrist_1_joint",
+                  "inherited": null,
+                  "resolved": -1.0656803802882286
+                },
+                {
+                  "joint": "ur5e_wrist_2_joint",
+                  "inherited": null,
+                  "resolved": -1.5707962242505238
+                },
+                {
+                  "joint": "ur5e_wrist_3_joint",
+                  "inherited": null,
+                  "resolved": 0.732419981642881
+                }
+              ]
+            },
+            "grasp": {
+              "positions_key": "grasp_positions",
+              "replaced_joints": [
+                "ur5e_shoulder_pan_joint",
+                "ur5e_shoulder_lift_joint",
+                "ur5e_elbow_joint",
+                "ur5e_wrist_1_joint",
+                "ur5e_wrist_2_joint",
+                "ur5e_wrist_3_joint"
+              ],
+              "diff_vs_inherited": [
+                {
+                  "joint": "ur5e_shoulder_pan_joint",
+                  "inherited": null,
+                  "resolved": -0.8384600423332021
+                },
+                {
+                  "joint": "ur5e_shoulder_lift_joint",
+                  "inherited": null,
+                  "resolved": -1.4939406647566482
+                },
+                {
+                  "joint": "ur5e_elbow_joint",
+                  "inherited": null,
+                  "resolved": 1.4349949735963274
+                },
+                {
+                  "joint": "ur5e_wrist_1_joint",
+                  "inherited": null,
+                  "resolved": -1.5118827933488557
+                },
+                {
+                  "joint": "ur5e_wrist_2_joint",
+                  "inherited": null,
+                  "resolved": -1.5706095060449023
+                },
+                {
+                  "joint": "ur5e_wrist_3_joint",
+                  "inherited": null,
+                  "resolved": 0.7323364449857219
+                }
+              ]
+            },
+            "lift": {
+              "positions_key": "lift_positions",
+              "replaced_joints": [
+                "ur5e_shoulder_pan_joint",
+                "ur5e_shoulder_lift_joint",
+                "ur5e_elbow_joint",
+                "ur5e_wrist_1_joint",
+                "ur5e_wrist_2_joint",
+                "ur5e_wrist_3_joint"
+              ],
+              "diff_vs_inherited": [
+                {
+                  "joint": "ur5e_shoulder_pan_joint",
+                  "inherited": null,
+                  "resolved": -0.8383764100736916
+                },
+                {
+                  "joint": "ur5e_shoulder_lift_joint",
+                  "inherited": null,
+                  "resolved": -1.4621528622910818
+                },
+                {
+                  "joint": "ur5e_elbow_joint",
+                  "inherited": null,
+                  "resolved": 1.1927419294915182
+                },
+                {
+                  "joint": "ur5e_wrist_1_joint",
+                  "inherited": null,
+                  "resolved": -1.3015005267636612
+                },
+                {
+                  "joint": "ur5e_wrist_2_joint",
+                  "inherited": null,
+                  "resolved": -1.5707962929137287
+                },
+                {
+                  "joint": "ur5e_wrist_3_joint",
+                  "inherited": null,
+                  "resolved": 0.7324199181012897
+                }
+              ]
+            }
+          },
+          "note": "\u53c2\u8003\u59ff\u6001\u4e0e pad_offset \u5747\u7531**\u8054\u5408\u6a21\u578b + \u672c placement** \u91cd\u89e3\uff08\u6c42\u89e3\u5668\u6309 `robots[].reference_solver` \u58f0\u660e\u8c03\u7528\uff09\uff1b`resolved` \u7684\u5173\u8282\u89e3\u662f**\u81c2\u57fa\u5ea7\u7cfb**\u4e0b\u7684\u5173\u8282\u89d2\uff0cMJCF qpos \u4e5f\u662f\u5c40\u90e8\u91cf \u21d2 \u53ef\u76f4\u63a5\u547d\u4ee4\u3002"
+        }
+      }
+    },
+    "attached_manipulators": [
+      {
+        "id": "piper",
+        "prefix": "piper_",
+        "manipulation_report": "build/models/piper-pick-scene.json",
+        "reference_solver": {
+          "module": "scripts/build_piper_baseline.py",
+          "entry": "build_reference_poses",
+          "place_entry": "build_place_reference_poses",
+          "feedforward_entry": "build_reference_feedforward",
+          "baseline": "config/piper_simulation_baseline.yaml"
+        },
+        "has_placement": true,
+        "resolved": true,
+        "name_map_included": true,
+        "note": "\u672c\u62a5\u544a\u7684\u9876\u5c42 manipulation/gripper/targets/name_map \u53d6\u81ea\u672c\u672c\u4f53\uff08scene.model.joint_manipulator\uff09"
+      },
+      {
+        "id": "ur5e",
+        "prefix": "ur5e_",
+        "manipulation_report": "build/models/ur5-pick-scene.json",
+        "reference_solver": {
+          "module": "scripts/build_robot_baseline.py",
+          "entry": "build_reference_poses",
+          "baseline": "config/ur5_simulation_baseline.yaml",
+          "target_override_world_m": [
+            0.15,
+            0.45,
+            0.375372
+          ],
+          "feedforward_entry": "build_reference_feedforward",
+          "place_entry": "build_place_reference_poses",
+          "place_target_id": "place_pad_b",
+          "place_carrier_frame": "handoff_station_frame_b",
+          "baseline_overrides": {
+            "grasp": {
+              "home_rise_m": 0.05,
+              "place_transit_extra_z_m": 0.15,
+              "place_via": "midpoint"
+            }
+          }
+        },
+        "has_placement": true,
+        "resolved": false,
+        "name_map_included": false,
+        "note": "\u5df2\u5728\u540c\u4e00\u7269\u7406\u4e16\u754c\u91cc\u88c5\u914d\uff08\u51e0\u4f55/\u6267\u884c\u5668/\u8d44\u4ea7\u90fd\u5728\uff09\uff0c\u4f46\u672c\u62a5\u544a**\u6ca1\u6709**\u4e3a\u5b83\u89e3\u53c2\u8003\u59ff\u6001/gripper/name_map \u4e8b\u5b9e\uff08scene.model.joint_manipulator \u672a\u6307\u5411\u5b83\uff09\u21d2 \u5728\u8054\u5408\u4e16\u754c\u91cc\u8dd1\u5b83\u7684\u6280\u80fd\u524d\u5fc5\u987b\u5148\u8865\u6309\u672c\u4f53\u7684 manipulation \u6bb5\uff1b\u5b83\u7684\u6280\u80fd\u9a8c\u6536\u5c5e\u4e8e\u540e\u7eed\u589e\u91cf"
+      }
+    ],
+    "inherited_from": "/home/coretek/AIIRAF/build/models/piper-pick-scene.json",
+    "rename_rule": "\u6539\u5199\u6210 <prefix>name \u5f53\u4e14\u4ec5\u5f53 <prefix>name \u5728\u8054\u5408\u6a21\u578b\u4e8b\u5b9e\u91cc\u3001\u4e14 name \u4e0d\u5728",
+    "name_map": {
+      "joint1": "piper_joint1",
+      "joint2": "piper_joint2",
+      "joint3": "piper_joint3",
+      "joint4": "piper_joint4",
+      "joint5": "piper_joint5",
+      "joint6": "piper_joint6",
+      "joint7": "piper_joint7",
+      "joint8": "piper_joint8",
+      "link1": "piper_link1",
+      "link2": "piper_link2",
+      "link3": "piper_link3",
+      "link4": "piper_link4",
+      "link5": "piper_link5",
+      "link6": "piper_link6",
+      "link7": "piper_link7",
+      "link8": "piper_link8"
+    },
+    "name_map_facts": {
+      "rule": "\u58f0\u660e\u540d\u2192\u8054\u5408\u6a21\u578b\u540d\uff1a\u53ea\u5bf9 <prefix>name \u5b58\u5728\u4e14 name \u4e0d\u5b58\u5728\u7684\u60c5\u5f62\u6620\u5c04",
+      "counts": {
+        "mapped": 24,
+        "identical": 1,
+        "conflicts": 0,
+        "missing": 0
+      },
+      "mapped": [
+        {
+          "kind": "bodies",
+          "declared": "link1",
+          "model": "piper_link1"
+        },
+        {
+          "kind": "bodies",
+          "declared": "link2",
+          "model": "piper_link2"
+        },
+        {
+          "kind": "bodies",
+          "declared": "link3",
+          "model": "piper_link3"
+        },
+        {
+          "kind": "bodies",
+          "declared": "link4",
+          "model": "piper_link4"
+        },
+        {
+          "kind": "bodies",
+          "declared": "link5",
+          "model": "piper_link5"
+        },
+        {
+          "kind": "bodies",
+          "declared": "link6",
+          "model": "piper_link6"
+        },
+        {
+          "kind": "bodies",
+          "declared": "link7",
+          "model": "piper_link7"
+        },
+        {
+          "kind": "bodies",
+          "declared": "link8",
+          "model": "piper_link8"
+        },
+        {
+          "kind": "joints",
+          "declared": "joint1",
+          "model": "piper_joint1"
+        },
+        {
+          "kind": "joints",
+          "declared": "joint2",
+          "model": "piper_joint2"
+        },
+        {
+          "kind": "joints",
+          "declared": "joint3",
+          "model": "piper_joint3"
+        },
+        {
+          "kind": "joints",
+          "declared": "joint4",
+          "model": "piper_joint4"
+        },
+        {
+          "kind": "joints",
+          "declared": "joint5",
+          "model": "piper_joint5"
+        },
+        {
+          "kind": "joints",
+          "declared": "joint6",
+          "model": "piper_joint6"
+        },
+        {
+          "kind": "joints",
+          "declared": "joint7",
+          "model": "piper_joint7"
+        },
+        {
+          "kind": "joints",
+          "declared": "joint8",
+          "model": "piper_joint8"
+        },
+        {
+          "kind": "actuators",
+          "declared": "joint1",
+          "model": "piper_joint1"
+        },
+        {
+          "kind": "actuators",
+          "declared": "joint2",
+          "model": "piper_joint2"
+        },
+        {
+          "kind": "actuators",
+          "declared": "joint3",
+          "model": "piper_joint3"
+        },
+        {
+          "kind": "actuators",
+          "declared": "joint4",
+          "model": "piper_joint4"
+        },
+        {
+          "kind": "actuators",
+          "declared": "joint5",
+          "model": "piper_joint5"
+        },
+        {
+          "kind": "actuators",
+          "declared": "joint6",
+          "model": "piper_joint6"
+        },
+        {
+          "kind": "actuators",
+          "declared": "joint7",
+          "model": "piper_joint7"
+        },
+        {
+          "kind": "actuators",
+          "declared": "joint8",
+          "model": "piper_joint8"
+        }
+      ],
+      "identical": [
+        {
+          "kind": "bodies",
+          "declared": "world",
+          "model": "world"
+        }
+      ],
+      "conflicts": [],
+      "missing": [],
+      "declared_names_source": "\u9644\u52a0\u672c\u4f53\u81ea\u8eab\u6a21\u578b\uff08attach \u4e4b\u524d\u91c7\u96c6\uff09",
+      "declared_object_counts": {
+        "bodies": 9,
+        "geoms": 0,
+        "sites": 0,
+        "joints": 8,
+        "actuators": 8
+      },
+      "note": "conflict\uff08\u540c\u540d\u5bf9\u8c61\u5728\u4e3b\u672c\u4f53\u4e0e\u9644\u52a0\u672c\u4f53\u91cc\u90fd\u5b58\u5728\uff09**\u4e0d\u8fdb name_map**\uff1a\u6620\u5c04\u6709\u6b67\u4e49\uff0c\u9700\u4eba\u5de5\u88c1\u5b9a\uff1bmissing \u53ea\u7559\u75d5\uff0c\u88ab manipulation \u76f4\u63a5\u5f15\u7528\u7684\u540d\u5b57\u5df2\u5728 rename() \u91cc\u663e\u5f0f\u5931\u8d25\u3002"
+    },
+    "reference_pose_check": {
+      "target_id": "box_01",
+      "target_body": "box_01",
+      "target_center_m": [
+        0.28,
+        -0.28,
+        0.025
+      ],
+      "pad_midpoint_m": [
+        0.280000315,
+        -0.280000708,
+        0.057008225
+      ],
+      "pad_offset_m": 0.032016224,
+      "pad_offset_axis": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "residual_m": [
+        3.15e-07,
+        -7.08e-07,
+        -7.999e-06
+      ],
+      "distance_m": 8.036e-06,
+      "declared_pose_tolerance_m": 0.005,
+      "within_declared_tolerance": true,
+      "note": "\u7ee7\u627f\u7684 `*_positions` \u82e5\u6765\u81ea\u522b\u7684\u57fa\u5ea7\u4f4d\u59ff\uff0c\u672c\u6b8b\u5dee\u4f1a\u663e\u8457\u5927\u4e8e\u58f0\u660e\u5bb9\u5dee \u21d2 \u5fc5\u987b\u5728**\u8054\u5408\u6a21\u578b**\u4e0a\u91cd\u7b97\u53c2\u8003\u59ff\u6001\uff08\u89c1 docs/debug/2026-09-24-joint-model-dog-arm.md \u00a711.4\uff09"
+    },
+    "reference_pose_clearance_check": {
+      "checked": true,
+      "target_body": "box_01",
+      "target_geom": "box_01_geom",
+      "target_pose": {
+        "position_m": [
+          0.28,
+          -0.28,
+          0.025
+        ],
+        "quaternion_wxyz": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "source": "declaration\uff08\u672c\u81c2\u5728\u672c\u573a\u666f\u7684\u6293\u53d6\u76ee\u6807\uff09"
+      },
+      "commanded_grasp": {
+        "piper_joint7": 0.035,
+        "piper_joint8": -0.035,
+        "piper_joint1": 1.1032e-05,
+        "piper_joint2": 2.085906398,
+        "piper_joint3": -0.438025747,
+        "piper_joint4": 8e-08,
+        "piper_joint5": -0.28589387,
+        "piper_joint6": 3e-09
+      },
+      "arm_geoms_touching_target": [
+        {
+          "geom": "piper_left_finger",
+          "body": "piper_link7",
+          "is_pad": true,
+          "dist_m": -0.035299
+        },
+        {
+          "geom": "piper_right_finger",
+          "body": "piper_link8",
+          "is_pad": true,
+          "dist_m": -0.035291
+        }
+      ],
+      "pad_touching_target": [
+        {
+          "geom": "piper_left_finger",
+          "body": "piper_link7",
+          "is_pad": true,
+          "dist_m": -0.035299
+        },
+        {
+          "geom": "piper_right_finger",
+          "body": "piper_link8",
+          "is_pad": true,
+          "dist_m": -0.035291
+        }
+      ],
+      "non_pad_touching_target": [],
+      "overlapping": true,
+      "phases": {
+        "home": {
+          "positions_key": "home_positions",
+          "checked": true,
+          "command": {
+            "piper_joint7": 0.035,
+            "piper_joint8": -0.035,
+            "piper_joint1": 0.0,
+            "piper_joint2": 0.0,
+            "piper_joint3": 0.0,
+            "piper_joint4": 0.0,
+            "piper_joint5": 0.0,
+            "piper_joint6": 0.0
+          },
+          "arm_geoms_touching_target": [],
+          "pad_touching_target": [],
+          "non_pad_touching_target": [],
+          "ignored_keys": [
+            "piper_joint7",
+            "piper_joint8"
+          ]
+        },
+        "approach": {
+          "positions_key": "approach_positions",
+          "checked": true,
+          "command": {
+            "piper_joint7": 0.035,
+            "piper_joint8": -0.035,
+            "piper_joint1": 1.0562e-05,
+            "piper_joint2": 1.885811236,
+            "piper_joint3": -0.36068515,
+            "piper_joint4": 3.83e-07,
+            "piper_joint5": -0.278652721,
+            "piper_joint6": 3e-09
+          },
+          "arm_geoms_touching_target": [
+            {
+              "geom": "piper_left_finger",
+              "body": "piper_link7",
+              "is_pad": true,
+              "dist_m": -0.003796
+            },
+            {
+              "geom": "piper_right_finger",
+              "body": "piper_link8",
+              "is_pad": true,
+              "dist_m": -0.003796
+            }
+          ],
+          "pad_touching_target": [
+            {
+              "geom": "piper_left_finger",
+              "body": "piper_link7",
+              "is_pad": true,
+              "dist_m": -0.003796
+            },
+            {
+              "geom": "piper_right_finger",
+              "body": "piper_link8",
+              "is_pad": true,
+              "dist_m": -0.003796
+            }
+          ],
+          "non_pad_touching_target": [],
+          "ignored_keys": [
+            "piper_joint7",
+            "piper_joint8"
+          ]
+        },
+        "grasp": {
+          "positions_key": "grasp_positions",
+          "checked": true,
+          "command": {
+            "piper_joint7": 0.035,
+            "piper_joint8": -0.035,
+            "piper_joint1": 1.1032e-05,
+            "piper_joint2": 2.085906398,
+            "piper_joint3": -0.438025747,
+            "piper_joint4": 8e-08,
+            "piper_joint5": -0.28589387,
+            "piper_joint6": 3e-09
+          },
+          "arm_geoms_touching_target": [
+            {
+              "geom": "piper_left_finger",
+              "body": "piper_link7",
+              "is_pad": true,
+              "dist_m": -0.035299
+            },
+            {
+              "geom": "piper_right_finger",
+              "body": "piper_link8",
+              "is_pad": true,
+              "dist_m": -0.035291
+            }
+          ],
+          "pad_touching_target": [
+            {
+              "geom": "piper_left_finger",
+              "body": "piper_link7",
+              "is_pad": true,
+              "dist_m": -0.035299
+            },
+            {
+              "geom": "piper_right_finger",
+              "body": "piper_link8",
+              "is_pad": true,
+              "dist_m": -0.035291
+            }
+          ],
+          "non_pad_touching_target": [],
+          "ignored_keys": [
+            "piper_joint7",
+            "piper_joint8"
+          ]
+        },
+        "lift": {
+          "positions_key": "lift_positions",
+          "checked": true,
+          "command": {
+            "piper_joint7": 0.023,
+            "piper_joint8": -0.023,
+            "piper_joint1": 1.0095e-05,
+            "piper_joint2": 1.677664244,
+            "piper_joint3": -0.295094705,
+            "piper_joint4": 7.01e-07,
+            "piper_joint5": -0.277655882,
+            "piper_joint6": 3e-09
+          },
+          "arm_geoms_touching_target": [],
+          "pad_touching_target": [],
+          "non_pad_touching_target": [],
+          "ignored_keys": [
+            "piper_joint7",
+            "piper_joint8"
+          ]
+        }
+      },
+      "note": "\u5f52\u5c5e\u6309 `geom_bodyid` \u2192 \u5bbf\u4e3b body \u7684\u524d\u7f00\u5224\u5b9a\uff08**\u4e0d\u770b geom \u540d**\uff1a\u672c\u573a\u666f\u81c2\u7684 link geom \u65e0\u540d\uff0c\u6309\u540d\u5b57\u8fc7\u6ee4\u4f1a\u6f0f\u6389\u771f\u6b63\u4fb5\u5165\u65b9\u5757\u7684\u90a3\u4e00\u4e2a \u2014\u2014 \u5b9e\u6d4b `<\u672a\u547d\u540d#66>(piper_link6)` \u4e0e `box_01_geom` \u91cd\u53e0 \u22120.014516 m\uff09\u3002\u5224\u636e\u4e0e\u81c2\u81ea\u5df1\u573a\u666f\u4e00\u81f4\uff08`validate_grasp_pose`\uff1a\u5f20\u5f00\u65f6\u624b\u6307\u4e0d\u4e0e\u4efb\u4f55\u7269\u4f53\u63a5\u89e6\uff09\uff1a**\u5b58\u5728\u63a5\u89e6\u5bf9\u5373\u51e0\u4f55\u4fb5\u5165**\uff08\u65e0\u9608\u503c\uff09\u3002\u4fb5\u5165\u4f1a\u628a\u81c2\u9876\u79bb\u59ff\u6001 \u21d2 \u9759\u6001\u4fdd\u6301\u4e0d\u8fbe\u6807\uff0c\u800c\u8fd0\u884c\u671f\u53ea\u8868\u73b0\u4e3a\u300c\u672a\u5230\u8fbe\u6293\u53d6\u4f4d\u59ff / \u672a\u786e\u8ba4\u5df2\u6293\u53d6\u300d\uff1b\u4fee\u6cd5\u5728\u6c42\u89e3\u5668\u5c42\uff08\u671d\u5411\u7ea6\u675f + \u78b0\u649e\u6821\u9a8c\uff09\uff0c\u89c1 docs/debug/2026-09-24-joint-model-dog-arm.md \u00a711.6\u3002\u8f7d\u8377\u6309**\u58f0\u660e\u76ee\u6807**\u6446\u653e\uff08\u4e0d\u662f\u9053\u5177\u521d\u59cb\u4f4d\uff09\uff1a\u5426\u5219\u67e5\u4e0d\u51fa\"\u4f4d\u5f62\u538b\u5728\u6258\u76d8\u8f7d\u8377\u91cc\"\u3002"
+    },
+    "reference_pose_resolution": {
+      "source": "resolved_for_joint_model",
+      "solver": {
+        "module": "/home/coretek/AIIRAF/scripts/build_piper_baseline.py",
+        "entry": "build_reference_poses",
+        "baseline": "/home/coretek/AIIRAF/config/piper_simulation_baseline.yaml",
+        "feedforward_entry": "build_reference_feedforward"
+      },
+      "placement": {
+        "pos_m": [
+          0.45,
+          -0.45,
+          0.12
+        ],
+        "quat_wxyz": [
+          0.38268343236509,
+          0.0,
+          0.0,
+          0.923879532511287
+        ]
+      },
+      "target_world_m": [
+        0.28,
+        -0.28,
+        0.025
+      ],
+      "target_derivation": {
+        "source": null,
+        "value": null,
+        "reason": null
+      },
+      "target_cross_check": {
+        "checked": false,
+        "reason": null
+      },
+      "local_target_m": [
+        0.240416306,
+        0.0,
+        -0.095
+      ],
+      "local_xy_radius_m": 0.240416306,
+      "resolved_pad_offset_m": 0.032016224,
+      "inherited_pad_offset_m": 0.029835769,
+      "place_reference_source": "resolved_for_joint_model",
+      "place_reference": {
+        "source": "resolved_for_joint_model",
+        "solver": {
+          "module": "/home/coretek/AIIRAF/scripts/build_piper_baseline.py",
+          "entry": "build_place_reference_poses",
+          "baseline": "/home/coretek/AIIRAF/config/piper_simulation_baseline.yaml"
+        },
+        "place_target_id": "tray_01",
+        "carrier_frame": null,
+        "seed_positions": {
+          "joint7": 0.023,
+          "joint8": -0.023,
+          "joint1": 1.0095e-05,
+          "joint2": 1.677664244,
+          "joint3": -0.295094705,
+          "joint4": 7.01e-07,
+          "joint5": -0.277655882,
+          "joint6": 3e-09
+        },
+        "gripper_axes": {
+          "above": [
+            0.700537341,
+            -0.69505269,
+            -0.161707118
+          ],
+          "descend": [
+            0.678249018,
+            -0.675066347,
+            -0.290282099
+          ],
+          "retreat": [
+            0.700537341,
+            -0.69505269,
+            -0.161707118
+          ],
+          "transit": [
+            0.943947457,
+            -5.668e-06,
+            -0.330095741
+          ]
+        },
+        "transit_local_m": [
+          0.240415755,
+          2.78e-07,
+          0.342380225
+        ],
+        "transit_height": {
+          "lift_pad_z_m": 0.017011158,
+          "bearing_pad_z_m": 0.342380225,
+          "used_z_m": 0.342380225,
+          "xy_source": "lift",
+          "source": "bearing_approach_height"
+        },
+        "waypoint_contacts": [],
+        "path_contact_count": 0,
+        "path_contacts": [],
+        "lift_axis_world": [
+          -0.371480428,
+          0.371487395,
+          -0.850881547
+        ],
+        "axes_flipped_vs_pick_lift": [
+          {
+            "phase": "above",
+            "dot_with_pick_lift": -0.380846,
+            "axis": [
+              0.700537341,
+              -0.69505269,
+              -0.161707118
+            ]
+          },
+          {
+            "phase": "descend",
+            "dot_with_pick_lift": -0.255739,
+            "axis": [
+              0.678249018,
+              -0.675066347,
+              -0.290282099
+            ]
+          },
+          {
+            "phase": "retreat",
+            "dot_with_pick_lift": -0.380846,
+            "axis": [
+              0.700537341,
+              -0.69505269,
+              -0.161707118
+            ]
+          },
+          {
+            "phase": "transit",
+            "dot_with_pick_lift": -0.069788,
+            "axis": [
+              0.943947457,
+              -5.668e-06,
+              -0.330095741
+            ]
+          }
+        ],
+        "target_local_m": [
+          0.318198052,
+          -0.318198052,
+          0.235372
+        ],
+        "payload_half_m": 0.025,
+        "pad_offset_m": 0.032016224,
+        "clearance_m": 0.05,
+        "written": {
+          "place_above_positions": {
+            "replaced_joints": [
+              "piper_joint1",
+              "piper_joint2",
+              "piper_joint3",
+              "piper_joint4",
+              "piper_joint5",
+              "piper_joint6"
+            ],
+            "position_error_m": 5.690070100765392e-06
+          },
+          "place_descend_positions": {
+            "replaced_joints": [
+              "piper_joint1",
+              "piper_joint2",
+              "piper_joint3",
+              "piper_joint4",
+              "piper_joint5",
+              "piper_joint6"
+            ],
+            "position_error_m": 9.881375755702248e-06
+          },
+          "place_retreat_positions": {
+            "replaced_joints": [
+              "piper_joint1",
+              "piper_joint2",
+              "piper_joint3",
+              "piper_joint4",
+              "piper_joint5",
+              "piper_joint6"
+            ],
+            "position_error_m": 5.690070100765392e-06
+          },
+          "place_transit_positions": {
+            "replaced_joints": [
+              "piper_joint1",
+              "piper_joint2",
+              "piper_joint3",
+              "piper_joint4",
+              "piper_joint5",
+              "piper_joint6"
+            ],
+            "position_error_m": 5.7938256600061645e-06
+          }
+        },
+        "note": "\u653e\u7f6e\u56db\u6bb5\u7684\u5173\u8282\u89e3\u7531**\u58f0\u660e\u7684\u6c42\u89e3\u5668**\u6309\u4e0a\u8ff0\u5c40\u90e8\u76ee\u6807\u89e3\u51fa\uff08\u6784\u5efa\u671f\uff09\uff0c\u540e\u7aef\u53ea\u56de\u653e\uff1b\u8fd0\u884c\u671f\u4ee5\u5b9e\u6d4b\u63a5\u6536\u4f53\u4f4d\u59ff\u5224\u636e\uff08\u89c1 place_object \u8bc1\u636e\uff09\u3002"
+      },
+      "feedforward_source": "resolved_for_joint_model",
+      "feedforward_evidence": {
+        "home": {
+          "method": "qfrc_bias_static_hold_fixed_point_replace",
+          "passes": 1,
+          "pass_trace": [
+            {
+              "pass": 1,
+              "worst_residual_rad": 0.0
+            }
+          ],
+          "gravity_torque_nm": {
+            "piper_joint1": 0.0,
+            "piper_joint2": 1.045943,
+            "piper_joint3": -1.802795,
+            "piper_joint4": -0.003631,
+            "piper_joint5": -0.360559,
+            "piper_joint6": 0.000115
+          },
+          "actuator_gain": {
+            "piper_joint1": 450.0,
+            "piper_joint2": 200.0,
+            "piper_joint3": 200.0,
+            "piper_joint4": 200.0,
+            "piper_joint5": 200.0,
+            "piper_joint6": 200.0
+          },
+          "hold_ms": 4000,
+          "residual_joint_rad": {
+            "piper_joint1": 0.0,
+            "piper_joint2": 0.0,
+            "piper_joint3": 0.0,
+            "piper_joint4": -0.0,
+            "piper_joint5": 0.0,
+            "piper_joint6": -0.0
+          },
+          "worst_residual_rad": 0.0,
+          "tolerance_rad": 0.001
+        },
+        "approach": {
+          "method": "qfrc_bias_static_hold_fixed_point_replace",
+          "passes": 1,
+          "pass_trace": [
+            {
+              "pass": 1,
+              "worst_residual_rad": 0.0
+            }
+          ],
+          "gravity_torque_nm": {
+            "piper_joint1": 0.0,
+            "piper_joint2": -1.593828,
+            "piper_joint3": -0.484363,
+            "piper_joint4": -0.000482,
+            "piper_joint5": -0.144925,
+            "piper_joint6": 4.6e-05
+          },
+          "actuator_gain": {
+            "piper_joint1": 450.0,
+            "piper_joint2": 200.0,
+            "piper_joint3": 200.0,
+            "piper_joint4": 200.0,
+            "piper_joint5": 200.0,
+            "piper_joint6": 200.0
+          },
+          "hold_ms": 4000,
+          "residual_joint_rad": {
+            "piper_joint1": 0.0,
+            "piper_joint2": 0.0,
+            "piper_joint3": -0.0,
+            "piper_joint4": -0.0,
+            "piper_joint5": 0.0,
+            "piper_joint6": -0.0
+          },
+          "worst_residual_rad": 0.0,
+          "tolerance_rad": 0.001
+        },
+        "grasp": {
+          "method": "qfrc_bias_static_hold_fixed_point_replace",
+          "passes": 1,
+          "pass_trace": [
+            {
+              "pass": 1,
+              "worst_residual_rad": 0.000156021
+            }
+          ],
+          "gravity_torque_nm": {
+            "piper_joint1": 0.0,
+            "piper_joint2": -1.87873,
+            "piper_joint3": -0.267735,
+            "piper_joint4": -3.6e-05,
+            "piper_joint5": -0.105733,
+            "piper_joint6": 3.4e-05
+          },
+          "actuator_gain": {
+            "piper_joint1": 450.0,
+            "piper_joint2": 200.0,
+            "piper_joint3": 200.0,
+            "piper_joint4": 200.0,
+            "piper_joint5": 200.0,
+            "piper_joint6": 200.0
+          },
+          "hold_ms": 4000,
+          "residual_joint_rad": {
+            "piper_joint1": -4.3e-08,
+            "piper_joint2": 0.000156021,
+            "piper_joint3": 2.429e-06,
+            "piper_joint4": 8e-09,
+            "piper_joint5": 1.373e-05,
+            "piper_joint6": -8e-09
+          },
+          "worst_residual_rad": 0.000156021,
+          "tolerance_rad": 0.001
+        },
+        "lift": {
+          "method": "qfrc_bias_static_hold_fixed_point_replace",
+          "passes": 1,
+          "pass_trace": [
+            {
+              "pass": 1,
+              "worst_residual_rad": 0.0
+            }
+          ],
+          "gravity_torque_nm": {
+            "piper_joint1": 0.0,
+            "piper_joint2": -1.270256,
+            "piper_joint3": -0.729179,
+            "piper_joint4": -0.000991,
+            "piper_joint5": -0.19027,
+            "piper_joint6": 6.1e-05
+          },
+          "actuator_gain": {
+            "piper_joint1": 450.0,
+            "piper_joint2": 200.0,
+            "piper_joint3": 200.0,
+            "piper_joint4": 200.0,
+            "piper_joint5": 200.0,
+            "piper_joint6": 200.0
+          },
+          "hold_ms": 4000,
+          "residual_joint_rad": {
+            "piper_joint1": 0.0,
+            "piper_joint2": 0.0,
+            "piper_joint3": 0.0,
+            "piper_joint4": -0.0,
+            "piper_joint5": 0.0,
+            "piper_joint6": -0.0
+          },
+          "worst_residual_rad": 0.0,
+          "tolerance_rad": 0.001
+        }
+      },
+      "feedforward_alignment": {
+        "checked": true,
+        "source": "resolved_for_joint_model",
+        "phases": {
+          "home": {
+            "positions_key": "home_positions",
+            "channels": 6,
+            "renamed": []
+          },
+          "approach": {
+            "positions_key": "approach_positions",
+            "channels": 6,
+            "renamed": []
+          },
+          "grasp": {
+            "positions_key": "grasp_positions",
+            "channels": 6,
+            "renamed": []
+          },
+          "lift": {
+            "positions_key": "lift_positions",
+            "channels": 6,
+            "renamed": []
+          }
+        },
+        "rule": "\u524d\u9988\u901a\u9053\u540d \u2192 \u8be5\u6bb5\u4f4d\u7f6e\u6307\u4ee4\u7684\u901a\u9053\u540d\uff1a\u4e00\u5f8b\u6309\u6a21\u578b\u81ea\u5df1\u7684 actuator_trnid \u5224\u300c\u540c\u4e00\u6761\u63a7\u5236\u901a\u9053\u300d\uff0c\u4e0d\u731c\u540d\u5b57\u540e\u7f00\uff1b\u5bf9\u4e0d\u4e0a\u5373\u6784\u5efa\u5931\u8d25"
+      },
+      "phase_residuals": {
+        "home": {
+          "residual_m": null,
+          "source": "declared",
+          "declared_home_source": "declared_zero_pose"
+        },
+        "approach": {
+          "residual_m": 5.138e-06,
+          "source": "ik",
+          "declared_home_source": null
+        },
+        "grasp": {
+          "residual_m": 8.122e-06,
+          "source": "ik",
+          "declared_home_source": null
+        },
+        "lift": {
+          "residual_m": 5.122e-06,
+          "source": "ik",
+          "declared_home_source": null
+        }
+      },
+      "phase_residual_tolerance_m": 1e-05,
+      "baseline_overrides": null,
+      "replaced_phases": {
+        "home": {
+          "positions_key": "home_positions",
+          "replaced_joints": [
+            "piper_joint1",
+            "piper_joint2",
+            "piper_joint3",
+            "piper_joint4",
+            "piper_joint5",
+            "piper_joint6"
+          ],
+          "diff_vs_inherited": [
+            {
+              "joint": "piper_joint1",
+              "inherited": null,
+              "resolved": 0.0
+            },
+            {
+              "joint": "piper_joint2",
+              "inherited": null,
+              "resolved": 0.0
+            },
+            {
+              "joint": "piper_joint3",
+              "inherited": null,
+              "resolved": 0.0
+            },
+            {
+              "joint": "piper_joint4",
+              "inherited": null,
+              "resolved": 0.0
+            },
+            {
+              "joint": "piper_joint5",
+              "inherited": null,
+              "resolved": 0.0
+            },
+            {
+              "joint": "piper_joint6",
+              "inherited": null,
+              "resolved": 0.0
+            }
+          ]
+        },
+        "approach": {
+          "positions_key": "approach_positions",
+          "replaced_joints": [
+            "piper_joint1",
+            "piper_joint2",
+            "piper_joint3",
+            "piper_joint4",
+            "piper_joint5",
+            "piper_joint6"
+          ],
+          "diff_vs_inherited": [
+            {
+              "joint": "piper_joint1",
+              "inherited": null,
+              "resolved": 1.0561985282408195e-05
+            },
+            {
+              "joint": "piper_joint2",
+              "inherited": null,
+              "resolved": 1.8858112356447498
+            },
+            {
+              "joint": "piper_joint3",
+              "inherited": null,
+              "resolved": -0.36068514980298955
+            },
+            {
+              "joint": "piper_joint4",
+              "inherited": null,
+              "resolved": 3.8285962018863633e-07
+            },
+            {
+              "joint": "piper_joint5",
+              "inherited": null,
+              "resolved": -0.2786527209679332
+            },
+            {
+              "joint": "piper_joint6",
+              "inherited": null,
+              "resolved": 2.637587298662197e-09
+            }
+          ]
+        },
+        "grasp": {
+          "positions_key": "grasp_positions",
+          "replaced_joints": [
+            "piper_joint1",
+            "piper_joint2",
+            "piper_joint3",
+            "piper_joint4",
+            "piper_joint5",
+            "piper_joint6"
+          ],
+          "diff_vs_inherited": [
+            {
+              "joint": "piper_joint1",
+              "inherited": null,
+              "resolved": 1.103227571376021e-05
+            },
+            {
+              "joint": "piper_joint2",
+              "inherited": null,
+              "resolved": 2.085906397708839
+            },
+            {
+              "joint": "piper_joint3",
+              "inherited": null,
+              "resolved": -0.43802574669425504
+            },
+            {
+              "joint": "piper_joint4",
+              "inherited": null,
+              "resolved": 8.046024414943407e-08
+            },
+            {
+              "joint": "piper_joint5",
+              "inherited": null,
+              "resolved": -0.2858938702912799
+            },
+            {
+              "joint": "piper_joint6",
+              "inherited": null,
+              "resolved": 2.7058844758982656e-09
+            }
+          ]
+        },
+        "lift": {
+          "positions_key": "lift_positions",
+          "replaced_joints": [
+            "piper_joint1",
+            "piper_joint2",
+            "piper_joint3",
+            "piper_joint4",
+            "piper_joint5",
+            "piper_joint6"
+          ],
+          "diff_vs_inherited": [
+            {
+              "joint": "piper_joint1",
+              "inherited": null,
+              "resolved": 1.0094766005987682e-05
+            },
+            {
+              "joint": "piper_joint2",
+              "inherited": null,
+              "resolved": 1.6776642438080362
+            },
+            {
+              "joint": "piper_joint3",
+              "inherited": null,
+              "resolved": -0.29509470498155954
+            },
+            {
+              "joint": "piper_joint4",
+              "inherited": null,
+              "resolved": 7.007759554699875e-07
+            },
+            {
+              "joint": "piper_joint5",
+              "inherited": null,
+              "resolved": -0.27765588217511483
+            },
+            {
+              "joint": "piper_joint6",
+              "inherited": null,
+              "resolved": 2.6288514045922467e-09
+            }
+          ]
+        },
+        "pre_lift": {
+          "positions_key": "pre_lift_positions",
+          "replaced_joints": [
+            "piper_joint1",
+            "piper_joint2",
+            "piper_joint3",
+            "piper_joint4",
+            "piper_joint5",
+            "piper_joint6"
+          ],
+          "diff_vs_inherited": [
+            {
+              "joint": "piper_joint1",
+              "inherited": 9.470179286487661e-06,
+              "resolved": 1.0561706676010121e-05
+            },
+            {
+              "joint": "piper_joint2",
+              "inherited": 0.9865417224542643,
+              "resolved": 1.8856837092701462
+            },
+            {
+              "joint": "piper_joint3",
+              "inherited": -0.08575404809598433,
+              "resolved": -0.3608380347298768
+            },
+            {
+              "joint": "piper_joint4",
+              "inherited": 5.215990998769501e-07,
+              "resolved": 3.8310829944668194e-07
+            },
+            {
+              "joint": "piper_joint5",
+              "inherited": -0.1124902675276865,
+              "resolved": -0.2781486919416916
+            },
+            {
+              "joint": "piper_joint6",
+              "inherited": 1.063323284571343e-09,
+              "resolved": 2.6327603049166123e-09
+            }
+          ]
+        },
+        "regrasp": {
+          "positions_key": "regrasp_positions",
+          "replaced_joints": [
+            "piper_joint1",
+            "piper_joint2",
+            "piper_joint3",
+            "piper_joint4",
+            "piper_joint5",
+            "piper_joint6"
+          ],
+          "diff_vs_inherited": [
+            {
+              "joint": "piper_joint1",
+              "inherited": 9.959080024477178e-06,
+              "resolved": 1.0938468725650603e-05
+            },
+            {
+              "joint": "piper_joint2",
+              "inherited": 1.187141803126162,
+              "resolved": 2.0467133481045323
+            },
+            {
+              "joint": "piper_joint3",
+              "inherited": -0.11167626522352093,
+              "resolved": -0.4219726662565226
+            },
+            {
+              "joint": "piper_joint4",
+              "inherited": 3.8842208859703634e-07,
+              "resolved": 1.414126628953339e-07
+            },
+            {
+              "joint": "piper_joint5",
+              "inherited": -0.11781219676956822,
+              "resolved": -0.28335346216946883
+            },
+            {
+              "joint": "piper_joint6",
+              "inherited": 1.1127852258647346e-09,
+              "resolved": 2.681772286636526e-09
+            }
+          ]
+        }
+      },
+      "note": "\u53c2\u8003\u59ff\u6001\u4e0e pad_offset \u5747\u7531**\u8054\u5408\u6a21\u578b + \u672c placement** \u91cd\u89e3\uff08\u6c42\u89e3\u5668\u6309 `robots[].reference_solver` \u58f0\u660e\u8c03\u7528\uff09\uff1b`resolved` \u7684\u5173\u8282\u89e3\u662f**\u81c2\u57fa\u5ea7\u7cfb**\u4e0b\u7684\u5173\u8282\u89d2\uff0cMJCF qpos \u4e5f\u662f\u5c40\u90e8\u91cf \u21d2 \u53ef\u76f4\u63a5\u547d\u4ee4\u3002"
+    }
+  }
+}

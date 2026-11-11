@@ -1065,8 +1065,23 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
             source_xml = Path(str(effective["_repo_root"])) / str(scene_rel)
             source_json = source_xml.with_suffix(".json")
             if not source_xml.is_file() or not source_json.is_file():
-                raise InstallError("声明的仿真场景缺文件：%s（需同时存在同名 .json 旁挂报告）"
-                                   % source_xml, EXIT_IO)
+                # 预置场景兜底（2026-11-11 方案 A）：干净安装机上没有 `build/`（构建产物不进交付包），
+                # 按"同名场景"回退到 bundle 自带的 `deploy/sdk/prebuilt/scenes/<stem>/`。
+                # 预置资产是**自包含**的：mesh 与资产已拍平到 assets/，XML 不再有 meshdir/texturedir。
+                fallback_dir = (Path(str(effective["_repo_root"])) / "deploy" / "sdk"
+                                / "prebuilt" / "scenes" / source_xml.stem)
+                fb_xml = fallback_dir / (source_xml.stem + ".xml")
+                fb_json = fallback_dir / (source_xml.stem + ".json")
+                if fb_xml.is_file() and fb_json.is_file():
+                    info("场景用预置资产（仓库无 build/）：%s" % fallback_dir)
+                    source_xml, source_json = fb_xml, fb_json
+                else:
+                    raise InstallError(
+                        "声明的仿真场景缺文件：%s（需同时存在同名 .json 旁挂报告）。\n"
+                        "  两种修法：① 在仓库里先生成场景：`python3 scripts/build_ur5_baseline.py` / "
+                        "`python3 scripts/build_scene.py --scene scenes/handoff_lab --robot piper --attach go2`；"
+                        "\n  ② 使用 bundle 自带的预置资产（deploy/sdk/prebuilt/scenes/%s/），"
+                        "缺它说明交付包不完整。" % (source_xml, source_xml.stem), EXIT_IO)
             models_dir = version_dir / "models"
             models_dir.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source_xml, models_dir / source_xml.name)

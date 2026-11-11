@@ -1,0 +1,631 @@
+{
+  "schema_version": "iraf.robot-pick-scene/v1",
+  "source": "/home/coretek/AIIRAF/build/models/ur5e_2f85/ur5e_2f85.xml",
+  "output": "/home/coretek/AIIRAF/build/models/ur5-pick-scene.xml",
+  "target_id": "box_01",
+  "target_position": {
+    "x": -0.55,
+    "y": -0.134,
+    "z": 0.025
+  },
+  "target_half_size_m": 0.025,
+  "targets": [
+    {
+      "id": "box_01",
+      "body": "box_01",
+      "geom": "box_01_geom",
+      "material": "box_01_material",
+      "rgba": [
+        0.82,
+        0.22,
+        0.12,
+        1.0
+      ],
+      "position_m": [
+        -0.55,
+        -0.134,
+        0.025
+      ],
+      "quaternion_wxyz": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "euler_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "multi_target": false,
+  "workbench_top_z_m": 0.0,
+  "pose_tolerance_m": 0.005,
+  "gravity_fixture": true,
+  "require_friction_lift": false,
+  "arm_position_kp": 0.0,
+  "arm_gains_injected": false,
+  "finger_geoms": {
+    "left": "rq2f85_left_pad1",
+    "right": "rq2f85_right_pad1",
+    "pad_boxes": [
+      "rq2f85_left_pad1",
+      "rq2f85_left_pad2",
+      "rq2f85_right_pad1",
+      "rq2f85_right_pad2"
+    ]
+  },
+  "arm_joints": [
+    "shoulder_pan_joint",
+    "shoulder_lift_joint",
+    "elbow_joint",
+    "wrist_1_joint",
+    "wrist_2_joint",
+    "wrist_3_joint"
+  ],
+  "gripper": {
+    "left_finger_body": "rq2f85_left_pad",
+    "right_finger_body": "rq2f85_right_pad",
+    "wrist_body": "wrist_3_link",
+    "open_positions": {
+      "rq2f85_fingers_actuator": 0.0
+    },
+    "closed_positions": {
+      "rq2f85_fingers_actuator": 163.0
+    },
+    "lift_positions": {
+      "shoulder_pan": 5.466973341779017e-08,
+      "shoulder_lift": -1.2573792282406564,
+      "elbow": 1.877512682576079,
+      "wrist_1": -2.1907503109082462,
+      "wrist_2": -1.5707963793592619,
+      "wrist_3": 1.5707963808704846,
+      "rq2f85_fingers_actuator": 163.0
+    },
+    "min_lift_delta_m": 0.02,
+    "min_normal_force_n": 0.2,
+    "max_force_imbalance_ratio": 4.0,
+    "pad_offset_m": 0.0,
+    "pad_offset_axis": [
+      0.0,
+      0.0,
+      1.0
+    ],
+    "left_finger_geom": "rq2f85_left_pad1",
+    "right_finger_geom": "rq2f85_right_pad1",
+    "pad_boxes": [
+      "rq2f85_left_pad1",
+      "rq2f85_left_pad2",
+      "rq2f85_right_pad1",
+      "rq2f85_right_pad2"
+    ],
+    "lift_constraint": "box_01_lift_constraint",
+    "lift_anchor_body": "grasp_anchor",
+    "lift_anchor_mode": "rigid_follow",
+    "require_contact_at_lift_end": true,
+    "place_settle_ms": 3000,
+    "lift_gripper": "closed",
+    "place_pose_correction": {
+      "mode": "touchdown",
+      "max_lateral_m": 0.07,
+      "touch_clearance_m": 0.0,
+      "max_vertical_m": 0.05,
+      "residual_tolerance_m": 0.005,
+      "touchdown_step_fraction": 0.3,
+      "touchdown_max_iterations": 10,
+      "lateral_tolerance_m": 0.035,
+      "ik_iterations": 800,
+      "ik_step": 0.5,
+      "max_residual_m": 0.0001
+    },
+    "grasp_pose_correction": {
+      "mode": "resolved",
+      "residual_tolerance_m": 0.002,
+      "max_correction_m": 0.07,
+      "ik_iterations": 400,
+      "ik_step": 0.5,
+      "ik_tolerance_m": 0.0005,
+      "align_max_attempts": 3,
+      "descend_splits": 5,
+      "max_axis_deg": 8.0
+    },
+    "approach_hold": "pin_payload",
+    "carry_constraint": {
+      "enabled": true,
+      "type": "weld",
+      "equality_name": "box_01_lift_constraint",
+      "anchor_body": "grasp_anchor",
+      "solref": [
+        0.01,
+        1.0
+      ],
+      "solimp": [
+        0.9,
+        0.95,
+        0.01
+      ],
+      "release_gripper": false,
+      "max_slip_m": 0.0,
+      "max_plant_steps_per_iteration": 64,
+      "source": "ur5_simulation_baseline.yaml:grasp.carry_constraint"
+    },
+    "home_positions": {
+      "shoulder_pan": -5.460389493912502e-08,
+      "shoulder_lift": -1.3724609860811072,
+      "elbow": 1.0078312462170194,
+      "wrist_1": -1.2062972631173148,
+      "wrist_2": -1.570796285305943,
+      "wrist_3": 1.57079626968727,
+      "rq2f85_fingers_actuator": 0.0
+    },
+    "approach_positions": {
+      "shoulder_pan": -5.140042169323092e-08,
+      "shoulder_lift": -1.3538826904488197,
+      "elbow": 1.770387832666166,
+      "wrist_1": -1.98749574493487,
+      "wrist_2": -1.5707962852654382,
+      "wrist_3": 1.5707962614477726,
+      "rq2f85_fingers_actuator": 0.0
+    },
+    "grasp_positions": {
+      "shoulder_pan": -3.5261649784091584e-06,
+      "shoulder_lift": -1.1254295344664313,
+      "elbow": 1.947106583544469,
+      "wrist_1": -2.392322481702818,
+      "wrist_2": -1.5707880034231214,
+      "wrist_3": 1.5707799501266462,
+      "rq2f85_fingers_actuator": 0.0
+    },
+    "gravity_feedforward": {
+      "home": {
+        "shoulder_pan": 0.0,
+        "shoulder_lift": -0.014029905,
+        "elbow": -0.009860383,
+        "wrist_1": -0.004829405,
+        "wrist_2": 2.51e-07,
+        "wrist_3": 0.0
+      },
+      "approach": {
+        "shoulder_pan": 0.0,
+        "shoulder_lift": -0.014231743,
+        "elbow": -0.009677534,
+        "wrist_1": -0.004829607,
+        "wrist_2": 2.51e-07,
+        "wrist_3": 0.0
+      },
+      "grasp": {
+        "shoulder_pan": 0.0,
+        "shoulder_lift": -0.016630406,
+        "elbow": -0.007514462,
+        "wrist_1": -0.004828513,
+        "wrist_2": 2.78e-07,
+        "wrist_3": -0.0
+      },
+      "lift": {
+        "shoulder_pan": 0.0,
+        "shoulder_lift": -0.015268674,
+        "elbow": -0.00874449,
+        "wrist_1": -0.004828422,
+        "wrist_2": 2.51e-07,
+        "wrist_3": -0.0
+      }
+    }
+  },
+  "vision": {
+    "evidence_file": "build/calibration/ur5-vision-target.json",
+    "refresh": "always",
+    "detector": {
+      "command": [
+        "{python}",
+        "scripts/detect_targets.py",
+        "--model",
+        "{model}",
+        "--config",
+        "{config}",
+        "--output",
+        "{evidence}",
+        "--extrinsics",
+        "{calibration}"
+      ],
+      "calibration_file": "build/calibration/ur5-camera-to-base.json"
+    }
+  },
+  "grasp_pose_validation": {
+    "finger_tip_z_m": 0.006242319,
+    "tip_clearance_m": 0.003,
+    "grip_region_geoms": [
+      "rq2f85_left_pad1",
+      "rq2f85_left_pad2",
+      "rq2f85_right_pad1",
+      "rq2f85_right_pad2"
+    ],
+    "contact_count": 4,
+    "finger_contacts": []
+  },
+  "model_source": {
+    "source": "/home/coretek/AIIRAF/build/models/ur5e_2f85/ur5e_2f85.xml",
+    "sha256": "d9ef3ef9945b73685acd5135c8e6d07d0639dc1a4d35e748a813952c2656b0e1"
+  },
+  "reference_poses": {
+    "schema_version": "iraf.robot-reference-pose/v1",
+    "source": "/home/coretek/AIIRAF/build/models/ur5e_2f85/ur5e_2f85.xml",
+    "arm_joints": [
+      "shoulder_pan_joint",
+      "shoulder_lift_joint",
+      "elbow_joint",
+      "wrist_1_joint",
+      "wrist_2_joint",
+      "wrist_3_joint"
+    ],
+    "gripper_axis_world": [
+      -0.000113357,
+      -1.28e-07,
+      -0.999999994
+    ],
+    "tool_pointing_direction_world": [
+      -0.0,
+      -0.0,
+      -1.0
+    ],
+    "approach_direction_world": [
+      0.0,
+      0.0,
+      1.0
+    ],
+    "retreat_direction_world": [
+      0.0,
+      0.0,
+      1.0
+    ],
+    "pregrasp_direction_world": [
+      0.0,
+      0.0,
+      1.0
+    ],
+    "spread_axis_world": [
+      1.0,
+      0.0,
+      0.0
+    ],
+    "grip_along_tool_axis_m": 0.134469999,
+    "flange_position_m": [
+      -0.549984772,
+      -0.133999985,
+      0.159469958
+    ],
+    "orientation_error_deg": {
+      "gripper_direction": 0.006467,
+      "spread_axis": 0.006467,
+      "limit": 3.0
+    },
+    "pad_height_diff_m": 1.0542e-05,
+    "grip_region": {
+      "geom_names": [
+        "rq2f85_left_pad1",
+        "rq2f85_left_pad2",
+        "rq2f85_right_pad1",
+        "rq2f85_right_pad2"
+      ],
+      "center_error_m": 6.6e-08,
+      "pad_z_delta_from_center_m": [
+        -0.00938,
+        -0.00937,
+        0.00937,
+        0.00938
+      ]
+    },
+    "pregrasp_offset_m": 0.16,
+    "tip_clearance_m": 0.003,
+    "finger_tip_z_m": 0.006242319,
+    "finger_height_correction_m": 0.0,
+    "clearance_trace": [
+      {
+        "iteration": 0,
+        "correction_m": 0.0,
+        "tip_z_m": 0.006242319,
+        "deficit_m": -0.003242319,
+        "position_error_m": 8.9e-08,
+        "rotation_error_rad": 7.583443872522098e-05,
+        "orientation_deg": {
+          "gripper_direction_deg": 0.008659,
+          "spread_axis_deg": 0.008677
+        }
+      }
+    ],
+    "gravity_feedforward": {
+      "home": {
+        "shoulder_pan_joint": 0.0,
+        "shoulder_lift_joint": -0.014029905,
+        "elbow_joint": -0.009860383,
+        "wrist_1_joint": -0.004829405,
+        "wrist_2_joint": 2.51e-07,
+        "wrist_3_joint": 0.0
+      },
+      "approach": {
+        "shoulder_pan_joint": 0.0,
+        "shoulder_lift_joint": -0.014231743,
+        "elbow_joint": -0.009677534,
+        "wrist_1_joint": -0.004829607,
+        "wrist_2_joint": 2.51e-07,
+        "wrist_3_joint": 0.0
+      },
+      "grasp": {
+        "shoulder_pan_joint": 0.0,
+        "shoulder_lift_joint": -0.016630406,
+        "elbow_joint": -0.007514462,
+        "wrist_1_joint": -0.004828513,
+        "wrist_2_joint": 2.78e-07,
+        "wrist_3_joint": -0.0
+      },
+      "lift": {
+        "shoulder_pan_joint": 0.0,
+        "shoulder_lift_joint": -0.015268674,
+        "elbow_joint": -0.00874449,
+        "wrist_1_joint": -0.004828422,
+        "wrist_2_joint": 2.51e-07,
+        "wrist_3_joint": -0.0
+      }
+    },
+    "gravity_feedforward_evidence": {
+      "home": {
+        "method": "qfrc_bias_static_hold_fixed_point_replace",
+        "passes": 1,
+        "pass_trace": [
+          {
+            "pass": 1,
+            "worst_residual_rad": 0.0
+          }
+        ],
+        "gravity_torque_nm": {
+          "shoulder_pan_joint": 0.0,
+          "shoulder_lift_joint": -28.059809,
+          "elbow_joint": -19.720767,
+          "wrist_1_joint": -2.414703,
+          "wrist_2_joint": 0.000126,
+          "wrist_3_joint": 0.0
+        },
+        "actuator_gain": {
+          "shoulder_pan_joint": 2000.0,
+          "shoulder_lift_joint": 2000.0,
+          "elbow_joint": 2000.0,
+          "wrist_1_joint": 500.0,
+          "wrist_2_joint": 500.0,
+          "wrist_3_joint": 500.0
+        },
+        "hold_ms": 4000,
+        "residual_joint_rad": {
+          "shoulder_pan_joint": 0.0,
+          "shoulder_lift_joint": -0.0,
+          "elbow_joint": -0.0,
+          "wrist_1_joint": -0.0,
+          "wrist_2_joint": -0.0,
+          "wrist_3_joint": 0.0
+        },
+        "worst_residual_rad": 0.0,
+        "tolerance_rad": 0.001
+      },
+      "approach": {
+        "method": "qfrc_bias_static_hold_fixed_point_replace",
+        "passes": 1,
+        "pass_trace": [
+          {
+            "pass": 1,
+            "worst_residual_rad": 0.0
+          }
+        ],
+        "gravity_torque_nm": {
+          "shoulder_pan_joint": 0.0,
+          "shoulder_lift_joint": -28.463485,
+          "elbow_joint": -19.355068,
+          "wrist_1_joint": -2.414803,
+          "wrist_2_joint": 0.000126,
+          "wrist_3_joint": 0.0
+        },
+        "actuator_gain": {
+          "shoulder_pan_joint": 2000.0,
+          "shoulder_lift_joint": 2000.0,
+          "elbow_joint": 2000.0,
+          "wrist_1_joint": 500.0,
+          "wrist_2_joint": 500.0,
+          "wrist_3_joint": 500.0
+        },
+        "hold_ms": 4000,
+        "residual_joint_rad": {
+          "shoulder_pan_joint": 0.0,
+          "shoulder_lift_joint": -0.0,
+          "elbow_joint": -0.0,
+          "wrist_1_joint": -0.0,
+          "wrist_2_joint": 0.0,
+          "wrist_3_joint": 0.0
+        },
+        "worst_residual_rad": 0.0,
+        "tolerance_rad": 0.001
+      },
+      "grasp": {
+        "method": "qfrc_bias_static_hold_fixed_point_replace",
+        "passes": 1,
+        "pass_trace": [
+          {
+            "pass": 1,
+            "worst_residual_rad": 0.0
+          }
+        ],
+        "gravity_torque_nm": {
+          "shoulder_pan_joint": 0.0,
+          "shoulder_lift_joint": -33.260812,
+          "elbow_joint": -15.028924,
+          "wrist_1_joint": -2.414256,
+          "wrist_2_joint": 0.000139,
+          "wrist_3_joint": -0.0
+        },
+        "actuator_gain": {
+          "shoulder_pan_joint": 2000.0,
+          "shoulder_lift_joint": 2000.0,
+          "elbow_joint": 2000.0,
+          "wrist_1_joint": 500.0,
+          "wrist_2_joint": 500.0,
+          "wrist_3_joint": 500.0
+        },
+        "hold_ms": 4000,
+        "residual_joint_rad": {
+          "shoulder_pan_joint": 0.0,
+          "shoulder_lift_joint": -0.0,
+          "elbow_joint": -0.0,
+          "wrist_1_joint": -0.0,
+          "wrist_2_joint": -0.0,
+          "wrist_3_joint": -0.0
+        },
+        "worst_residual_rad": 0.0,
+        "tolerance_rad": 0.001
+      },
+      "lift": {
+        "method": "qfrc_bias_static_hold_fixed_point_replace",
+        "passes": 1,
+        "pass_trace": [
+          {
+            "pass": 1,
+            "worst_residual_rad": 0.0
+          }
+        ],
+        "gravity_torque_nm": {
+          "shoulder_pan_joint": 0.0,
+          "shoulder_lift_joint": -30.537348,
+          "elbow_joint": -17.488979,
+          "wrist_1_joint": -2.414211,
+          "wrist_2_joint": 0.000126,
+          "wrist_3_joint": -0.0
+        },
+        "actuator_gain": {
+          "shoulder_pan_joint": 2000.0,
+          "shoulder_lift_joint": 2000.0,
+          "elbow_joint": 2000.0,
+          "wrist_1_joint": 500.0,
+          "wrist_2_joint": 500.0,
+          "wrist_3_joint": 500.0
+        },
+        "hold_ms": 4000,
+        "residual_joint_rad": {
+          "shoulder_pan_joint": 0.0,
+          "shoulder_lift_joint": -0.0,
+          "elbow_joint": -0.0,
+          "wrist_1_joint": -0.0,
+          "wrist_2_joint": 0.0,
+          "wrist_3_joint": 0.0
+        },
+        "worst_residual_rad": 0.0,
+        "tolerance_rad": 0.001
+      }
+    },
+    "grasp_point_m": [
+      -0.55,
+      -0.134,
+      0.025
+    ],
+    "finger_center_m": [
+      -0.550000063,
+      -0.134000012,
+      0.025000061
+    ],
+    "target_z_m": 0.025,
+    "lift_offset_m": 0.08,
+    "home_rise_m": 0.3,
+    "home": {
+      "shoulder_pan_joint": -5.460389493912502e-08,
+      "shoulder_lift_joint": -1.3724609860811072,
+      "elbow_joint": 1.0078312462170194,
+      "wrist_1_joint": -1.2062972631173148,
+      "wrist_2_joint": -1.570796285305943,
+      "wrist_3_joint": 1.57079626968727
+    },
+    "home_solved": {
+      "joint_positions": {
+        "shoulder_pan_joint": -5.460389493912502e-08,
+        "shoulder_lift_joint": -1.3724609860811072,
+        "elbow_joint": 1.0078312462170194,
+        "wrist_1_joint": -1.2062972631173148,
+        "wrist_2_joint": -1.570796285305943,
+        "wrist_3_joint": 1.57079626968727
+      },
+      "finger_center_m": [
+        -0.549999915,
+        -0.13399998,
+        0.484999876
+      ],
+      "target_m": [
+        -0.55,
+        -0.134,
+        0.485
+      ],
+      "position_error_m": 1.5180568291848331e-07,
+      "iterations": 15
+    },
+    "approach": {
+      "joint_positions": {
+        "shoulder_pan_joint": -5.140042169323092e-08,
+        "shoulder_lift_joint": -1.3538826904488197,
+        "elbow_joint": 1.770387832666166,
+        "wrist_1_joint": -1.98749574493487,
+        "wrist_2_joint": -1.5707962852654382,
+        "wrist_3_joint": 1.5707962614477726
+      },
+      "finger_center_m": [
+        -0.549999921,
+        -0.133999981,
+        0.184999918
+      ],
+      "target_m": [
+        -0.55,
+        -0.134,
+        0.185
+      ],
+      "position_error_m": 1.1520511309194474e-07,
+      "iterations": 11
+    },
+    "grasp": {
+      "joint_positions": {
+        "shoulder_pan_joint": -3.5261649784091584e-06,
+        "shoulder_lift_joint": -1.1254295344664313,
+        "elbow_joint": 1.947106583544469,
+        "wrist_1_joint": -2.392322481702818,
+        "wrist_2_joint": -1.5707880034231214,
+        "wrist_3_joint": 1.5707799501266462
+      },
+      "finger_center_m": [
+        -0.550000063,
+        -0.134000012,
+        0.025000061
+      ],
+      "target_m": [
+        -0.55,
+        -0.134,
+        0.025
+      ],
+      "position_error_m": 8.852152079374226e-08,
+      "iterations": 16
+    },
+    "lift": {
+      "joint_positions": {
+        "shoulder_pan_joint": 5.466973341779017e-08,
+        "shoulder_lift_joint": -1.2573792282406564,
+        "elbow_joint": 1.877512682576079,
+        "wrist_1_joint": -2.1907503109082462,
+        "wrist_2_joint": -1.5707963793592619,
+        "wrist_3_joint": 1.5707963808704846
+      },
+      "finger_center_m": [
+        -0.55000007,
+        -0.134000018,
+        0.105000077
+      ],
+      "target_m": [
+        -0.55,
+        -0.134,
+        0.105
+      ],
+      "position_error_m": 1.0552778160272119e-07,
+      "iterations": 6
+    },
+    "pose_evidence": "/home/coretek/AIIRAF/build/calibration/ur5-baseline-pose.json"
+  }
+}
