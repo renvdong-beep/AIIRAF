@@ -1,8 +1,22 @@
 # 控制面（Provider Supervisor）安装
 
-> `sim-x86` 角色只装运行时与 Provider；**控制面单独装**。两个入口：
+> `sim-x86` 角色只装运行时与 Provider；控制面单独装。**一劳永逸用 `install_all.sh`**；
+> 也可以按下面两个入口分开装。
 
-## 入口 A（推荐，不依赖板卡 SSH）：`deploy/install_control_plane.sh`
+## 入口 0（一键，推荐）：`deploy/sdk/install_all.sh`
+
+```bash
+bash deploy/sdk/install_all.sh \
+  --sdk-wheel build/sdk/iraf_sdk-0.4.4-py3-none-any.whl \
+  --runtime-bundle build/sdk/iraf-runtime-0.4.4-universal.tar.gz \
+  --host-id x86-1 --allow 10.203.247.147 --allow 10.203.247.112 \
+  --run-user coretek
+```
+
+先跑 `install-iraf.sh`（运行时 + 3 个 Provider），再跑 `install_control_plane.sh`（控制面）；
+token 缺失时自动生成并提示同步到板卡。
+
+## 入口 A（不依赖板卡 SSH）：`deploy/install_control_plane.sh`
 
 ```bash
 # 注册表来源二选一：从板卡拉，或离线目录
