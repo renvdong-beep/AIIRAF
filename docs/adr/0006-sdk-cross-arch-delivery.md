@@ -10,7 +10,7 @@ IRAF 对 aarch64 边缘板（E300 / FIREFLY-RK3588）的交付采用 **L1 分级
 
 1. 产物固定为三类（顺序即构建顺序，缺一不可）：
    1. `iraf-sdk-<ver>-py3-none-any.whl`——SDK 层（`iraf_sdk`），纯 Python、与目标架构无关，可在开发端 x86_64 完整测试；
-   2. `iraf-runtime-<ver>-<arch>.tar.gz`——控制面运行时（`iraf_core` + `iraf_adapters` + `skills/` + `profiles/` + `config/` + `deploy/`）+ 离线 wheelhouse；
+   2. `iraf-runtime-<ver>-universal.tar.gz`（架构无关）——控制面运行时（`iraf_core` + `iraf_adapters` + `skills/` + `profiles/` + `config/` + `deploy/`）+ 离线 wheelhouse；
    3. `iraf-board-<board>-<ver>-<arch>.tar.gz`——板级 bundle = `BoardProfile` + `install.sh`/`uninstall.sh`/`verify.sh` + systemd 单元 + env 模板 + 目标端证据目录约定。
    每个产物附 `manifest.json`（schema `iraf.package-manifest/v1`）与逐文件 SHA-256。
 2. **目标端只做「安装 + 配置 + 预检 + 启动」**，不在目标端编译 Rust/C++/现场总线 SDK；跨架构承诺的是**同一 IDL / TaskFlow / Skill 合约语义可运行**，不是同一二进制。

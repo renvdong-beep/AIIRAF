@@ -110,7 +110,7 @@
 三类产物（缺一不可，顺序即构建顺序）：
 
 1. `iraf-sdk-<ver>-py3-none-any.whl`：SDK 层（`iraf_sdk`），纯 Python，不绑定架构；含 `client`、错误码→中文诊断映射、最小示例。**与目标端架构无关，因此可在 x86 上完整测试。**
-2. `iraf-runtime-<ver>-<arch>.tar.gz`：控制面运行时（`iraf_core` + `iraf_adapters` + `skills/` + `profiles/` + `config/` + `deploy/`），附离线 wheelhouse。
+2. `iraf-runtime-<ver>-universal.tar.gz`（架构无关：纯源码+资产）：控制面运行时（`iraf_core` + `iraf_adapters` + `skills/` + `profiles/` + `config/` + `deploy/`），附离线 wheelhouse。
 3. `iraf-board-<board>-<ver>-<arch>.tar.gz`：板级 bundle = BoardProfile（含 `unverified` 标记）+ `install.sh`/`uninstall.sh`/`verify.sh` + systemd 单元 + env 模板 + 目标端证据目录约定。
 
 产物必须满足：`tar.gz` 内路径不含绝对路径与 `..`；每个文件登记 SHA-256；`uninstall.sh` 只回滚本 bundle 且不动数据目录；`install.sh` 幂等（重复执行结果一致，`AGENTS.md` 2.4）。

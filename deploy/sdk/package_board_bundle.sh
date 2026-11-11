@@ -44,7 +44,7 @@ usage() {
   --board <path>         BoardProfile（必填），如 profiles/boards/e300.yaml
   --allow-unverified     显式放行"声明未实测"状态并在产物清单里记录（不放行契约层失败）
   --wheelhouse <dir>     离线 wheelhouse 目录（默认 build/wheelhouse/<target-id>）
-  --runtime <path>       runtime bundle（默认 build/sdk/iraf-runtime-<version>-<arch>.tar.gz）
+  --runtime <path>       runtime bundle（默认 build/sdk/iraf-runtime-<version>-universal.tar.gz）
   --sdk-wheel <path>     SDK wheel（默认 build/sdk/<dist>-<version>-py3-none-any.whl）
   --out <dir>            产物输出目录（默认 build/sdk，已 gitignore）
   --matrix <path>        产物矩阵（默认 config/sdk/package_matrix.yaml）

@@ -101,7 +101,7 @@ def make_manifest(**overrides) -> dict:
             "limits": {"ram_mb": "unverified", "disk_mb": "unverified"},
         },
         "sdk": {"name": "iraf-sdk", "version": "0.2.0", "wheel_member": "sdk/iraf_sdk-0.2.0-py3-none-any.whl"},
-        "runtime": {"bundle_member": "runtime/iraf-runtime-0.2.0-aarch64.tar.gz", "size_bytes": 1024},
+        "runtime": {"bundle_member": "runtime/iraf-runtime-0.2.0-universal.tar.gz", "size_bytes": 1024},
         "wheelhouse": {"dir_member": "wheelhouse/x", "wheels": [{"name": "mujoco.whl", "size_bytes": 10}], "declared": {}},
         "scripts": {"install_member": "scripts/install.sh"},
         "post_verify": {"script": "deploy/sdk/verify.sh", "present": False, "status": "pending_step_09"},

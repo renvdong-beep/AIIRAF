@@ -82,7 +82,7 @@ MATRIX_REL = "config/sdk/package_matrix.yaml"
 MATRIX_SCHEMA_REL = "config/sdk/package_matrix.schema.json"
 DEFAULT_OUT = "build/sdk"
 DEFAULT_WHEELHOUSE_ROOT = "build/wheelhouse"
-RUNTIME_BUNDLE_TEMPLATE = "iraf-runtime-{version}-{arch}.tar.gz"
+RUNTIME_BUNDLE_TEMPLATE = "iraf-runtime-{version}-universal.tar.gz"
 SDK_WHEEL_TEMPLATE = "{dist}-{version}-py3-none-any.whl"
 PROFILE_CHECK_SCRIPT = "scripts/profile_check.py"
 #: 随 bundle 交付的脚本（相对仓库根）。缺失即**组装失败**（不得交付跑不起来的安装包）。
