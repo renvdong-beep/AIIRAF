@@ -451,10 +451,18 @@ def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800,
     payload.update(extra)
     payload.update(_scene_payload)
     payload.update(st.snapshot())
-    if _resolved is None and _registry_mode() == "on":
+    if _resolved is None and _registry_mode() == "on" and not _plan_only():
+        # 计划模式不连 provider：解析默认场景只会在返回里塞一个 x86 endpoint，误导模型与用户。
         _r, _e = _resolve_scene(principal, "")
         _resolved = _r
     payload.update(_robot_facts(_resolved))
+    if _plan_only():
+        # 计划模式的"装配事实"：无 provider 端点、无仿真开关、只有端侧计划场景。
+        payload.pop("simulation", None)
+        payload["provider_endpoint"] = None
+        payload["execution_mode"] = "plan-only"
+        payload["computation"] = "kinematic（端侧运动学，不运行物理仿真）"
+        payload["scenes"] = ["ur5-pick-planned", "piper-pick-planned"]
     # 把"进入之后照做什么"直接写进返回：实机证据（2026-10-22）是模型自己设计了
     # "只读自检 + 冒烟提交"两段式，冒烟那次把仿真场景弄脏。规则写在返回值里比写在文档里有效。
     # 计划模式（IRAF_PLAN_ONLY=1）不执行、不搬场景：把"复位场景"那条护栏换成计划模式说明，
