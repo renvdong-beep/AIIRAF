@@ -175,7 +175,7 @@ def _bridge():
 
 
 @app.tool()
-def iraf_enter_robot_mode(scene_id: str = "") -> str:
+def iraf_enter_robot_mode(scene_id: str = "", detail: bool = False) -> str:
     """进入「机器人开发模式」（用户说"开始机器人开发模式"时必须调用本工具）。
 
     零参数、名字即语义：模型不需要在 enum 里选 action，听到这句中文就调它。
@@ -183,7 +183,7 @@ def iraf_enter_robot_mode(scene_id: str = "") -> str:
     安全策略 / 后端端点 / simulation 标记 / next_steps（进入后照做的固定顺序）。
     调用后**只做盘点并报告**，不要为了验证链路先提交一条任务（会弄脏仿真场景）。
     """
-    return iraf_robot_mode(action="enter", scene_id=scene_id)
+    return iraf_robot_mode(action="enter", scene_id=scene_id, detail=detail)
 
 
 @app.tool()
@@ -307,7 +307,7 @@ def _resolve_scene(principal, scene_id=None, resource_id=None):
 
 @app.tool()
 def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800,
-                    scene_id: str = "") -> str:
+                    scene_id: str = "", detail: bool = False) -> str:
     """机器人开发模式的开关与状态（语义触发：用户说"开始机器人开发模式"时调用）。
 
     action: enter = 打开（后续任务默认按机器人任务域处理）；exit = 关闭；status = 只看状态。
@@ -372,6 +372,15 @@ def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800,
     # 自带"正确用法示范"：模型不必自己摸索该怎么调，也减少它去翻源码/重写实现的动机。
     # 注意：examples 是**语义映射说明**，不是验收脚本；purpose 字段已明示"不要求执行"。
     payload["examples"] = {"robot_task": _WORKED_EXAMPLE, "non_robot": _FILTERED_EXAMPLE}
+    if not detail:
+        # 紧凑模式（2026-11-11 实测）：完整返回 4.3k 字符 ≈1.45k tokens，其中 skill_triggers/intents/
+        # routing_policy 与工具描述、系统提示重复；板卡本地 Qwen 生成仅 13.7 tok/s，模型读得越多、
+        # 回得越长，用户等得越久。默认只给"能立刻做决定"的最小集，细节用 detail=true。
+        for key in ("skill_triggers", "intents", "routing_policy", "examples"):
+            payload.pop(key, None)
+        payload["next_steps"] = list(_enter_next_steps())[:2]
+        payload["reply_hint"] = ("用不超过 3 行汇报：已进入模式 / 有哪些场景 / 可用技能数；"
+                                 "不要复述字段；需要清单细节再调用 iraf_robot_mode(detail=true)。")
     return json.dumps(payload, ensure_ascii=False)
 
 
