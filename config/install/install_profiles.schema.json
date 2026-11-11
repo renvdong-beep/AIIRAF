@@ -599,6 +599,10 @@
           "type": "string",
           "pattern": "^/",
           "description": "角色级解释器覆盖（2026-10-19 新增）。解释器是**目标端事实**：同一套声明要覆盖系统 python 版本各异的边缘机时必须能按角色覆盖 defaults，否则只能继承一个错的解释器（实测：某边缘机系统 python3 是 3.8.10，SDK 的 cp310 轮装不上，必须指向 /usr/local/bin/python3.10）。"
+        },
+        "env_requires_provider_endpoint": {
+          "type": "boolean",
+          "description": "装配单模板是否必须包含 @PROVIDER_ENDPOINT@ 占位符。0.4.4 起端点由场景注册表解析（IRAF_SCENE_REGISTRY_MODE=on），远端 backend 角色可显式设 false；未声明时按 backend_entrypoint 推断。"
         }
       }
     }

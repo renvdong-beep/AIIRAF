@@ -225,7 +225,12 @@ def check_semantics(declaration: dict, repo_root: Path) -> tuple:
                 #     硬要求会逼人写一个没人用的占位符；
                 #   · 声明了 provider_display 的角色必须把显示模式也占位符化（不许在模板里写死）。
                 required = ["@PROFILE@", "@VERSION_DIR@", "@DATA_DIR@"]
-                if "provider_backend" in str(profile.get("backend_entrypoint") or ""):
+                # 注册表模式（0.4.4 起）端点由 /etc/iraf/scenes|providers 解析，装配单不再写死；
+                # 角色可用 env_requires_provider_endpoint: false 显式去掉该要求（未声明时按后端推断）。
+                needs_endpoint = profile.get("env_requires_provider_endpoint")
+                if needs_endpoint is None:
+                    needs_endpoint = "provider_backend" in str(profile.get("backend_entrypoint") or "")
+                if needs_endpoint:
                     required.append("@PROVIDER_ENDPOINT@")
                 if profile.get("provider_display"):
                     required.append("@PROVIDER_DISPLAY_MODE@")

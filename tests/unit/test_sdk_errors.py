@@ -222,7 +222,8 @@ class DiagnosisTests(unittest.TestCase):
     def test_retryable_set_is_exactly_the_documented_ones(self):
         retryable = {code for code in KNOWN_ERROR_CODES if is_retryable(code)}
         self.assertEqual(
-            {"IRAF-SKILL-PROVIDER-UNAVAILABLE", "IRAF-RESOURCE-BUSY", TRANSPORT_FAILED_CODE},
+            {"IRAF-SKILL-PROVIDER-UNAVAILABLE", "IRAF-RESOURCE-BUSY",
+             "IRAF-CAPACITY-EXHAUSTED", TRANSPORT_FAILED_CODE},
             retryable,
         )
 

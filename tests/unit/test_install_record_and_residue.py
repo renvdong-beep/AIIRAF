@@ -39,13 +39,20 @@ _m = _re.search(r'(?m)^version\s*=\s*"([^"]+)"', (REPO / "pyproject.toml").read_
 VERSION = _m.group(1) if _m else "0.0.0"  # 版本单一来源：pyproject.toml
 
 
+_REAL_LISTENING_PORTS = lib._listening_ports
+
+
 class InstallLayoutTest(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)      # 扮演文件系统根 "/"
         self.effective = lib.effective_layout(REPO, PROFILE)
+        # 沙箱不校验宿主端口：8765 在本机常被 iraf-mcp-local 占用，属环境事实
+        self._orig_ports = lib._listening_ports
+        lib._listening_ports = lambda: set()
 
     def tearDown(self):
+        lib._listening_ports = self._orig_ports
         self._tmp.cleanup()
 
     # ---------- 夹具 ----------
@@ -65,7 +72,11 @@ class InstallLayoutTest(unittest.TestCase):
         if unit:
             unit_dir = Path(str(self.root) + "/etc/systemd/system")
             unit_dir.mkdir(parents=True, exist_ok=True)
-            (unit_dir / "iraf-runtime-grpc.service").write_text("[Unit]\n", encoding="utf-8")
+            # 按声明建全部单元（edge-intel 现在是 grpc + mcp-http 两个）：
+            # 只建一个会让 residue 把另一个报成 missing，制造假红。
+            for service in self.effective["services"]:
+                (unit_dir / ("%s.service" % service["name"])).write_text("[Unit]\n",
+                                                                        encoding="utf-8")
         if env:
             config_dir = Path(str(self.root) + str(self.effective["config_dir"]))
             config_dir.mkdir(parents=True, exist_ok=True)
@@ -82,14 +93,27 @@ class InstallLayoutTest(unittest.TestCase):
         return lib.read_record(self.effective, version_dir)
 
     def _scan(self, record=None):
-        return lib.residue_scan(self.effective, self.root, record=record)
+        # 若测试自己 stub 了端口（如 test_residue_reports_port_and_process），尊重它
+        if lib._listening_ports is not _REAL_LISTENING_PORTS:
+            return lib.residue_scan(self.effective, self.root, record=record)
+        original = lib._listening_ports
+        lib._listening_ports = lambda: set()
+        try:
+            return lib.residue_scan(self.effective, self.root, record=record)
+        finally:
+            lib._listening_ports = original
 
     def _run(self, *args):
         import contextlib
         import io
         out, err = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = lib.main(["--repo-root", str(REPO), *args])
+        original = lib._listening_ports
+        lib._listening_ports = lambda: set()
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = lib.main(["--repo-root", str(REPO), *args])
+        finally:
+            lib._listening_ports = original
         return code, out.getvalue() + err.getvalue()
 
     # ---------- 成功路径 ----------
@@ -110,7 +134,8 @@ class InstallLayoutTest(unittest.TestCase):
         self.assertEqual(len(record["files"]), 2)
         self.assertEqual(len(record["config_files"]), 1)
         self.assertEqual(record["file_count"], 3)
-        self.assertEqual(record["units"], ["iraf-runtime-grpc.service"])
+        self.assertEqual(record["units"], ["iraf-runtime-grpc.service",
+                                            "iraf-mcp-http.service"])
         # 记录自身不计入文件清单（否则自我引用）
         self.assertNotIn(self.effective["file_record"],
                          [item["path"] for item in record["files"]])
@@ -273,6 +298,8 @@ class InstallActionTest(unittest.TestCase):
         self.root = Path(self._tmp.name)
         self.effective = lib.effective_layout(REPO, PROFILE)
         self.art = self.root / "artifacts"
+        self._orig_ports = lib._listening_ports
+        lib._listening_ports = lambda: set()
         (self.art / "wheelhouse").mkdir(parents=True, exist_ok=True)
         self.wheel = self._make_wheel(self.art / "wheelhouse")
         # 清单里必须写明 wheelhouse 属于哪个**构建目标**：声明里 dependency_source.target_id 会与它比对
@@ -286,6 +313,7 @@ class InstallActionTest(unittest.TestCase):
         self.effective["python_stubs_dir"] = None
 
     def tearDown(self):
+        lib._listening_ports = self._orig_ports
         self._tmp.cleanup()
 
     def _make_wheel(self, dest: Path) -> Path:
@@ -302,11 +330,16 @@ class InstallActionTest(unittest.TestCase):
 
     def _install(self, **overrides):
         kwargs = dict(sdk_wheel=self.wheel, wheelhouse=self.art / "wheelhouse",
-                      allow_unverified=True, rehearsal=True,
-                      # edge-intel 的装配单模板要求部署期给值（就像真实部署那样）
-                      env_values={"PROVIDER_ENDPOINT": "PROBE-HOST:50052"})
+                      allow_unverified=True, rehearsal=True)
         kwargs.update(overrides)
-        return lib.apply_install(self.effective, self.root, **kwargs)
+        # 沙箱安装不校验宿主端口：8765 在本机常被 iraf-mcp-local 占着，
+        # 那是环境事实，不该让"演练"用例红（端口校验另有专门用例覆盖）。
+        original = lib._listening_ports
+        lib._listening_ports = lambda: set()
+        try:
+            return lib.apply_install(self.effective, self.root, **kwargs)
+        finally:
+            lib._listening_ports = original
 
     def _version_dir(self) -> Path:
         return Path(str(self.root) + str(self.effective["prefix"])) / VERSION
@@ -332,9 +365,10 @@ class InstallActionTest(unittest.TestCase):
         self.assertTrue(plan["ok"])
         self.assertTrue((self._version_dir() / "lib/iraf_sdk/__init__.py").is_file())
         self.assertTrue(Path(plan["env_file"]).is_file())
-        self.assertEqual(len(plan["units"]), 1)
-        self.assertTrue(Path(plan["units"][0]).read_text(encoding="utf-8").count("@") == 0,
-                        "渲染后不得残留占位符")
+        self.assertEqual(len(plan["units"]), 2)
+        for unit in plan["units"]:
+            self.assertEqual(Path(unit).read_text(encoding="utf-8").count("@"), 0,
+                             "渲染后不得残留占位符：%s" % unit)
         record = lib.read_record(self.effective, self._version_dir())
         removed = lib.apply_uninstall(lib.plan_uninstall(self.effective, self.root, record), root=self.root)
         self.assertTrue(removed)
@@ -526,13 +560,13 @@ class InstallActionTest(unittest.TestCase):
         self.assertIn("MemoryMax=1G", text)
         self.assertNotIn("@CPU_QUOTA@", text)
 
-    def test_missing_deploy_value_names_field_and_template_line(self):
-        """缺部署期取值时必须报"字段名 + 模板行号"，而不是让部署方去翻模板。"""
-        with self.assertRaises(lib.InstallError) as ctx:
-            self._install(env_values={})  # 故意不给 PROVIDER_ENDPOINT
-        message = str(ctx.exception)
-        self.assertIn("PROVIDER_ENDPOINT", message)
-        self.assertIn("模板第", message)
+    def test_registry_mode_needs_no_provider_endpoint(self):
+        """0.4.4 起端点由注册表解析：装配单不再要求部署期给 PROVIDER_ENDPOINT。"""
+        plan = self._install()
+        self.assertTrue(plan["ok"])
+        text = Path(plan["env_file"]).read_text(encoding="utf-8")
+        self.assertNotIn('"endpoint"', text)
+        self.assertNotIn("@PROVIDER_ENDPOINT@", text)
 
     def test_sim_scene_is_copied_and_backend_config_generated(self):
         """仿真档：声明的场景（XML + 旁挂报告）复制进版本目录，并在**目标端**生成 IRAF_BACKEND_CONFIG。
@@ -574,8 +608,10 @@ class InstallActionTest(unittest.TestCase):
         self.assertTrue(raw_value.startswith("'") and raw_value.endswith("'"),
                         "IRAF_BACKEND_CONFIG 的 JSON 必须被单引号包住（否则 shell/systemd 会剥引号）")
         config = json.loads(raw_value[1:-1])
-        self.assertIn("endpoint", config, "edge-intel 的 BACKEND_CONFIG 必须是跨机形态")
+        # 0.4.4 起端点由场景注册表解析：边缘档 env 不写死 endpoint（多场景会 MISMATCH）
+        self.assertNotIn("endpoint", config)
         self.assertEqual(config.get("token_env"), "IRAF_PROVIDER_TOKEN")
+        self.assertTrue(config.get("token_file"), "必须声明 token_file 才能 fail-closed 装配")
         self.assertNotIn("manipulation", config, "板上不装仿真：不得把场景配置写进边缘档 env")
         # 边缘档不装仿真 ⇒ env 里不应出现 model_path（场景不进这块板的运行配置）
         self.assertNotIn("model_path", config)

@@ -732,6 +732,19 @@ ERROR_SPECS: Tuple[ErrorSpec, ...] = (
         retry_policy_zh="不重试：该路径将在阶段 B/C 移除。",
         provenance=PROVENANCE_CODE_ONLY,
     ),
+    ErrorSpec(
+        code="IRAF-CAPACITY-EXHAUSTED",
+        summary_zh="目标主机/世界的并发容量已耗尽（本次不排队）",
+        suggestion_zh=(
+            "先用 iraf_scene_status 看 leases / inflight 与各 host 的负载；等当前执行结束、"
+            "或经授权释放租约（iraf_lease action=\"release\"）后重试。"
+            "不要放宽判据或绕过租约：那会让两个执行同时写同一个世界。"
+        ),
+        retryable=True,
+        retry_policy_zh="是，受租约 TTL 与 TaskFlow 策略限制；不得无限重试",
+        provenance=PROVENANCE_CODE_ONLY,
+        emitter=("src/iraf_adapters/mcp/server.py:1136",),
+    ),
 )
 
 ERROR_SPECS_BY_CODE = {spec.code: spec for spec in ERROR_SPECS}

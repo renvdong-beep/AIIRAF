@@ -53,4 +53,4 @@ if [ -z "${XAUTHORITY:-}" ] || [ ! -r "${XAUTHORITY:-/nonexistent}" ]; then
 fi
 
 echo "provider_launch: DISPLAY=${DISPLAY:-} XAUTHORITY=${XAUTHORITY:-}" >&2
-exec /usr/bin/python3 -m iraf_adapters.remote.provider_cli
+exec "${IRAF_PYTHON_BIN:-/usr/bin/python3}" -m iraf_adapters.remote.provider_cli

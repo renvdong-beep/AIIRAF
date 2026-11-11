@@ -254,12 +254,21 @@ profiles:
     forbidden_components: [adapters_sim]
     # 北向 MCP（HTTP/stdio）依赖：`python3 -m iraf_adapters.mcp.server` 需要 mcp>=1.26,<2。
     # 边缘角色显式声明，禁止靠宿主碰巧装过；交付 wheelhouse 必须补入该包及其传递闭包。
+    # 2026-11-11 钉版：板卡实测可用的组合（mcp 1.30 依赖的 starlette 1.x 未在该板验证过）。
+    # 直接钉顶层与关键传递依赖，保证 wheelhouse 可复现；升级时整组一起改并跑一次上板验收。
     runtime_dependencies:
       - pyyaml
       - jsonschema
       - grpcio
       - protobuf
-      - mcp
+      - "mcp==1.26.0"
+      - "starlette==1.0.1"
+      - "sse-starlette==3.5.0"
+      - "uvicorn==0.41.0"
+      - "pydantic==2.13.4"
+      - "anyio==4.15.1"
+      - "python-multipart==0.0.27"
+      - "typing-inspection==0.4.4"
     # 2026-10-16：本域 runtime 的 Capability Provider 经跨机 gRPC 调 **x86 仿真 Provider**
     # （板上跑 TaskFlow/Skill/Policy，x86 只把能力执行出来并显示）。
     # 设计见 .hermes/plans/2026-10-16-agentos-semantic-mcp-bridge.md；
@@ -267,6 +276,8 @@ profiles:
     backend_entrypoint: iraf_adapters.remote.provider_backend:RemoteProviderBackend
     # 运行装配单模板（占位符化：端点/机型 Profile/目录都由部署期值填充，见 deploy/sdk/env/）
     env_template: deploy/sdk/env/edge-intel.env.tmpl
+    # 0.4.4 起端点由场景注册表解析（IRAF_SCENE_REGISTRY_MODE=on），装配单模板不再要求端点占位符。
+    env_requires_provider_endpoint: false
     services:
       - name: iraf-runtime-grpc
         template: deploy/sdk/units/iraf-runtime-grpc.service.tmpl
@@ -277,6 +288,14 @@ profiles:
         # 取值依据 E300 实测（2 核 / 3979 MB）：智能域 1.5 核 / 1G，留足 TaskFlow+Policy 余量。
         cpu_quota: "150%"
         memory_max: "1G"
+      # 北向任务级 MCP（HTTP）：板卡只做控制面；单元/端口都在声明里，禁止脚本再写一份。
+      - name: iraf-mcp-http
+        template: deploy/sdk/units/iraf-mcp-http.service.tmpl
+        scope: system
+        ports: [8765]
+        optional: false
+        cpu_quota: "50%"
+        memory_max: "512M"
     cross_domain:
       role: upstream
       peers: ["edge-motion"]
@@ -291,8 +310,8 @@ profiles:
       independent_device_ownership: true
     residue:
       scan_roots: ["{prefix}", "{config_dir}"]
-      units: ["iraf-runtime-grpc.service"]
-      ports: [50051]
+      units: ["iraf-runtime-grpc.service", "iraf-mcp-http.service"]
+      ports: [50051, 8765]
       processes: ["iraf-runtime-grpc", "iraf-agentos"]
 
   - id: edge-motion
@@ -417,6 +436,8 @@ profiles:
     forbidden_components: [adapters_sim]
     backend_entrypoint: iraf_adapters.remote.provider_backend:RemoteProviderBackend
     env_template: deploy/sdk/env/edge-intel.env.tmpl
+    # 0.4.4 起端点由场景注册表解析（IRAF_SCENE_REGISTRY_MODE=on），装配单模板不再要求端点占位符。
+    env_requires_provider_endpoint: false
     services:
       - name: iraf-runtime-grpc
         template: deploy/sdk/units/iraf-runtime-grpc.service.tmpl

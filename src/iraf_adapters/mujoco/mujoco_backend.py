@@ -4913,6 +4913,17 @@ class MujocoBackend:
             missing = sorted(required - set(raw_gripper))
             if missing:
                 raise ValueError("夹爪配置缺少字段: " + str(missing))
+            # pad_boxes（夹持区口径）：声明了就必须是**非空、无重复的字符串列表**。
+            # 为什么在这里拦：运行期才用它求夹持区中点；空列表/重复名/非字符串会在
+            # "夹持区 geom 不存在"或静默退化到左右代表面，两种都是把配置错误伪装成行为差异。
+            if "pad_boxes" in raw_gripper:
+                boxes = raw_gripper.get("pad_boxes")
+                if not isinstance(boxes, (list, tuple)) or not boxes:
+                    raise ValueError("gripper.pad_boxes 必须是非空列表")
+                if any(not isinstance(name, str) or not name.strip() for name in boxes):
+                    raise ValueError("gripper.pad_boxes 的元素必须是非空字符串")
+                if len(set(boxes)) != len(boxes):
+                    raise ValueError("gripper.pad_boxes 不能包含重复名字")
             open_positions = dict(raw_gripper["open_positions"])
             closed_positions = dict(raw_gripper["closed_positions"])
             if set(open_positions) != set(closed_positions) or not open_positions:

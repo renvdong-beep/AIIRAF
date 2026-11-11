@@ -674,8 +674,69 @@ def render_template(template: Path, tokens: dict) -> str:
     return text
 
 
+def _parse_env_lines(text):
+    """把 KEY=VALUE 文本解析成 (顺序, 字典)；注释与非法行忽略。"""
+    order, values = [], {}
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        key = key.strip()
+        if not re.fullmatch(r"[A-Z0-9_]+", key):
+            continue
+        if key not in values:
+            order.append(key)
+        values[key] = value.strip()
+    return order, values
+
+
+def _merge_env_text(rendered, previous):
+    """升级时保留站点键（2026-11-11：0.4.4 升级把 PROFILE/SAFETY_POLICY/AGENTOS_* 抹成空）。
+
+    规则（可预期、不猜）：
+      · 模板渲染出**非空**值 ⇒ 以模板为准（声明变了要能生效）；
+      · 模板渲染为**空**值 ⇒ 沿用旧值（升级不把部署期填过的键抹掉）；
+      · 旧有新无 ⇒ 追加到文件尾（站点特有键，如 IRAF_AGENTOS_*、IRAF_SCENE_*）；
+      · `*_ALLOWED_HOSTS` ⇒ 新旧取并集（多网卡/跨机访问不会被升级抹掉）。
+    """
+    if not (previous or "").strip():
+        return rendered
+    old_order, old = _parse_env_lines(previous)
+    _, new = _parse_env_lines(rendered)
+    merged = dict(new)
+    appended = []
+    for key in old_order:
+        if key not in merged:
+            merged[key] = old[key]
+            appended.append(key)
+        elif not merged[key] and old[key]:
+            merged[key] = old[key]
+        elif key.endswith("_ALLOWED_HOSTS"):
+            parts = [p.strip() for p in (merged[key] + "," + old[key]).split(",") if p.strip()]
+            seen = []
+            for part in parts:
+                if part not in seen:
+                    seen.append(part)
+            merged[key] = ",".join(seen)
+    result = []
+    for line in rendered.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            key = stripped.split("=", 1)[0].strip()
+            if key in merged:
+                result.append("%s=%s" % (key, merged[key]))
+                continue
+        result.append(line)
+    if appended:
+        result += ["", "# —— 升级保留的既有取值（装配单模板未声明，避免升级丢站点配置）——"]
+        result += ["%s=%s" % (key, merged[key]) for key in appended]
+    return "\n".join(result) + "\n"
+
+
+
 def render_env_file(effective: dict, root: Path, tokens: dict, *,
-                    repo_root=None, env_values=None) -> str:
+                    repo_root=None, env_values=None, previous_text="") -> str:
     """渲染运行装配单。
 
     两种来源（**同一事实只允许出现一处**）：
@@ -716,7 +777,7 @@ def render_env_file(effective: dict, root: Path, tokens: dict, *,
         merged.update({str(k).strip().upper(): str(v) for k, v in dict(env_values or {}).items()})
         template_path = Path(repo_root) / template_rel
         try:
-            return render_template(template_path, merged)
+            return _merge_env_text(render_template(template_path, merged), previous_text)
         except InstallError as exc:
             # 把"缺哪个部署期取值"变成可操作信息：字段名 + 模板行号（部署时不必翻模板）。
             text = template_path.read_text(encoding="utf-8")
@@ -756,7 +817,7 @@ def render_env_file(effective: dict, root: Path, tokens: dict, *,
             key = "IRAF_RUNTIME_PORT" if int(port) == 8765 else "IRAF_GRPC_PORT"
             lines.append("%s=%d" % (key, int(port)))
     lines.append("IRAF_PATH_ROOT=%s" % prefix_current)
-    return "\n".join(lines) + "\n"
+    return _merge_env_text("\n".join(lines) + "\n", previous_text)
 
 
 def precheck(effective: dict, root: Path, *, allow_unverified: bool, wheelhouse: Path | None,
@@ -1201,9 +1262,16 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
             if target["service"]:
                 instance_tokens["PROFILE"] = target["service"]
             env_path = config_dir / target["env_file"]
+            previous_env = ""
+            if env_path.is_file():
+                try:
+                    previous_env = env_path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    previous_env = ""
             env_path.write_text(render_env_file(instance, root, instance_tokens,
                                                 repo_root=effective.get("_repo_root"),
-                                                env_values=instance_env), encoding="utf-8")
+                                                env_values=instance_env,
+                                                previous_text=previous_env), encoding="utf-8")
             created_files.append(env_path)
             env_paths.append(env_path)
             info("装配单已生成：%s（实例=%s 场景=%s）"
@@ -1242,6 +1310,21 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
                 raise InstallError("--secrets-file 没有任何有效键：%s（允许：%s）"
                                    % (src, ", ".join(allowed)), EXIT_IO)
             secrets_path = config_dir / "runtime.secrets"
+            # 升级场景：--secrets-file 往往只含本次要写的键；旧文件里其它允许键必须保留，
+            # 否则会把 IRAF_PROVIDER_TOKEN 抹掉（2026-11-06 实测：装完 runtime 起不来）。
+            if secrets_path.is_file():
+                try:
+                    old_lines = secrets_path.read_text(encoding="utf-8").splitlines()
+                except OSError:
+                    old_lines = []
+                for line in old_lines:
+                    item = line.strip()
+                    if not item or item.startswith("#") or "=" not in item:
+                        continue
+                    key = item.split("=", 1)[0].strip()
+                    if key in allowed and key not in seen:
+                        lines.append(item)
+                        seen.append(key)
             secrets_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
             try:
                 secrets_path.chmod(0o600)
@@ -1271,6 +1354,9 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
                 svc_tokens["PROFILE"] = str(item["name"])
             svc_tokens["CPU_QUOTA"] = str(item.get("cpu_quota") or "")
             svc_tokens["MEMORY_MAX"] = str(item.get("memory_max") or "")
+            # 单端口服务把端口给模板（数值仍只来自 services[].ports 声明）
+            _ports = [int(p) for p in (item.get("ports") or [])]
+            svc_tokens["MCP_PORT"] = str(_ports[0]) if len(_ports) == 1 else ""
             content = render_template(template, svc_tokens)
             # 未声明限额的角色（x86 开发档）⇒ 整行删除。不能留着 "CPUQuota=" 空值：
             # systemd 对空值要么报错要么静默忽略，两者都会让"限额是否存在"变得不可判定。

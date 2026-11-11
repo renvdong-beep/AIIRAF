@@ -32,19 +32,26 @@ def _tokens(profile_id):
 def test_declared_role_renders_from_template():
     effective, tokens = _tokens("edge-intel")
     assert effective.get("env_template"), "edge-intel 应当声明 env_template"
-    text = lib.render_env_file(effective, Path("/"), tokens, repo_root=REPO,
-                               env_values={"PROVIDER_ENDPOINT": "PROBE-HOST:50052"})
+    text = lib.render_env_file(effective, Path("/"), tokens, repo_root=REPO)
     assert "IRAF_BACKEND_ENTRYPOINT=iraf_adapters.remote.provider_backend:RemoteProviderBackend" in text
-    assert '"endpoint":"PROBE-HOST:50052"' in text, text
+    # 0.4.4 起端点来自注册表：装配单里**不得**再有写死的 endpoint（多场景会 MISMATCH）
+    assert '"endpoint"' not in text, text
+    assert '"token_env":"IRAF_PROVIDER_TOKEN"' in text, text
     assert "IRAF_EVENT_STORE=/var/lib/iraf/iraf-runtime.db" in text
+    import re as _re
+    leftover = sorted(set(_re.findall(r"@[A-Z_]+@", text)))
+    assert not leftover, "渲染后不得残留占位符：%s" % leftover
 
 
-def test_missing_deployment_value_fails_closed():
-    """缺部署期取值必须显式失败 —— 否则会渲染出一个"看起来能用"的半成品 env。"""
-    effective, tokens = _tokens("edge-intel")
-    with pytest.raises(lib.InstallError) as exc:
-        lib.render_env_file(effective, Path("/"), tokens, repo_root=REPO, env_values={})
-    assert "PROVIDER_ENDPOINT" in str(exc.value)
+def test_env_merge_keeps_site_values():
+    """升级时模板没声明的站点键必须保留（0.4.4 升级曾把 PROFILE/SAFETY_POLICY 抹空）。"""
+    rendered = "IRAF_PROFILE=\nIRAF_MCP_TRANSPORT=http\n"
+    previous = ("IRAF_PROFILE=profiles/piper_mujoco.yaml\n"
+                "IRAF_DEFAULT_SCENE=piper-pick\n")
+    merged = lib._merge_env_text(rendered, previous)
+    assert "IRAF_PROFILE=profiles/piper_mujoco.yaml" in merged
+    assert "IRAF_DEFAULT_SCENE=piper-pick" in merged
+    assert "IRAF_MCP_TRANSPORT=http" in merged
 
 
 def test_role_without_template_keeps_programmatic_output():
