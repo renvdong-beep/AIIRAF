@@ -158,8 +158,8 @@ provider:
 | 2026-11-11 17:35 | — | 计划创建，goal 启动 | 本文件 |
 | 2026-11-11 17:37 | 0.4.5 | 冻结备份（tag v0.4.5） | wheel 53028516 / bundle 85216dd0 |
 | 2026-11-11 17:45 | 0.4.6 | 端侧验证双场景（板卡，无 x86） | ur5 0.71s、piper 0.24s；IK 6/33 次；报告 /var/lib/iraf/reports/planned |
-| 2026-11-11 | 0.4.5 | iraf_sdk-0.4.5-py3-none-any.whl | `53028516b40cf8a9` |
+| 2026-11-11 | 0.4.5 | iraf_sdk-0.4.5-py3-none-any.whl | `dfaf3879604a70bc` |
 | 2026-11-11 | 0.4.5 | iraf-runtime-0.4.5-universal.tar.gz | `85216dd096e7c162` |
 | 2026-11-11 | 0.4.6 | T5 端侧验证（板卡，无 x86） | ur5 wall=0.71s/IK 6 次/7.47e-07；piper wall=0.24s/IK 33 次/7.82e-06；报告 /var/lib/iraf/reports/planned |
 | 2026-11-11 | 0.4.6 | iraf_sdk-0.4.6-py3-none-any.whl | `6d25926bd5850b55` |
-| 2026-11-11 | 0.4.6 | iraf-runtime-0.4.6-universal.tar.gz | `6dab41b04766eb81` |
+| 2026-11-11 | 0.4.6 | iraf-runtime-0.4.6-universal.tar.gz | `dfaf3879604a70bc` |
