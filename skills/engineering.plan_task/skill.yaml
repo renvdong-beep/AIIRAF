@@ -1,0 +1,23 @@
+apiVersion: iraf.intewell.io/v1
+kind: Skill
+metadata: {name: engineering.plan_task, version: 1.0.0}
+spec:
+  verification: development
+  inputSchema: engineering.plan_task.input.json
+  outputSchema: engineering.plan_task.output.json
+  # 计划类能力：只做运动学计算（IK/限位/时序），**不跑物理、不驱动执行器、不申请运动租约**。
+  # 与 pick_object 等运动 skill 严格隔离：本 skill 永远返回 planned=true, physics=false，
+  # 不产出 grasped/bilateral_contact 这类物理证据（否则即伪造成功，违反铁律 5）。
+  requires: [engineering.plan_task]
+  preconditions: []
+  intentExamples: [计算抓取计划, 端侧算一下能不能抓到, 规划抓取轨迹, 不跑仿真看计划, plan pick]
+  timeoutSeconds: 120
+  cancellation: not_applicable
+  recovery: [request_handover]
+  safetyClass: build_tooling
+  providers:
+    - name: engineering_plan_task
+      type: python_adapter
+      entrypoint: "iraf_skills.engineering.plan_task:PlanTaskProvider"
+      selector: {mode: simulation}
+      priority: 100

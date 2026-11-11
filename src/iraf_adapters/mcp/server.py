@@ -187,6 +187,49 @@ def iraf_enter_robot_mode(scene_id: str = "", detail: bool = False) -> str:
 
 
 @app.tool()
+def iraf_plan_task(scene_id: str = "ur5-pick-planned", target_id: str = "box_01",
+                   approach_m: float = 0.10, lift_m: float = 0.05,
+                   duration_ms: int = 3000) -> str:
+    """端侧运动学**计划**计算：不跑物理、不开窗、不需要 x86 或 Provider 进程。
+
+    用 MuJoCo **只做模型加载 + IK/FK**（不 mj_step、不渲染），返回：
+    IK 收敛/误差/迭代、关节解、限位余量、夹爪开口、预计时长、模型 sha256、报告路径。
+    强制标注 `planned=true, physics=false, backend=kinematic` —— 这是"计划是否可行"，
+    **不是**抓取成功或物理验收（无接触/滑移/沉降信息）。
+    """
+    from iraf_adapters.kinematic.planner import PlanError, plan_pick
+    from iraf_adapters.mcp import auth
+
+    try:
+        principal = _principal()
+        auth.require_scope(principal, "task.read")
+    except auth.AuthError as exc:
+        return _auth_error(exc)
+    auth.audit("tool_call", principal, tool="iraf_plan_task", scene_id=scene_id, target_id=target_id)
+    try:
+        result = plan_pick(scene_id=scene_id, target_id=target_id,
+                           approach_m=float(approach_m), lift_m=float(lift_m),
+                           duration_ms=int(duration_ms))
+    except PlanError as exc:
+        hint = {
+            "SCENE-NOT-FOUND": "端侧需有场景模型：deploy/sdk/prebuilt/scenes/<stem>/ 或 build/；设 IRAF_REPO_ROOT",
+            "TARGET-NOT-FOUND": "检查 target_id（ur5-pick 场景为 box_01）",
+            "IK-FAILED": "目标可能不可达；调整 approach_m 或检查模型",
+            "IK-NOT-CONVERGED": "残差超容差，计划不可行（不伪造成功）",
+        }.get(exc.code, "")
+        return json.dumps({"status": "FAILED", "error_code": exc.code, "reason": exc.detail,
+                           "hint": hint, "planned": True, "physics": False,
+                           "backend": "kinematic"}, ensure_ascii=False)
+    compact = {k: result[k] for k in ("status", "planned", "physics", "backend", "scene",
+                                      "target", "approach", "ik", "gripper", "timing",
+                                      "model", "report", "disclaimer")}
+    compact["limits"] = {"min_margin_deg": result["limits"]["min_margin_deg"],
+                         "per_joint": result["limits"]["per_joint"]}
+    compact["hint"] = "⚠️ 计划计算（无物理/接触）；真实抓取需 x86 MuJoCo 或真机执行"
+    return json.dumps(compact, ensure_ascii=False)
+
+
+@app.tool()
 def iraf_rt_latency(duration_s: int = 10, interval_us: int = 200,
                     priority: int = 240, histogram_us: int = 100,
                     target_host: str = "") -> str:

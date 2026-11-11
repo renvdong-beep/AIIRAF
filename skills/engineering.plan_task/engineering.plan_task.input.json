@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["scene_id"],
+  "properties": {
+    "scene_id": {"type": "string", "description": "ur5-pick-planned / piper-pick-planned"},
+    "target_id": {"type": "string", "default": "box_01"},
+    "approach_m": {"type": "number", "minimum": 0, "maximum": 0.5, "default": 0.1,
+                   "description": "抓取前抬高的接近距离（米）"},
+    "lift_m": {"type": "number", "minimum": 0, "maximum": 0.5, "default": 0.05},
+    "duration_ms": {"type": "integer", "minimum": 100, "maximum": 60000, "default": 3000}
+  }
+}
