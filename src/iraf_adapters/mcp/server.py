@@ -734,6 +734,28 @@ _PLAN_SCENES = {"piper-pick": "piper-pick-planned", "ur5-pick": "ur5-pick-planne
                 "ur5-pick-planned": "ur5-pick-planned"}
 
 
+def _compact_plan(plan: dict) -> dict:
+    """把计划结果压成适合 chat 的大小（完整计划仍在报告/ detail=true 里）。"""
+    ik = plan.get("ik") or {}
+    limits = plan.get("limits") or {}
+    return {
+        "status": plan.get("status"),
+        "mode": "planned",
+        "planned": True,
+        "physics": False,
+        "backend": "kinematic",
+        "scene": plan.get("scene"),
+        "target": plan.get("target"),
+        "ik": {"iterations": ik.get("iterations"), "error_m": ik.get("error_m"),
+               "converged": ik.get("converged")},
+        "limits": {"min_margin_deg": limits.get("min_margin_deg")},
+        "warnings": plan.get("warnings") or [],
+        "summary": plan.get("summary"),
+        "report": plan.get("report"),
+        "hint": plan.get("hint") or "端侧运动学计划（planned=true, physics=false），未执行物理仿真",
+    }
+
+
 def _plan_only() -> bool:
     """演示开关：`IRAF_PLAN_ONLY=1` 时**完全不连 x86**，所有抓取请求直接走端侧运动学计划。
 
@@ -803,7 +825,14 @@ def iraf_submit_task(text: str, deadline_seconds: int = 180,
     if _plan_only():
         plan = _plan_fallback(text, scene_id)
         plan["degraded_from"] = "plan-only（IRAF_PLAN_ONLY=1，未连接 x86）"
-        return json.dumps(plan, ensure_ascii=False)
+        try:
+            from iraf_adapters.mcp import auth as _auth
+            _principal_ = _principal()
+            _auth.audit("tool_call", _principal_, tool="iraf_submit_task",
+                        mode="planned", scene_id=plan.get("scene"), target_id=(plan.get("target") or {}).get("id"))
+        except Exception:
+            pass
+        return json.dumps(plan if detail else _compact_plan(plan), ensure_ascii=False)
     raw = _submit_task_impl(text=text, deadline_seconds=deadline_seconds,
                             scene_id=scene_id, resource_id=resource_id, detail=detail)
     if not _plan_fallback_enabled():
@@ -819,7 +848,7 @@ def iraf_submit_task(text: str, deadline_seconds: int = 180,
             or "provider" in reason.lower() or "不可达" in reason):
         plan = _plan_fallback(text, scene_id)
         plan.setdefault("original_error", {"error_code": code, "reason": reason[:200]})
-        return json.dumps(plan, ensure_ascii=False)
+        return json.dumps(plan if detail else _compact_plan(plan), ensure_ascii=False)
     return raw
 
 
