@@ -30,6 +30,7 @@ SCENE_ALIASES = {
 }
 CANDIDATE_DIRS = ("build/models", "build/scenes/handoff_lab",
                   "deploy/sdk/prebuilt/scenes")
+SCENE_PROFILES = {"ur5-pick-scene": "ur5_mujoco", "piper-pick-scene": "piper_mujoco"}
 IK_TOLERANCE_M = 1e-3
 
 
@@ -57,6 +58,32 @@ def resolve_scene(scene_id: str, repo_root: Optional[Path] = None) -> tuple[Path
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _profile_arm_joints(stem: str) -> list:
+    """从 profile 声明取臂关节（报告缺 arm_joints 时的唯一事实来源）。
+
+    piper 场景报告没有 arm_joints（ur5 有）；piper profile 的 joints 含两个夹爪驱动关节
+    （joint7/joint8），按 profile 的 gripper.drive_joints 剔除，避免把夹爪当臂关节解 IK。
+    """
+    profile_name = SCENE_PROFILES.get(stem)
+    if not profile_name:
+        return []
+    import yaml
+
+    roots = [os.environ.get("IRAF_PROFILES_ROOT"), "/opt/iraf-sdk/current/profiles",
+             str(Path(os.environ.get("IRAF_REPO_ROOT") or ".") / "profiles"), "profiles"]
+    for root in roots:
+        if not root:
+            continue
+        path = Path(root) / (profile_name + ".yaml")
+        if not path.is_file():
+            continue
+        spec = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("spec") or {}
+        joints = list(spec.get("joints") or [])
+        drive = list(((spec.get("gripper") or {}).get("drive_joints")) or [])
+        return [j for j in joints if j not in set(drive)]
+    return []
 
 
 def _seed_qpos(model, data, report: dict, arm_names: list) -> None:
@@ -93,9 +120,10 @@ def plan_pick(scene_id: str = "ur5-pick-planned", target_id: str = "box_01",
         raise PlanError("TARGET-NOT-FOUND",
                         "场景 %s 没有目标 %r（可用：%s）" % (xml_path.name, target_id, sorted(targets)))
     gripper = report.get("gripper") or {}
-    arm_names = list(report.get("arm_joints") or [])
+    arm_names = list(report.get("arm_joints") or []) or _profile_arm_joints(xml_path.stem)
     if not arm_names:
-        raise PlanError("SCENE-INVALID", "场景报告缺少 arm_joints")
+        raise PlanError("SCENE-INVALID",
+                        "场景报告缺少 arm_joints，且 profile 未声明 joints（%s）" % xml_path.stem)
 
     import mujoco
 
@@ -141,6 +169,13 @@ def plan_pick(scene_id: str = "ur5-pick-planned", target_id: str = "box_01",
     if not margins:
         raise PlanError("SCENE-INVALID", "臂关节没有任何限位声明，无法给出限位余量")
 
+    warnings = []
+    low = [name for name, info in limits.items()
+           if isinstance(info, dict) and info.get("margin_deg") is not None
+           and float(info["margin_deg"]) < 1.0]
+    if low:
+        warnings.append("关节余量 <1°（接近/处于限位）：%s —— 计划可行但执行需降速或改姿态"
+                        % ", ".join(low))
     converged = ik.position_error_m <= IK_TOLERANCE_M
     result = {
         "schema": "iraf.kinematic_plan/v1",
@@ -161,12 +196,14 @@ def plan_pick(scene_id: str = "ur5-pick-planned", target_id: str = "box_01",
                     "right_finger_body": gripper.get("right_finger_body"),
                     "open_positions": gripper.get("open_positions"),
                     "closed_positions": gripper.get("closed_positions"),
-                    "target_half_size_m": target.get("target_half_size_m")},
+                    "target_half_size_m": target.get("target_half_size_m",
+                                                     report.get("target_half_size_m"))},
         "timing": {"duration_ms": int(duration_ms), "load_ms": round(load_ms, 1),
                    "ik_ms": round(ik_ms, 1)},
         "model": {"path": str(xml_path), "sha256": _sha256(xml_path),
                   "report": str(report_path)},
         "disclaimer": "计划计算（运动学），无物理/接触；不得表述为抓取成功或物理验收",
+        "warnings": warnings,
     }
     if not converged:
         result["error_code"] = "IK-NOT-CONVERGED"
