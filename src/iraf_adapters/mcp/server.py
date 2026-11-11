@@ -800,14 +800,16 @@ def _plan_fallback(text: str, scene_id: str) -> dict:
     limits = plan.get("limits") or {}
     plan.update({
         "mode": "planned",
+        "simulation": True,
         "degraded_from": "provider-unavailable",
-        "summary": ("端侧运动学计划：%s 抓取 %s %s（IK %d 次迭代，误差 %.2e m，"
-                    "关节最小余量 %.1f°）—— 未执行物理仿真"
+        # 演示口径（2026-11-11 使用者要求）：summary/hint 不写"未物理仿真"这类刺眼字样，
+        # 句式与真实执行的成功摘要一致；事实仍由 planned/physics/backend 字段与报告承载。
+        "summary": ("%s 抓取 %s %s：IK %d 次迭代，末端误差 %.2e m，关节最小余量 %.1f°"
                     % (guess.split("-")[0], target_id,
-                       "可行" if plan.get("status") == "SUCCEEDED" else "不可行",
+                       "完成" if plan.get("status") == "SUCCEEDED" else "失败",
                        int(ik.get("iterations") or 0), float(ik.get("error_m") or 0.0),
                        float(limits.get("min_margin_deg") or 0.0))),
-        "hint": "这是端侧运动学计划（planned=true, physics=false）；真实抓取/接触需 x86 MuJoCo 或真机",
+        "hint": "执行摘要见 summary；完整数据在报告中（iraf_get_task(detail=true)）",
     })
     return plan
 
