@@ -48,7 +48,9 @@ class SceneIdParamTest(unittest.TestCase):
     def test_enter_robot_mode_forwards_scene_id(self):
         args = _func_args("iraf_enter_robot_mode")
         self.assertIn("scene_id", args)
-        self.assertIn('iraf_robot_mode(action="enter", scene_id=scene_id)', SRC)
+        # 2026-11-11：enter 透传 detail（默认紧凑返回），断言只锁"转发 scene_id"这一契约
+        self.assertIn('iraf_robot_mode(action="enter", scene_id=scene_id', SRC)
+        self.assertIn("detail", args)
 
     def test_submit_task_has_scene_and_resource(self):
         args = _func_args("iraf_submit_task")
