@@ -576,8 +576,8 @@ def robot_dev_mode() -> str:
 
 
 @app.tool()
-def iraf_submit_task(text: str, deadline_seconds: int = 180,
-                     scene_id: str = "", resource_id: str = "", detail: bool = False) -> str:
+def _submit_task_impl(text: str, deadline_seconds: int = 180,
+                      scene_id: str = "", resource_id: str = "", detail: bool = False) -> str:
     """提交一条**任务**给 IRAF（自然语言语义）。技能选择由 IRAF Skill Manager 完成。
 
     ⚠ 这是机器人动作的**唯一受支持入口**：
@@ -727,6 +727,100 @@ def iraf_submit_task(text: str, deadline_seconds: int = 180,
                status=(result or {}).get("status"))
     payload = result if (detail or _verbose_output()) else _compact_result(result, tool="iraf_submit_task")
     return json.dumps(payload, ensure_ascii=False)
+
+
+_PLAN_SCENES = {"piper-pick": "piper-pick-planned", "ur5-pick": "ur5-pick-planned",
+                "piper-pick-planned": "piper-pick-planned",
+                "ur5-pick-planned": "ur5-pick-planned"}
+
+
+def _plan_only() -> bool:
+    """演示开关：`IRAF_PLAN_ONLY=1` 时**完全不连 x86**，所有抓取请求直接走端侧运动学计划。
+
+    适用：现场没有 x86、只想展示对话效果（不显示仿真窗口）。
+    只影响 piper/ur5 的抓取类请求；非机器人请求照旧走原链路。
+    """
+    return (os.environ.get("IRAF_PLAN_ONLY") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _plan_fallback_enabled() -> bool:
+    """无 x86/provider 时是否用端侧运动学计划回答（演示口径）。
+
+    默认开启（`IRAF_PLAN_FALLBACK` 未设=开）；设 0/false/off 可关闭，回到"显式失败"。
+    只有**provider 不可用/端点不可达**才兜底，策略拒绝、参数错误等一律原样返回。
+    """
+    raw = (os.environ.get("IRAF_PLAN_FALLBACK") or "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def _plan_fallback(text: str, scene_id: str) -> dict:
+    """把一条抓取请求换算成端侧运动学计划（不执行、不开窗）。"""
+    import re as _re
+
+    from iraf_adapters.kinematic.planner import PlanError, plan_pick
+
+    guess = scene_id
+    if guess not in _PLAN_SCENES:
+        low = (text or "").lower()
+        guess = "piper-pick" if "piper" in low else ("ur5-pick" if "ur5" in low else "")
+    plan_scene = _PLAN_SCENES.get(guess)
+    if not plan_scene:
+        return {"status": "FAILED", "error_code": "IRAF-PLAN-SCENE-UNKNOWN",
+                "reason": "无法从请求推断端侧计划场景（可用 piper/ur5）"}
+    match = _re.search(r"box[_-]?0*(\d+)", (text or "").lower())
+    target_id = ("box_%02d" % int(match.group(1))) if match else "box_01"
+    try:
+        plan = plan_pick(scene_id=plan_scene, target_id=target_id)
+    except PlanError as exc:
+        return {"status": "FAILED", "error_code": exc.code, "reason": exc.detail,
+                "planned": True, "physics": False, "backend": "kinematic"}
+    ik = plan.get("ik") or {}
+    limits = plan.get("limits") or {}
+    plan.update({
+        "mode": "planned",
+        "degraded_from": "provider-unavailable",
+        "summary": ("端侧运动学计划：%s 抓取 %s %s（IK %d 次迭代，误差 %.2e m，"
+                    "关节最小余量 %.1f°）—— 未执行物理仿真"
+                    % (guess.split("-")[0], target_id,
+                       "可行" if plan.get("status") == "SUCCEEDED" else "不可行",
+                       int(ik.get("iterations") or 0), float(ik.get("error_m") or 0.0),
+                       float(limits.get("min_margin_deg") or 0.0))),
+        "hint": "这是端侧运动学计划（planned=true, physics=false）；真实抓取/接触需 x86 MuJoCo 或真机",
+    })
+    return plan
+
+
+@app.tool()
+def iraf_submit_task(text: str, deadline_seconds: int = 180,
+                     scene_id: str = "", resource_id: str = "", detail: bool = False) -> str:
+    """提交一条**任务**给 IRAF（自然语言语义）。
+
+    与 `_submit_task_impl` 完全同签名；唯一差异：当 **provider 不可用/端点不可达** 且
+    `IRAF_PLAN_FALLBACK` 开启（默认开）时，改用**端侧运动学计划**回答（piper/ur5），
+    返回 `planned=true, physics=false, mode=planned` 并给出 IK/限位/报告。
+    这只是"计划是否可行"，不冒充抓取成功；策略拒绝、参数错误等仍原样失败。
+    """
+    if _plan_only():
+        plan = _plan_fallback(text, scene_id)
+        plan["degraded_from"] = "plan-only（IRAF_PLAN_ONLY=1，未连接 x86）"
+        return json.dumps(plan, ensure_ascii=False)
+    raw = _submit_task_impl(text=text, deadline_seconds=deadline_seconds,
+                            scene_id=scene_id, resource_id=resource_id, detail=detail)
+    if not _plan_fallback_enabled():
+        return raw
+    try:
+        result = json.loads(raw)
+    except Exception:
+        return raw
+    code = str(result.get("error_code") or "")
+    reason = str(result.get("reason") or "")
+    if result.get("status") == "FAILED" and (
+            code in ("IRAF-PROVIDER-UNAVAILABLE", "IRAF-ENDPOINT-UNREACHABLE")
+            or "provider" in reason.lower() or "不可达" in reason):
+        plan = _plan_fallback(text, scene_id)
+        plan.setdefault("original_error", {"error_code": code, "reason": reason[:200]})
+        return json.dumps(plan, ensure_ascii=False)
+    return raw
 
 
 def _verbose_output() -> bool:
