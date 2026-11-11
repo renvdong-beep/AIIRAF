@@ -284,6 +284,9 @@ profiles:
         scope: system
         ports: [50051]
         optional: false
+        # 南向任务级 gRPC（50051）：本部署以北向 MCP 为入口，默认不起；
+        # 需要时 `systemctl enable --now iraf-runtime-grpc`（或把本项改 true 后重装）。
+        autostart: false
         # 独立资源限额（AGENTS 6.11）：与运控域同机部署时不得共享同一份 CPU/内存额度。
         # 取值依据 E300 实测（2 核 / 3979 MB）：智能域 1.5 核 / 1G，留足 TaskFlow+Policy 余量。
         cpu_quota: "150%"
@@ -294,6 +297,9 @@ profiles:
         scope: system
         ports: [8765]
         optional: false
+        # 板卡主入口：装完即启用，重启后自恢复（2026-11-11：此前安装器只写单元不 enable，
+        # 新板子/重启后必须人工 start，属可用性缺陷）。
+        autostart: true
         cpu_quota: "50%"
         memory_max: "512M"
     cross_domain:

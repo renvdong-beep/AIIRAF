@@ -35,6 +35,7 @@ PYTHON="${PYTHON:-python3}"
 LIB="${SCRIPT_DIR}/lib_install.py"
 PASSTHROUGH=()
 DRY_RUN="0"
+export IRAF_INSTALL_NO_START="${IRAF_INSTALL_NO_START:-0}"
 
 log() { printf '[install-iraf] %s\n' "$*" >&2; }
 err() { printf '[install-iraf][错误] %s\n' "$*" >&2; }
@@ -63,6 +64,7 @@ usage() {
                           运行期凭据文件（每行 KEY=VALUE；允许 IRAF_PROVIDER_TOKEN /
                           IRAF_GRPC_TOKEN / IRAF_AGENTOS_TOKEN）；落地为 <config_dir>/runtime.secrets
                           （600）并登记进安装记录。凭据不进装配单/命令行值，只能走文件。
+  --no-start              只 enable 不自启（演练/排障用；默认 enable --now）
   --json                  输出 JSON 计划/结果
   --repo-root <dir>       仓库根（调试用）
 
@@ -78,6 +80,7 @@ while [ "$#" -gt 0 ]; do
     -h|--help) usage; exit 0 ;;
     -n|--dry-run) DRY_RUN="1"; PASSTHROUGH+=("$1") ;;
     --allow-unverified|--rehearsal|--json) PASSTHROUGH+=("$1") ;;
+    --no-start) export IRAF_INSTALL_NO_START=1 ;;
     --profile|--root|--sdk-wheel|--runtime-bundle|--wheelhouse|--python|--run-user|--repo-root|--stubs-dir|--env-set|--secrets-file)
       [ "$#" -ge 2 ] || { err "$1 缺少取值"; exit 1; }
       PASSTHROUGH+=("$1" "$2"); shift ;;

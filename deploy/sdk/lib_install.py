@@ -942,6 +942,38 @@ def precheck(effective: dict, root: Path, *, allow_unverified: bool, wheelhouse:
     return checks
 
 
+def _enable_autostart_services(effective, root, services, *, no_start=False):
+    """按声明 enable（并 start）开机自启的服务；沙箱/演练不调用 systemctl。
+
+    2026-11-11 实测缺陷：安装器以前只写单元文件、不 enable ⇒ 新板子装完或板卡重启后，
+    北向 MCP 不会自己起来，必须人工 `systemctl start`。现在由声明 `autostart` 决定。
+    """
+    if str(effective.get("systemd_scope")) != "system":
+        return []
+    if Path(str(root)).resolve() != Path("/"):
+        info("演练/沙箱：跳过 systemctl enable/start（root=%s）" % root)
+        return []
+    names = [str(item["name"]) for item in services if item.get("autostart") is True]
+    if not names:
+        return []
+    done = []
+    subprocess.run(["systemctl", "daemon-reload"], capture_output=True, text=True, timeout=60)
+    for name in names:
+        unit = "%s.service" % name
+        args = ["systemctl", "enable"] + ([] if no_start else ["--now"]) + [unit]
+        result = subprocess.run(args, capture_output=True, text=True, timeout=120)
+        if result.returncode != 0:
+            for done_name in done:
+                subprocess.run(["systemctl", "disable", "%s.service" % done_name],
+                               capture_output=True, text=True, timeout=60)
+            raise InstallError(
+                "开机自启设置失败（%s）：%s"
+                % (unit, (result.stderr or result.stdout).strip()[:300]), EXIT_SERVICE)
+        done.append(name)
+        info("已启用开机自启：%s%s" % (unit, "" if no_start else "（并已启动）"))
+    return done
+
+
 def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundle: Path | None = None,
                   wheelhouse: Path | None = None, python_exe: str | None = None,
                   allow_unverified: bool = False, dry_run: bool = False,
@@ -1380,6 +1412,9 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
             created_files.append(unit_path)
             rendered_units.append(str(unit_path))
         plan["units"] = rendered_units
+        plan["autostart_units"] = _enable_autostart_services(
+            effective, root, effective["services"],
+            no_start=str(os.environ.get("IRAF_INSTALL_NO_START") or "0") == "1")
 
         if current.is_symlink() or current.exists():
             current.unlink()

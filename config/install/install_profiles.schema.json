@@ -339,6 +339,10 @@
               "description": "按真实时间推进仿真（演示口径：动作看得见）。缺省 false = 尽快跑完（回归/验收口径）。"
             }
           }
+        },
+        "autostart": {
+          "type": "boolean",
+          "description": "安装时是否 enable --now（默认 false）。true = 装完即在跑、重启后自恢复；只对 system 作用域且真实根 / 生效（沙箱演练不调用 systemctl）。"
         }
       }
     },
