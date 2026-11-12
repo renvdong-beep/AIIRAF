@@ -5,10 +5,12 @@ profile: profiles/ur5_mujoco.yaml
 safety_policy: profiles/safety/simulation_lab.yaml
 simulation: true
 switch_name: ur5
+# 使用者口语常说 “ur”/“ur5e”；不加别名会落回默认 piper-pick（2026-11-12 实测）
+aliases: [ur, ur5, ur5e, 优傲]
 max_concurrency: 1
 lease_ttl_s: 60
 resources:
   - id: ur5
     profile: profiles/ur5_mujoco.yaml
     capabilities: [move_joint, pick_object, visual_pick, place_object, stop, reset_scene]
-digest: sha256:9c9a82d325c258d73296882651d0d589e596cf913317d61c49a61959d1b18e1d
+digest: sha256:abbc024b7724d6ce1866151168899db28245810342494c6e4c9592501a4f28ab

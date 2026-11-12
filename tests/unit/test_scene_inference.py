@@ -31,6 +31,19 @@ class SceneInferenceTest(unittest.TestCase):
     def test_handoff_text_maps_to_joint(self):
         self.assertEqual("joint-handoff", self.reg.infer("跑 handoff_lab 全量演示"))
 
+    def test_chinese_box_phrases(self):
+        """中文口语“盒子”不得影响机型判定（2026-11-12 使用者口径）。"""
+        self.assertEqual("piper-pick", self.reg.infer("piper抓取盒子"))
+        self.assertEqual("ur5-pick", self.reg.infer("ur抓取盒子"))
+
+    def test_ur_alias_and_ur5e_alias(self):
+        """口语 `ur` / 型号 `ur5e` 都要落到 ur5-pick；不能落默认 piper。"""
+        self.assertEqual("ur5-pick", self.reg.infer("ur抓取盒子"))
+        self.assertEqual("ur5-pick", self.reg.infer("ur5e抓取盒子"))
+
+    def test_joint_chinese_alias(self):
+        self.assertEqual("joint-handoff", self.reg.infer("联合世界交接"))
+
     def test_non_robot_text_yields_empty(self):
         self.assertEqual("", self.reg.infer("今天天气怎么样"))
 

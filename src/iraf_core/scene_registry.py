@@ -410,7 +410,12 @@ class SceneRegistry:
             return ""
         if len(scored) == 1:
             return next(iter(scored))
-        pref = [sid for sid, token in scored.items() if sid.lower().startswith(token)]
+        # 命中多个场景时先看“命中词有多具体”：ur5e 应压过 joint 里 ur5 的泛命中。
+        longest = max(len(token) for token in scored.values())
+        best = {sid: token for sid, token in scored.items() if len(token) == longest}
+        if len(best) == 1:
+            return next(iter(best))
+        pref = [sid for sid, token in best.items() if sid.lower().startswith(token)]
         return pref[0] if len(pref) == 1 else ""
 
     def resolve(self, scene_id: Optional[str] = None,

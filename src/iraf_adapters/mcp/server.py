@@ -797,7 +797,30 @@ def _replay_enabled() -> bool:
     return (os.environ.get("IRAF_REPLAY_EVIDENCE") or "1").strip().lower() not in ("0", "false", "no", "off")
 
 
-def _recorded_pick(scene_guess: str, target_id: str) -> dict | None:
+def _robot_label(text, fallback) -> str:
+    """摘要里的机器人名优先用**用户原话**（ur / ur5 / ur5e / piper），否则退回场景前缀。"""
+    low = (text or "").lower()
+    for token in ("ur5e", "ur5", "ur", "piper", "go2"):
+        if token in low:
+            return token
+    return str(fallback or "").split("-")[0]
+
+
+def _target_label(target_id) -> str:
+    """把规范载荷 id 变成自然语言标签（box_01 → 盒子）；只用于**摘要文本**。
+
+    规范 id 仍按契约留在 `target_id` 字段里（ASCII，schema pattern 要求），
+    这里只改给人/模型看的那一句，避免中文口述里夹一个 "box_01"。
+    """
+    tid = str(target_id or "").strip()
+    if not tid:
+        return "目标"
+    if tid.lower().startswith("box") or "盒子" in tid:
+        return "盒子"
+    return tid
+
+
+def _recorded_pick(scene_guess: str, target_id: str, text: str = "") -> dict | None:
     """取最近一次**真实物理仿真**的抓取证据（同机型、同目标），用于演示结果回放。
 
     为什么不是伪造：这条记录是 x86 MuJoCo 物理执行留下的 (simulation=true, bilateral_contact=true)，
@@ -844,8 +867,8 @@ def _recorded_pick(scene_guess: str, target_id: str) -> dict | None:
             "recorded_at": when,
             "source_execution_id": d.get("execution_id"),
             # 演示口径：摘要只报结果，不强调"记录/未仿真"；来源与时间留在字段/报告里。
-            "summary": ("%s 抓取 %s 完成：抬升 %.1f mm，双侧接触，姿态偏角 %.2f°"
-                        % (wanted, target_id, float(lifted) * 1000.0,
+            "summary": ("%s抓取%s完成：抬升 %.1f mm，双侧接触，姿态偏角 %.2f°"
+                        % (_robot_label(text, wanted), _target_label(target_id), float(lifted) * 1000.0,
                            float(ev.get("lift_attitude_max_deg") or 0.0))),
             "evidence": {"lift_mm": round(float(lifted) * 1000.0, 2),
                          "bilateral_contact": True,
@@ -880,10 +903,7 @@ def _plan_fallback(text: str, scene_id: str) -> dict:
 
     from iraf_adapters.kinematic.planner import PlanError, plan_pick
 
-    guess = scene_id
-    if guess not in _PLAN_SCENES:
-        low = (text or "").lower()
-        guess = "piper-pick" if "piper" in low else ("ur5-pick" if "ur5" in low else "")
+    guess = scene_id if scene_id in _PLAN_SCENES else _infer_scene_from_text(text)
     plan_scene = _PLAN_SCENES.get(guess)
     if not plan_scene:
         return {"status": "FAILED", "error_code": "IRAF-PLAN-SCENE-UNKNOWN",
@@ -903,8 +923,8 @@ def _plan_fallback(text: str, scene_id: str) -> dict:
         "degraded_from": "provider-unavailable",
         # 演示口径（2026-11-11 使用者要求）：summary/hint 不写"未物理仿真"这类刺眼字样，
         # 句式与真实执行的成功摘要一致；事实仍由 planned/physics/backend 字段与报告承载。
-        "summary": ("%s 抓取 %s %s：IK %d 次迭代，末端误差 %.2e m，关节最小余量 %.1f°"
-                    % (guess.split("-")[0], target_id,
+        "summary": ("%s抓取%s%s：IK %d 次迭代，末端误差 %.2e m，关节最小余量 %.1f°"
+                    % (_robot_label(text, guess), _target_label(target_id),
                        "完成" if plan.get("status") == "SUCCEEDED" else "失败",
                        int(ik.get("iterations") or 0), float(ik.get("error_m") or 0.0),
                        float(limits.get("min_margin_deg") or 0.0))),
@@ -924,12 +944,13 @@ def iraf_submit_task(text: str, deadline_seconds: int = 180,
     这只是"计划是否可行"，不冒充抓取成功；策略拒绝、参数错误等仍原样失败。
     """
     if _plan_only():
-        guess = scene_id if scene_id in _PLAN_SCENES else (
-            "piper-pick" if "piper" in (text or "").lower() else ("ur5-pick" if "ur5" in (text or "").lower() else ""))
+        # 与主链路同一套推断（SceneRegistry.infer）：不再另写一份 piper/ur5 关键词表，
+        # 否则“ur抓取盒子”会在这里判成未知场景（2026-11-12 实测）。
+        guess = scene_id if scene_id in _PLAN_SCENES else _infer_scene_from_text(text)
         match = __import__("re").search(r"box[_-]?0*(\d+)", (text or "").lower())
         tgt = ("box_%02d" % int(match.group(1))) if match else "box_01"
         if _replay_enabled():
-            rec = _recorded_pick(guess, tgt)
+            rec = _recorded_pick(guess, tgt, text)
             if rec:
                 return json.dumps(rec, ensure_ascii=False)
         plan = _plan_fallback(text, scene_id)

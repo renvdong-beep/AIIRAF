@@ -8,7 +8,8 @@
   "properties": {
     "target_id": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "description": "要抓取的载荷 id（ASCII：如 box_01）。自然语言『盒子/方块/box』指默认载荷 box_01。"
     },
     "duration_ms": {
       "type": "integer",
@@ -18,7 +19,7 @@
     "vision_file": {
       "type": "string",
       "minLength": 1,
-      "description": "\u89c6\u89c9\u76ee\u6807\u8bc1\u636e\u6587\u4ef6\u8def\u5f84\uff0c\u7f3a\u7701\u7531 Backend \u4f7f\u7528\u9ed8\u8ba4\u8def\u5f84"
+      "description": "视觉目标证据文件路径，缺省由 Backend 使用默认路径"
     }
   }
 }

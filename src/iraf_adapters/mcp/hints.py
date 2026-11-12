@@ -8,7 +8,7 @@
 """
 
 WORKED_EXAMPLE = {
-    "text": "抓取 box_01",
+    "text": "piper 抓取盒子",
     "purpose": "语义映射示例：说明这类话应交给 iraf_submit_task。**不要求执行**，"
                "更不要在进入模式时拿它当链路自检（会弄脏 MuJoCo 场景）。",
     "resolved_skill": "pick_object",

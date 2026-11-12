@@ -5,7 +5,7 @@ profile: profiles/piper_mujoco.yaml
 safety_policy: profiles/safety/simulation_lab.yaml
 simulation: true
 switch_name: handoff_lab_joint
-aliases: [joint]   # 板卡注册表尚未改名，保留旧名过渡
+aliases: [joint, 联合, 交接, handoff]   # joint 为旧名过渡；中文口径供自然语言使用
 max_concurrency: 1
 lease_ttl_s: 120
 description: 联合世界（Go2 + Piper + UR5e）；9 步交接链路
@@ -26,4 +26,4 @@ resources:
   - id: joint-go2
     profile: profiles/unitree_go2_mujoco.yaml
     capabilities: [stand, locomote, dock_for_handoff, accept_payload, stop]
-digest: sha256:310ad45211aacc40f32d2a3dbab1250375d0839135ba065517791f0edee87787
+digest: sha256:2ee079a2d9a222c3a449dca9f305641ab3754e3ad63d6526d67fdda3fa8c3f0b
