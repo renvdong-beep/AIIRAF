@@ -150,3 +150,25 @@ python3 /root/bind_agentos_durable.py && systemctl restart agentos-dashboard
 3. 板卡仍处演练/回放开关：`IRAF_PLAN_ONLY=1`、`IRAF_REPLAY_EVIDENCE=1`（提交返回录制摘要）。
 4. `iraf-runtime-grpc` 默认不自启（`autostart: false`），需要南向 50051 时手工
    `systemctl enable --now iraf-runtime-grpc`。
+
+---
+
+## 7. 板卡用「0.4.6 收口产物」干净重装（2026-11-12 13:55）
+
+此前板卡上的三处修复是**热修**（直接改 `/opt/iraf-sdk/0.4.6/src`），安装记录里的哈希与文件不一致，
+下一次受控卸载会被判「清单外文件/哈希不符」。收口后用重打产物完整重装，消除漂移：
+
+```text
+[install] 已启用开机自启：iraf-mcp-http.service（并已启动）
+[install] 安装完成：/opt/iraf-sdk/0.4.6（版本目录 2314 个文件）
+current -> /opt/iraf-sdk/0.4.6
+iraf-mcp-http      enabled=enabled  active=active  healthz=200
+iraf-runtime-grpc  enabled=disabled active=inactive（按需）
+tools=12（无 _submit_task_impl），iraf_scene_status isError=False
+piper抓取盒子 → "piper抓取盒子完成：抬升 83.3 mm，双侧接触，姿态偏角 21.56°"
+ur抓取盒子    → "ur抓取盒子完成：抬升 76.3 mm，双侧接触，姿态偏角 2.21°"
+站点 env 键 6/6 保留（PROFILE/SAFETY/SCENE_MODE/DEFAULT_SCENE/PLAN_ONLY/REPLAY_EVIDENCE）
+AgentOS: [check] env=OK config=OK token_in_config=False；✓ Connected (103ms) / 12 tools
+```
+
+备份：`/root/iraf-0.4.6-prev`（热修版）、`/root/units-prev4/`（旧单元）。
