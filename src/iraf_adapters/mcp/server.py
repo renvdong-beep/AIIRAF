@@ -613,7 +613,8 @@ def robot_dev_mode() -> str:
     )
 
 
-@app.tool()
+# 内部实现：**不是**对外工具（2026-11-12 实测它曾被 @app.tool() 暴露成第 13 个工具，
+# 模型可直接调用从而绕过 iraf_submit_task 的 plan-fallback 与统一审计）。
 def _submit_task_impl(text: str, deadline_seconds: int = 180,
                       scene_id: str = "", resource_id: str = "", detail: bool = False) -> str:
     """提交一条**任务**给 IRAF（自然语言语义）。技能选择由 IRAF Skill Manager 完成。
