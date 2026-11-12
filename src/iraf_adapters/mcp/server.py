@@ -20,9 +20,11 @@
 """
 from __future__ import annotations
 
+import functools
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 VERSION_DIR = Path(os.environ.get("IRAF_VERSION_DIR") or "/opt/iraf-sdk/current")
@@ -186,7 +188,37 @@ def iraf_enter_robot_mode(scene_id: str = "", detail: bool = False) -> str:
     return iraf_robot_mode(action="enter", scene_id=scene_id, detail=detail)
 
 
+def _audited(tool_name: str):
+    """给 MCP 工具加一条 tool_span 审计：ts(开始) + duration_ms + outcome。
+
+    为什么需要它（2026-11-12）：只有 tool_call 的 ts 与少数工具的 duration_s，
+    端到端核对时要靠 AgentOS 日志拼；加上这条后，一次调用在 audit 里就能看到
+    "MCP 收到 → 工具返回"的真实耗时（含 IRAF 执行，如 submit_task 的同步执行）。
+    """
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            from iraf_adapters.mcp import auth as _auth
+            started = time.time()
+            outcome = "ok"
+            try:
+                return fn(*args, **kwargs)
+            except BaseException:
+                outcome = "error"
+                raise
+            finally:
+                try:
+                    _auth.audit("tool_span", _principal(), tool=tool_name,
+                                duration_ms=int((time.time() - started) * 1000),
+                                outcome=outcome)
+                except Exception:
+                    pass
+        return wrapper
+    return deco
+
+
 @app.tool()
+@_audited("iraf_plan_task")
 def iraf_plan_task(scene_id: str = "ur5-pick-planned", target_id: str = "box_01",
                    approach_m: float = 0.10, lift_m: float = 0.05,
                    duration_ms: int = 3000) -> str:
@@ -395,6 +427,7 @@ def _resolve_scene(principal, scene_id=None, resource_id=None):
 
 
 @app.tool()
+@_audited("iraf_robot_mode")
 def iraf_robot_mode(action: str = "status", ttl_seconds: int = 1800,
                     scene_id: str = "", detail: bool = False) -> str:
     """机器人开发模式的开关与状态（语义触发：用户说"开始机器人开发模式"时调用）。
@@ -934,6 +967,7 @@ def _plan_fallback(text: str, scene_id: str) -> dict:
 
 
 @app.tool()
+@_audited("iraf_submit_task")
 def iraf_submit_task(text: str, deadline_seconds: int = 180,
                      scene_id: str = "", resource_id: str = "", detail: bool = False) -> str:
     """提交一条**任务**给 IRAF（自然语言语义）。
@@ -1448,6 +1482,7 @@ def iraf_run_scenario(scenario: str = "nominal", display: str = "window",
                 pass
 
 @app.tool()
+@_audited("iraf_scene_status")
 def iraf_scene_status(scene_id: str = "", probe: bool = False) -> str:
     """只读：场景 / Provider / 主机 / 注册表状态（排障的唯一入口，不要用 ss/nc 猜）。
 
@@ -1503,6 +1538,7 @@ def iraf_scene_status(scene_id: str = "", probe: bool = False) -> str:
 
 
 @app.tool()
+@_audited("iraf_lease")
 def iraf_lease(action: str = "list", scene_id: str = "", resource_id: str = "__world__",
                lease_id: str = "", ttl_s: int = 0) -> str:
     """显式租约：acquire / renew / release / list（D3）。
@@ -1576,6 +1612,7 @@ def iraf_lease(action: str = "list", scene_id: str = "", resource_id: str = "__w
 
 
 @app.tool()
+@_audited("iraf_get_task")
 def iraf_get_task(execution_id: str, detail: bool = False) -> str:
     """按 execution_id 查询 IRAF 事件库里的执行事实（权威来源，不是缓存）。
 
