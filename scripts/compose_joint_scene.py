@@ -15,8 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from iraf_adapters.mujoco.joint_compose import (  # noqa: E402
-    ComposeError, build_registry_scene, compose_profile, compose_scene, load_descriptor,
-    write_outputs)
+    ComposeError, build_provider_doc, build_registry_scene, compose_profile, compose_scene,
+    load_descriptor, write_outputs)
 
 
 def main() -> int:
@@ -27,6 +27,9 @@ def main() -> int:
     ap.add_argument("--out", default="", help="输出目录（默认 scenes/<scene-id>）")
     ap.add_argument("--dry-run", action="store_true", help="只打印计划，不写文件")
     ap.add_argument("--register", action="store_true", help="同时生成 config/scenes/<id>.yaml")
+    ap.add_argument("--endpoint", default="", help="部署期 provider 端点 host:port（生成 provider 时必填）")
+    ap.add_argument("--control-url", default="", help="部署期 supervisor control_url")
+    ap.add_argument("--host-id", default="x86-1")
     args = ap.parse_args()
 
     base = ROOT / args.base
@@ -62,6 +65,13 @@ def main() -> int:
         reg_path = ROOT / "config" / "scenes" / ("%s.yaml" % args.scene_id)
         reg_path.write_text(yaml.safe_dump(registry, allow_unicode=True, sort_keys=False), encoding="utf-8")
         files.append(str(reg_path))
+        if args.endpoint and args.control_url:
+            provider = build_provider_doc(args.scene_id, endpoint=args.endpoint,
+                                          control_url=args.control_url, host_id=args.host_id)
+            prov_path = ROOT / "config" / "providers" / ("iraf-%s.yaml" % args.scene_id)
+            prov_path.parent.mkdir(parents=True, exist_ok=True)
+            prov_path.write_text(yaml.safe_dump(provider, allow_unicode=True, sort_keys=False), encoding="utf-8")
+            files.append(str(prov_path))
     print("[compose] 已生成：")
     for f in files:
         print("  " + f)

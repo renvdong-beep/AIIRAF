@@ -243,3 +243,24 @@ tools/call iraf_compose_joint_scene {scene_id: test_compose, robots: "piper,unit
 - 工具已部署到板卡 `/opt/iraf-sdk/current`（server.py + joint_compose.py + scenes/handoff_lab）；
 - `healthz=200`，MCP 工具可被 AgentOS 直接调用；
 - 写入模式（`dry_run=false, register=true`）会生成 scene/baseline/profile/registry 四个声明文件。
+
+### P4 首个增量（N 机器人复用，2026-11-18）
+
+- **provider 注册表生成**：CLI `--endpoint/--control-url/--host-id` → `config/providers/iraf-<id>.yaml`
+  （端点/控制面是部署期事实，composer 不猜）。
+- **N 机器人组合**（piper+ur5e+go2，未写任何机型代码）：
+
+```text
+compose_joint_scene --robots piper,ur5e,unitree_go2 --scene-id piper_ur5_go2_lab \
+  --register --endpoint 10.203.247.145:50055 --control-url http://10.203.247.145:8770
+→ 28 关节；resources {piper: arm, ur5e: arm, unitree_go2: quadruped}
+→ scenes/piper_ur5_go2_lab + profiles/piper_ur5_go2_lab.yaml
+→ config/scenes/piper_ur5_go2_lab.yaml + config/providers/iraf-piper_ur5_go2_lab.yaml
+
+build_scene --scene scenes/piper_ur5_go2_lab --robot unitree_go2 --attach piper --attach ur5e
+→ nq=48 / nv=46 / nu=27 / ncam=1 / nsite=8
+```
+
+- 运行时：临时把 provider 指向三机器人产物，`go2站起来` → **SUCCEEDED，4.4 s**；随后已恢复 handoff 原模型。
+- 已知：联合报告对 ur5e 的 manipulation 仍是 `resolved=false`（构建期有“放置航点翻转分支”告警），
+  A3 仍需按本体生成 manipulation 事实。

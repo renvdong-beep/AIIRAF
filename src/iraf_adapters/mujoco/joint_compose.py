@@ -146,3 +146,31 @@ def build_registry_scene(scene_id: str, descriptors: Iterable[dict]) -> Dict:
         "description": "联合场景 %s（composer 生成）" % scene_id,
         "resources": resources,
     }
+
+
+def build_provider_doc(scene_id: str, *, endpoint: str, control_url: str,
+                       host_id: str = "x86-1", allowed_hosts=None,
+                       token_env: str = "IRAF_PROVIDER_TOKEN") -> Dict:
+    """生成 provider 注册表文档（config/providers/iraf-<scene_id>.yaml）。
+
+    端点/控制面是**部署期事实**，必须由调用方给出；composer 不猜 IP/端口。
+    """
+    if not endpoint or not control_url:
+        raise ComposeError("生成 provider 需要 endpoint 与 control_url（部署期事实，不猜）")
+    hosts = sorted(set(allowed_hosts or [endpoint.rsplit(":", 1)[0]]))
+    return {
+        "schema": "iraf.provider/v1",
+        "provider_id": "iraf/%s" % scene_id,
+        "scene_id": scene_id,
+        "token_env": token_env,
+        "hosts": [{
+            "id": host_id,
+            "endpoint": endpoint,
+            "capacity": {"cores": 4, "gpu": "none"},
+            "priority": 10,
+            "control_url": control_url,
+        }],
+        "schedule": "static",
+        "health": {"interval_s": 5, "timeout_s": 2, "failover": "next"},
+        "allowed_hosts": hosts,
+    }

@@ -1,0 +1,19 @@
+schema: iraf.provider/v1
+provider_id: iraf/piper_ur5_go2_lab
+scene_id: piper_ur5_go2_lab
+token_env: IRAF_PROVIDER_TOKEN
+hosts:
+- id: x86-1
+  endpoint: 10.203.247.145:50055
+  capacity:
+    cores: 4
+    gpu: none
+  priority: 10
+  control_url: http://10.203.247.145:8770
+schedule: static
+health:
+  interval_s: 5
+  timeout_s: 2
+  failover: next
+allowed_hosts:
+- 10.203.247.145
