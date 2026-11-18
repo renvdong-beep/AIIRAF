@@ -1078,7 +1078,7 @@ def _probe_host(host, timeout: float = 2.0) -> dict:
     import urllib.error
     import urllib.request
 
-    base = _supervisor_url(host)
+    base = (base_url or _supervisor_url(host)).strip().rstrip("/")
     if not base:
         return {"error": "no-control-url"}
     req = urllib.request.Request(base + "/status")
@@ -1125,12 +1125,22 @@ def _capacity_state(provider, holder: str) -> tuple:
 
 
 def _supervisor_url(host=None) -> str:
-    """控制面地址：优先用注册表里该 host 的 control_url，其次 IRAF_SUPERVISOR_URL。"""
+    """控制面地址：注册表 host 的 control_url → 由 endpoint 推导 :8770 → 环境变量。
+
+    2026-11-18 实测：场景注册表模型只保留 id/endpoint/capacity，host 对象上没有
+    control_url 属性；只读 env 会让 iraf_run_scenario 回落到 SSH（默认旧机/无免密），
+    报“链路失败”。这里从 endpoint 的 IP 推导控制面地址，保证“注册表即路由”。
+    """
     host_control_url = getattr(host, "control_url", "") if host is not None else ""
+    if not host_control_url and host is not None:
+        endpoint = str(getattr(host, "endpoint", "") or "")
+        if ":" in endpoint:
+            host_control_url = "http://%s:8770" % endpoint.rsplit(":", 1)[0]
     return (host_control_url or os.environ.get("IRAF_SUPERVISOR_URL") or "").strip().rstrip("/")
 
 
-def _supervisor_call(path: str, params: dict, timeout: int = 120, host=None) -> dict:
+def _supervisor_call(path: str, params: dict, timeout: int = 120, host=None,
+                     base_url: str = "") -> dict:
     """调 x86 supervisor 控制面（带 X-Iraf-Token）。失败返回标准错误 JSON。"""
     import urllib.error
     import urllib.parse
@@ -1287,15 +1297,16 @@ def iraf_switch_scene(scene: str) -> str:
                         "result": result}, ensure_ascii=False)
 
 
-def _execute_scenario(scenario, display, hold, host):
+def _execute_scenario(scenario, display, hold, host, control_url=""):
     """同步执行全量链路（阻塞）；返回与工具响应同构的 dict，供同步/异步两条路径复用。"""
     import json as _json
     import subprocess as _sp
 
     mode = "window" if str(display).lower() in ("window", "interactive", "viewer") else "none"
-    if _supervisor_url():
+    control_url = (control_url or _supervisor_url()).strip().rstrip("/")
+    if control_url:
         r = _supervisor_call("/scenario", {"scenario": scenario, "display": mode, "hold": hold},
-                             timeout=900)
+                             timeout=900, base_url=control_url)
         ok = r.get("status") == "SUCCEEDED"
         if not ok:
             return {"status": "FAILED",
@@ -1342,7 +1353,7 @@ def _run_store():
     return _STATE["run_store"]
 
 
-def _run_scenario_bg(run_id, scenario, display, hold, subject, scene_id):
+def _run_scenario_bg(run_id, scenario, display, hold, subject, scene_id, control_url=""):
     """后台跑全量链路：本线程持租约，结束释放；任何失败都写进 runs 表（不伪造成功）。"""
     from iraf_core.leases import LeaseConflict
 
@@ -1359,8 +1370,9 @@ def _run_scenario_bg(run_id, scenario, display, hold, subject, scene_id):
                 "host:%s" % resolved.host.id, "__world__", "%s/async" % subject,
                 ttl_s=max(int(hold) + 300, resolved.scene.lease_ttl_s))
         host = (resolved.host.host if resolved is not None
-                else (os.environ.get("IRAF_SCENARIO_HOST") or "10.203.247.121"))
-        r = _execute_scenario(scenario, display, hold, host)
+                else (os.environ.get("IRAF_SCENARIO_HOST") or ""))
+        base = control_url or _supervisor_url(resolved.host if resolved is not None else None)
+        r = _execute_scenario(scenario, display, hold, host, control_url=base)
         ok = r.get("status") == "SUCCEEDED"
         store.finish(run_id, status="succeeded" if ok else "failed",
                      passed=r.get("passed"), rc=r.get("rc"), wall_s=r.get("wall_s"),
@@ -1430,9 +1442,16 @@ def iraf_run_scenario(scenario: str = "nominal", display: str = "window",
                             "reason": "scenario 必须是 %s 之一" % ", ".join(allowed_scen)},
                            ensure_ascii=False)
     host = (_resolved.host.host if _resolved is not None
-            else _os.environ.get("IRAF_SCENARIO_HOST", "10.203.247.121"))
+            else (_os.environ.get("IRAF_SCENARIO_HOST") or ""))
+    control_url = _supervisor_url(_resolved.host if _resolved is not None else None)
+    if not host and not control_url:
+        return _json.dumps({"status": "FAILED", "error_code": "IRAF-SCENARIO-HOST-UNSET",
+                            "reason": "未配置 x86 控制面：请设置 IRAF_SUPERVISOR_URL（如 "
+                                      "http://<x86>:8770）或场景注册表的 control_url，"
+                                      "不要依赖默认主机"},
+                           ensure_ascii=False)
     allow = _allowed_hosts()
-    if host not in allow:
+    if host and host not in allow:
         return _json.dumps({"status": "FAILED", "error_code": "IRAF-PROVIDER-HOST-REJECTED",
                             "reason": "scenario 主机 %s 不在允许列表 %s" % (host, allow)},
                            ensure_ascii=False)
@@ -1446,7 +1465,8 @@ def iraf_run_scenario(scenario: str = "nominal", display: str = "window",
         run_id = _run_store().create(scenario, mode, hold)
         threading.Thread(target=_run_scenario_bg,
                          args=(run_id, scenario, mode, hold, principal.subject,
-                               _resolved.scene.scene_id if _resolved is not None else ""),
+                               _resolved.scene.scene_id if _resolved is not None else "",
+                               control_url),
                          daemon=True, name="scenario-%s" % run_id[:8]).start()
         _auth.audit("tool_call", principal, tool="iraf_run_scenario", action="async",
                     run_id=run_id, scene=scenario)
@@ -1469,7 +1489,7 @@ def iraf_run_scenario(scenario: str = "nominal", display: str = "window",
                                 "reason": str(exc), "lease": exc.lease.as_dict()},
                                ensure_ascii=False)
     try:
-        r = _execute_scenario(scenario, mode, hold, host)
+        r = _execute_scenario(scenario, mode, hold, host, control_url=control_url)
         ok = r.get("status") == "SUCCEEDED"
         _auth.audit("tool_call", principal, tool="iraf_run_scenario", scene=scenario,
                     status="SUCCEEDED" if ok else "FAILED", via=r.get("via") or "ssh")

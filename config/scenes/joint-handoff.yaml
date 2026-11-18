@@ -5,7 +5,7 @@ profile: profiles/piper_mujoco.yaml
 safety_policy: profiles/safety/simulation_lab.yaml
 simulation: true
 switch_name: handoff_lab_joint
-aliases: [joint, 联合, 交接, handoff]   # joint 为旧名过渡；中文口径供自然语言使用
+aliases: [joint, 联合, 交接, handoff, 狗, 机器狗, 四足]   # joint 为旧名过渡；中文口径供自然语言使用
 max_concurrency: 1
 lease_ttl_s: 120
 description: 联合世界（Go2 + Piper + UR5e）；9 步交接链路
