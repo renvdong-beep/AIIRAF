@@ -169,3 +169,23 @@ spec:
 新增：`joint_backend.py`、`joint_compose.py`、`scripts/compose_joint_scene.py`、`skills/engineering/joint_scene_composer/*`。
 修改：`src/iraf_adapters/mcp/server.py`（注册工具，薄封装）、`src/iraf_core/profile.py`（可选 `joint` 段解析）、`config/install`（联合 profile 模板）。
 不动：TaskFlow、Policy、Registry、单机 provider 后端、handoff 场景脚本。
+
+---
+
+## 10. 执行记录（P1，2026-11-18）
+
+| 编号 | 状态 | 证据 |
+|---|---|---|
+| A1 联合世界 `go2站起来` | ✅ | SUCCEEDED，3.8 s；`provider=quadruped_stand_sim`，`control_cycles=800` |
+| A2 联合世界 `piper抓取盒子` | ✅ | SUCCEEDED，43.1 s；`bilateral_contact=true`、`force_ok=true` |
+| A3 联合世界 `ur5` 抓取 | ⛔ 阻塞 | `config/machines/ur5e_joint.yaml` 明确登记：联合报告只描述主臂 piper，UR5e 的 manipulation 段尚未解算（I3/I4 增量），不是后端路由能绕过的 |
+| A4 `handoff_lab` nominal 回归 | ✅ | 9/9 步 SUCCEEDED，89.9 s，`passed=true` |
+| A5 composer 生成 piper+go2 | 待 P2 | — |
+| A6 单机 provider 回归 | 待验 | 默认场景未改，待跑 |
+| A7 declared⊆implemented | ✅ | 联合 Profile 10 能力全部在 JointMujocoBackend 上；factory 装配期通过 |
+
+P1 代码：`9357671`（JointMujocoBackend、联合 Profile、SafetyPolicy 放行、RemoteProviderBackend go2 代理、plant stepper）。
+
+**结论**：联合世界的 piper/go2 单点控制已打通；UR5 需要先补齐联合报告的 manipulation 事实（P2 composer 的一部分：按本体生成 manipulation 段），再回到 A3。
+
+下一步（P2）：`joint_compose.py` —— 先做 Profile 并集/校验与 MJCF 命名空间合并，用 piper+go2 生成新场景验证 A5。
