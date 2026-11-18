@@ -1510,6 +1510,10 @@ def iraf_compose_joint_scene(scene_id: str, robots: str, base: str = "",
     robots 用逗号分隔（如 "piper,unitree_go2"）；只生成 scene/baseline/Profile（可选 registry），
     MJCF 合成仍由 scripts/build_scene.py 完成（主本体选四足）。
     """
+    import json as _json
+    import os as _os
+    from pathlib import Path as _Path
+
     from iraf_adapters.mujoco import joint_compose as _jc
 
     try:
@@ -1523,18 +1527,18 @@ def iraf_compose_joint_scene(scene_id: str, robots: str, base: str = "",
         if not ids:
             return _json.dumps({"status": "FAILED", "error_code": "IRAF-COMPOSE-INPUT",
                                 "reason": "robots 不能为空"}, ensure_ascii=False)
-        descriptors = [_jc.load_descriptor(Path(base_dir) / "scene.yaml", rid) for rid in ids]
+        descriptors = [_jc.load_descriptor(_Path(base_dir) / "scene.yaml", rid) for rid in ids]
         profile = _jc.compose_profile(descriptors, scene_id=str(scene_id))
-        composed = _jc.compose_scene(Path(base_dir) / "scene.yaml", Path(base_dir) / "baseline.yaml",
+        composed = _jc.compose_scene(_Path(base_dir) / "scene.yaml", _Path(base_dir) / "baseline.yaml",
                                      scene_id=str(scene_id), robot_ids=ids)
         files = []
         if not dry_run:
-            files = _jc.write_outputs(Path(root), scene_id=str(scene_id), composed=composed,
-                                      profile=profile, out_dir=Path(root) / "scenes" / str(scene_id))
+            files = _jc.write_outputs(_Path(root), scene_id=str(scene_id), composed=composed,
+                                      profile=profile, out_dir=_Path(root) / "scenes" / str(scene_id))
             if register:
                 import yaml as _yaml
                 registry = _jc.build_registry_scene(str(scene_id), descriptors)
-                reg_path = Path(root) / "config" / "scenes" / ("%s.yaml" % scene_id)
+                reg_path = _Path(root) / "config" / "scenes" / ("%s.yaml" % scene_id)
                 reg_path.write_text(_yaml.safe_dump(registry, allow_unicode=True, sort_keys=False),
                                     encoding="utf-8")
                 files.append(str(reg_path))

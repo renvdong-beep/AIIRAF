@@ -232,3 +232,14 @@ python3 scripts/build_scene.py --scene scenes/piper_go2_lab --robot unitree_go2 
 - **注册表生成**：CLI `--register` 写 `config/scenes/<id>.yaml`（resources/profile/safety_policy）；
 - 实测：`piper,unitree_go2 → piper_go2_lab`，Provider `SUCCEEDED`，20 关节，生成
   scene/baseline/profile/registry 四个文件；MCP 工具待部署到板卡后做端到端调用。
+
+### P3 端到端（板卡 MCP，2026-11-18）
+
+```text
+tools/call iraf_compose_joint_scene {scene_id: test_compose, robots: "piper,unitree_go2", dry_run: true}
+→ {"status":"SUCCEEDED","joints":20,"capabilities":[10 项],"files":[],"dry_run":true}
+```
+
+- 工具已部署到板卡 `/opt/iraf-sdk/current`（server.py + joint_compose.py + scenes/handoff_lab）；
+- `healthz=200`，MCP 工具可被 AgentOS 直接调用；
+- 写入模式（`dry_run=false, register=true`）会生成 scene/baseline/profile/registry 四个声明文件。
