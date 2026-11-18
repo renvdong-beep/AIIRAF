@@ -317,3 +317,14 @@ build_scene --scene scenes/franka_lab --robot franka
   （`robots/0: 'reference_solver' is a required property`）。
 - 结论：P4 的“新机器人单机接入 + 构建”已完成；“新机器人参与联合世界”需要先为它生成
   manipulation/reference 事实（与 A3 的 ur5 同一类增量），不是后端或路由问题。
+
+### P4 Franka 联合组合：事实缺口（2026-11-18）
+
+- 加最小 `reference_solver`（`scripts/build_franka_baseline.py`）后，schema 通过；
+- 构建继续在“继承 gripper”处 fail-closed：
+  `臂侧场景报告缺少 gripper 段，无法继承: build/scenes/franka_lab/franka_lab.json`；
+- 结论：Franka 要与其它机器人组成**可抓取的联合世界**，必须先为它生成
+  `spec.manipulation`（gripper/夹爪几何、开合位形、targets）与单机 pick 报告；
+  这与 ur5 的 I3/I4 属同一类“按本体事实”的增量，不能由 composer 猜。
+- 当前交付边界：Franka 单机 Profile/场景/资产锁/构建已复用现有链路完成（P4 接入）；
+  联合世界参与需补 manipulation 事实（后续增量）。

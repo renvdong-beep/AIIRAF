@@ -1,0 +1,8 @@
+schema_version: iraf.scene-baseline/v1
+scene: scene.yaml
+robots:
+  franka: config/machines/franka.yaml
+  unitree_go2: config/go2_joint.yaml
+robots_joint:
+  franka: config/machines/franka.yaml
+  unitree_go2: config/go2_joint.yaml
