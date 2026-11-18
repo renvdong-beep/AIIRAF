@@ -189,3 +189,14 @@ P1 代码：`9357671`（JointMujocoBackend、联合 Profile、SafetyPolicy 放�
 **结论**：联合世界的 piper/go2 单点控制已打通；UR5 需要先补齐联合报告的 manipulation 事实（P2 composer 的一部分：按本体生成 manipulation 段），再回到 A3。
 
 下一步（P2）：`joint_compose.py` —— 先做 Profile 并集/校验与 MJCF 命名空间合并，用 piper+go2 生成新场景验证 A5。
+
+### P2 首个增量（2026-11-18）
+
+- 新增 `src/iraf_adapters/mujoco/joint_compose.py`：从既有场景取本体声明 → **Profile 并集**
+  （joints/limits/capabilities + `joint.resources`）→ 生成 `scene.yaml` / `baseline.yaml` / Profile；
+- 新增 `scripts/compose_joint_scene.py` CLI（`--robots piper,unitree_go2 --scene-id ...`，支持 `--dry-run`）；
+- 实测：piper+go2 生成 **20 关节**、能力并集、资源 `{piper: arm, unitree_go2: quadruped}`；
+- 产物路径自动改写到 `build/scenes/<scene_id>/`，不覆盖 handoff 既有产物。
+- **当前阻塞**：`build_scene.py --scene scenes/piper_go2_lab --robot piper --attach unitree_go2`
+  报 `厂商模型里没有 IMU site None（spec.model.imu_site 与模型不一致）` —— 生成场景的 `model` 段
+  仍继承 handoff 的机型声明，需要按所选本体裁剪（下一步修 composer 的 model/robots 裁剪规则）。
