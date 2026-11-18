@@ -512,7 +512,7 @@ async function handleJob(job){
   document.getElementById('play').textContent = '暂停';
 }
 async function pollJobs(){
-  if(!AUTO_FOLLOW || !D) return;
+  if(!AUTO_FOLLOW) return;
   try{
     const url = '/api/jobs' + (lastJob ? ('?since=' + encodeURIComponent(lastJob)) : '');
     const r = await fetch(url);
