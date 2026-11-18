@@ -328,3 +328,20 @@ build_scene --scene scenes/franka_lab --robot franka
   这与 ur5 的 I3/I4 属同一类“按本体事实”的增量，不能由 composer 猜。
 - 当前交付边界：Franka 单机 Profile/场景/资产锁/构建已复用现有链路完成（P4 接入）；
   联合世界参与需补 manipulation 事实（后续增量）。
+
+### 最终回归（2026-11-18，路由/多臂/组合改动后）
+
+| 编号 | 结果 |
+|---|---|
+| A1 联合 go2 stand | ✅ accepted=true，control_cycles=800 |
+| A2 联合 piper pick | ✅ accepted=true，bilateral_contact/force_ok=true |
+| A3 联合 ur5 pick | ✅ 26.7 s（ur5-go2-lab） |
+| A4 handoff nominal | ✅ 9/9 步 SUCCEEDED，99.0 s，passed=true |
+| A6 单机 piper/ur5 | ✅ 5.5 s / 58.3 s |
+
+### 交付边界（P4）
+
+- **已完成**：新机器人接入复用链路（Profile + 场景 + vendor source-lock + 构建；
+  Franka 单机 `nq=9/nu=8/ncam=1`）；任意既有机器人 N 组合（piper+ur5e+go2）；
+- **后续增量**：新机器人（Franka）进入**可抓取**联合世界需补其 manipulation 事实
+  （gripper/targets + 单机 pick 报告），与 ur5 的 I3/I4 同类，不属于编排器本身。
