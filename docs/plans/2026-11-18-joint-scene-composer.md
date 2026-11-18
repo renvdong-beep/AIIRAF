@@ -307,3 +307,13 @@ build_scene --scene scenes/franka_lab --robot franka
 ```
 
 下一步：把 franka 与 go2 组进同一联合场景（composer 复用），验证 P4 的“新机器人参与联合编排”。
+
+
+### P4 Franka 组合的当前阻塞（2026-11-18）
+
+- Franka 单机接入已通过：`franka_lab.xml`（nq=9/nu=8/ncam=1）；
+- 尝试 franka+go2 组合时，scene.schema 要求机械臂条目带 `reference_solver`（且构建器要求
+  `manipulation_report`）；Franka 目前没有抓取参考解/夹爪事实 ⇒ 组合构建被 correctly 拒绝
+  （`robots/0: 'reference_solver' is a required property`）。
+- 结论：P4 的“新机器人单机接入 + 构建”已完成；“新机器人参与联合世界”需要先为它生成
+  manipulation/reference 事实（与 A3 的 ur5 同一类增量），不是后端或路由问题。
