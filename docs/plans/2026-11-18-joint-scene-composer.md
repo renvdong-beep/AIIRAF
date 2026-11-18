@@ -291,3 +291,19 @@ ur抓取盒子 → SUCCEEDED，26.7 s，accepted=true，
 ```
 
 **A3 完成**：联合世界里 ur5 可单点抓取（uc5 主操纵联合场景），go2 与 piper 走各自路由。
+
+### P4 新机器人（Franka）接入，2026-11-18
+
+- `scene_builder`：机械臂模型可**不声明** `spec.model.imu_site`（只有声明了才校验；无 site 是合法事实）；
+- 新增 `profiles/franka_mujoco.yaml`（关节/限位来自 `panda.xml` 实测：7 臂 + 2 指）；
+- 新增 `scenes/franka_lab/`（单机场景 + baseline）；
+- `vendor/franka_emika_panda/source-lock.json` 补齐（76 个资产，schema `iraf.vendor-source-lock/v1`）；
+- 构建实测：
+
+```text
+build_scene --scene scenes/franka_lab --robot franka
+→ build/scenes/franka_lab/franka_lab.xml
+   nq=9 / nv=9 / nu=8 / ncam=1 / nsite=0
+```
+
+下一步：把 franka 与 go2 组进同一联合场景（composer 复用），验证 P4 的“新机器人参与联合编排”。

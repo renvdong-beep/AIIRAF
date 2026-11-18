@@ -3660,7 +3660,8 @@ def build_scene_model(scene_dir, robot, root=None, output=None, attach=()):
             "厂商模型里没有躯干 body %s（spec.model.trunk_body 与模型不一致）" % trunk_body_name,
         )
     vendor_site_names = {site.get("name") for site in xml_root.iter("site")}
-    if str(model.get("imu_site")) not in vendor_site_names:
+    # 机械臂类模型通常没有 IMU site：缺省（未声明）时跳过校验，声明了才要求模型里存在。
+    if model.get("imu_site") and str(model.get("imu_site")) not in vendor_site_names:
         _fail(
             EXIT_REFERENCE,
             "厂商模型里没有 IMU site %s（spec.model.imu_site 与模型不一致）" % model.get("imu_site"),
