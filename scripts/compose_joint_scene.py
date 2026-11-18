@@ -57,8 +57,11 @@ def main() -> int:
     print("[compose] 已生成：")
     for f in files:
         print("  " + f)
-    print("[compose] 下一步：python3 scripts/build_scene.py --scene %s --robot %s --attach %s"
-          % (out_dir.relative_to(ROOT), robot_ids[0], " --attach ".join(robot_ids[1:])))
+    primary = next((r for r in robot_ids if r in ("unitree_go2", "go2")), robot_ids[0])
+    attach = [r for r in robot_ids if r != primary]
+    print("[compose] 下一步：python3 scripts/build_scene.py --scene %s --robot %s%s"
+          % (out_dir.relative_to(ROOT), primary,
+             "".join(" --attach " + r for r in attach)))
     return 0
 
 

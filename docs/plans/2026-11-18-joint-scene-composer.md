@@ -200,3 +200,18 @@ P1 代码：`9357671`（JointMujocoBackend、联合 Profile、SafetyPolicy 放�
 - **当前阻塞**：`build_scene.py --scene scenes/piper_go2_lab --robot piper --attach unitree_go2`
   报 `厂商模型里没有 IMU site None（spec.model.imu_site 与模型不一致）` —— 生成场景的 `model` 段
   仍继承 handoff 的机型声明，需要按所选本体裁剪（下一步修 composer 的 model/robots 裁剪规则）。
+
+### A5（P2 第二个增量，2026-11-18）
+
+- 修正：构建主本体应选**四足**（厂商 go2 模型自带 IMU site），机械臂作为 `--attach`；
+  生成器的 `--robot piper` 会拿臂 Profile 的 `spec.model.imu_site=None` 去比对，必失败。
+- 实测：
+
+```text
+python3 scripts/build_scene.py --scene scenes/piper_go2_lab --robot unitree_go2 --attach piper
+→ build/scenes/piper_go2_lab/piper_go2_lab_joint.xml（nq=34, nv=32, nu=20, ncam=1, nsite=5）
+```
+
+- 运行时：把 handoff provider 临时指向该产物（备份 env），板卡 `go2站起来` → **SUCCEEDED，3.4 s**；
+  验证后已恢复 handoff 原模型。
+- 结论：**A5 通过**（composer 生成 piper+go2 联合场景，单点 stand 成功）。

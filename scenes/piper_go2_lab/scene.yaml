@@ -1,0 +1,298 @@
+schema_version: iraf.scene/v1
+id: piper_go2_lab
+description: 联合场景 piper_go2_lab（composer 生成）：piper,unitree_go2
+simulation: true
+plant_demand_gate: true
+world_physics:
+  cone: elliptic
+  impratio: 100
+seed:
+  base: 20260920
+  randomization: false
+terrain:
+  kind: flat
+  friction: 1.0 0.02 0.001
+  workbench:
+    top_z_m: 0.0
+    half_size_m: 1.5
+    half_thickness_m: 0.025
+    friction: 1.0 0.02 0.001
+robots:
+- id: piper
+  kind: arm
+  role: manipulator
+  profile: profiles/piper_mujoco.yaml
+  profile_name: piper_mujoco
+  capabilities:
+  - move_joint
+  - pick_object
+  - visual_pick
+  - place_object
+  - stop
+  manipulation_report: build/models/piper-pick-scene.json
+  reference_solver:
+    module: scripts/build_piper_baseline.py
+    entry: build_reference_poses
+    place_entry: build_place_reference_poses
+    feedforward_entry: build_reference_feedforward
+    baseline: config/piper_simulation_baseline.yaml
+  placement:
+    pos_m:
+    - 0.45
+    - -0.45
+    - 0.12
+    quat_wxyz:
+    - 0.38268343236509
+    - 0.0
+    - 0.0
+    - 0.923879532511287
+  note: 既有能力（MuJoCo 仿真已验收）；本场景复用配置 config/piper_simulation_baseline.yaml，不改其语义。
+- id: unitree_go2
+  kind: quadruped
+  role: carrier
+  profile: profiles/unitree_go2_mujoco.yaml
+  capabilities:
+  - stand
+  - stop
+  - locomote
+  - dock_for_handoff
+  - accept_payload
+  note: 厂家 MJCF 已探测（12 个力矩型 motor、imu site、无相机/无雷达），仅证明低层模型存在，不代表导航/停靠能力（AGENTS.md
+    6.8）；场景构建器按本场景声明注入相机/雷达/托盘/道具/光照，厂商文件只读。locomote 已在 MuJoCo 仿真里验收并声明（速度指令可走/转/退，受安全策略
+    max_speed_mps=0.5 约束；**上板部署证据另计**）；**停靠/放托盘/载荷确认仍未交付**，见 scenario.yaml 的 pending
+    登记（步骤 18）。
+props:
+- id: box_01
+  body: box_01
+  kind: box
+  geometry:
+    type: box
+    size_m:
+    - 0.025
+    - 0.025
+    - 0.025
+  mass_kg: 0.04
+  friction: 2.0 0.05 0.001
+  rgba:
+  - 0.82
+  - 0.22
+  - 0.12
+  - 1.0
+  pose:
+    pos_m:
+    - 0.28
+    - -0.28
+    - 0.025
+    quat_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  note: 方块在机械臂旁边（离基座 0.240416 m）；抓取判据按 body 命中，数值由联合模型 FK 回写报告（不看继承值）。
+- id: tray_01
+  body: tray_01
+  kind: tray
+  geometry:
+    type: box
+    size_m:
+    - 0.12
+    - 0.08
+    - 0.01
+  mass_kg: 0.35
+  friction: 1.4 0.03 0.001
+  rgba:
+  - 0.25
+  - 0.3
+  - 0.35
+  - 1.0
+  pose:
+    mount:
+      entity: unitree_go2
+      frame: tray_frame
+  receiving: true
+  note: 停靠判据（平移 ≤30mm、偏航 ≤2deg）针对 tray_frame，见 baseline.yaml 的 acceptance 段。
+- id: arm_pedestal
+  body: arm_pedestal
+  kind: stand
+  geometry:
+    type: box
+    size_m:
+    - 0.09
+    - 0.09
+    - 0.057
+  mass_kg: 5.0
+  friction: 1.0 0.005 0.0001
+  rgba:
+  - 0.45
+  - 0.45
+  - 0.5
+  - 1.0
+  pose:
+    pos_m:
+    - 0.45
+    - -0.45
+    - 0.057
+    quat_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  static: true
+  note: '机械臂基座（静态体，顶面 0.114 m，支撑 0.12 m 安装面）。静态体必须 `static: true`（不带自由关节）—— 带自由关节的台架会直接自由落体。不是接收体（未声明
+    receiving），不参与放置判据。'
+- id: place_pad_b
+  body: place_pad_b
+  kind: box
+  static: true
+  geometry:
+    type: box
+    size_m:
+    - 0.18
+    - 0.18
+    - 0.01
+  mass_kg: 0.05
+  friction: 1.4 0.03 0.001
+  rgba:
+  - 0.35
+  - 0.45
+  - 0.3
+  - 1.0
+  pose:
+    pos_m:
+    - 0.88
+    - 0.7
+    - -0.005
+    quat_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  receiving: true
+  note: UR5e 卸载落点（I4-a，A 方案：B 站旁台面）。顶面 z=0.0 与工作台齐平；依据见 docs/debug/2026-09-24-joint-model-dog-arm.md
+    §11.48（可达带/残差/姿态偏差/裕度/净距）。 【2026-09-30 §11.60 外移 0.70,0.60 → 0.78,0.70】运行期逐拍实测：载荷在
+    above 段下降时 **擦到狗的前左髋 FL_hip**（`PLACE_TRACE` 的 `payload_contacts` 里出现 `FL_hip`），刚性焊缝
+    把这股力传回臂、把臂拽离指令位姿（x 从 0.7374 外漂到 0.7848、z 停在 0.1512 而非构建期 FK 的 0.020633）⇒ descend
+    永远到不了、末端报"触地纠偏需要竖向移动 -0.118808736 m"。 与狗前左髋（狗在 B 站 (0.45,0.45)、躯干半长 ~0.19 ⇒ 髋
+    ≈ (0.64,0.55)）的净距： 原 0.078 m → **0.205 m**；可达性复核 r = 0.386 m（带内 [0.042868, 1.027868]），
+    三点可行性探针（0.75,0.65 / 0.78,0.70 / 0.70,0.70）均 pass=true。
+frames:
+- id: handoff_station_frame
+  kind: site
+  pose:
+    pos_m:
+    - 0.45
+    - 0.0
+    - 0.0
+    quat_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  note: 前提：臂基座在台面原点附近（臂尚未装进同一模型，见 .hermes/plans/2026-09-23-dock-for-handoff.md §11）；只按**位置**可达筛选，**未约束工具姿态**。待臂的摆放（A/B/C
+    方案）确定后复核此坐标。
+- id: handoff_station_frame_b
+  kind: site
+  pose:
+    pos_m:
+    - 0.15
+    - 0.45
+    - 0.0
+    quat_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  note: 站位名在机型声明里登记（config/go2_joint.yaml 的 dock_for_handoff.stations.handoff_b）；
+    步骤按**站名**选择，不写坐标。台面 half_size_m=1.5 ⇒ 在台面内。
+sensors:
+- id: overhead_camera
+  kind: camera
+  source: scene
+  anchor:
+    object_kind: camera
+    name: overhead_camera
+    entity: piper
+  pos_m:
+  - 0.28
+  - -0.72
+  - 0.72
+  look_at_m:
+  - 0.28
+  - -0.28
+  - 0.025
+  fovy_deg: 78
+  note: 相机位姿与外参按机型独立；本场景沿用 Piper 基线已标定的视角，标定文件仍走 config/piper_simulation_baseline.yaml
+    的 vision 段。
+- id: payload_lidar
+  kind: lidar
+  source: scene
+  anchor:
+    object_kind: site
+    name: payload_lidar_site
+    entity: unitree_go2
+  num_rays: 360
+  range_m: 8.0
+  mount_height_m: 0.12
+  note: 首期只用于场景观测；导航能力未验收前不得据此声明 navigate 可用。
+- id: base_imu
+  kind: imu
+  source: vendor
+  anchor:
+    object_kind: site
+    name: imu
+    entity: unitree_go2
+  rate_hz: 100
+  note: 厂商 go2.xml 自带 <site name="imu">；场景构建器只读该 site，不修改厂商文件。
+lights:
+- name: key
+  directional: true
+  dir:
+  - -0.16
+  - 0.16
+  - -1.0
+  diffuse:
+  - 0.85
+  - 0.84
+  - 0.82
+  specular:
+  - 0.25
+  - 0.25
+  - 0.25
+  castshadow: false
+- name: fill
+  directional: true
+  dir:
+  - 0.6
+  - -0.25
+  - -0.55
+  diffuse:
+  - 0.3
+  - 0.3
+  - 0.3
+  specular:
+  - 0.05
+  - 0.05
+  - 0.05
+  castshadow: false
+- name: rim
+  directional: true
+  dir:
+  - 0.25
+  - 0.7
+  - -0.4
+  diffuse:
+  - 0.22
+  - 0.22
+  - 0.24
+  specular:
+  - 0.0
+  - 0.0
+  - 0.0
+  castshadow: false
+model:
+  output: build/scenes/piper_go2_lab/piper_go2_lab.xml
+  joint_output: build/scenes/piper_go2_lab/piper_go2_lab_joint.xml
+  joint_manipulator: piper
+  attached_actuator:
+    armature_min_kg_m2: 0.5
+  builder: scripts/build_scene.py
