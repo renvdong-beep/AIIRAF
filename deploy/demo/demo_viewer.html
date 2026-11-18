@@ -239,7 +239,7 @@ function phaseHTML(){
 }
 function updatePanel(){
   const info = (ROBOTS && ROBOTS.robots[ROBOT]) || {};
-  if(D.kind === 'quadruped'){ updateQuadPanel(info); return; }
+  if(D.kind === 'quadruped' || D.kind === 'humanoid'){ updateQuadPanel(info); return; }
   document.getElementById('title').innerHTML = info.label + ' 抓取 · 可改 box 位置 <span class="tag">PLAN</span>';
   document.getElementById('k-err').textContent = 'IK 误差';
   document.getElementById('k-fing').textContent = '夹爪开口';
@@ -270,7 +270,7 @@ function render(){
   const B=bounds();
   drawGrid(B,w,h);
   const f=D.frames[frame];
-  if(D.kind === 'quadruped'){
+  if(D.kind === 'quadruped' || D.kind === 'humanoid'){
     drawReferenceBox(B,w,h);
     drawBodyBox(B,w,h,f);
     drawQuadruped(B,w,h,f);
@@ -280,11 +280,11 @@ function render(){
     drawRobot(B,w,h,f);
   }
   document.getElementById('phase').textContent = f.phase_label + ' · ' + f.t.toFixed(2) + ' s';
-  if(D.kind === 'quadruped'){
-    const b=f.pos.base_link;
+  if(D.kind === 'quadruped' || D.kind === 'humanoid'){
+    const b=f.pos[D.base_body||'base_link'];
     document.getElementById('p-ee').textContent = b.map(v=>v.toFixed(3)).join(', ');
     document.getElementById('p-fing').textContent = (D.meta.distance_m).toFixed(2)+' m';
-    document.getElementById('p-q').textContent = 'GO2 12 关节（四足步态）';
+    document.getElementById('p-q').textContent = D.robot === 'g1' ? 'G1 29 关节（人形步态）' : 'GO2 12 关节（四足步态）';
   }else{
   const G=D.gripper||{left:'link7',right:'link8'};
   const L=f.pos[G.left], Rr=f.pos[G.right];
@@ -312,9 +312,9 @@ async function loadRobot(name){
   frame = 0; last = 0; playing = true;
   document.getElementById('play').textContent = '暂停';
   const kind = (ROBOTS.robots[name] || {}).kind || 'arm';
-  document.getElementById('ctl').style.display = kind === 'quadruped' ? 'none' : 'flex';
-  document.getElementById('go2ctl').style.display = kind === 'quadruped' ? 'flex' : 'none';
-  if(kind === 'quadruped'){
+  document.getElementById('ctl').style.display = kind === 'quadruped' || kind === 'humanoid' ? 'none' : 'flex';
+  document.getElementById('go2ctl').style.display = kind === 'quadruped' || kind === 'humanoid' ? 'flex' : 'none';
+  if(kind === 'quadruped' || kind === 'humanoid'){
     GO2_DIR = (D.meta && D.meta.command) || 'forward';
     document.querySelectorAll('#go2ctl [data-dir]').forEach(b =>
       b.classList.toggle('on', b.dataset.dir === GO2_DIR));
@@ -345,7 +345,7 @@ function updateQuadPanel(info){
   document.getElementById('k-err').textContent = '步态';
   document.getElementById('k-fing').textContent = '移动距离';
   document.getElementById('k-ee').textContent = '机身位置';
-  document.getElementById('p-robot').textContent = 'go2';
+  document.getElementById('p-robot').textContent = ROBOT;
   document.getElementById('p-target').textContent = D.target.id;
   document.getElementById('p-box').textContent = D.target.pos.map(v=>v.toFixed(2)).join(', ');
   document.getElementById('p-err').textContent = D.meta.gait;
@@ -407,13 +407,13 @@ function drawQuadruped(B,w,h,f){
   const colors={'FL':'#f97316','FR':'#22c55e','RL':'#60a5fa','RR':'#a78bfa'};
   // 轨迹（机身）
   for(let i=1;i<=frame;i++){
-    const a=project(D.frames[i-1].pos.base_link,B,w,h);
-    const b=project(D.frames[i].pos.base_link,B,w,h);
+    const BB=D.base_body||'base_link'; const a=project(D.frames[i-1].pos[BB],B,w,h);
+    const b=project(D.frames[i].pos[BB],B,w,h);
     ctx.strokeStyle='rgba(148,163,184,.5)'; ctx.lineWidth=2;
     ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke();
   }
   // 狗头 + 朝向箭头（方向 = 运动方向）
-  const base=f.pos.base_link, yaw=f.yaw||0;
+  const BB=D.base_body||'base_link'; const base=f.pos[BB], yaw=f.yaw||0;
   const H=D.head || {local_offset:[0.24,0,0.04], half:[0.075,0.06,0.05]};
   const c=Math.cos(yaw), s=Math.sin(yaw);
   const hc=[base[0]+H.local_offset[0]*c-H.local_offset[1]*s,
@@ -437,7 +437,7 @@ function drawQuadruped(B,w,h,f){
   ctx.fillStyle='rgba(34,211,238,.9)'; ctx.font='10px ui-sans-serif';
   ctx.fillText('运动方向', P[0]+6, P[1]+12);
   for(let li=0; li<D.chains.length; li++){
-    const chain=D.chains[li], color=colors[D.feet[li].slice(0,2)] || '#93c5fd';
+    const chain=D.chains[li], color=colors[D.feet[li].slice(0,2)] || ['#f97316','#22c55e','#60a5fa','#a78bfa'][li % 4];
     for(const [a,b] of chain.slice(0,-1).map((x,i)=>[x,chain[i+1]])){
       line(f.pos[a], f.pos[b], B,w,h, 'rgba(15,23,42,.9)', 6);
       line(f.pos[a], f.pos[b], B,w,h, color, 3);
@@ -450,20 +450,20 @@ function drawQuadruped(B,w,h,f){
     ctx.fillText(D.feet[li].slice(0,2), P[0]+6, P[1]+12);
   }
 }
-async function replanGo2(){
+async function replanMove(){
   const msg=document.getElementById('msg');
   const distance=parseFloat(document.getElementById('gdist').value);
   if(Number.isNaN(distance)){ msg.textContent='距离格式不对'; return; }
   msg.classList.remove('err'); msg.textContent='计算中…';
   try{
-    const resp=await fetch(`/api/plan?robot=go2&dir=${GO2_DIR}&distance=${distance}`);
+    const resp=await fetch(`/api/plan?robot=${ROBOT}&dir=${GO2_DIR}&distance=${distance}`);
     const data=await resp.json();
     if(data.status==='OK'){
       D=data.result; frame=0; last=0; playing=true;
       document.getElementById('play').textContent='暂停';
       phaseHTML(); updatePanel(); render();
       const cmd=(D.meta.command_label||D.meta.command);
-      msg.textContent=`已计算：GO2 ${cmd} ${D.meta.distance_m.toFixed(2)} m（${D.meta.frames} 帧 / ${D.meta.duration_s.toFixed(1)}s）`;
+      msg.textContent=`已计算：${ROBOT.toUpperCase()} ${cmd} ${D.meta.distance_m.toFixed(2)} m（${D.meta.frames} 帧 / ${D.meta.duration_s.toFixed(1)}s）`;
     }else{
       msg.classList.add('err'); msg.textContent=data.error||'计算失败';
     }
@@ -475,7 +475,6 @@ function setAuto(text, show){
   el.classList.toggle('on', !!show || AUTO_FOLLOW);
 }
 async function handleJob(job){
-  lastJob = job.seq;
   const robot = job.robot || 'piper';
   const label = ((ROBOTS.robots || {})[robot] || {}).label || robot;
   let msg = `AgentOS → ${label} · ${job.action || ''}`;
@@ -493,7 +492,7 @@ async function handleJob(job){
     document.querySelectorAll('#go2ctl [data-dir]').forEach(b =>
       b.classList.toggle('on', b.dataset.dir === GO2_DIR));
     if(job.distance) document.getElementById('gdist').value = job.distance;
-    await replanGo2();
+    await replanMove();
   }
   frame = 0; last = 0; playing = true;
   document.getElementById('play').textContent = '暂停';
@@ -505,7 +504,7 @@ async function pollJobs(){
     const r = await fetch(url);
     const d = await r.json();
     for(const job of (d.jobs || [])){
-      if(job.seq !== lastJob){ await handleJob(job); }
+      if(job.seq !== lastJob){ await handleJob(job); lastJob = job.seq; }
     }
   }catch(e){ setAuto('AUTO · job 轮询失败：' + e.message, true); }
 }
@@ -539,10 +538,10 @@ async function boot(){
     b.onclick=()=>{
       GO2_DIR=b.dataset.dir;
       document.querySelectorAll('#go2ctl [data-dir]').forEach(x=>x.classList.toggle('on', x===b));
-      replanGo2();
+      replanMove();
     };
   });
-  document.getElementById('gmove').onclick=replanGo2;
+  document.getElementById('gmove').onclick=replanMove;
   document.getElementById('play').onclick=e=>{ playing=!playing; e.target.textContent=playing?'暂停':'播放'; };
   document.getElementById('spin').onclick=e=>{ spinning=!spinning; e.target.textContent=spinning?'停止环绕':'环绕'; };
   document.getElementById('scrub').oninput=e=>{ frame=+e.target.value; playing=false;
@@ -576,7 +575,7 @@ async function boot(){
       }
     }catch(_){}
     pollJobs();
-    setInterval(pollJobs, 1500);
+    setInterval(pollJobs, 800);
   }
   requestAnimationFrame(loop);
 }
