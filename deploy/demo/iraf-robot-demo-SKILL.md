@@ -1,9 +1,7 @@
 ---
 name: iraf-robot-demo
-description: "IRAF 端侧演示：用语义让 Piper/UR5 抓取、Go2/G1 前后左右移动，并在 8085 演示屏自动播放；支持在可抓取范围内随机取 box 位置。"
 version: 0.1.0
 author: Intewell Agent
-tags: [iraf, robot, demo, plan, piper, ur5, go2, g1, kinematic]
 ---
 
 # IRAF Robot Demo（端侧运动学演示）
@@ -32,7 +30,6 @@ tags: [iraf, robot, demo, plan, piper, ur5, go2, g1, kinematic]
 | 「piper 抓取 box」 | `iraf_edge_plan_task(robot="piper", action="pick")` |
 | 「ur5 随机位置抓一个」 | `iraf_edge_random_target(robot="ur5")` → `iraf_edge_plan_task(robot="ur5", action="pick", x=..., y=..., z=...)` |
 | 「让狗往左走 0.4 米」 | `iraf_edge_plan_task(robot="go2", action="move", direction="left", distance=0.4)` |
-| 「让 G1 往前走 0.5 米」 | `iraf_edge_plan_task(robot="g1", action="move", direction="forward", distance=0.5)` |
 | 「范围是多少」 | `iraf_edge_target_ranges(robot="piper")` |
 
 方向只支持 `forward / back / left / right`；距离 0–2 米。

@@ -24,7 +24,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from piper_api import Planner as PiperPlanner  # noqa: E402
 from ur5_api import Planner as Ur5Planner      # noqa: E402
 from go2_api import Go2Planner                 # noqa: E402
-from g1_api import G1Planner                   # noqa: E402
 
 ROOT = Path(os.environ.get("IRAF_DEMO_ROOT") or "/home/coretek/demo")
 SCENE_ROOT = Path(os.environ.get("IRAF_DEMO_SCENE_ROOT")
@@ -38,7 +37,6 @@ SCENES = {
     "ur5": (Ur5Planner, SCENE_ROOT / "ur5-pick-scene/ur5-pick-scene.xml",
             "UR5（6 轴 + Robotiq 2F-85）", "assets/ur5_scene.png", "arm"),
     "go2": (Go2Planner, None, "Go2（四足）", "assets/go2_scene.png", "quadruped"),
-    "g1": (G1Planner, None, "G1（人形）", "assets/g1_scene.png", "humanoid"),
 }
 PLANNERS = {}
 for _name, (_cls, _xml, _label, _img, _kind) in SCENES.items():
@@ -119,7 +117,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(400, {"status": "FAILED", "error": "未知机器人: %s" % robot})
             planner = PLANNERS[robot]
             try:
-                if robot in ("go2", "g1"):
+                if robot == "go2":
                     direction = (q.get("dir", ["forward"])[0] or "forward").lower()
                     distance = float(q.get("distance", ["0.5"])[0])
                     return self._json(200, {"status": "OK",

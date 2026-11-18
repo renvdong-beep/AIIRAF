@@ -60,6 +60,7 @@
   body.agentos #tabs, body.agentos #ctl, body.agentos #go2ctl, body.agentos #panel,
   body.agentos #bar, body.agentos #scene, body.agentos #hud .sub, body.agentos #hud .phase{display:none !important}
   body.agentos #phases{bottom:26px}
+  body.agentos:not(.has-robot) #hud, body.agentos:not(.has-robot) #phases{display:none !important}
   body.agentos #hud{max-width:72%}
 </style>
 </head>
@@ -269,7 +270,13 @@ function updatePanel(){
   }
 }
 function render(){
-  if(!D) return;
+  const r0=cv.parentElement.getBoundingClientRect(), w0=r0.width, h0=r0.height;
+  if(!D){
+    ctx.clearRect(0,0,w0,h0);
+    ctx.fillStyle='rgba(148,163,184,.55)'; ctx.font='16px ui-sans-serif';
+    ctx.textAlign='center'; ctx.fillText('等待 AgentOS 指令…', w0/2, h0/2); ctx.textAlign='left';
+    return;
+  }
   const r=cv.parentElement.getBoundingClientRect(), w=r.width, h=r.height;
   ctx.clearRect(0,0,w,h);
   const B=bounds();
@@ -289,7 +296,7 @@ function render(){
     const b=f.pos[D.base_body||'base_link'];
     document.getElementById('p-ee').textContent = b.map(v=>v.toFixed(3)).join(', ');
     document.getElementById('p-fing').textContent = (D.meta.distance_m).toFixed(2)+' m';
-    document.getElementById('p-q').textContent = D.robot === 'g1' ? 'G1 29 关节（人形步态）' : 'GO2 12 关节（四足步态）';
+    document.getElementById('p-q').textContent = 'GO2 12 关节（四足步态）';
   }else{
   const G=D.gripper||{left:'link7',right:'link8'};
   const L=f.pos[G.left], Rr=f.pos[G.right];
@@ -487,6 +494,7 @@ async function handleJob(job){
   if(job.target) msg += ` @ (${job.target.x}, ${job.target.y}, ${job.target.z})`;
   if(job.direction) msg += ` ${job.direction} ${job.distance || ''}m`;
   setAuto(msg, true);
+  document.body.classList.add('has-robot');
   if(robot !== ROBOT){ await loadRobot(robot); }
   if(job.action === 'pick' && job.target){
     document.getElementById('inx').value = job.target.x;
@@ -567,9 +575,6 @@ async function boot(){
     zoom=Math.max(0.5,Math.min(2.5, zoom*(e.deltaY>0?0.92:1.08))); render(); }, {passive:false});
   document.getElementById('msg').textContent='选择机器人或修改坐标后点"计算并播放"';
   const qp = new URLSearchParams(location.search);
-  await loadRobot(qp.get('robot') || ROBOTS.default || 'piper');
-  const fp = parseInt(qp.get('f'), 10);
-  if(!Number.isNaN(fp) && D && D.frames){ frame = Math.min(D.frames.length - 1, Math.max(0, fp)); playing = false; render(); }
   if(AUTO_FOLLOW){
     setAuto('AUTO · 等待 AgentOS 指令…', true);
     try{
@@ -585,6 +590,10 @@ async function boot(){
     }catch(_){}
     pollJobs();
     setInterval(pollJobs, 800);
+  } else {
+    await loadRobot(qp.get('robot') || ROBOTS.default || 'piper');
+    const fp = parseInt(qp.get('f'), 10);
+    if(!Number.isNaN(fp) && D && D.frames){ frame = Math.min(D.frames.length - 1, Math.max(0, fp)); playing = false; render(); }
   }
   requestAnimationFrame(loop);
 }

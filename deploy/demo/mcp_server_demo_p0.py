@@ -263,10 +263,9 @@ def _planner_for(robot: str):
         from go2_api import Go2Planner
         planner = Go2Planner()
     elif robot == "g1":
-        from g1_api import G1Planner
-        planner = G1Planner()
+        raise ValueError("g1 已下线（不参与演示）")
     else:
-        raise ValueError("robot 只支持 piper/ur5/go2/g1：%r" % robot)
+        raise ValueError("robot 只支持 piper/ur5/go2：%r" % robot)
     _PLANNERS[robot] = planner
     return planner
 
@@ -275,7 +274,7 @@ def _robot_of(scene_id: str, robot: str) -> str:
     if robot and robot.strip():
         return robot.strip().lower()
     sid = (scene_id or "").lower()
-    for name in ("piper", "ur5", "go2", "g1"):
+    for name in ("piper", "ur5", "go2"):
         if name in sid:
             return name
     return "ur5"
@@ -342,7 +341,7 @@ def iraf_edge_plan_task(scene_id: str = "ur5-pick-planned", target_id: str = "bo
                    publish: bool = True) -> str:
     """端侧（edge）运动学计划：本地模型 IK/FK，返回计划；可发布 job 供 8085 播放。
 
-    robot: piper / ur5（抓取）、go2 / g1（前后左右移动）。
+    robot: piper / ur5（抓取）、go2（前后左右移动）。
     x/y/z: 目标（不给则用场景默认）；random_target=True 时在已测范围内随机并校验。
     publish=True（默认）：写 job 到 /var/lib/iraf-demo/jobs，供 8085 演示屏播放。
     强制标注 planned=true / physics=false；不产出接触/成功率结论。
@@ -360,7 +359,7 @@ def iraf_edge_plan_task(scene_id: str = "ur5-pick-planned", target_id: str = "bo
                action=action, random=bool(random_target))
     try:
         planner = _planner_for(name)
-        if name in ("go2", "g1"):
+        if name == "go2":
             result = planner.build(action if action in ("forward", "back", "left", "right")
                                    else direction, float(distance))
             job, job_path = (_publish_job(name, "move", direction=direction,
