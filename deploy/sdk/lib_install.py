@@ -1208,6 +1208,32 @@ def apply_install(effective: dict, root: Path, *, sdk_wheel: Path, runtime_bundl
                     {"from": str(src_mesh_dir), "files": copied_meshes})
                 info("场景 mesh 已随包：%d 个（来自 %s，引用改写为 meshes/）"
                      % (copied_meshes, src_mesh_dir))
+            # 目录级资产：`<compiler meshdir="../../../vendor/...">` 或 texturedir 指向
+            # 版本目录之外时，mesh 引用是**裸文件名**，上面的 `/meshes/` 规则覆盖不到。
+            # 处置：把该目录整棵拷进 <version>/models/{assets|textures}，并把属性改写成相对目录，
+            # 使安装物自包含（handoff_lab_joint 的 Go2 资产就是这种写法，2026-11-18 实测起不来）。
+            for attr, subdir in (("meshdir", "assets"), ("texturedir", "textures")):
+                for ref in sorted(set(re.findall(r'%s="([^"]+)"' % attr, xml_text))):
+                    if not ref.startswith(("..", "/")):
+                        continue
+                    src_dir = (source_xml.parent / ref).resolve()
+                    if not src_dir.is_dir():
+                        continue
+                    dst_dir = models_dir / subdir
+                    copied_dir_assets = 0
+                    for item in src_dir.rglob("*"):
+                        if not item.is_file():
+                            continue
+                        target = dst_dir / item.relative_to(src_dir)
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(item, target)
+                        copied_dir_assets += 1
+                    xml_text = xml_text.replace('%s="%s"' % (attr, ref),
+                                                '%s="%s/"' % (attr, subdir))
+                    plan.setdefault("scene_meshdir_assets", []).append(
+                        {"attr": attr, "from": str(src_dir), "files": copied_dir_assets})
+                    info("场景 %s 已随包：%d 个文件（来自 %s，改写为 %s/）"
+                         % (attr, copied_dir_assets, src_dir, subdir))
             xml_target.write_text(xml_text, encoding="utf-8")
             # 除 mesh 之外，场景还会引用**普通资产**（UR5e 的 `ur5e_2f85/assets/*.obj`、贴图等），
             # 且引用写法可能只有裸文件名（真实位置由 meshdir/texturedir 决定）。按名字猜路径不可靠，
