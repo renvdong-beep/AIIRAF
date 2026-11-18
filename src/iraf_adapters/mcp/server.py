@@ -1190,7 +1190,11 @@ def _ensure_scene(scene: str, endpoint: str = "", host=None, provider=None) -> s
             r = _supervisor_call("/ensure", {"scene": scene}, timeout=150)
             if r.get("status") == "OK":
                 return "switched(supervisor)"
-            return "switch-failed:%s" % (r.get("reason") or "supervisor 拒绝")
+            reason = str(r.get("reason") or r.get("error") or "")
+            # 新组合场景不在 supervisor 的固定场景表里：继续用 provider 端点直连检查，
+            # 不把"supervisor 不认识"误判成"provider 不可用"。
+            if "无此场景" not in reason and "IRAF-SCENE-NOT-FOUND" not in reason:
+                return "switch-failed:%s" % (reason or "supervisor 拒绝")
         failover = str((getattr(provider, "health", {}) or {}).get("failover") or "")
         if failover == "next" and provider is not None:
             hosted += [h for h in sorted(provider.hosts, key=lambda x: x.priority)

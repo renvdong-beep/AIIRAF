@@ -30,6 +30,7 @@ def main() -> int:
     ap.add_argument("--endpoint", default="", help="部署期 provider 端点 host:port（生成 provider 时必填）")
     ap.add_argument("--control-url", default="", help="部署期 supervisor control_url")
     ap.add_argument("--host-id", default="x86-1")
+    ap.add_argument("--joint-manipulator", default="", help="联合报告顶层 manipulation 取自哪台臂（缺省沿用）")
     args = ap.parse_args()
 
     base = ROOT / args.base
@@ -38,7 +39,8 @@ def main() -> int:
         descriptors = [load_descriptor(base / "scene.yaml", rid) for rid in robot_ids]
         profile = compose_profile(descriptors, scene_id=args.scene_id)
         composed = compose_scene(base / "scene.yaml", base / "baseline.yaml",
-                                 scene_id=args.scene_id, robot_ids=robot_ids)
+                                 scene_id=args.scene_id, robot_ids=robot_ids,
+                                 joint_manipulator=args.joint_manipulator)
     except ComposeError as exc:
         print("[compose][错误] %s" % exc)
         return 2

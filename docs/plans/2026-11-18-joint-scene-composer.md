@@ -264,3 +264,15 @@ build_scene --scene scenes/piper_ur5_go2_lab --robot unitree_go2 --attach piper 
 - 运行时：临时把 provider 指向三机器人产物，`go2站起来` → **SUCCEEDED，4.4 s**；随后已恢复 handoff 原模型。
 - 已知：联合报告对 ur5e 的 manipulation 仍是 `resolved=false`（构建期有“放置航点翻转分支”告警），
   A3 仍需按本体生成 manipulation 事实。
+
+### A3 推进（2026-11-18）：ur5e 作为联合世界主操纵臂
+
+- composer 新增 `--joint-manipulator`：`ur5_go2_lab` 以 **ur5e 为主 manipulator** 构建；
+- 联合报告结果：`declared_primary: ur5e`，`attached_manipulators` 中 **ur5e resolved=True**
+  （piper 不再参与），模型 `nq=40/nu=19`；
+- JointMujocoBackend 支持多机械臂（piper/ur5 子后端 + 按 lease.resource_id 选择），
+  ur5 后端由 `emit_backend_config.py` 生成（targets=box_01、name_map=47）；
+- 新 provider `iraf-provider@ur5_go2_lab` 已在 `.145` 起在 **50056**（10 能力，JointMujocoBackend）；
+- 板卡注册 `ur5-go2-lab` 场景 + provider 端点后，提交仍被 **supervisor 场景白名单**拦下：
+  `switch-failed: supervisor 无此场景：ur5-go2-lab（可用：handoff_lab_joint, piper, ur5）`；
+  已给 `_ensure_scene` 加“未知场景继续走 provider 直连”的回退，但运行时仍走到该分支 —— 下一轮修路由。

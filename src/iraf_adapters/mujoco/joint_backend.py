@@ -65,29 +65,45 @@ class JointMujocoBackend:
         go2_profile = load_robot_profile(root / go2_profile_path)
         go2 = UnitreeGo2Adapter.from_config(go2_cfg, go2_profile, authority)
 
-        arm_cfg = dict(config.get("piper") or {})
-        arm_cfg.setdefault("model_path", config.get("model_path"))
-        arm_cfg["plant"] = go2.plant  # 机械臂是 guest：共享四足拥有的植物
-        arm_profile_path = arm_cfg.pop("profile", "profiles/piper_mujoco.yaml")
-        arm_profile = load_robot_profile(root / arm_profile_path)
-        arm = MujocoBackend.from_config(arm_cfg, arm_profile, authority)
+        arms = {}
+        piper_cfg = dict(config.get("piper") or {})
+        ur5_cfg = dict(config.get("ur5") or {})
+        for key, cfg, default_profile in (("piper", piper_cfg, "profiles/piper_mujoco.yaml"),
+                                          ("ur5", ur5_cfg, "profiles/ur5_mujoco.yaml")):
+            if not cfg:
+                continue
+            cfg.setdefault("model_path", config.get("model_path"))
+            cfg["plant"] = go2.plant  # 机械臂是 guest：共享四足拥有的植物
+            cfg.setdefault("plant_guest_timeout_factor", 3.0)
+            profile_path = cfg.pop("profile", default_profile)
+            arms[key] = MujocoBackend.from_config(cfg, load_robot_profile(root / profile_path), authority)
+        if not arms:
+            raise JointBindingError("联合装配至少需要一台机械臂（piper/ur5）")
 
-        return cls(profile=profile, authority=authority, arm=arm, quadruped=go2,
-                   resources=dict(config.get("resources") or cls.DEFAULT_RESOURCES),
-                   go2_profile=go2_profile, arm_profile=arm_profile)
+        return cls(profile=profile, authority=authority, arms=arms, quadruped=go2,
+                   resources=dict(config.get("resources") or cls.DEFAULT_RESOURCES))
 
-    def __init__(self, *, profile, authority, arm, quadruped, resources,
-                 go2_profile=None, arm_profile=None):
+    def __init__(self, *, profile, authority, arms, quadruped, resources):
         self.profile = profile
         self.authority = authority
-        self._arm = arm
+        self._arms = dict(arms)
         self._quadruped = quadruped
         self._resources = dict(resources)
-        self.model = getattr(quadruped, "model", getattr(arm, "model", None))
-        self.data = getattr(quadruped, "data", getattr(arm, "data", None))
+        first = next(iter(self._arms.values()))
+        self.model = getattr(quadruped, "model", getattr(first, "model", None))
+        self.data = getattr(quadruped, "data", getattr(first, "data", None))
         self.plant = getattr(quadruped, "plant", None)
-        self._go2_profile = go2_profile
-        self._arm_profile = arm_profile
+
+    def _arm_for(self, lease):
+        rid = str(getattr(lease, "resource_id", "") or "")
+        if "ur5" in rid and "ur5" in self._arms:
+            return self._arms["ur5"]
+        if "piper" in rid and "piper" in self._arms:
+            return self._arms["piper"]
+        # 缺资源名（场景/Profile 名）时：只有一台臂就直接用它；多台必须显式
+        if len(self._arms) == 1:
+            return next(iter(self._arms.values()))
+        raise JointBindingError("联合世界有多台机械臂，但 lease.resource_id=%r 无法区分" % rid)
 
     # ---- 路由 ----
     def _kind(self, lease, resource_id=""):
@@ -132,20 +148,24 @@ class JointMujocoBackend:
 
     # ---- 机械臂能力（piper / ur5） ----
     def move_joint(self, *args, **kwargs):
+        lease = kwargs.get("lease") or (args[-1] if args else None)
         with self._advance_plant():
-            return self._arm.move_joint(*args, **kwargs)
+            return self._arm_for(lease).move_joint(*args, **kwargs)
 
     def pick_object(self, *args, **kwargs):
+        lease = kwargs.get("lease") or (args[-1] if args else None)
         with self._advance_plant():
-            return self._arm.pick_object(*args, **kwargs)
+            return self._arm_for(lease).pick_object(*args, **kwargs)
 
     def place_object(self, *args, **kwargs):
+        lease = kwargs.get("lease") or (args[-1] if args else None)
         with self._advance_plant():
-            return self._arm.place_object(*args, **kwargs)
+            return self._arm_for(lease).place_object(*args, **kwargs)
 
     def visual_pick(self, *args, **kwargs):
+        lease = kwargs.get("lease") or (args[-1] if args else None)
         with self._advance_plant():
-            return self._arm.visual_pick(*args, **kwargs)
+            return self._arm_for(lease).visual_pick(*args, **kwargs)
 
     def reset_scene(self, *args, **kwargs):
         return self._arm.reset_scene(*args, **kwargs)
@@ -179,7 +199,7 @@ class JointMujocoBackend:
         远端 runtime 会拿它做 Policy 前置条件与 Health.inventory；缺它时
         Provider 直接被判 IRAF-PROVIDER-INVENTORY-UNAVAILABLE（2026-11-18 实测）。
         """
-        inventory = dict(self._arm.runtime_inventory())
+        inventory = dict(next(iter(self._arms.values())).runtime_inventory())
         inventory["mode"] = "simulation"
         inventory["joint"] = {
             "resources": dict(self._resources),
@@ -190,11 +210,13 @@ class JointMujocoBackend:
 
     # ---- 显示/渲染（viewer 依赖；联合世界用四足/机械臂的同一把植物锁） ----
     def display_lock(self):
-        return self._arm.display_lock() if callable(getattr(self._arm, "display_lock", None)) \
-            else self.plant.lock()
+        arm = next(iter(self._arms.values()))
+        if callable(getattr(arm, "display_lock", None)):
+            return arm.display_lock()
+        return self.plant.lock()
 
     def render_frames(self, *args, **kwargs):
-        for backend in (self._quadruped, self._arm):
+        for backend in [self._quadruped, *self._arms.values()]:
             fn = getattr(backend, "render_frames", None)
             if callable(fn):
                 return fn(*args, **kwargs)
@@ -206,12 +228,12 @@ class JointMujocoBackend:
             kind, _ = self._kind(lease)
         except JointBindingError:
             kind = "arm"
-        target = self._quadruped if kind == "quadruped" else self._arm
+        target = self._quadruped if kind == "quadruped" else self._arm_for(lease)
         return target.stop(lease, execution_id=execution_id)
 
     def emergency_stop(self, reason):
         reports = []
-        for backend in (self._quadruped, self._arm):
+        for backend in [self._quadruped, *self._arms.values()]:
             try:
                 reports.append(backend.emergency_stop(reason))
             except Exception as exc:  # noqa: BLE001 - 急停必须尝试两侧，失败要可见

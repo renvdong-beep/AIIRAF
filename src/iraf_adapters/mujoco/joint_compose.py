@@ -22,6 +22,10 @@ class ComposeError(ValueError):
     pass
 
 
+def _slug(value: str) -> str:
+    return str(value).replace("_", "-")
+
+
 def _load(path: Path) -> dict:
     if not path.is_file():
         raise ComposeError("声明文件不存在：%s" % path)
@@ -73,7 +77,8 @@ def compose_profile(descriptors: Iterable[dict], *, scene_id: str) -> Dict:
 
 
 def compose_scene(base_scene: Path, base_baseline: Path, *, scene_id: str,
-                  robot_ids: Iterable[str], placements: Dict[str, dict] | None = None) -> Dict[str, dict]:
+                  robot_ids: Iterable[str], placements: Dict[str, dict] | None = None,
+                  joint_manipulator: str = "") -> Dict[str, dict]:
     """生成联合场景的 scene.yaml / baseline.yaml（只改声明，不碰 MJCF）。"""
     scene = _load(base_scene)
     baseline = _load(base_baseline)
@@ -95,6 +100,8 @@ def compose_scene(base_scene: Path, base_baseline: Path, *, scene_id: str,
     model["output"] = "build/scenes/%s/%s.xml" % (scene_id, scene_id)
     if "joint_output" in model:
         model["joint_output"] = "build/scenes/%s/%s_joint.xml" % (scene_id, scene_id)
+    if joint_manipulator:
+        model["joint_manipulator"] = joint_manipulator
     scene["description"] = "联合场景 %s（composer 生成）：%s" % (scene_id, ",".join(wanted))
 
     joint_bindings = dict((baseline.get("robots_joint") or {}))
@@ -134,13 +141,13 @@ def build_registry_scene(scene_id: str, descriptors: Iterable[dict]) -> Dict:
         })
     return {
         "schema": "iraf.scene/v1",
-        "scene_id": scene_id,
-        "provider_id": "iraf/%s" % scene_id,
+        "scene_id": _slug(scene_id),
+        "provider_id": "iraf/%s" % _slug(scene_id),
         "profile": "profiles/%s.yaml" % scene_id,
         "safety_policy": "profiles/safety/simulation_lab.yaml",
         "simulation": True,
-        "switch_name": scene_id,
-        "aliases": [scene_id],
+        "switch_name": _slug(scene_id),
+        "aliases": [scene_id, _slug(scene_id)],
         "max_concurrency": 1,
         "lease_ttl_s": 120,
         "description": "联合场景 %s（composer 生成）" % scene_id,
@@ -160,8 +167,8 @@ def build_provider_doc(scene_id: str, *, endpoint: str, control_url: str,
     hosts = sorted(set(allowed_hosts or [endpoint.rsplit(":", 1)[0]]))
     return {
         "schema": "iraf.provider/v1",
-        "provider_id": "iraf/%s" % scene_id,
-        "scene_id": scene_id,
+        "provider_id": "iraf/%s" % _slug(scene_id),
+        "scene_id": _slug(scene_id),
         "token_env": token_env,
         "hosts": [{
             "id": host_id,

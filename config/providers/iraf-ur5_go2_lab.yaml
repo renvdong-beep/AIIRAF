@@ -1,0 +1,21 @@
+schema: iraf.provider/v1
+provider_id: iraf/ur5-go2-lab
+scene_id: ur5-go2-lab
+token_env: IRAF_PROVIDER_TOKEN
+hosts:
+- id: x86-1
+  endpoint: 10.203.247.145:50056
+  capacity:
+    cores: 4
+    gpu: none
+  priority: 10
+  control_url: http://10.203.247.145:8770
+schedule: static
+health:
+  interval_s: 5
+  timeout_s: 2
+  failover: next
+allowed_hosts:
+- 10.203.247.145
+- 10.203.247.147
+- 10.203.247.209
