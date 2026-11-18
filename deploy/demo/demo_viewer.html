@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>IRAF · 机器人抓取演示（Piper / UR5）</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b1020;color:#e6edf7;font-family:ui-sans-serif,system-ui,"Segoe UI",sans-serif;overflow:hidden}
+  #wrap{display:flex;height:100%}
+  #stage{flex:1;position:relative}
+  canvas{display:block;width:100%;height:100%;cursor:grab}
+  canvas:active{cursor:grabbing}
+  #hud{position:absolute;left:18px;top:14px;pointer-events:none}
+  #hud h1{font-size:16px;margin:0 0 6px;font-weight:600;letter-spacing:.5px}
+  #hud .sub{font-size:12px;color:#8aa0c0}
+  #hud .phase{margin-top:6px;font-size:13px;color:#fdba74}
+  #auto{display:none;position:absolute;left:50%;top:14px;transform:translateX(-50%);
+        background:rgba(12,74,110,.85);border:1px solid #0ea5e9;color:#e0f2fe;
+        border-radius:999px;padding:6px 16px;font-size:12px;max-width:60%;text-align:center}
+  #auto.on{display:block}
+  #tabs{position:absolute;left:18px;top:92px;display:flex;gap:8px}
+  #tabs button{background:#111c33;border:1px solid #263552;color:#9fb3d1;border-radius:8px;
+               padding:6px 14px;cursor:pointer;font-size:13px}
+  #tabs button.on{background:#1d4ed8;border-color:#2563eb;color:#fff}
+  #ctl{position:absolute;left:18px;top:136px;display:flex;gap:10px;align-items:center;
+       background:rgba(15,23,42,.78);border:1px solid #1e2a44;border-radius:10px;padding:8px 12px;font-size:12px}
+  #ctl .grp{display:flex;gap:4px;align-items:center}
+  #ctl label{color:#8aa0c0}
+  #ctl input{width:60px;background:#0b1224;border:1px solid #263552;color:#dbe7ff;
+             border-radius:6px;padding:4px 6px;font-size:12px;font-variant-numeric:tabular-nums}
+  #ctl .rng{color:#5f7a9f;font-size:11px}
+  #ctl button{background:#0e7490;border:0;color:#fff;border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12px}
+  #ctl button:hover{background:#0891b2}
+  #go2ctl{display:none;position:absolute;left:18px;top:136px;gap:8px;align-items:center;
+          background:rgba(15,23,42,.78);border:1px solid #1e2a44;border-radius:10px;padding:8px 12px;font-size:12px}
+  #go2ctl button.dir{background:#111c33;border:1px solid #263552;color:#9fb3d1;border-radius:7px;padding:6px 12px;cursor:pointer}
+  #go2ctl button.dir.on{background:#0e7490;border-color:#0891b2;color:#fff}
+  #go2ctl input{width:64px;background:#0b1224;border:1px solid #263552;color:#dbe7ff;border-radius:6px;padding:4px 6px}
+  #go2ctl .go{background:#0e7490;border:0;color:#fff;border-radius:6px;padding:6px 12px;cursor:pointer}
+  #msg{font-size:12px;color:#93c5fd;max-width:320px}
+  #msg.err{color:#fca5a5}
+  #panel{position:absolute;right:18px;top:14px;width:260px;background:rgba(15,23,42,.72);
+         border:1px solid #1e2a44;border-radius:10px;padding:12px;font-size:12px;line-height:1.65}
+  #panel .k{color:#7f93b3}
+  #panel .v{color:#dbe7ff;float:right;font-variant-numeric:tabular-nums}
+  #scene{position:absolute;right:18px;top:286px;width:260px;background:rgba(15,23,42,.72);
+         border:1px solid #1e2a44;border-radius:10px;padding:8px}
+  #scene img{width:100%;border-radius:6px;display:block;background:#0b1224}
+  #scene .cap{font-size:11px;color:#7f93b3;margin-top:6px}
+  #bar{position:absolute;left:18px;right:18px;bottom:16px;display:flex;gap:12px;align-items:center;
+       background:rgba(15,23,42,.72);border:1px solid #1e2a44;border-radius:10px;padding:10px 14px}
+  #bar button{background:#1d4ed8;border:0;color:#fff;border-radius:7px;padding:7px 14px;cursor:pointer;font-size:13px}
+  #bar button:hover{background:#2563eb}
+  #bar input[type=range]{flex:1}
+  #prog{font-variant-numeric:tabular-nums;color:#93c5fd;font-size:12px;width:62px;text-align:right}
+  .tag{display:inline-block;font-size:11px;padding:2px 7px;border-radius:999px;margin-right:6px;background:#7c2d12;color:#fdba74}
+  #phases{position:absolute;left:18px;right:18px;bottom:74px;display:flex;gap:4px;pointer-events:none}
+  #phases div{flex:1;font-size:11px;color:#8aa0c0;border-top:3px solid #1e2a44;padding-top:4px;text-align:center}
+  #phases div.on{color:#fdba74;border-top-color:#f97316}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="hud">
+      <h1 id="title">机器人抓取演示 <span class="tag">PLAN</span></h1>
+      <div class="sub">端侧运动学计算 · FK/IK + 关节插值 · 无物理引擎</div>
+      <div class="phase" id="phase">加载中…</div>
+    </div>
+    <div id="tabs"></div>
+    <div id="auto">AUTO · 等待 AgentOS 指令…</div>
+    <div id="ctl">
+      <div class="grp"><label>box x</label><input id="inx"><span class="rng" id="rx"></span></div>
+      <div class="grp"><label>y</label><input id="iny"><span class="rng" id="ry"></span></div>
+      <div class="grp"><label>z</label><input id="inz"><span class="rng" id="rz"></span></div>
+      <button id="replan">计算并播放</button>
+      <span id="msg">选择机器人后可改坐标</span>
+    </div>
+    <div id="go2ctl">
+      <button class="dir on" data-dir="forward">前</button>
+      <button class="dir" data-dir="back">后</button>
+      <button class="dir" data-dir="left">左</button>
+      <button class="dir" data-dir="right">右</button>
+      <label style="color:#8aa0c0">距离(m)</label>
+      <input id="gdist" value="0.50">
+      <button class="go" id="gmove">移动</button>
+    </div>
+    <div id="panel">
+      <div><span class="k">机器人</span><span class="v" id="p-robot">-</span></div>
+      <div><span class="k">目标</span><span class="v" id="p-target">-</span></div>
+      <div><span class="k">箱子位置</span><span class="v" id="p-box">-</span></div>
+      <div><span class="k" id="k-err">IK 误差</span><span class="v" id="p-err">-</span></div>
+      <div><span class="k">轨迹时长</span><span class="v" id="p-dur">-</span></div>
+      <div><span class="k" id="k-fing">夹爪开口</span><span class="v" id="p-fing">-</span></div>
+      <div><span class="k" id="k-ee">末端</span><span class="v" id="p-ee">-</span></div>
+      <div style="height:4px"></div>
+      <div class="k">关节角（deg）</div>
+      <div id="p-q" style="font-family:ui-monospace,Consolas,monospace;font-size:11px;color:#c7d6ee"></div>
+    </div>
+    <div id="scene">
+      <img id="sceneimg" alt="scene">
+      <div class="cap" id="scenecap">场景实例</div>
+    </div>
+    <div id="phases"></div>
+    <div id="bar">
+      <button id="play">暂停</button>
+      <input id="scrub" type="range" min="0" max="1000" value="0">
+      <span id="prog">0%</span>
+      <button id="spin" title="自动环绕">环绕</button>
+    </div>
+  </div>
+</div>
+<script>
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+let D = null, ROBOTS = null, ROBOT = 'piper';
+let frame = 0, playing = true, spinning = false, last = 0;
+let yaw = -1.05, pitch = 0.62, zoom = 1;
+let dragging = false, lastX = 0, lastY = 0;
+let GO2_DIR = 'forward';
+const AUTO_FOLLOW = location.port === '8085';
+let lastJob = null;
+
+function resize(){
+  const r = cv.parentElement.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = Math.max(320, r.width * dpr);
+  cv.height = Math.max(240, r.height * dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+window.addEventListener('resize', resize);
+
+function bounds(){
+  const pts = [];
+  for (const f of D.frames) for (const b of D.bodies) if (f.pos[b]) pts.push(f.pos[b]);
+  let mn=[1e9,1e9,1e9], mx=[-1e9,-1e9,-1e9];
+  for (const p of pts) for (let i=0;i<3;i++){ mn[i]=Math.min(mn[i],p[i]); mx[i]=Math.max(mx[i],p[i]); }
+  const c=[0,1,2].map(i=>(mn[i]+mx[i])/2);
+  const span=Math.max(mx[0]-mn[0], mx[1]-mn[1], mx[2]-mn[2], 0.5);
+  return {c, span};
+}
+function project(p,B,w,h){
+  const cy=Math.cos(yaw), sy=Math.sin(yaw);
+  let x=p[0]-B.c[0], y=p[1]-B.c[1], z=p[2]-B.c[2];
+  let x1=x*cy-y*sy, y1=x*sy+y*cy;
+  const cp=Math.cos(pitch), sp=Math.sin(pitch);
+  const y2=z*cp-y1*sp;
+  const scale=Math.min(w,h)*0.62/B.span*zoom;
+  return [w/2+x1*scale, h/2-y2*scale, y1];
+}
+function line(a,b,B,w,h,color,width){
+  const A=project(a,B,w,h), P=project(b,B,w,h);
+  ctx.strokeStyle=color; ctx.lineWidth=width; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(A[0],A[1]); ctx.lineTo(P[0],P[1]); ctx.stroke();
+}
+function dot(p,B,w,h,r,color){
+  const P=project(p,B,w,h); ctx.fillStyle=color;
+  ctx.beginPath(); ctx.arc(P[0],P[1],r,0,Math.PI*2); ctx.fill();
+}
+function drawGrid(B,w,h){
+  const n=10, s=0.1;
+  for(let i=-n;i<=n;i++){
+    for(const seg of [[[-n*s,i*s,0],[n*s,i*s,0]], [[i*s,-n*s,0],[i*s,n*s,0]]]){
+      const A=project(seg[0],B,w,h), P=project(seg[1],B,w,h);
+      ctx.strokeStyle='rgba(70,100,150,.14)'; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(A[0],A[1]); ctx.lineTo(P[0],P[1]); ctx.stroke();
+    }
+  }
+}
+function drawBox(B,w,h,f){
+  const t=D.target, hs=t.half_size;
+  const p=(f.pos && f.pos.box_01) || t.pos;
+  const v=[];
+  for(const dx of [-1,1]) for(const dy of [-1,1]) for(const dz of [-1,1])
+    v.push([p[0]+dx*hs[0], p[1]+dy*hs[1], p[2]+dz*hs[2]]);
+  const edges=[[0,1],[0,2],[0,4],[1,3],[1,5],[2,3],[2,6],[3,7],[4,5],[4,6],[5,7],[6,7]];
+  ctx.strokeStyle='rgba(248,113,113,.9)'; ctx.lineWidth=1.8;
+  for(const [i,j] of edges){
+    const A=project(v[i],B,w,h), P=project(v[j],B,w,h);
+    ctx.beginPath(); ctx.moveTo(A[0],A[1]); ctx.lineTo(P[0],P[1]); ctx.stroke();
+  }
+  const top=project([p[0],p[1],p[2]+hs[2]+0.02],B,w,h);
+  ctx.fillStyle='rgba(248,113,113,.95)'; ctx.font='12px ui-sans-serif'; ctx.fillText(t.id, top[0]+4, top[1]-4);
+}
+function drawTrail(B,w,h,upto){
+  const G=D.gripper || {left:'link7',right:'link8'};
+  const pts=[];
+  for(let i=0;i<=upto;i++){
+    const f=D.frames[i], l=f.pos[G.left], r=f.pos[G.right];
+    pts.push([(l[0]+r[0])/2,(l[1]+r[1])/2,(l[2]+r[2])/2]);
+  }
+  for(let i=1;i<pts.length;i++){
+    const a=project(pts[i-1],B,w,h), b=project(pts[i],B,w,h);
+    const hue=200-160*(i/pts.length);
+    ctx.strokeStyle=`hsla(${hue},95%,62%,.95)`; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke();
+  }
+}
+function drawRobot(B,w,h,f){
+  const G = D.gripper || {wrist:'link6', left:'link7', right:'link8'};
+  const closing = (f.phase==='close');
+  for(const [a,b] of D.chain){
+    line(f.pos[a], f.pos[b], B,w,h, 'rgba(96,165,250,.95)', 7);
+    line(f.pos[a], f.pos[b], B,w,h, 'rgba(219,234,254,.95)', 3);
+  }
+  for(const b of D.bodies.slice(0,-1)) dot(f.pos[b],B,w,h,4,'#bfdbfe');
+  dot(f.pos[G.wrist],B,w,h,6,'#f8fafc');
+  line(f.pos[G.wrist], f.pos[G.left], B,w,h, closing?'rgba(251,191,36,.95)':'rgba(148,163,184,.9)', 4);
+  line(f.pos[G.wrist], f.pos[G.right], B,w,h, closing?'rgba(251,191,36,.95)':'rgba(148,163,184,.9)', 4);
+  dot(f.pos[G.left],B,w,h,3.5,'#fca5a5'); dot(f.pos[G.right],B,w,h,3.5,'#fca5a5');
+  // 关节标签（跟随关节移动，简单避让：重叠时错开）
+  if(D.joint_labels){
+    ctx.font='11px ui-monospace,Consolas,monospace';
+    const placed=[];
+    for(const j of D.joint_labels){
+      const p=f.pos[j.body]; if(!p) continue;
+      const P=project(p,B,w,h);
+      let x=P[0]+7, y=P[1]-7;
+      for(let k=0;k<6;k++){
+        if(!placed.some(q=>Math.hypot(q[0]-x,q[1]-y)<18)) break;
+        x += 14; if(x>P[0]+44){ x=P[0]-26; y-=13; }
+      }
+      placed.push([x,y]);
+      ctx.fillStyle='rgba(147,197,253,.95)';
+      ctx.fillText(j.label, x, y);
+    }
+  }
+  // 夹爪状态标签（挂在腕部）
+  const g = (f.gap_m!=null ? f.gap_m*1000 : (f.fingers!=null? f.fingers*1000 : null));
+  if(g!=null){
+    const P=project(f.pos[G.wrist],B,w,h);
+    ctx.fillStyle='rgba(251,191,36,.95)';
+    ctx.fillText('夹爪 ' + g.toFixed(1) + ' mm', P[0]+9, P[1]+14);
+  }
+}
+function phaseHTML(){
+  document.getElementById('phases').innerHTML =
+    D.phases.map(p=>`<div data-n="${p.name}">${p.label} · ${(p.t1-p.t0).toFixed(1)}s</div>`).join('');
+}
+function updatePanel(){
+  const info = (ROBOTS && ROBOTS.robots[ROBOT]) || {};
+  if(D.kind === 'quadruped'){ updateQuadPanel(info); return; }
+  document.getElementById('title').innerHTML = info.label + ' 抓取 · 可改 box 位置 <span class="tag">PLAN</span>';
+  document.getElementById('k-err').textContent = 'IK 误差';
+  document.getElementById('k-fing').textContent = '夹爪开口';
+  document.getElementById('k-ee').textContent = '末端';
+  document.getElementById('p-robot').textContent = ROBOT;
+  document.getElementById('p-target').textContent = D.target.id;
+  document.getElementById('p-box').textContent = D.target.pos.map(v=>v.toFixed(3)).join(', ');
+  document.getElementById('p-err').textContent = D.meta.ik_error_m.toExponential(2)+' m';
+  document.getElementById('p-dur').textContent = D.meta.duration_s.toFixed(1)+' s';
+  document.getElementById('scrub').max = D.frames.length-1;
+  document.getElementById('inx').value = D.target.pos[0].toFixed(3);
+  document.getElementById('iny').value = D.target.pos[1].toFixed(3);
+  document.getElementById('inz').value = D.target.pos[2].toFixed(3);
+  const r=(info.ranges)||{};
+  const fmt=(v)=> v? '['+v[0].toFixed(2)+', '+v[1].toFixed(2)+']' : '[—]';
+  document.getElementById('rx').textContent = fmt(r.x);
+  document.getElementById('ry').textContent = fmt(r.y);
+  document.getElementById('rz').textContent = fmt(r.z);
+  if(info.image){
+    document.getElementById('sceneimg').src = info.image + '?v=1';
+    document.getElementById('scenecap').textContent = info.label + ' · 场景实例';
+  }
+}
+function render(){
+  if(!D) return;
+  const r=cv.parentElement.getBoundingClientRect(), w=r.width, h=r.height;
+  ctx.clearRect(0,0,w,h);
+  const B=bounds();
+  drawGrid(B,w,h);
+  const f=D.frames[frame];
+  if(D.kind === 'quadruped'){
+    drawReferenceBox(B,w,h);
+    drawBodyBox(B,w,h,f);
+    drawQuadruped(B,w,h,f);
+  }else{
+    drawBox(B,w,h,f);
+    drawTrail(B,w,h,frame);
+    drawRobot(B,w,h,f);
+  }
+  document.getElementById('phase').textContent = f.phase_label + ' · ' + f.t.toFixed(2) + ' s';
+  if(D.kind === 'quadruped'){
+    const b=f.pos.base_link;
+    document.getElementById('p-ee').textContent = b.map(v=>v.toFixed(3)).join(', ');
+    document.getElementById('p-fing').textContent = (D.meta.distance_m).toFixed(2)+' m';
+    document.getElementById('p-q').textContent = 'GO2 12 关节（四足步态）';
+  }else{
+  const G=D.gripper||{left:'link7',right:'link8'};
+  const L=f.pos[G.left], Rr=f.pos[G.right];
+  document.getElementById('p-ee').textContent =
+    (((L[0]+Rr[0])/2).toFixed(3))+', '+(((L[1]+Rr[1])/2).toFixed(3))+', '+(((L[2]+Rr[2])/2).toFixed(3));
+  document.getElementById('p-fing').textContent =
+    ((f.gap_m!=null? f.gap_m : f.fingers)*1000).toFixed(1)+' mm';
+  const labels = D.arm_labels || ['j1','j2','j3','j4','j5','j6'];
+  document.getElementById('p-q').textContent =
+    f.q.map((v,i)=>`${labels[i]} ${(v*180/Math.PI).toFixed(1)}`).join('  ');
+  }
+  const pct = D.frames.length>1 ? frame/(D.frames.length-1) : 0;
+  document.getElementById('prog').textContent = Math.round(pct*100)+'%';
+  document.getElementById('scrub').value = Math.round(pct*1000);
+  document.querySelectorAll('#phases div').forEach(el=>{
+    el.classList.toggle('on', el.dataset.n===f.phase);
+  });
+}
+async function loadRobot(name){
+  const resp = await fetch(`/api/plan?robot=${encodeURIComponent(name)}`);
+  const data = await resp.json();
+  if(data.status !== 'OK'){ throw new Error(data.error || '加载失败'); }
+  ROBOT = name;
+  D = data.result;
+  frame = 0; last = 0; playing = true;
+  document.getElementById('play').textContent = '暂停';
+  const kind = (ROBOTS.robots[name] || {}).kind || 'arm';
+  document.getElementById('ctl').style.display = kind === 'quadruped' ? 'none' : 'flex';
+  document.getElementById('go2ctl').style.display = kind === 'quadruped' ? 'flex' : 'none';
+  if(kind === 'quadruped'){
+    GO2_DIR = (D.meta && D.meta.command) || 'forward';
+    document.querySelectorAll('#go2ctl [data-dir]').forEach(b =>
+      b.classList.toggle('on', b.dataset.dir === GO2_DIR));
+  }
+  phaseHTML(); updatePanel(); render();
+  document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('on', b.dataset.robot===name));
+}
+async function replan(x,y,z){
+  const msg=document.getElementById('msg');
+  msg.classList.remove('err'); msg.textContent='计算中…';
+  try{
+    const resp=await fetch(`/api/plan?robot=${ROBOT}&x=${x}&y=${y}&z=${z}`);
+    const data=await resp.json();
+    if(data.status==='OK'){
+      D=data.result; frame=0; last=0; playing=true;
+      document.getElementById('play').textContent='暂停';
+      phaseHTML(); updatePanel(); render();
+      msg.textContent = `已计算：${ROBOT} box(${D.target.pos.map(v=>v.toFixed(3)).join(', ')}) ` +
+        `${D.meta.frames} 帧 / ${D.meta.duration_s.toFixed(1)}s  IK ${D.meta.ik_error_m.toExponential(1)} m`;
+    }else{
+      msg.classList.add('err');
+      msg.textContent = (data.error || '计算失败') + (data.status==='UNREACHABLE'?'（目标不可达，画面未改）':'');
+    }
+  }catch(e){ msg.classList.add('err'); msg.textContent='请求失败：'+e.message; }
+}
+function updateQuadPanel(info){
+  document.getElementById('title').innerHTML = info.label + ' · 前后左右移动 <span class="tag">PLAN</span>';
+  document.getElementById('k-err').textContent = '步态';
+  document.getElementById('k-fing').textContent = '移动距离';
+  document.getElementById('k-ee').textContent = '机身位置';
+  document.getElementById('p-robot').textContent = 'go2';
+  document.getElementById('p-target').textContent = D.target.id;
+  document.getElementById('p-box').textContent = D.target.pos.map(v=>v.toFixed(2)).join(', ');
+  document.getElementById('p-err').textContent = D.meta.gait;
+  document.getElementById('p-dur').textContent = D.meta.duration_s.toFixed(1)+' s';
+  document.getElementById('scrub').max = D.frames.length-1;
+  document.getElementById('gdist').value = D.meta.distance_m.toFixed(2);
+  if(info.image){
+    document.getElementById('sceneimg').src = info.image + '?v=1';
+    document.getElementById('scenecap').textContent = info.label + ' · 场景实例';
+  }
+}
+function boxLines(pos, half){
+  const v=[];
+  for(const dx of [-1,1]) for(const dy of [-1,1]) for(const dz of [-1,1])
+    v.push([pos[0]+dx*half[0], pos[1]+dy*half[1], pos[2]+dz*half[2]]);
+  return {v, edges:[[0,1],[0,2],[0,4],[1,3],[1,5],[2,3],[2,6],[3,7],[4,5],[4,6],[5,7],[6,7]]};
+}
+function drawReferenceBox(B,w,h){
+  const ref=D.reference || D.target;
+  const {v,edges}=boxLines(ref.pos, ref.half || ref.half_size);
+  ctx.strokeStyle='rgba(248,113,113,.95)'; ctx.lineWidth=2;
+  for(const [i,j] of edges){
+    const A=project(v[i],B,w,h), P=project(v[j],B,w,h);
+    ctx.beginPath(); ctx.moveTo(A[0],A[1]); ctx.lineTo(P[0],P[1]); ctx.stroke();
+  }
+  const top=project([ref.pos[0], ref.pos[1], ref.pos[2]+ (ref.half||ref.half_size)[2] + 0.03],B,w,h);
+  ctx.fillStyle='rgba(248,113,113,.95)'; ctx.font='12px ui-sans-serif';
+  ctx.fillText(ref.label || '参考 box', top[0]+4, top[1]-4);
+  // 起点标记
+  const O=project([0,0,0.01],B,w,h);
+  ctx.strokeStyle='rgba(34,197,94,.9)'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.arc(O[0],O[1],6,0,Math.PI*2); ctx.stroke();
+}
+function drawBodyBox(B,w,h,f){
+  const bb=D.body_box; if(!bb) return;
+  const p=f.pos[bb.body]; if(!p) return;
+  const {v,edges}=boxLines(p, bb.half);
+  ctx.strokeStyle='rgba(226,232,240,.85)'; ctx.lineWidth=1.6;
+  for(const [i,j] of edges){
+    const A=project(v[i],B,w,h), P=project(v[j],B,w,h);
+    ctx.beginPath(); ctx.moveTo(A[0],A[1]); ctx.lineTo(P[0],P[1]); ctx.stroke();
+  }
+}
+function drawOrientedBox(B,w,h,center,half,yaw,color){
+  const c=Math.cos(yaw), s=Math.sin(yaw);
+  const v=[];
+  for(const dx of [-1,1]) for(const dy of [-1,1]) for(const dz of [-1,1]){
+    const lx=dx*half[0], ly=dy*half[1], lz=dz*half[2];
+    v.push([center[0]+lx*c-ly*s, center[1]+lx*s+ly*c, center[2]+lz]);
+  }
+  const edges=[[0,1],[0,2],[0,4],[1,3],[1,5],[2,3],[2,6],[3,7],[4,5],[4,6],[5,7],[6,7]];
+  ctx.strokeStyle=color; ctx.lineWidth=2;
+  for(const [i,j] of edges){
+    const A=project(v[i],B,w,h), P=project(v[j],B,w,h);
+    ctx.beginPath(); ctx.moveTo(A[0],A[1]); ctx.lineTo(P[0],P[1]); ctx.stroke();
+  }
+}
+function drawQuadruped(B,w,h,f){
+  const colors={'FL':'#f97316','FR':'#22c55e','RL':'#60a5fa','RR':'#a78bfa'};
+  // 轨迹（机身）
+  for(let i=1;i<=frame;i++){
+    const a=project(D.frames[i-1].pos.base_link,B,w,h);
+    const b=project(D.frames[i].pos.base_link,B,w,h);
+    ctx.strokeStyle='rgba(148,163,184,.5)'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke();
+  }
+  // 狗头 + 朝向箭头（方向 = 运动方向）
+  const base=f.pos.base_link, yaw=f.yaw||0;
+  const H=D.head || {local_offset:[0.24,0,0.04], half:[0.075,0.06,0.05]};
+  const c=Math.cos(yaw), s=Math.sin(yaw);
+  const hc=[base[0]+H.local_offset[0]*c-H.local_offset[1]*s,
+            base[1]+H.local_offset[0]*s+H.local_offset[1]*c,
+            base[2]+H.local_offset[2]];
+  drawOrientedBox(B,w,h,hc,H.half,yaw,'rgba(250,204,21,.95)');
+  const hp=project(hc,B,w,h);
+  ctx.fillStyle='rgba(250,204,21,.95)'; ctx.font='11px ui-sans-serif';
+  ctx.fillText('头', hp[0]+8, hp[1]-8);
+  // 地面方向箭头
+  const tip=[base[0]+c*0.45, base[1]+s*0.45, 0.02];
+  const A=project([base[0],base[1],0.02],B,w,h), P=project(tip,B,w,h);
+  ctx.strokeStyle='rgba(34,211,238,.9)'; ctx.lineWidth=2.5;
+  ctx.beginPath(); ctx.moveTo(A[0],A[1]); ctx.lineTo(P[0],P[1]); ctx.stroke();
+  const ang=Math.atan2(P[1]-A[1],P[0]-A[0]);
+  ctx.beginPath(); ctx.moveTo(P[0],P[1]);
+  ctx.lineTo(P[0]-10*Math.cos(ang-0.4), P[1]-10*Math.sin(ang-0.4));
+  ctx.moveTo(P[0],P[1]);
+  ctx.lineTo(P[0]-10*Math.cos(ang+0.4), P[1]-10*Math.sin(ang+0.4));
+  ctx.stroke();
+  ctx.fillStyle='rgba(34,211,238,.9)'; ctx.font='10px ui-sans-serif';
+  ctx.fillText('运动方向', P[0]+6, P[1]+12);
+  for(let li=0; li<D.chains.length; li++){
+    const chain=D.chains[li], color=colors[D.feet[li].slice(0,2)] || '#93c5fd';
+    for(const [a,b] of chain.slice(0,-1).map((x,i)=>[x,chain[i+1]])){
+      line(f.pos[a], f.pos[b], B,w,h, 'rgba(15,23,42,.9)', 6);
+      line(f.pos[a], f.pos[b], B,w,h, color, 3);
+    }
+    for(const b of chain) dot(f.pos[b],B,w,h,3.5,'#cbd5e1');
+    const foot=f.pos[chain[chain.length-1]];
+    dot(foot,B,w,h,4.5,color);
+    const P=project(foot,B,w,h);
+    ctx.fillStyle=color; ctx.font='10px ui-monospace,Consolas,monospace';
+    ctx.fillText(D.feet[li].slice(0,2), P[0]+6, P[1]+12);
+  }
+}
+async function replanGo2(){
+  const msg=document.getElementById('msg');
+  const distance=parseFloat(document.getElementById('gdist').value);
+  if(Number.isNaN(distance)){ msg.textContent='距离格式不对'; return; }
+  msg.classList.remove('err'); msg.textContent='计算中…';
+  try{
+    const resp=await fetch(`/api/plan?robot=go2&dir=${GO2_DIR}&distance=${distance}`);
+    const data=await resp.json();
+    if(data.status==='OK'){
+      D=data.result; frame=0; last=0; playing=true;
+      document.getElementById('play').textContent='暂停';
+      phaseHTML(); updatePanel(); render();
+      const cmd=(D.meta.command_label||D.meta.command);
+      msg.textContent=`已计算：GO2 ${cmd} ${D.meta.distance_m.toFixed(2)} m（${D.meta.frames} 帧 / ${D.meta.duration_s.toFixed(1)}s）`;
+    }else{
+      msg.classList.add('err'); msg.textContent=data.error||'计算失败';
+    }
+  }catch(e){ msg.classList.add('err'); msg.textContent='请求失败：'+e.message; }
+}
+function setAuto(text, show){
+  const el = document.getElementById('auto');
+  el.textContent = text;
+  el.classList.toggle('on', !!show || AUTO_FOLLOW);
+}
+async function handleJob(job){
+  lastJob = job.seq;
+  const robot = job.robot || 'piper';
+  const label = ((ROBOTS.robots || {})[robot] || {}).label || robot;
+  let msg = `AgentOS → ${label} · ${job.action || ''}`;
+  if(job.target) msg += ` @ (${job.target.x}, ${job.target.y}, ${job.target.z})`;
+  if(job.direction) msg += ` ${job.direction} ${job.distance || ''}m`;
+  setAuto(msg, true);
+  if(robot !== ROBOT){ await loadRobot(robot); }
+  if(job.action === 'pick' && job.target){
+    document.getElementById('inx').value = job.target.x;
+    document.getElementById('iny').value = job.target.y;
+    document.getElementById('inz').value = job.target.z;
+    await replan(job.target.x, job.target.y, job.target.z);
+  } else if(job.action === 'move'){
+    GO2_DIR = job.direction || 'forward';
+    document.querySelectorAll('#go2ctl [data-dir]').forEach(b =>
+      b.classList.toggle('on', b.dataset.dir === GO2_DIR));
+    if(job.distance) document.getElementById('gdist').value = job.distance;
+    await replanGo2();
+  }
+  frame = 0; last = 0; playing = true;
+  document.getElementById('play').textContent = '暂停';
+}
+async function pollJobs(){
+  if(!AUTO_FOLLOW || !D) return;
+  try{
+    const url = '/api/jobs' + (lastJob ? ('?since=' + encodeURIComponent(lastJob)) : '');
+    const r = await fetch(url);
+    const d = await r.json();
+    for(const job of (d.jobs || [])){
+      if(job.seq !== lastJob){ await handleJob(job); }
+    }
+  }catch(e){ setAuto('AUTO · job 轮询失败：' + e.message, true); }
+}
+function loop(ts){
+  if(!last) last=ts;
+  const dt=(ts-last)/1000; last=ts;
+  if(spinning) yaw += dt*0.12;
+  if(playing && D) frame = (frame + Math.max(1, Math.round(dt*30))) % D.frames.length;
+  render();
+  requestAnimationFrame(loop);
+}
+async function boot(){
+  resize();
+  ROBOTS = await (await fetch('/api/robots')).json();
+  const tabs=document.getElementById('tabs');
+  tabs.innerHTML='';
+  for(const [name,info] of Object.entries(ROBOTS.robots)){
+    const b=document.createElement('button');
+    b.dataset.robot=name; b.textContent=name.toUpperCase();
+    b.onclick=()=>loadRobot(name).catch(e=>{document.getElementById('msg').textContent=e.message;});
+    tabs.appendChild(b);
+  }
+  document.getElementById('replan').onclick=()=>{
+    const x=parseFloat(document.getElementById('inx').value);
+    const y=parseFloat(document.getElementById('iny').value);
+    const z=parseFloat(document.getElementById('inz').value);
+    if([x,y,z].some(Number.isNaN)){ document.getElementById('msg').textContent='坐标格式不对'; return; }
+    replan(x,y,z);
+  };
+  document.querySelectorAll('#go2ctl [data-dir]').forEach(b=>{
+    b.onclick=()=>{
+      GO2_DIR=b.dataset.dir;
+      document.querySelectorAll('#go2ctl [data-dir]').forEach(x=>x.classList.toggle('on', x===b));
+      replanGo2();
+    };
+  });
+  document.getElementById('gmove').onclick=replanGo2;
+  document.getElementById('play').onclick=e=>{ playing=!playing; e.target.textContent=playing?'暂停':'播放'; };
+  document.getElementById('spin').onclick=e=>{ spinning=!spinning; e.target.textContent=spinning?'停止环绕':'环绕'; };
+  document.getElementById('scrub').oninput=e=>{ frame=+e.target.value; playing=false;
+    document.getElementById('play').textContent='播放'; render(); };
+  cv.addEventListener('pointerdown',e=>{ dragging=true; lastX=e.clientX; lastY=e.clientY;
+    try{cv.setPointerCapture(e.pointerId);}catch(_){}});
+  cv.addEventListener('pointermove',e=>{
+    if(!dragging) return;
+    yaw += (e.clientX-lastX)*0.01;
+    pitch = Math.max(-0.2, Math.min(1.4, pitch + (e.clientY-lastY)*0.008));
+    lastX=e.clientX; lastY=e.clientY; render();
+  });
+  const stop=()=>{ dragging=false; };
+  cv.addEventListener('pointerup',stop); cv.addEventListener('pointercancel',stop); cv.addEventListener('pointerleave',stop);
+  cv.addEventListener('wheel',e=>{ e.preventDefault();
+    zoom=Math.max(0.5,Math.min(2.5, zoom*(e.deltaY>0?0.92:1.08))); render(); }, {passive:false});
+  document.getElementById('msg').textContent='选择机器人或修改坐标后点"计算并播放"';
+  const qp = new URLSearchParams(location.search);
+  await loadRobot(qp.get('robot') || ROBOTS.default || 'piper');
+  if(AUTO_FOLLOW){
+    setAuto('AUTO · 等待 AgentOS 指令…', true);
+    try{
+      const r = await fetch('/api/jobs/latest');
+      const d = await r.json();
+      if(d.job) lastJob = d.job.seq;
+      const id = qp.get('job');
+      if(id){
+        const all = await (await fetch('/api/jobs')).json();
+        const target = (all.jobs || []).find(j => j.seq === id);
+        if(target) await handleJob(target);
+      }
+    }catch(_){}
+    pollJobs();
+    setInterval(pollJobs, 1500);
+  }
+  requestAnimationFrame(loop);
+}
+boot();
+</script>
+</body>
+</html>
