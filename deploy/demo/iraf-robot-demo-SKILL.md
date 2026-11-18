@@ -13,27 +13,27 @@ tags: [iraf, robot, demo, plan, piper, ur5, go2, g1, kinematic]
 
 ## 原则
 
-- 只用 `iraf_plan_task` 发起演示；它计算运动学计划并自动发 job，8085 会自动播放。
+- 只用 `iraf_edge_plan_task` 发起演示；它计算运动学计划并自动发 job，8085 会自动播放。
 - 不声称物理/真机执行；回答里保留 `PLAN` 口径（`planned=true, physics=false`）。
-- 目标必须在 `iraf_target_ranges` 返回的范围内；随机目标用 `iraf_random_target` 生成。
+- 目标必须在 `iraf_edge_target_ranges` 返回的范围内；随机目标用 `iraf_edge_random_target` 生成。
 
 ## 工具
 
 | 工具 | 用途 |
 |---|---|
-| `iraf_plan_task(robot, action, x, y, z, direction, distance, random_target)` | 计算计划并发布 job |
-| `iraf_random_target(robot)` | 在范围内随机取一个已验证的 box 位置 |
-| `iraf_target_ranges(robot)` | 查 x/y/z 范围 |
+| `iraf_edge_plan_task(robot, action, x, y, z, direction, distance, random_target)` | 计算计划并发布 job |
+| `iraf_edge_random_target(robot)` | 在范围内随机取一个已验证的 box 位置 |
+| `iraf_edge_target_ranges(robot)` | 查 x/y/z 范围 |
 
 ## 话术 → 调用
 
 | 用户说 | 调用 |
 |---|---|
-| 「piper 抓取 box」 | `iraf_plan_task(robot="piper", action="pick")` |
-| 「ur5 随机位置抓一个」 | `iraf_random_target(robot="ur5")` → `iraf_plan_task(robot="ur5", action="pick", x=..., y=..., z=...)` |
-| 「让狗往左走 0.4 米」 | `iraf_plan_task(robot="go2", action="move", direction="left", distance=0.4)` |
-| 「让 G1 往前走 0.5 米」 | `iraf_plan_task(robot="g1", action="move", direction="forward", distance=0.5)` |
-| 「范围是多少」 | `iraf_target_ranges(robot="piper")` |
+| 「piper 抓取 box」 | `iraf_edge_plan_task(robot="piper", action="pick")` |
+| 「ur5 随机位置抓一个」 | `iraf_edge_random_target(robot="ur5")` → `iraf_edge_plan_task(robot="ur5", action="pick", x=..., y=..., z=...)` |
+| 「让狗往左走 0.4 米」 | `iraf_edge_plan_task(robot="go2", action="move", direction="left", distance=0.4)` |
+| 「让 G1 往前走 0.5 米」 | `iraf_edge_plan_task(robot="g1", action="move", direction="forward", distance=0.5)` |
+| 「范围是多少」 | `iraf_edge_target_ranges(robot="piper")` |
 
 方向只支持 `forward / back / left / right`；距离 0–2 米。
 

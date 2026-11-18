@@ -87,18 +87,18 @@ class G1Planner:
                 p, gait = 1.0, 0.0
             e = 0.5 - 0.5 * math.cos(math.pi * max(0.0, min(1.0, p)))
             base = start + delta * e
-            base[2] = self.base_z + 0.015 * math.sin(2 * phase) * gait
+            base[2] = self.base_z + 0.03 * math.sin(2 * phase) * gait
 
             q = {}
             for side, off in (("L", 0.0), ("R", math.pi)):
                 ph = phase + off
                 sgn = 1.0 if side == "L" else -1.0
-                q[f"{side.lower()}_hip_pitch_joint"] = 0.35 * math.sin(ph) * gait
+                q[f"{side.lower()}_hip_pitch_joint"] = 0.80 * math.sin(ph) * gait
                 q[f"{side.lower()}_hip_roll_joint"] = 0.04 * sgn * gait
                 q[f"{side.lower()}_hip_yaw_joint"] = 0.05 * math.sin(ph) * gait
-                knee = 0.15 + 0.28 * math.sin(ph + 0.5) * gait
+                knee = 0.25 + 0.75 * max(0.0, math.sin(ph + 0.6)) * gait
                 q[f"{side.lower()}_knee_joint"] = max(0.03, knee)
-                q[f"{side.lower()}_ankle_pitch_joint"] = -0.28 * math.sin(ph) * gait
+                q[f"{side.lower()}_ankle_pitch_joint"] = -0.10 * math.sin(ph) * gait
                 q[f"{side.lower()}_ankle_roll_joint"] = 0.0
                 # 手臂反向摆
                 q[f"{side.lower()}_shoulder_pitch_joint"] = -0.25 * math.sin(ph) * gait
@@ -129,7 +129,7 @@ class G1Planner:
             "bodies": bodies, "chains": chains, "feet": ["L", "R", "LA", "RA"],
             "reference": REFERENCE, "body_box": {"body": "pelvis", "half": [0.13, 0.10, 0.13]},
             "base_body": "pelvis",
-            "head": {"local_offset": [0.0, 0.0, 0.40], "half": [0.075, 0.07, 0.08],
+            "head": {"local_offset": [0.0, 0.0, 0.34], "half": [0.06, 0.06, 0.07],
                      "label": "头（固定朝前）"},
             "target": {"id": "参考 box", "pos": REFERENCE["pos"], "half_size": REFERENCE["half"]},
             "start": [0.0, 0.0],

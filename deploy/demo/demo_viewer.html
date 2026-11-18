@@ -56,6 +56,11 @@
   #phases{position:absolute;left:18px;right:18px;bottom:74px;display:flex;gap:4px;pointer-events:none}
   #phases div{flex:1;font-size:11px;color:#8aa0c0;border-top:3px solid #1e2a44;padding-top:4px;text-align:center}
   #phases div.on{color:#fdba74;border-top-color:#f97316}
+
+  body.agentos #tabs, body.agentos #ctl, body.agentos #go2ctl, body.agentos #panel,
+  body.agentos #bar, body.agentos #scene, body.agentos #hud .sub, body.agentos #hud .phase{display:none !important}
+  body.agentos #phases{bottom:26px}
+  body.agentos #hud{max-width:72%}
 </style>
 </head>
 <body>
@@ -439,8 +444,9 @@ function drawQuadruped(B,w,h,f){
   for(let li=0; li<D.chains.length; li++){
     const chain=D.chains[li], color=colors[D.feet[li].slice(0,2)] || ['#f97316','#22c55e','#60a5fa','#a78bfa'][li % 4];
     for(const [a,b] of chain.slice(0,-1).map((x,i)=>[x,chain[i+1]])){
-      line(f.pos[a], f.pos[b], B,w,h, 'rgba(15,23,42,.9)', 6);
-      line(f.pos[a], f.pos[b], B,w,h, color, 3);
+      const LW=D.kind === 'humanoid' ? 5 : 3;
+      line(f.pos[a], f.pos[b], B,w,h, 'rgba(15,23,42,.9)', LW+3);
+      line(f.pos[a], f.pos[b], B,w,h, color, LW);
     }
     for(const b of chain) dot(f.pos[b],B,w,h,3.5,'#cbd5e1');
     const foot=f.pos[chain[chain.length-1]];
@@ -517,6 +523,7 @@ function loop(ts){
   requestAnimationFrame(loop);
 }
 async function boot(){
+  if(location.port==='8085') document.body.classList.add('agentos');
   resize();
   ROBOTS = await (await fetch('/api/robots')).json();
   const tabs=document.getElementById('tabs');
@@ -561,6 +568,8 @@ async function boot(){
   document.getElementById('msg').textContent='选择机器人或修改坐标后点"计算并播放"';
   const qp = new URLSearchParams(location.search);
   await loadRobot(qp.get('robot') || ROBOTS.default || 'piper');
+  const fp = parseInt(qp.get('f'), 10);
+  if(!Number.isNaN(fp) && D && D.frames){ frame = Math.min(D.frames.length - 1, Math.max(0, fp)); playing = false; render(); }
   if(AUTO_FOLLOW){
     setAuto('AUTO · 等待 AgentOS 指令…', true);
     try{

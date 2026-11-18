@@ -332,15 +332,15 @@ def _publish_job(robot: str, action: str, target=None, direction=None,
 
 
 @app.tool()
-@_audited("iraf_plan_task")
-def iraf_plan_task(scene_id: str = "ur5-pick-planned", target_id: str = "box_01",
+@_audited("iraf_edge_plan_task")
+def iraf_edge_plan_task(scene_id: str = "ur5-pick-planned", target_id: str = "box_01",
                    approach_m: float = 0.10, lift_m: float = 0.05,
                    duration_ms: int = 3000, robot: str = "",
                    x: float = None, y: float = None, z: float = None,
                    random_target: bool = False, action: str = "pick",
                    direction: str = "forward", distance: float = 0.5,
                    publish: bool = True) -> str:
-    """端侧运动学**计划**计算：加载模型 IK/FK，返回计划；可发布演示 job（8085 播放）。
+    """端侧（edge）运动学计划：本地模型 IK/FK，返回计划；可发布 job 供 8085 播放。
 
     robot: piper / ur5（抓取）、go2 / g1（前后左右移动）。
     x/y/z: 目标（不给则用场景默认）；random_target=True 时在已测范围内随机并校验。
@@ -356,7 +356,7 @@ def iraf_plan_task(scene_id: str = "ur5-pick-planned", target_id: str = "box_01"
         return _auth_error(exc)
 
     name = _robot_of(scene_id, robot)
-    auth.audit("tool_call", principal, tool="iraf_plan_task", robot=name,
+    auth.audit("tool_call", principal, tool="iraf_edge_plan_task", robot=name,
                action=action, random=bool(random_target))
     try:
         planner = _planner_for(name)
@@ -429,8 +429,8 @@ def iraf_plan_task(scene_id: str = "ur5-pick-planned", target_id: str = "box_01"
 
 
 @app.tool()
-@_audited("iraf_target_ranges")
-def iraf_target_ranges(robot: str) -> str:
+@_audited("iraf_edge_target_ranges")
+def iraf_edge_target_ranges(robot: str) -> str:
     """返回该机器人 box 的可抓取 x/y/z 范围（由同一套 IK 扫描得出）。"""
     from iraf_adapters.mcp import auth
 
@@ -454,8 +454,8 @@ def iraf_target_ranges(robot: str) -> str:
 
 
 @app.tool()
-@_audited("iraf_random_target")
-def iraf_random_target(robot: str) -> str:
+@_audited("iraf_edge_random_target")
+def iraf_edge_random_target(robot: str) -> str:
     """在可抓取范围内随机取一个 box 位置，并用 IK 校验（不可达自动重采）。"""
     from iraf_adapters.mcp import auth
 
