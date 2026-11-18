@@ -1,0 +1,21 @@
+apiVersion: iraf.intewell.io/v1
+kind: Skill
+metadata: {name: engineering.joint_scene_composer, version: 1.0.0}
+spec:
+  verification: development
+  inputSchema: engineering.joint_scene_composer.input.json
+  outputSchema: engineering.joint_scene_composer.output.json
+  # 只产出声明工件（scene/baseline/联合 Profile），不驱动机器人。
+  requires: [engineering.joint_scene_composer]
+  preconditions: []
+  intentExamples: [组合联合场景, 编排联合世界, 把 piper 和 go2 组成一个场景, joint scene composer]
+  timeoutSeconds: 30
+  cancellation: cooperative_stop
+  recovery: [request_handover]
+  safetyClass: build_tooling
+  providers:
+    - name: engineering_joint_scene_composer
+      type: python_adapter
+      entrypoint: "iraf_skills.engineering.joint_scene_composer:JointSceneComposerProvider"
+      selector: {mode: simulation}
+      priority: 100

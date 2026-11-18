@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["status", "scene_id", "files"],
+  "additionalProperties": true,
+  "properties": {
+    "status": {"type": "string", "enum": ["SUCCEEDED", "FAILED"]},
+    "scene_id": {"type": "string"},
+    "robots": {"type": "array", "items": {"type": "string"}},
+    "joints": {"type": "integer", "minimum": 1},
+    "capabilities": {"type": "array", "items": {"type": "string"}},
+    "files": {"type": "array", "items": {"type": "string"}},
+    "note": {"type": "string"}
+  }
+}

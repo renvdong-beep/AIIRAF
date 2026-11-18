@@ -15,7 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from iraf_adapters.mujoco.joint_compose import (  # noqa: E402
-    ComposeError, compose_profile, compose_scene, load_descriptor, write_outputs)
+    ComposeError, build_registry_scene, compose_profile, compose_scene, load_descriptor,
+    write_outputs)
 
 
 def main() -> int:
@@ -25,6 +26,7 @@ def main() -> int:
     ap.add_argument("--scene-id", required=True, help="新联合场景 id")
     ap.add_argument("--out", default="", help="输出目录（默认 scenes/<scene-id>）")
     ap.add_argument("--dry-run", action="store_true", help="只打印计划，不写文件")
+    ap.add_argument("--register", action="store_true", help="同时生成 config/scenes/<id>.yaml")
     args = ap.parse_args()
 
     base = ROOT / args.base
@@ -54,6 +56,12 @@ def main() -> int:
         return 0
     files = write_outputs(ROOT, scene_id=args.scene_id, composed=composed,
                           profile=profile, out_dir=out_dir)
+    if args.register:
+        import yaml
+        registry = build_registry_scene(args.scene_id, descriptors)
+        reg_path = ROOT / "config" / "scenes" / ("%s.yaml" % args.scene_id)
+        reg_path.write_text(yaml.safe_dump(registry, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        files.append(str(reg_path))
     print("[compose] 已生成：")
     for f in files:
         print("  " + f)

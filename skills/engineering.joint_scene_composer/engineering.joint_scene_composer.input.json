@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["scene_id", "robots"],
+  "additionalProperties": false,
+  "properties": {
+    "scene_id": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,40}$"},
+    "robots": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1},
+      "description": "基础场景里已有的本体 id（如 piper、unitree_go2）"
+    },
+    "base": {"type": "string", "description": "基础场景目录（默认 scenes/handoff_lab）"},
+    "root": {"type": "string", "description": "仓库根（默认当前目录）"}
+  }
+}

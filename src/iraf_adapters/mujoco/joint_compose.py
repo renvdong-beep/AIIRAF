@@ -120,3 +120,29 @@ def write_outputs(root: Path, *, scene_id: str, composed: Dict[str, dict],
         yaml.safe_dump(profile, allow_unicode=True, sort_keys=False), encoding="utf-8")
     files.append(str(profile_path))
     return files
+
+
+def build_registry_scene(scene_id: str, descriptors: Iterable[dict]) -> Dict:
+    """生成场景注册表文档（config/scenes/<id>.yaml）；provider 端点由部署侧补。"""
+    resources = []
+    for desc in descriptors:
+        profile = load_robot_profile(str(desc["profile"]))
+        resources.append({
+            "id": str(desc["id"]),
+            "profile": str(desc["profile"]),
+            "capabilities": sorted(profile.capabilities),
+        })
+    return {
+        "schema": "iraf.scene/v1",
+        "scene_id": scene_id,
+        "provider_id": "iraf/%s" % scene_id,
+        "profile": "profiles/%s.yaml" % scene_id,
+        "safety_policy": "profiles/safety/simulation_lab.yaml",
+        "simulation": True,
+        "switch_name": scene_id,
+        "aliases": [scene_id],
+        "max_concurrency": 1,
+        "lease_ttl_s": 120,
+        "description": "联合场景 %s（composer 生成）" % scene_id,
+        "resources": resources,
+    }

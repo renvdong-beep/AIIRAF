@@ -1,0 +1,30 @@
+schema: iraf.scene/v1
+scene_id: piper_go2_lab
+provider_id: iraf/piper_go2_lab
+profile: profiles/piper_go2_lab.yaml
+safety_policy: profiles/safety/simulation_lab.yaml
+simulation: true
+switch_name: piper_go2_lab
+aliases:
+- piper_go2_lab
+max_concurrency: 1
+lease_ttl_s: 120
+description: 联合场景 piper_go2_lab（composer 生成）
+resources:
+- id: piper
+  profile: profiles/piper_mujoco.yaml
+  capabilities:
+  - move_joint
+  - pick_object
+  - place_object
+  - reset_scene
+  - stop
+  - visual_pick
+- id: unitree_go2
+  profile: profiles/unitree_go2_mujoco.yaml
+  capabilities:
+  - accept_payload
+  - dock_for_handoff
+  - locomote
+  - stand
+  - stop

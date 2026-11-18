@@ -224,3 +224,11 @@ python3 scripts/build_scene.py --scene scenes/piper_go2_lab --robot unitree_go2 
 | `ur抓取盒子` | `ur5-pick` | SUCCEEDED，58.3 s，`bilateral_contact=true` |
 
 单机 provider 路径未被联合改动污染。
+
+### P3 首个增量（2026-11-18）
+
+- **MCP 工具**：`iraf_compose_joint_scene(scene_id, robots, base, dry_run, register)`（server.py）；
+- **Skill**：`skills/engineering.joint_scene_composer/`（skill.yaml + input/output schema + Provider）；
+- **注册表生成**：CLI `--register` 写 `config/scenes/<id>.yaml`（resources/profile/safety_policy）；
+- 实测：`piper,unitree_go2 → piper_go2_lab`，Provider `SUCCEEDED`，20 关节，生成
+  scene/baseline/profile/registry 四个文件；MCP 工具待部署到板卡后做端到端调用。

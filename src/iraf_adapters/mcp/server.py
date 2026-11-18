@@ -1502,6 +1502,52 @@ def iraf_run_scenario(scenario: str = "nominal", display: str = "window",
                 pass
 
 @app.tool()
+@_audited("iraf_compose_joint_scene")
+def iraf_compose_joint_scene(scene_id: str, robots: str, base: str = "",
+                             dry_run: bool = True, register: bool = False) -> str:
+    """把已有单机/联合场景里的若干部件编排成新的联合场景声明（不驱动机器人）。
+
+    robots 用逗号分隔（如 "piper,unitree_go2"）；只生成 scene/baseline/Profile（可选 registry），
+    MJCF 合成仍由 scripts/build_scene.py 完成（主本体选四足）。
+    """
+    from iraf_adapters.mujoco import joint_compose as _jc
+
+    try:
+        root = _os.path.abspath(_os.environ.get("IRAF_REPO_ROOT") or _os.getcwd())
+        base_dir = _os.path.join(root, base or "scenes/handoff_lab")
+        if not _os.path.isfile(_os.path.join(base_dir, "scene.yaml")):
+            return _json.dumps({"status": "FAILED", "error_code": "IRAF-COMPOSE-BASE-MISSING",
+                                "reason": "基础场景不存在：%s（用 base 参数指定含 scene.yaml 的目录）" % base_dir},
+                               ensure_ascii=False)
+        ids = [x.strip() for x in str(robots).split(",") if x.strip()]
+        if not ids:
+            return _json.dumps({"status": "FAILED", "error_code": "IRAF-COMPOSE-INPUT",
+                                "reason": "robots 不能为空"}, ensure_ascii=False)
+        descriptors = [_jc.load_descriptor(Path(base_dir) / "scene.yaml", rid) for rid in ids]
+        profile = _jc.compose_profile(descriptors, scene_id=str(scene_id))
+        composed = _jc.compose_scene(Path(base_dir) / "scene.yaml", Path(base_dir) / "baseline.yaml",
+                                     scene_id=str(scene_id), robot_ids=ids)
+        files = []
+        if not dry_run:
+            files = _jc.write_outputs(Path(root), scene_id=str(scene_id), composed=composed,
+                                      profile=profile, out_dir=Path(root) / "scenes" / str(scene_id))
+            if register:
+                import yaml as _yaml
+                registry = _jc.build_registry_scene(str(scene_id), descriptors)
+                reg_path = Path(root) / "config" / "scenes" / ("%s.yaml" % scene_id)
+                reg_path.write_text(_yaml.safe_dump(registry, allow_unicode=True, sort_keys=False),
+                                    encoding="utf-8")
+                files.append(str(reg_path))
+        return _json.dumps({"status": "SUCCEEDED", "scene_id": str(scene_id), "robots": ids,
+                            "joints": len(profile["spec"]["joints"]),
+                            "capabilities": profile["spec"]["capabilities"],
+                            "files": files, "dry_run": bool(dry_run)}, ensure_ascii=False)
+    except Exception as exc:  # noqa: BLE001
+        return _json.dumps({"status": "FAILED", "error_code": "IRAF-COMPOSE-ERROR",
+                            "reason": "%s: %s" % (type(exc).__name__, exc)}, ensure_ascii=False)
+
+
+@app.tool()
 @_audited("iraf_scene_status")
 def iraf_scene_status(scene_id: str = "", probe: bool = False) -> str:
     """只读：场景 / Provider / 主机 / 注册表状态（排障的唯一入口，不要用 ss/nc 猜）。
