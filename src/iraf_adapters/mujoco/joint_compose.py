@@ -135,7 +135,7 @@ def build_registry_scene(scene_id: str, descriptors: Iterable[dict]) -> Dict:
     for desc in descriptors:
         profile = load_robot_profile(str(desc["profile"]))
         resources.append({
-            "id": str(desc["id"]),
+            "id": _slug(desc["id"]),
             "profile": str(desc["profile"]),
             "capabilities": sorted(profile.capabilities),
         })

@@ -276,3 +276,18 @@ build_scene --scene scenes/piper_ur5_go2_lab --robot unitree_go2 --attach piper 
 - 板卡注册 `ur5-go2-lab` 场景 + provider 端点后，提交仍被 **supervisor 场景白名单**拦下：
   `switch-failed: supervisor 无此场景：ur5-go2-lab（可用：handoff_lab_joint, piper, ur5）`；
   已给 `_ensure_scene` 加“未知场景继续走 provider 直连”的回退，但运行时仍走到该分支 —— 下一轮修路由。
+
+### A3 通过（2026-11-18）
+
+- 路由修复：`_ensure_scene` 在 supervisor 对所有 host 都返回“无此场景”时，继续走 provider 端点直连，
+  不再把“supervisor 不认识”误判为 provider 不可用；
+- ur5 主操纵场景 `ur5_go2_lab`：ur5e 放到可抓取位置（`pos_m=[0.28,-0.9,0]`），
+  `target_override_world_m=[0.28,-0.28,0.024892]`，pick-only（放置段暂关，避免无关不可达）；
+- 实测（板卡 MCP，scene=`ur5-go2-lab`，provider 50056）：
+
+```text
+ur抓取盒子 → SUCCEEDED，26.7 s，accepted=true，
+             bilateral_contact=true，force_ok=true，constraint_activated=true
+```
+
+**A3 完成**：联合世界里 ur5 可单点抓取（uc5 主操纵联合场景），go2 与 piper 走各自路由。

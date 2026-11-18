@@ -64,13 +64,13 @@ def main() -> int:
     if args.register:
         import yaml
         registry = build_registry_scene(args.scene_id, descriptors)
-        reg_path = ROOT / "config" / "scenes" / ("%s.yaml" % args.scene_id)
+        reg_path = ROOT / "config" / "scenes" / ("%s.yaml" % args.scene_id.replace("_", "-"))
         reg_path.write_text(yaml.safe_dump(registry, allow_unicode=True, sort_keys=False), encoding="utf-8")
         files.append(str(reg_path))
         if args.endpoint and args.control_url:
             provider = build_provider_doc(args.scene_id, endpoint=args.endpoint,
                                           control_url=args.control_url, host_id=args.host_id)
-            prov_path = ROOT / "config" / "providers" / ("iraf-%s.yaml" % args.scene_id)
+            prov_path = ROOT / "config" / "providers" / ("iraf-%s.yaml" % args.scene_id.replace("_", "-"))
             prov_path.parent.mkdir(parents=True, exist_ok=True)
             prov_path.write_text(yaml.safe_dump(provider, allow_unicode=True, sort_keys=False), encoding="utf-8")
             files.append(str(prov_path))
