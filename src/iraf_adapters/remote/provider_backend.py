@@ -211,6 +211,22 @@ class RemoteProviderBackend:
         return self._invoke("reset_scene", {"scope": str(scope or "all"),
                                            "target_id": target_id}, lease)
 
+    def stand(self, lease, targets=None, duration_ms=None) -> Dict[str, Any]:
+        return self._invoke("stand", {"targets": targets or {},
+                                      "duration_ms": int(duration_ms) if duration_ms else None}, lease)
+
+    def locomote(self, velocity, duration_ms, lease) -> Dict[str, Any]:
+        return self._invoke("locomote", {"velocity": velocity,
+                                         "duration_ms": int(duration_ms)}, lease)
+
+    def dock_for_handoff(self, *, lease, position_tolerance_m, yaw_tolerance_rad,
+                         max_final_speed_mps) -> Dict[str, Any]:
+        return self._invoke("dock_for_handoff", {
+            "position_tolerance_m": float(position_tolerance_m),
+            "yaw_tolerance_rad": float(yaw_tolerance_rad),
+            "max_final_speed_mps": float(max_final_speed_mps),
+        }, lease)
+
     def stop(self, lease) -> None:
         self._invoke("stop", {}, lease)
 

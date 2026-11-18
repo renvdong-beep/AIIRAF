@@ -1,0 +1,89 @@
+apiVersion: iraf.intewell.io/v1
+kind: RobotProfile
+metadata:
+  name: handoff_lab_joint
+  version: 0.1.0
+spec:
+  simulation: true
+  verification: development
+  control_frequency_hz: 100
+  # 联合世界（Piper + UR5e + Go2）的能力/关节并集。
+  # 关节名取各单机 Profile 的声明名；联合 MJCF 的模型名由各 sub-backend 的 name_map/bindings 映射。
+  joints:
+    - joint1
+    - joint2
+    - joint3
+    - joint4
+    - joint5
+    - joint6
+    - joint7
+    - joint8
+    - shoulder_pan_joint
+    - shoulder_lift_joint
+    - elbow_joint
+    - wrist_1_joint
+    - wrist_2_joint
+    - wrist_3_joint
+    - rq2f85_right_driver_joint
+    - rq2f85_left_driver_joint
+    - FL_hip_joint
+    - FL_thigh_joint
+    - FL_calf_joint
+    - FR_hip_joint
+    - FR_thigh_joint
+    - FR_calf_joint
+    - RL_hip_joint
+    - RL_thigh_joint
+    - RL_calf_joint
+    - RR_hip_joint
+    - RR_thigh_joint
+    - RR_calf_joint
+  joint_limits:
+    joint1: [-3.14, 3.14]
+    joint2: [-3.14, 3.14]
+    joint3: [-3.14, 3.14]
+    joint4: [-3.14, 3.14]
+    joint5: [-3.14, 3.14]
+    joint6: [-3.14, 3.14]
+    joint7: [0.0, 0.035]
+    joint8: [-0.035, 0.0]
+    shoulder_pan_joint: [-6.28319, 6.28319]
+    shoulder_lift_joint: [-6.28319, 6.28319]
+    elbow_joint: [-3.1415, 3.1415]
+    wrist_1_joint: [-6.28319, 6.28319]
+    wrist_2_joint: [-6.28319, 6.28319]
+    wrist_3_joint: [-6.28319, 6.28319]
+    rq2f85_right_driver_joint: [0.0, 0.8]
+    rq2f85_left_driver_joint: [0.0, 0.8]
+    FL_hip_joint: [-1.0472, 1.0472]
+    FL_thigh_joint: [-1.5708, 3.4907]
+    FL_calf_joint: [-2.7227, -0.83776]
+    FR_hip_joint: [-1.0472, 1.0472]
+    FR_thigh_joint: [-1.5708, 3.4907]
+    FR_calf_joint: [-2.7227, -0.83776]
+    RL_hip_joint: [-1.0472, 1.0472]
+    RL_thigh_joint: [-0.5236, 4.5379]
+    RL_calf_joint: [-2.7227, -0.83776]
+    RR_hip_joint: [-1.0472, 1.0472]
+    RR_thigh_joint: [-0.5236, 4.5379]
+    RR_calf_joint: [-2.7227, -0.83776]
+  # 能力并集：机械臂（piper/ur5）+ 四足（go2）
+  capabilities:
+    [move_joint, pick_object, visual_pick, place_object, stop, reset_scene,
+     stand, locomote, dock_for_handoff, accept_payload]
+  # 资源 → 角色（JointMujocoBackend 的路由表；与 scene 注册表的 resource id 对齐）
+  joint:
+    resources:
+      joint-piper: arm
+      joint-ur5: arm
+      joint-go2: quadruped
+  # 仅作参考位形（Piper 单机 home）；联合世界初始状态由 MJCF keyframe 决定
+  home:
+    joint1: 0.0
+    joint2: 0.0
+    joint3: 0.0
+    joint4: 0.0
+    joint5: 0.0
+    joint6: 0.0
+    joint7: 0.035
+    joint8: -0.035

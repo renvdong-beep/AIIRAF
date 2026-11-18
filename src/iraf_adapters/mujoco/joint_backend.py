@@ -13,6 +13,9 @@
 """
 from __future__ import annotations
 
+import threading
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from iraf_adapters.mujoco.mujoco_backend import MujocoBackend
@@ -46,6 +49,10 @@ class JointMujocoBackend:
         "ur5e": "arm",
         "go2": "quadruped",
         "unitree_go2": "quadruped",
+        # 场景注册表的资源 id（joint 场景）
+        "joint-piper": "arm",
+        "joint-ur5": "arm",
+        "joint-go2": "quadruped",
     }
 
     @classmethod
@@ -100,43 +107,61 @@ class JointMujocoBackend:
     def _quad_backend(self):
         return self._quadruped
 
+    # ---- 植物推进：机械臂是 guest，动作期间必须由 owner（四足）推进时间 ----
+    @contextmanager
+    def _advance_plant(self):
+        stop = threading.Event()
+        owner = self._quadruped
+        plant = self.plant
+
+        def loop():
+            while not stop.is_set():
+                try:
+                    plant.step_once(owner)
+                except Exception:
+                    break
+                time.sleep(0.0005)
+
+        thread = threading.Thread(target=loop, daemon=True, name="joint-plant-stepper")
+        thread.start()
+        try:
+            yield
+        finally:
+            stop.set()
+            thread.join(timeout=1.0)
+
     # ---- 机械臂能力（piper / ur5） ----
     def move_joint(self, *args, **kwargs):
-        return self._arm.move_joint(*args, **kwargs)
+        with self._advance_plant():
+            return self._arm.move_joint(*args, **kwargs)
 
     def pick_object(self, *args, **kwargs):
-        return self._arm.pick_object(*args, **kwargs)
+        with self._advance_plant():
+            return self._arm.pick_object(*args, **kwargs)
 
     def place_object(self, *args, **kwargs):
-        return self._arm.place_object(*args, **kwargs)
+        with self._advance_plant():
+            return self._arm.place_object(*args, **kwargs)
 
     def visual_pick(self, *args, **kwargs):
-        return self._arm.visual_pick(*args, **kwargs)
+        with self._advance_plant():
+            return self._arm.visual_pick(*args, **kwargs)
 
     def reset_scene(self, *args, **kwargs):
         return self._arm.reset_scene(*args, **kwargs)
 
     # ---- 四足能力（go2） ----
     def stand(self, lease, targets=None, duration_ms=None, execution_id=None):
-        kind, _ = self._kind(lease)
-        if kind != "quadruped":
-            raise JointBindingError("stand 只能用于四足资源（lease.resource_id=%s）"
-                                    % getattr(lease, "resource_id", ""))
+        # 能力本身决定目标机器人：stand 只可能落在四足上（resource_id 可能是场景/Profile 名）。
         return self._quadruped.stand(lease, targets=targets,
                                      duration_ms=duration_ms, execution_id=execution_id)
 
     def locomote(self, velocity, duration_ms, lease, execution_id=None):
-        kind, _ = self._kind(lease)
-        if kind != "quadruped":
-            raise JointBindingError("locomote 只能用于四足资源")
         return self._quadruped.locomote(velocity, duration_ms, lease,
                                         execution_id=execution_id)
 
     def dock_for_handoff(self, *, lease, position_tolerance_m, yaw_tolerance_rad,
                          max_final_speed_mps, execution_id=None):
-        kind, _ = self._kind(lease)
-        if kind != "quadruped":
-            raise JointBindingError("dock_for_handoff 只能用于四足资源")
         return self._quadruped.dock_for_handoff(
             lease=lease, position_tolerance_m=position_tolerance_m,
             yaw_tolerance_rad=yaw_tolerance_rad,
@@ -148,9 +173,39 @@ class JointMujocoBackend:
     def read_state(self, *args, **kwargs):
         return self._quadruped.read_state(*args, **kwargs)
 
+    def runtime_inventory(self):
+        """联合世界的运行时清单：机械臂安全/操纵事实 + 资源表 + 四足可读状态。
+
+        远端 runtime 会拿它做 Policy 前置条件与 Health.inventory；缺它时
+        Provider 直接被判 IRAF-PROVIDER-INVENTORY-UNAVAILABLE（2026-11-18 实测）。
+        """
+        inventory = dict(self._arm.runtime_inventory())
+        inventory["mode"] = "simulation"
+        inventory["joint"] = {
+            "resources": dict(self._resources),
+            "capabilities": sorted(self.IMPLEMENTED_CAPABILITIES),
+            "quadruped_state": callable(getattr(self._quadruped, "read_state", None)),
+        }
+        return inventory
+
+    # ---- 显示/渲染（viewer 依赖；联合世界用四足/机械臂的同一把植物锁） ----
+    def display_lock(self):
+        return self._arm.display_lock() if callable(getattr(self._arm, "display_lock", None)) \
+            else self.plant.lock()
+
+    def render_frames(self, *args, **kwargs):
+        for backend in (self._quadruped, self._arm):
+            fn = getattr(backend, "render_frames", None)
+            if callable(fn):
+                return fn(*args, **kwargs)
+        raise JointBindingError("组合后端没有可用的 render_frames")
+
     # ---- 通用 ----
     def stop(self, lease, execution_id=None):
-        kind, _ = self._kind(lease)
+        try:
+            kind, _ = self._kind(lease)
+        except JointBindingError:
+            kind = "arm"
         target = self._quadruped if kind == "quadruped" else self._arm
         return target.stop(lease, execution_id=execution_id)
 
