@@ -215,3 +215,12 @@ python3 scripts/build_scene.py --scene scenes/piper_go2_lab --robot unitree_go2 
 - 运行时：把 handoff provider 临时指向该产物（备份 env），板卡 `go2站起来` → **SUCCEEDED，3.4 s**；
   验证后已恢复 handoff 原模型。
 - 结论：**A5 通过**（composer 生成 piper+go2 联合场景，单点 stand 成功）。
+
+### A6（单机 provider 回归，2026-11-18）
+
+| 语义 | 场景 | 结果 |
+|---|---|---|
+| `piper抓取盒子` | `piper-pick` | SUCCEEDED，5.5 s，`bilateral_contact=true` |
+| `ur抓取盒子` | `ur5-pick` | SUCCEEDED，58.3 s，`bilateral_contact=true` |
+
+单机 provider 路径未被联合改动污染。
