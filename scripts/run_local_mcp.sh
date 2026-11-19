@@ -36,6 +36,9 @@ exec env \
   IRAF_SKILL_ROOT=/home/coretek/AIIRAF/skills \
   IRAF_BACKEND_ENTRYPOINT=iraf_adapters.unitree_g1.backend:UnitreeG1Backend \
   'IRAF_BACKEND_CONFIG={"declaration":"config/unitree_g1_loopback.yaml"}' \
-  IRAF_SCENE_REGISTRY_MODE=off \
+  IRAF_SCENE_REGISTRY_MODE=on \
+  IRAF_SCENE_ROOT=/home/coretek/.config/iraf/registry \
+  IRAF_PROFILES_ROOT=/home/coretek/AIIRAF/profiles \
   IRAF_REPO_ROOT="$REPO" \
+  IRAF_PLAN_FALLBACK=0 \
   python3 -m iraf_adapters.mcp.server

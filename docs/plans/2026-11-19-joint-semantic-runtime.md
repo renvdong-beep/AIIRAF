@@ -349,3 +349,24 @@ move_joint accepted = True（7 臂关节，2000ms）
 - 实测：`iraf_submit_task("franka移动", scene_id="franka-lab")` 仍解析到 **unitree_g1 profile**
   （resource_id=unitree_g1）⇒ 场景解析/桥选择仍有缓存或默认场景问题，待定位；
   Provider 级 `move_joint` 已通过（50059）。
+
+## Franka MCP 单机入口打通（2026-11-19）
+
+- 根因链：
+  1. 本地 MCP 实际仍是 `IRAF_SCENE_REGISTRY_MODE=off`（配置未生效）⇒ 走默认 G1；
+  2. 打开注册表后，`_bridge_for_resolved` 用装配单 base 覆盖了 scene 的 `backend_config`；
+  3. `_supervisor_url` 从 endpoint 推导 8770，把无控制面的 provider 误送 supervisor；
+  4. Franka 关键词把腱驱动夹爪关节写进 move_joint。
+- 修复：
+  - launcher 真正启用 registry + `IRAF_SCENE_ROOT`/`IRAF_PROFILES_ROOT`；
+  - scene `backend_config` 优先于装配单 base；
+  - `_supervisor_url` 只认显式 `control_url`/env，不再从 endpoint 推导；
+  - Franka move 只下发 7 个臂关节（夹爪腱驱动不可直接位置控制）。
+- 实测：
+
+```text
+iraf_submit_task("franka移动", scene_id="franka-lab")
+→ SUCCEEDED, resolved_skill=move_joint, scene=franka-lab
+```
+
+G1 与 Franka 现在都能通过本地 MCP 单机控制。

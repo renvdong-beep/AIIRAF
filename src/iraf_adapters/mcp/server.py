@@ -145,11 +145,14 @@ def _bridge_for_resolved(resolved):
                 os.environ["IRAF_BACKEND_CONFIG"] = json.dumps(scene_config)
             # 装配单里保留的是"基线配置"（token_file/timeout/subject 等），这里只合并 endpoint，
             # 不整体覆盖 —— 否则凭据配置丢失，Provider 鉴权直接失败。
-            try:
-                base = json.loads(saved.get("IRAF_BACKEND_CONFIG") or "{}")
-            except Exception:
-                base = {}
-            base = dict(base) if isinstance(base, dict) else {}
+            if isinstance(scene_config, dict):
+                base = dict(scene_config)
+            else:
+                try:
+                    base = json.loads(saved.get("IRAF_BACKEND_CONFIG") or "{}")
+                except Exception:
+                    base = {}
+                base = dict(base) if isinstance(base, dict) else {}
             base["endpoint"] = resolved.host.endpoint
             os.environ["IRAF_BACKEND_CONFIG"] = json.dumps(base)
             dispatcher = TaskDispatcher(build_runtime_from_env())
@@ -1139,10 +1142,6 @@ def _supervisor_url(host=None) -> str:
     报“链路失败”。这里从 endpoint 的 IP 推导控制面地址，保证“注册表即路由”。
     """
     host_control_url = getattr(host, "control_url", "") if host is not None else ""
-    if not host_control_url and host is not None:
-        endpoint = str(getattr(host, "endpoint", "") or "")
-        if ":" in endpoint:
-            host_control_url = "http://%s:8770" % endpoint.rsplit(":", 1)[0]
     return (host_control_url or os.environ.get("IRAF_SUPERVISOR_URL") or "").strip().rstrip("/")
 
 
