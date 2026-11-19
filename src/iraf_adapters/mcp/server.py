@@ -1544,6 +1544,126 @@ def iraf_onboard_robot(robot_id: str, model_path: str, capabilities: str = "",
                             "reason": "%s: %s" % (type(exc).__name__, exc)}, ensure_ascii=False)
 
 
+def _robot_lifecycle():
+    from iraf_adapters.mujoco import robot_lifecycle as _rl
+    return _rl
+
+
+def _robot_root() -> str:
+    import os as _os
+    return _os.path.abspath(_os.environ.get("IRAF_REPO_ROOT") or _os.getcwd())
+
+
+def _json_arg(value):
+    import json as _json
+    if value is None or value == "":
+        return {}
+    if isinstance(value, (dict, list)):
+        return value
+    return _json.loads(value)
+
+
+@app.tool()
+@_audited("iraf_robot_build_scene")
+def iraf_robot_build_scene(robot_id: str, scene_id: str, profile: str,
+                           provider_endpoint: str, capabilities: str = "",
+                           report_path: str = "", model_path: str = "",
+                           backend_entrypoint: str = "", backend_config: str = "",
+                           control_url: str = "", dry_run: bool = True) -> str:
+    """生成单机 scene/provider 声明（可选自动从报告生成 backend_config）。
+
+    这是"接入产品化"的声明阶段：不写 registry、不执行机器人；未验收前不得注册。
+    """
+    import json as _json
+    try:
+        caps = [x.strip() for x in str(capabilities or "").split(",") if x.strip()]
+        cfg = _json_arg(backend_config)
+        result = _robot_lifecycle().build_scene(
+            robot_id=robot_id, scene_id=scene_id, profile=profile,
+            provider_endpoint=provider_endpoint, capabilities=caps,
+            root=_robot_root(), report_path=report_path, model_path=model_path,
+            backend_entrypoint=backend_entrypoint, backend_config=cfg,
+            control_url=control_url, dry_run=bool(dry_run))
+        return _json.dumps(result, ensure_ascii=False)
+    except Exception as exc:  # noqa: BLE001
+        return _json.dumps({"status": "FAILED", "error_code": "IRAF-ROBOT-SCENE-FAILED",
+                            "reason": "%s: %s" % (type(exc).__name__, exc)}, ensure_ascii=False)
+
+
+@app.tool()
+@_audited("iraf_robot_scaffold_capability")
+def iraf_robot_scaffold_capability(robot_id: str, capability: str,
+                                   dry_run: bool = True) -> str:
+    """生成能力实现/skill/声明补丁草案；不自动改现有源码（fail-closed）。"""
+    import json as _json
+    try:
+        result = _robot_lifecycle().scaffold_capability(
+            robot_id, capability, root=_robot_root(), dry_run=bool(dry_run))
+        return _json.dumps(result, ensure_ascii=False)
+    except Exception as exc:  # noqa: BLE001
+        return _json.dumps({"status": "FAILED", "error_code": "IRAF-ROBOT-SCAFFOLD-FAILED",
+                            "reason": "%s: %s" % (type(exc).__name__, exc)}, ensure_ascii=False)
+
+
+@app.tool()
+@_audited("iraf_robot_acceptance")
+def iraf_robot_acceptance(robot_id: str, capability: str, profile: str,
+                          params: str = "{}", backend_entrypoint: str = "",
+                          backend_config: str = "", dry_run: bool = True) -> str:
+    """在本地 Backend 上做单机能力验收并写 report；dry_run 不执行、不产生证据。
+
+    支持：move_joint / gripper / pick_object（其余能力显式失败，不伪造）。
+    """
+    import json as _json
+    try:
+        result = _robot_lifecycle().acceptance(
+            robot_id, capability, profile=profile, root=_robot_root(),
+            backend_entrypoint=backend_entrypoint,
+            backend_config=_json_arg(backend_config),
+            params=_json_arg(params), dry_run=bool(dry_run))
+        return _json.dumps(result, ensure_ascii=False)
+    except Exception as exc:  # noqa: BLE001
+        return _json.dumps({"status": "FAILED", "error_code": "IRAF-ROBOT-ACCEPTANCE-FAILED",
+                            "reason": "%s: %s" % (type(exc).__name__, exc)}, ensure_ascii=False)
+
+
+@app.tool()
+@_audited("iraf_robot_register")
+def iraf_robot_register(scene_file: str, provider_file: str,
+                        acceptance_report: str, dry_run: bool = True,
+                        registry_root: str = "", allow_overwrite: bool = False) -> str:
+    """验收 passed=true 后把 scene/provider 装入 /etc/iraf 注册表并 seal。"""
+    import json as _json
+    import os as _os
+    try:
+        result = _robot_lifecycle().register(
+            scene_file, provider_file, root=_robot_root(),
+            registry_root=registry_root or _os.environ.get("IRAF_SCENE_ROOT") or "/etc/iraf",
+            profiles_root=_os.environ.get("IRAF_PROFILES_ROOT") or "profiles",
+            acceptance_report=acceptance_report, dry_run=bool(dry_run),
+            allow_overwrite=bool(allow_overwrite))
+        return _json.dumps(result, ensure_ascii=False)
+    except Exception as exc:  # noqa: BLE001
+        return _json.dumps({"status": "FAILED", "error_code": "IRAF-ROBOT-REGISTER-FAILED",
+                            "reason": "%s: %s" % (type(exc).__name__, exc)}, ensure_ascii=False)
+
+
+@app.tool()
+def iraf_robot_status(robot_id: str) -> str:
+    """只读：机器人场景/能力/验收状态（未验收项明确列出）。"""
+    import json as _json
+    import os as _os
+    try:
+        result = _robot_lifecycle().status(
+            robot_id, root=_robot_root(),
+            registry_root=_os.environ.get("IRAF_SCENE_ROOT") or "/etc/iraf",
+            profiles_root=_os.environ.get("IRAF_PROFILES_ROOT") or "profiles")
+        return _json.dumps(result, ensure_ascii=False)
+    except Exception as exc:  # noqa: BLE001
+        return _json.dumps({"status": "FAILED", "error_code": "IRAF-ROBOT-STATUS-FAILED",
+                            "reason": "%s: %s" % (type(exc).__name__, exc)}, ensure_ascii=False)
+
+
 @app.tool()
 @_audited("iraf_compose_joint_scene")
 def iraf_compose_joint_scene(scene_id: str, robots: str, base: str = "",

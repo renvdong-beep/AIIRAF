@@ -1,15 +1,22 @@
 apiVersion: iraf.intewell.io/v1
 kind: Skill
-metadata: {name: engineering.robot_onboard, version: 1.0.0}
+metadata: {name: engineering.robot_onboard, version: 1.1.0}
 spec:
   verification: development
   inputSchema: robot_onboard.input.json
   outputSchema: robot_onboard.output.json
-  # 只做接入声明与校验（不驱动机器人）；能力实现与单机验收是后续强制步骤。
   requires: [engineering.robot_onboard]
   preconditions: []
-  intentExamples: [接入新机器人, 新机器人导入, onboard robot, 生成机器人 Profile]
-  timeoutSeconds: 60
+  intentExamples:
+    - 接入新机器人
+    - 新机器人导入
+    - onboard robot
+    - 生成机器人 Profile
+    - 生成机器人场景
+    - 验收机器人能力
+    - 注册机器人场景
+    - 机器人接入还差什么
+  timeoutSeconds: 180
   cancellation: cooperative_stop
   recovery: [request_handover]
   safetyClass: build_tooling

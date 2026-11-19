@@ -570,3 +570,37 @@ iraf_submit_task("g1站起来")  # 不传 scene_id
 ```
 
 凭据：`/home/coretek/.config/iraf/agentos.key`（600），不入 git。
+
+## 新机器人接入产品化（2026-11-19）
+
+新增 MCP 工具（均 fail-closed，默认 dry-run）：
+
+```text
+iraf_robot_build_scene          从 Profile/报告生成 scene/provider（report 自动生成 backend_config）
+iraf_robot_scaffold_capability  生成 backend/skill/Profile/Scene/Policy 补丁草案（不自动改源码）
+iraf_robot_acceptance           本地 Backend 只读验收（move_joint/gripper/pick_object/place_object/stand/locomote）
+iraf_robot_register             必须 accepted_report passed=true 才写注册表并 seal
+iraf_robot_status               查场景/Profile/验收状态
+```
+
+`engineering.robot_onboard` 升级为 stage 编排：
+`onboard | scaffold | scene | acceptance | register | status`。
+
+实测：
+
+```text
+iraf_robot_acceptance(franka_2f85, gripper, close)
+→ passed=true, driver_qpos=0.781538, report 落盘
+
+iraf_robot_register(franka-lab, acceptance_report=gripper/report.json, registry_root=/tmp/reg-test)
+→ SUCCEEDED, scenes=[franka-lab]
+
+iraf_robot_status(franka_2f85)
+→ scene=franka-lab, acceptance=[gripper passed]
+
+iraf_robot_scaffold_capability(demo_bot, stand)
+→ 生成 backend_method/provider/skill/profile/scene/policy 草案
+```
+
+边界：`scaffold` 只产出草案，必须人审/实现；`register` 不接收未验收项；
+`acceptance` 支持的能力见工具 docstring，其余显式失败。
