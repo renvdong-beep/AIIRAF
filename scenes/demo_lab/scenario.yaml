@@ -1,0 +1,24 @@
+schema_version: iraf.scenario-catalog/v1
+scene: scene.yaml
+simulation: true
+scenarios:
+  stand_stop:
+    description: 语义组合场景冒烟：四足站立保持 → 松力停机
+    steps:
+    - id: ss01_stand
+      action: stand
+      robot: unitree_go2
+      params: {}
+      criteria:
+        min_stable_hold_s: 3.0
+        max_speed_m_s: 0.05
+        timeout_s: 10.0
+    - id: ss02_stop
+      action: stop
+      robot: unitree_go2
+      params: {}
+      criteria:
+        min_stable_hold_s: 1.0
+        max_speed_m_s: 0.05
+        timeout_s: 5.0
+    faults: []

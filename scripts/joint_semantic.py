@@ -103,6 +103,36 @@ def parse_text(text: str, library: dict):
     return robots, props
 
 
+def write_stand_scenario(out_dir: Path, robot: str) -> Path:
+    """生成最小可执行场景：stand → stop（进程内 MuJoCo，不需要 Provider/板卡）。"""
+    scenario = {
+        "schema_version": "iraf.scenario-catalog/v1",
+        "scene": "scene.yaml",
+        "simulation": True,
+        "scenarios": {
+            "stand_stop": {
+                "description": "语义组合场景冒烟：四足站立保持 → 松力停机",
+                "steps": [
+                    {"id": "ss01_stand", "action": "stand", "robot": robot, "params": {},
+                     "criteria": {"min_stable_hold_s": 3.0, "max_speed_m_s": 0.05,
+                                  "timeout_s": 10.0}},
+                    {"id": "ss02_stop", "action": "stop", "robot": robot, "params": {},
+                     "criteria": {"min_stable_hold_s": 1.0, "max_speed_m_s": 0.05,
+                                  "timeout_s": 5.0}},
+                ],
+                "faults": [],
+            }
+        },
+    }
+    path = out_dir / "scenario.yaml"
+    path.write_text(yaml.safe_dump(scenario, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    readme = out_dir / "README.md"
+    if not readme.exists():
+        readme.write_text("# %s\n\n由 `scripts/joint_semantic.py` 生成的语义组合场景。\n" % out_dir.name,
+                          encoding="utf-8")
+    return path
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--text", default="", help="自然语言（受控词表）")
@@ -112,6 +142,7 @@ def main() -> int:
     ap.add_argument("--base", default="scenes/handoff_lab")
     ap.add_argument("--build", action="store_true", help="调用 build_scene 生成 MJCF")
     ap.add_argument("--register", action="store_true")
+    ap.add_argument("--run", action="store_true", help="构建后用 scenario.py 在进程内跑 stand_stop")
     args = ap.parse_args()
 
     library = load_props_library(ROOT)
@@ -158,7 +189,20 @@ def main() -> int:
         print("[build] " + " ".join(cmd))
         rc = subprocess.call(cmd, cwd=str(ROOT))
         print("[build] rc=%d" % rc)
-        return rc
+        if rc != 0:
+            return rc
+    if args.run:
+        go2 = next((r for r in robots if r in ("unitree_go2", "go2")), None)
+        if not go2:
+            print(json.dumps({"status": "FAILED", "error": "run 需要 unitree_go2（stand_stop）"},
+                             ensure_ascii=False))
+            return 2
+        out_dir = ROOT / "scenes" / args.scene_id
+        write_stand_scenario(out_dir, go2)
+        run_cmd = [sys.executable, str(ROOT / "scripts/scenario.py"), "run",
+                   "--scene", str(out_dir), "--scenario", "stand_stop", "--display", "none"]
+        print("[run] " + " ".join(run_cmd))
+        return subprocess.call(run_cmd, cwd=str(ROOT))
     return 0
 
 

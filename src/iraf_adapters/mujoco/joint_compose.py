@@ -118,6 +118,9 @@ def compose_scene(base_scene: Path, base_baseline: Path, *, scene_id: str,
     baseline["robots_joint"] = filtered
     single = {k: v for k, v in (baseline.get("robots") or {}).items() if k in wanted}
     baseline["robots"] = single
+    initial = baseline.get("initial_state")
+    if isinstance(initial, dict):
+        baseline["initial_state"] = {k: v for k, v in initial.items() if k in wanted}
     return {"scene": scene, "baseline": baseline}
 
 
