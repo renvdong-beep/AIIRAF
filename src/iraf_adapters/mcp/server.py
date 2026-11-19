@@ -1703,6 +1703,18 @@ def iraf_robot_join_world(scene_id: str, robots: str, base: str = "",
 
 
 @app.tool()
+def iraf_robot_pick_readiness(report_path: str = "") -> str:
+    """只读：检查 scene_report 是否具备 pick 事实（不执行、不猜默认值）。"""
+    import json as _json
+    try:
+        return _json.dumps(_robot_lifecycle().pick_readiness(
+            report_path, root=_robot_root()), ensure_ascii=False)
+    except Exception as exc:  # noqa: BLE001
+        return _json.dumps({"status": "FAILED", "error_code": "IRAF-ROBOT-PICK-READINESS-FAILED",
+                            "reason": "%s: %s" % (type(exc).__name__, exc)}, ensure_ascii=False)
+
+
+@app.tool()
 @_audited("iraf_compose_joint_scene")
 def iraf_compose_joint_scene(scene_id: str, robots: str, base: str = "",
                              dry_run: bool = True, register: bool = False) -> str:

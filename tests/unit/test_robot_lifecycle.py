@@ -81,3 +81,16 @@ def test_join_world_blocks_unaccepted_robot():
         rl.join_world("demo-joint", "piper", base="scenes/handoff_lab",
                       root=".", dry_run=True, require_runnable=True)
 
+
+def test_pick_readiness_ur5_report():
+    out = rl.pick_readiness("build/models/ur5-pick-scene.json", root=".")
+    assert out["ready"] is True
+    assert out["missing"] == []
+
+
+def test_pick_readiness_missing_report():
+    out = rl.pick_readiness("", root=".")
+    assert out["ready"] is False
+    assert "report_path" in out["missing"]
+
+

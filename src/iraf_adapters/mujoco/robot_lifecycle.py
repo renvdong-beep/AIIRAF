@@ -436,6 +436,32 @@ def join_world(scene_id: str, robots, *, base="scenes/handoff_lab", root=".",
             "note": "只生成联合声明；MJCF 合成仍由 scripts/build_scene.py"}
 
 
+def pick_readiness(report_path: str = "", *, root=".") -> Dict[str, Any]:
+    """检查 scene_report 是否具备 pick 所需事实；不执行、不猜默认值。"""
+    if not report_path:
+        return {"status": "SUCCEEDED", "ready": False,
+                "reason": "未提供 scene_report（pick 需要目标/夹爪几何/参考解）",
+                "missing": ["report_path"]}
+    p = Path(report_path)
+    if not p.is_absolute():
+        p = _root(root) / p
+    if not p.is_file():
+        return {"status": "SUCCEEDED", "ready": False,
+                "reason": "报告不存在：%s" % p, "missing": ["report_path"]}
+    report = json.loads(p.read_text(encoding="utf-8"))
+    gripper = report.get("gripper") or {}
+    required = ["wrist_body", "left_finger_body", "right_finger_body",
+                "left_finger_geom", "right_finger_geom",
+                "open_positions", "closed_positions"]
+    missing = [k for k in required if not gripper.get(k)]
+    if not (report.get("targets") or []):
+        missing.append("targets")
+    return {"status": "SUCCEEDED", "ready": not missing, "missing": missing,
+            "report": str(p), "model": report.get("output"),
+            "targets": [x.get("id") for x in (report.get("targets") or [])],
+            "note": "ready=true 只代表事实齐全；pick 仍需实际 acceptance 证据"}
+
+
 def status(robot_id: str, *, root=".", registry_root="/etc/iraf", profiles_root="") -> Dict[str, Any]:
     root = _root(root)
     from iraf_core.scene_registry import SceneRegistry

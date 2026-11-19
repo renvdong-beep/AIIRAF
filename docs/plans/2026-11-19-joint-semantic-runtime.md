@@ -671,3 +671,18 @@ iraf_robot_join_world(piper, require_runnable=true)
 - `join_world` 复用 joint_compose，只生成联合声明；MJCF 合成仍由 build_scene.py。
 - 9 个 lifecycle 单测通过。
 - Franka pick 仍需 manipulation 报告/目标/参考解；当前没有该报告，未伪造。
+
+### Franka pick 事实探测（2026-11-19 16:05）
+
+新增只读工具 `iraf_robot_pick_readiness`：
+
+```text
+UR5 report → ready=true, targets=[box_01], missing=[]
+Franka（无 report）→ ready=false, missing=[report_path]
+```
+
+即：pick 所需的目标/夹爪几何/参考解事实在 UR5 报告里齐全；Franka 目前没有
+场景报告，工具明确拒绝，不用默认值伪造 pick。要交付 Franka pick，下一步必须：
+1) 构建 Franka 目标场景报告（target box + gripper 几何 + 参考解）；
+2) 通过后跑 `iraf_robot_acceptance` 的 `pick_object`；
+3) 才允许注册/进联合世界。
