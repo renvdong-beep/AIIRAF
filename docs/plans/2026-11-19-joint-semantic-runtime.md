@@ -745,3 +745,13 @@ iraf_robot_join_world(demo_joint_build, piper,unitree_go2,
 - 目标初始位姿已设到指腹中点，`pick_object` 仍报告 `lift_delta_m=0.0`
   ⇒ 当前夹持/抬升轨迹不足以把自由目标提起，严格判据继续拒绝；
 - 不伪造 Franka pick。下一步需要可复现的抬升轨迹/夹持约束（不能只改静态目标）。
+
+### Franka freejoint 目标调试（2026-11-19 16:40）
+
+- `initial_qpos` 已支持按 body 名找到 free joint（box_01）；
+- 调试日志显示：`pick_object` 的 HOME/APPROACH/DESCEND 都到位（center_distance≈0.0166 m），
+  但 GRIP_CLOSE 后 `rq2f85_fingers_actuator` 的驱动关节 qpos 仍≈0，
+  法向力 0.0，`lift_delta_m=0.0`；
+- 结论：不是目标位置问题，是 2F-85 夹爪在该模型/配置下没有真正闭合（tendon 执行器语义），
+  需要单独的 2F-85 驱动映射/标定，之后才能谈 lift。
+- 严格 pick 判据继续拒绝；不伪造。
