@@ -379,3 +379,20 @@ G1 与 Franka 现在都能通过本地 MCP 单机控制。
 - 已排除：`factory.py` 被 main 整文件覆盖（已恢复 release 版，仅保留 G1 映射）；
   但重跑仍失败 ⇒ 需继续定位（build 模型/场景状态/依赖版本）。
 - 在修复前不宣称 handoff 不退化；Goal 保持 active。
+
+## handoff 回归根因定位（2026-11-19）
+
+- 现象：`handoff_lab nominal` s04 横向 0.073 > 0.07，s05–s07 级联失败；
+- 在 `.145` 上用 **系统 MuJoCo 3.3.3** 重跑同一场景/同一模型：
+
+```text
+mujoco 3.3.3 /home/coretek/.local/lib/python3.10/site-packages/mujoco/__init__.py
+scenario run nomial → passed=true
+```
+
+- 根因：`.local/opt/iraf-sdk/0.4.4/lib/mujoco` 是 **3.17.0**，当 PYTHONPATH 加入 `lib`
+  （为补 `jsonschema`）时它会**遮蔽系统 3.3.3**；3.17 下接触/位姿结果偏移，导致 s04 超限。
+- 附带修复：`scene_builder._apply_declared_position_gains` 对 MuJoCo 3.17 的
+  `joint.damping` 数组做了标量兼容（否则重建模型 TypeError）。
+- 结论：**代码回归不成立**，是运行环境 MuJoCo 版本漂移；应固定 MuJoCo 版本
+  （x86 用 3.3.3；板卡轮子用 3.13/3.14），并避免 `lib` 内混入不兼容版本。

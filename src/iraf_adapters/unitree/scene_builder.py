@@ -743,7 +743,7 @@ def _apply_declared_position_gains(root, child, profile_spec, robot_id):
     if not joints:
         _fail(EXIT_DECLARATION, "robots.%s 的执行器刚度声明缺少关节清单（%s 的 %s.arm_joints）"
               % (robot_id, baseline_path, declaration["joints_section"]))
-    damping = {str(joint.name): float(joint.damping)
+    damping = {str(joint.name): float(__import__('numpy').asarray(joint.damping).reshape(-1)[0])
                for joint in (getattr(child, "joints", []) or [])}
     applied = []
     for actuator in (getattr(child, "actuators", []) or []):
