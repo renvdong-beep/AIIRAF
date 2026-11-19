@@ -78,7 +78,7 @@ def compose_profile(descriptors: Iterable[dict], *, scene_id: str) -> Dict:
 
 def compose_scene(base_scene: Path, base_baseline: Path, *, scene_id: str,
                   robot_ids: Iterable[str], placements: Dict[str, dict] | None = None,
-                  joint_manipulator: str = "") -> Dict[str, dict]:
+                  joint_manipulator: str = "", props: list | None = None) -> Dict[str, dict]:
     """生成联合场景的 scene.yaml / baseline.yaml（只改声明，不碰 MJCF）。"""
     scene = _load(base_scene)
     baseline = _load(base_baseline)
@@ -96,6 +96,15 @@ def compose_scene(base_scene: Path, base_baseline: Path, *, scene_id: str,
             robot["placement"] = placement
     scene["id"] = scene_id
     scene["robots"] = robots
+    if props is not None:
+        scene["props"] = props
+        # 语义组合默认是 pick/stand 演示：没有声明接收体时移除放置段，避免
+        # “place_targets 缺失”把整次构建拒掉（放置段仍可在正式场景声明里保留）。
+        for robot in robots:
+            solver = robot.get("reference_solver")
+            if isinstance(solver, dict):
+                for key in ("place_entry", "place_target_id", "place_carrier_frame"):
+                    solver.pop(key, None)
     model = scene.setdefault("model", {})
     model["output"] = "build/scenes/%s/%s.xml" % (scene_id, scene_id)
     if "joint_output" in model:

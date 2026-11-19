@@ -1,0 +1,52 @@
+# 常用物品库（scene.props 模板）
+# 用法：joint_semantic.py --props "box@0.28,-0.28,0.03" / "cup@0.2,-0.2,0.09"
+props:
+  box:
+    kind: box
+    geometry: {type: box, size_m: [0.025, 0.025, 0.025]}
+    mass_kg: 0.04
+    friction: "2.0 0.05 0.001"
+    rgba: [0.82, 0.22, 0.12, 1.0]
+    note: 标准抓取方块（与 handoff box_01 同尺寸）
+  cube:
+    kind: box
+    geometry: {type: box, size_m: [0.02, 0.02, 0.02]}
+    mass_kg: 0.02
+    friction: "2.0 0.05 0.001"
+    rgba: [0.20, 0.55, 0.85, 1.0]
+    note: 小方块（更适合夹爪抓取）
+  ball:
+    kind: sphere
+    geometry: {type: sphere, size_m: [0.02]}
+    mass_kg: 0.03
+    friction: "1.2 0.02 0.001"
+    rgba: [0.90, 0.75, 0.15, 1.0]
+    note: 球（滚动目标，抓取需额外约束）
+  cylinder:
+    kind: cylinder
+    geometry: {type: cylinder, size_m: [0.02, 0.06]}
+    mass_kg: 0.08
+    friction: "1.5 0.05 0.001"
+    rgba: [0.30, 0.70, 0.35, 1.0]
+    note: 圆柱（半径 2cm、半高 6cm）
+  cup:
+    kind: cylinder
+    geometry: {type: cylinder, size_m: [0.025, 0.045]}
+    mass_kg: 0.05
+    friction: "1.5 0.05 0.001"
+    rgba: [0.85, 0.85, 0.90, 1.0]
+    note: 杯子（简化为实心圆柱；真实杯壁/开口属后续 mesh 资产）
+  tray:
+    kind: box
+    geometry: {type: box, size_m: [0.12, 0.08, 0.01]}
+    mass_kg: 0.20
+    friction: "1.0 0.02 0.001"
+    rgba: [0.45, 0.45, 0.50, 1.0]
+    note: 托盘（承载面）
+  button:
+    kind: cylinder
+    geometry: {type: cylinder, size_m: [0.02, 0.005]}
+    mass_kg: 0.03
+    friction: "1.0 0.02 0.001"
+    rgba: [0.85, 0.25, 0.25, 1.0]
+    note: 按钮（低矮圆柱）
