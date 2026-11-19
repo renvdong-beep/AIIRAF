@@ -1,0 +1,22 @@
+schema: iraf.scene/v1
+scene_id: franka-lab
+provider_id: iraf/franka-lab
+profile: profiles/franka_2f85_mujoco.yaml
+safety_policy: profiles/safety/simulation_lab.yaml
+simulation: true
+switch_name: franka
+aliases:
+- franka
+- panda
+- 机械臂
+max_concurrency: 1
+lease_ttl_s: 120
+description: Franka + 2F-85 单机（move_joint）
+resources:
+- id: franka
+  profile: profiles/franka_2f85_mujoco.yaml
+  capabilities:
+  - move_joint
+  - stop
+  - reset_scene
+digest: sha256:c59cf2249b15261ab0f9445fe32ba21f1fa47cc7f55c0cc8c8fbd54daa3f8521

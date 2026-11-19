@@ -324,3 +324,19 @@ iraf_submit_task("g1走两步") → SUCCEEDED, resolved_skill=locomote
 ```
 
 G1 现在达到与 UR5/Piper 同级的**单机 MCP 控制闭环**（仿真证据）。
+
+## Franka+2F-85 标准接入 + 单机 Provider（2026-11-19）
+
+- 用 `iraf_onboard_robot` 对装配模型走标准流程：
+  `franka_2f85_probe`，生成 Profile + `validation.json`（runnable=false）+ Backend 骨架；
+- `iraf-provider@franka_2f85` @ **50059**（MujocoBackend，headless）：
+  `PROVIDER_CAPABILITIES 3 move_joint,reset_scene,stop`；
+- gRPC 实测（`scripts/verify_franka_provider.py`）：
+
+```text
+move_joint accepted = True（7 臂关节，2000ms）
+```
+
+- 注册表：`franka-lab` → `10.203.247.145:50059`，`infer("franka移动")=franka-lab`；
+- 剩余：本地 MCP 的 runtime 入口目前按 G1 单入口配置，Franka 需要“按场景选择 Backend
+  entrypoint”后才能走 `iraf_submit_task`（Provider 级已通过）；gripper/pick 仍待 manipulation 事实。
