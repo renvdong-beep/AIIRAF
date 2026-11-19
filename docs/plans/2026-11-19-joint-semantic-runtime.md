@@ -396,3 +396,18 @@ scenario run nomial → passed=true
   `joint.damping` 数组做了标量兼容（否则重建模型 TypeError）。
 - 结论：**代码回归不成立**，是运行环境 MuJoCo 版本漂移；应固定 MuJoCo 版本
   （x86 用 3.3.3；板卡轮子用 3.13/3.14），并避免 `lib` 内混入不兼容版本。
+
+## 最终回归（MuJoCo 版本固定后，2026-11-19）
+
+- 处理：禁用 `.local/opt/iraf-sdk/0.4.4/lib/mujoco`（3.17.0），使用系统 **3.3.7**；
+  `pyproject` 约束改为 `mujoco>=3.2,<3.16`（排除 3.17，保留板卡 3.13/3.14）。
+- 实测：
+
+```text
+handoff_lab nominal → passed=true（9 步）
+g1站起来（MCP）    → SUCCEEDED (stand)
+franka移动（MCP）  → SUCCEEDED (move_joint)
+```
+
+- 结论：handoff 回归由 MuJoCo 3.17 环境漂移导致，**不是**新机器人接入代码；
+  固定版本后恢复 9/9。
