@@ -19,4 +19,8 @@ resources:
   - move_joint
   - stop
   - reset_scene
-digest: sha256:c59cf2249b15261ab0f9445fe32ba21f1fa47cc7f55c0cc8c8fbd54daa3f8521
+backend_entrypoint: iraf_adapters.mujoco.mujoco_backend:MujocoBackend
+backend_config:
+  model_path: /home/coretek/AIIRAF/build/models/franka_2f85/franka_2f85.xml
+  realtime: false
+digest: sha256:85ec822bafcabcdbf8540762b65cd71c126cec1f57c58e2befdc9031c7a52e8f

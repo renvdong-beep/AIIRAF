@@ -133,9 +133,16 @@ def _bridge_for_resolved(resolved):
             "IRAF 侧意图 Provider 未配置（需要 IRAF_AGENTOS_MODEL_URL + IRAF_AGENTOS_MODEL）")
     lock = _STATE.setdefault("_env_lock", threading.Lock())
     with lock:
-        saved = {k: os.environ.get(k) for k in ("IRAF_PROFILE", "IRAF_BACKEND_CONFIG")}
+        saved = {k: os.environ.get(k) for k in
+                 ("IRAF_PROFILE", "IRAF_BACKEND_CONFIG", "IRAF_BACKEND_ENTRYPOINT")}
         try:
             os.environ["IRAF_PROFILE"] = resolved.scene.profile
+            scene_override = (resolved.scene.raw or {})
+            if scene_override.get("backend_entrypoint"):
+                os.environ["IRAF_BACKEND_ENTRYPOINT"] = str(scene_override["backend_entrypoint"])
+            scene_config = scene_override.get("backend_config")
+            if isinstance(scene_config, dict):
+                os.environ["IRAF_BACKEND_CONFIG"] = json.dumps(scene_config)
             # 装配单里保留的是"基线配置"（token_file/timeout/subject 等），这里只合并 endpoint，
             # 不整体覆盖 —— 否则凭据配置丢失，Provider 鉴权直接失败。
             try:

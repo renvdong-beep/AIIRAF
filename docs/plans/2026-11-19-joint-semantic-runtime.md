@@ -340,3 +340,12 @@ move_joint accepted = True（7 臂关节，2000ms）
 - 注册表：`franka-lab` → `10.203.247.145:50059`，`infer("franka移动")=franka-lab`；
 - 剩余：本地 MCP 的 runtime 入口目前按 G1 单入口配置，Franka 需要“按场景选择 Backend
   entrypoint”后才能走 `iraf_submit_task`（Provider 级已通过）；gripper/pick 仍待 manipulation 事实。
+
+### 按场景 Backend entrypoint（2026-11-19）
+
+- `_bridge_for_resolved` 支持 Scene.raw 的 `backend_entrypoint` / `backend_config` 覆盖；
+- `franka-lab` 增加 MujocoBackend + 装配模型配置；
+- KeywordIntentProvider 增加 franka move_joint；
+- 实测：`iraf_submit_task("franka移动", scene_id="franka-lab")` 仍解析到 **unitree_g1 profile**
+  （resource_id=unitree_g1）⇒ 场景解析/桥选择仍有缓存或默认场景问题，待定位；
+  Provider 级 `move_joint` 已通过（50059）。

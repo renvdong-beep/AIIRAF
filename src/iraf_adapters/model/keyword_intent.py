@@ -31,6 +31,17 @@ class KeywordIntentProvider:
                 }, allowed)
             if any(token in raw for token in ("停", "停止", "stop")):
                 return self._intent("stop", {}, allowed)
+        if any(token in raw for token in ("franka", "Franka", "panda", "Panda")):
+            if any(token in raw for token in ("移动", "动", "伸", "move")):
+                positions = {
+                    "joint1": 0.2, "joint2": 0.1, "joint3": 0.0, "joint4": -0.6,
+                    "joint5": 0.0, "joint6": 0.6, "joint7": 0.0,
+                    "rq2f85_right_driver_joint": 0.0, "rq2f85_right_coupler_joint": 0.0,
+                    "rq2f85_right_spring_link_joint": 0.0, "rq2f85_right_follower_joint": 0.0,
+                    "rq2f85_left_driver_joint": 0.0, "rq2f85_left_coupler_joint": 0.0,
+                    "rq2f85_left_spring_link_joint": 0.0, "rq2f85_left_follower_joint": 0.0,
+                }
+                return self._intent("move_joint", {"positions": positions, "duration_ms": 2000}, allowed)
         if any(token in raw for token in ("停", "停止", "stop")):
             return self._intent("stop", {}, allowed)
         raise IntentNoMatch("关键词模式无法匹配：%r" % raw, matches=sorted(allowed))
