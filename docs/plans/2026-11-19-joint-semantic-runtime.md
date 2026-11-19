@@ -123,3 +123,19 @@ build/acceptance/demo_lab/stand_stop/report.json
 
 - 修复：baseline.initial_state 需按所选机器人过滤；scene 包需 README.md（scene_check 契约）；
 - 语义组合默认移除放置段（无接收体时），保留 pick/stand 冒烟。
+
+## 执行记录（2026-11-19，阶段 1/2/5 起步）
+
+- 无板卡：`.145` 上直接 `joint_semantic.py --robots piper,unitree_go2 --props "box@..." --build --run`；
+- 生成场景 + 构建 + `scenario.py run stand_stop` 全链路通过：
+
+```text
+build/scenes/demo_lab/demo_lab_joint.xml  nq=34/nu=20，box_01 在模型里
+build/acceptance/demo_lab/stand_stop/report.json
+  passed=true
+  ss01_stand SUCCEEDED
+  ss02_stop  SUCCEEDED
+```
+
+- 修复：baseline.initial_state 需按所选机器人过滤；scene 包需 README.md（scene_check 契约）；
+- 语义组合默认移除放置段（无接收体时），保留 pick/stand 冒烟。
