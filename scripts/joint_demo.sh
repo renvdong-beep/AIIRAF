@@ -42,7 +42,7 @@ export XAUTHORITY="${XAUTHORITY:-/run/user/${UID_}/gdm/Xauthority}"
 export XAUTHORITY
 
 cd /home/coretek/AIIRAF || exit 2
-export PYTHONPATH=src
+export PYTHONPATH=src:/home/coretek/.local/opt/iraf-sdk/0.4.4/lib
 echo "[joint_demo] DISPLAY=$DISPLAY XAUTHORITY=$XAUTHORITY hold=${HOLD}s render_hz=${HZ}"
 exec python3 scripts/scenario.py run \
   --scene scenes/handoff_lab --scenario nominal \
