@@ -611,3 +611,30 @@ iraf_robot_scaffold_capability(demo_bot, stand)
 `iraf_robot_status` 增加：
 `declared_capabilities / accepted_capabilities / missing_acceptance / runnable`。
 只有全部声明能力都有 `passed=true` 验收报告且场景存在时 `runnable=true`。
+
+## 产品化收口（2026-11-19 15:36）
+
+MCP 工具已全部接通并实测：
+
+```text
+iraf_robot_acceptance  Franka gripper/move_joint/stop/reset_scene → passed=true
+iraf_robot_scaffold_capability  gripper/stand 等 → 生成草案
+iraf_robot_build_scene  UR5 report → scene/provider（dry-run）
+iraf_robot_register     acceptance passed=true → 临时注册表 seal 成功
+iraf_robot_status       declared/accepted/missing/runnable 完整输出
+```
+
+回归：
+
+```text
+35 项目标单测（含 6 个 robot_lifecycle 测试）→ 全过
+handoff_lab nominal → passed=true（9/9）
+```
+
+剩余未产品化（诚实边界）：
+
+- Backend 实现仍是“草案 + 人审”，不自动改源码；
+- pick/place 的目标、夹爪几何、参考解必须来自 scene_report；无报告时显式失败；
+- `franka pick` 本身仍未实现；
+- 联合世界仍用既有 `iraf_compose_joint_scene`，新机器人纳入联合世界的自动编排
+  还未与 lifecycle 打通。

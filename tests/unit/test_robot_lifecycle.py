@@ -31,6 +31,18 @@ def test_build_scene_rejects_undeclared_capability(tmp_path):
                        ["pick_object"], root=str(tmp_path), dry_run=True)
 
 
+def test_build_scene_writes_files(tmp_path):
+    profile = tmp_path / "p.yaml"
+    profile.write_text("kind: RobotProfile\nmetadata: {name: x}\nspec: {simulation: true,"
+                       " control_frequency_hz: 100, joints: [j1], joint_limits: {j1: [-1, 1]},"
+                       " capabilities: [move_joint]}\n", encoding="utf-8")
+    out = rl.build_scene("x", "x-scene", str(profile), "127.0.0.1:50052",
+                         ["move_joint"], root=str(tmp_path), dry_run=False)
+    assert out["status"] == "SUCCEEDED"
+    assert (tmp_path / "config/scenes/x-scene.yaml").is_file()
+    assert (tmp_path / "config/providers/iraf-x-scene.yaml").is_file()
+
+
 def test_register_requires_passed_report(tmp_path):
     scene = tmp_path / "s.yaml"
     provider = tmp_path / "p.yaml"

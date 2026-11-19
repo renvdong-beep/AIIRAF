@@ -175,6 +175,22 @@ _SCAFFOLDS = {
 ''',
         "requires": "locomote",
     },
+    "stop": {
+        "method": '''    def stop(self, lease):
+        self.authority.validate(lease)
+        # TODO: 进入安全停止；不得把停止实现成继续运动
+        raise NotImplementedError("实现 stop 后删除本行")
+''',
+        "requires": "stop",
+    },
+    "reset_scene": {
+        "method": '''    def reset_scene(self, scope="all", target_id=None, lease=None):
+        self.authority.validate(lease)
+        # TODO: 复位到 Profile 声明的 home/初始位姿
+        raise NotImplementedError("实现 reset_scene 后删除本行")
+''',
+        "requires": "reset_scene",
+    },
 }
 
 
@@ -254,8 +270,11 @@ def acceptance(robot_id: str, capability: str, *, profile: str, root=".", scene_
     p = dict(params or {})
     evidence = None
     if cap == "move_joint":
-        backend.move_joint(dict(p.get("positions") or {}), int(p.get("duration_ms", 1000)), lease)
-        evidence = {"positions": p.get("positions"), "duration_ms": int(p.get("duration_ms", 1000))}
+        positions = dict(p.get("positions") or {})
+        if not positions:
+            raise LifecycleError("move_joint 验收必须给出 positions")
+        backend.move_joint(positions, int(p.get("duration_ms", 1000)), lease)
+        evidence = {"positions": positions, "duration_ms": int(p.get("duration_ms", 1000))}
     elif cap == "gripper":
         evidence = backend.gripper(str(p.get("action") or "close"), lease, int(p.get("duration_ms", 1000)))
     elif cap == "pick_object":
@@ -272,6 +291,12 @@ def acceptance(robot_id: str, capability: str, *, profile: str, root=".", scene_
     elif cap == "locomote":
         evidence = backend.locomote(dict(p.get("velocity") or {}),
                                     int(p.get("duration_ms", 2000)), lease)
+    elif cap == "stop":
+        backend.stop(lease)
+        evidence = {"stopped": True}
+    elif cap == "reset_scene":
+        evidence = backend.reset_scene(str(p.get("scope") or "all"),
+                                       p.get("target_id"), lease)
     else:
         raise LifecycleError("验收模板暂不支持：%s" % cap)
     report = {"schema": "iraf.robot-acceptance/v1", "robot_id": robot_id,
