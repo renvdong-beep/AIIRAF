@@ -28,6 +28,7 @@ exec env \
   IRAF_MCP_TRANSPORT=http IRAF_MCP_HOST=127.0.0.1 IRAF_MCP_PORT=8766 \
   IRAF_MCP_TOKEN_FILE="$TOKEN_FILE" \
   IRAF_MCP_AUDIT_LOG=/home/coretek/.local/state/iraf/mcp-local-audit.jsonl \
+  IRAF_EVENT_STORE=/home/coretek/.local/state/iraf/local-mcp.db \
   IRAF_SCENE_REGISTRY_MODE=off \
   IRAF_REPO_ROOT="$REPO" \
   python3 -m iraf_adapters.mcp.server

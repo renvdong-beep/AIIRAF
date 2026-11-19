@@ -1,0 +1,22 @@
+schema: iraf.scene/v1
+scene_id: g1-lab
+provider_id: iraf/g1-lab
+profile: profiles/unitree_g1_mujoco.yaml
+safety_policy: profiles/safety/simulation_lab.yaml
+simulation: true
+switch_name: g1
+aliases:
+- g1
+- 人形
+- 机器人
+max_concurrency: 1
+lease_ttl_s: 120
+description: G1 人形单机（stand/locomote）
+resources:
+- id: g1
+  profile: profiles/unitree_g1_mujoco.yaml
+  capabilities:
+  - stand
+  - stop
+  - locomote
+digest: sha256:673650d545a25e7bccfafcc9cde438c68388de8c44165e7898fe118d6a9da18b

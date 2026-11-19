@@ -299,3 +299,12 @@ walk : distance_m=0.81635（指令 0.5 m/s，2000ms）
 ```
 
 G1 现在具备**单机 Provider 级别的 stand/locomote**；还剩“场景注册 + MCP/chat 语义入口”。
+
+## G1 单机 Provider + 注册表（2026-11-19）
+
+- G1 provider 50058 已注册 `g1-lab`（`config/scenes/g1-lab.yaml` + `config/providers/iraf-g1-lab.yaml`）；
+- 本地 MCP 打开注册表（`IRAF_SCENE_REGISTRY_MODE=on`，root=~/.config/iraf/registry），
+  `infer("g1站起来") → g1-lab`；
+- **阻塞**：本地 MCP 的 `iraf_submit_task` 需要意图 Provider
+  （`IRAF_AGENTOS_MODEL_URL + IRAF_AGENTOS_MODEL`），`.145` 未配置 LLM ⇒ 文本任务入口不可用；
+  Provider 级 stand/locomote 已通过（见 c3679af）。
