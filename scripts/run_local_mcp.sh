@@ -30,7 +30,11 @@ exec env \
   IRAF_MCP_TOKEN_FILE="$TOKEN_FILE" \
   IRAF_MCP_AUDIT_LOG=/home/coretek/.local/state/iraf/mcp-local-audit.jsonl \
   IRAF_EVENT_STORE=/home/coretek/.local/state/iraf/local-mcp.db \
-  IRAF_INTENT_KEYWORD=1 \
+  IRAF_AGENTOS_MODEL_URL=http://127.0.0.1:3000/v1 \
+  IRAF_AGENTOS_MODEL=deepseek-flash \
+  IRAF_AGENTOS_TOKEN_FILE=/home/coretek/.config/iraf/agentos.key \
+  IRAF_AGENTOS_TIMEOUT_SECONDS=30 \
+  IRAF_AGENTOS_MAX_TOKENS=2048 \
   IRAF_PROFILE=profiles/unitree_g1_mujoco.yaml \
   IRAF_SAFETY_POLICY=profiles/safety/simulation_lab.yaml \
   IRAF_SKILL_ROOT=/home/coretek/AIIRAF/skills \

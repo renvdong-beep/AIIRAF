@@ -524,3 +524,23 @@ iraf_submit_task("franka夹爪打开", scene_id="franka-lab")
   `Invalid token`；现有 `build/board-147-agentos.token` 不是模型网关 key；
 - 因此第 3 项的真实模型 endpoint/token 仍缺，代码已就绪（真实优先 +
   `IRAF_AGENTOS_TOKEN_FILE`），不伪造、不把关键词回退冒充完成。
+
+## 真实意图 Provider 切通（2026-11-19）
+
+- `.145` 本地 MCP 不再使用 `IRAF_INTENT_KEYWORD=1`，改为：
+  `IRAF_AGENTOS_MODEL_URL=http://127.0.0.1:3000/v1`、
+  `IRAF_AGENTOS_MODEL=deepseek-flash`、
+  `IRAF_AGENTOS_TOKEN_FILE=/home/coretek/.config/iraf/agentos.key`（600）。
+- 模型网关：`model_proxy.py` → `192.168.100.89:3000`，key 已从历史配置恢复到 600 文件。
+- 实测：
+
+```text
+iraf_submit_task("ur5抓取盒子", scene_id="ur5-pick-local")
+→ SUCCEEDED, intent_provider=openai-compatible-intent, model=deepseek-flash,
+  resolved_skill=pick_object, lift_mm=76.38
+
+iraf_submit_task("g1站起来")  # 不传 scene_id
+→ SUCCEEDED, scene=g1-lab, resolved_skill=stand
+```
+
+- 关键词回退仍保留在代码里，但只在**无模型配置**时启用；本机已切到真实模型。
