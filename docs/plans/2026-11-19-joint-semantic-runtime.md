@@ -185,3 +185,15 @@ scenario run stand_stop：
 ```
 
 G1 当前是**静态实体**（`static_model_only`，无运动能力）；站立/行走仍需 G1 适配器与运动事实。
+
+## 阶段 4 记录：Franka + Robotiq 2F-85 装配（2026-11-19）
+
+- 新增 `scripts/assemble_franka_2f85.py`（复用 UR5e 装配思路）：
+  - 源：`vendor/franka_emika_panda/panda_nohand.xml` + Menagerie `robotiq_2f85`；
+  - 挂载：Franka `attachment` body（法兰），2F-85 根 body pos=0/quat=identity；
+  - 类名/元素名/网格前缀、mesh scale、tendon/equality/contact 搬运、关键帧维度补齐；
+- 产物：`build/models/franka_2f85/franka_2f85.xml`；
+- 编译实测：`nbody=24 njnt=15 ngeom=87 nu=8 nq=15`，夹爪执行器 `rq2f85_fingers_actuator`，
+  pinch site 保留；
+- 新 Profile：`profiles/franka_2f85_mujoco.yaml`（15 关节，加载通过）；
+- 尚未完成：Franka+2F-85 的 manipulation 事实（gripper/targets/参考解）与单机 pick 场景。
