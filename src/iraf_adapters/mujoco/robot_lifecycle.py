@@ -279,7 +279,7 @@ def acceptance(robot_id: str, capability: str, *, profile: str, root=".", scene_
             if jid < 0:
                 raise LifecycleError("initial_qpos 关节不存在：%s" % name)
             adr = int(backend.model.jnt_qposadr[jid])
-            vals = list(values)
+            vals = list(values) if isinstance(values, (list, tuple)) else [values]
             backend.data.qpos[adr:adr + len(vals)] = vals
         _mj.mj_forward(backend.model, backend.data)
     evidence = None
