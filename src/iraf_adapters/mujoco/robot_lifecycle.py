@@ -342,5 +342,19 @@ def status(robot_id: str, *, root=".", registry_root="/etc/iraf", profiles_root=
             acc.append({"capability": d.get("capability"), "passed": d.get("passed"), "path": str(p)})
         except Exception:
             acc.append({"path": str(p), "passed": False})
+    declared = set()
+    for m in matches:
+        for profile_path in m.get("resources") or []:
+            p = root / str(profile_path)
+            if p.is_file():
+                try:
+                    declared.update((_load_yaml(p).get("spec") or {}).get("capabilities") or [])
+                except Exception:
+                    pass
+    accepted = {str(a.get("capability")) for a in acc if a.get("passed") is True}
     return {"status": "SUCCEEDED", "robot_id": robot_id, "scenes": matches,
-            "acceptance": acc, "registry_errors": r.errors}
+            "acceptance": acc, "registry_errors": r.errors,
+            "declared_capabilities": sorted(declared),
+            "accepted_capabilities": sorted(accepted),
+            "missing_acceptance": sorted(declared - accepted),
+            "runnable": bool(matches) and not (declared - accepted)}

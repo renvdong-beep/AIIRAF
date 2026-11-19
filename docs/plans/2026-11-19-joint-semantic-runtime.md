@@ -604,3 +604,10 @@ iraf_robot_scaffold_capability(demo_bot, stand)
 
 边界：`scaffold` 只产出草案，必须人审/实现；`register` 不接收未验收项；
 `acceptance` 支持的能力见工具 docstring，其余显式失败。
+
+
+### gap 状态（2026-11-19）
+
+`iraf_robot_status` 增加：
+`declared_capabilities / accepted_capabilities / missing_acceptance / runnable`。
+只有全部声明能力都有 `passed=true` 验收报告且场景存在时 `runnable=true`。
