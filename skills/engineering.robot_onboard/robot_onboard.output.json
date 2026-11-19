@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["status", "robot_id", "validation"],
+  "additionalProperties": true,
+  "properties": {
+    "status": {"type": "string", "enum": ["SUCCEEDED", "FAILED"]},
+    "robot_id": {"type": "string"},
+    "profile": {"type": "object"},
+    "validation": {"type": "object"},
+    "artifacts": {"type": "array", "items": {"type": "string"}},
+    "dry_run": {"type": "boolean"}
+  }
+}

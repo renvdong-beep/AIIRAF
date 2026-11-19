@@ -78,3 +78,20 @@ v1 交付**只做仿真**：仿真在 x86 主机（MuJoCo），板卡不装仿�
 9. AgentOS 只能经 `AgentOSBridge` 和版本化公共服务进入 IRAF；AgentOS 私有类型、身份声明、ROS topic 或设备凭据不得穿透公共边界。
 10. 必须兼容 `MQ50-E300-3VM-LPR`、`MQ50-E300-3VM-LPP`、`FIREFLY-RK3588-2VM-LR` 三个正式 Hyper 构型。VM 数量、编号、IP、OS 和角色映射只能来自签名 HyperProfile/Release manifest，禁止硬编码。
 11. 2VM 构型合并部署角色时不得合并安全边界；Motion 与 Master 仍须独立进程、权限、资源限额和设备所有权。S600 未有正式发布构型前禁止标记 S2。
+
+
+## 12. 新机器人接入铁律（强制，禁止手工作坊）
+
+1. **必须走标准入口**：新机器人接入必须调用 `iraf_onboard_robot`（MCP）或
+   `engineering.robot_onboard` / `engineering.robot_adapter`（skill），产出
+   `profile.yaml + validation.json + backend_skeleton.py`；禁止只手写 Profile 就宣称“接入完成”。
+2. **runnable=false 不是可用**：`validation.json` 的 `runnable` 在补齐 Backend 能力与
+   单机验收前恒为 false；不得把“生成了 Profile/能加载模型”当成“机器人可用”。
+3. **能力必须实现并验收**：Profile 声明的每一项能力（stand/locomote/move_joint/pick_object…）
+   必须在 Backend 上有实现，并有单机场景/机型声明/Provider 的验收报告（simulation=true）。
+4. **单机通过才允许组合**：只有单机 `stand`/`locomote`/`move`/`pick` 验收通过后，
+   才允许用 `iraf_compose_joint_scene` 进入联合世界；联合世界不得替机器人“补事实”。
+5. **事实缺口显式登记**：缺 manipulation（gripper/targets/参考解）或 locomotion 事实时，
+   必须在报告与 Profile 中显式标注，禁止 composer 猜测或静默降级。
+6. **回归不可退化**：每次接入后必须回归 handoff 9 步、单机 piper/ur5、
+   `declared ⊆ implemented` 装配期校验。

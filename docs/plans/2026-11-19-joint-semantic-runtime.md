@@ -269,3 +269,18 @@ verify_g1_locomote.py:
 ```
 
 G1 现在具备 `stand/stop/locomote`（simulation=true），可以进入单机/联合场景。
+
+## 新机器人接入标准化（2026-11-19）
+
+- 新增 MCP 工具 `iraf_onboard_robot`：
+  - 输入 robot_id + MJCF 路径 + capabilities；
+  - 输出：Profile、`validation.json`（`runnable=false`）、`backend_skeleton.py`；
+  - 实测：G1 模型 dry-run → SUCCEEDED，29 关节、29 执行器、runnable=false。
+- 新增 skill `engineering.robot_onboard`（Provider 与 MCP 工具共用同一模块）。
+- **AGENTS.md §12 新增“新机器人接入铁律”**：
+  1. 必须走 `iraf_onboard_robot` / `engineering.robot_onboard`；
+  2. `runnable=false` 不得当可用；
+  3. 能力必须有 Backend 实现 + 单机验收；
+  4. 单机通过才允许 `iraf_compose_joint_scene`；
+  5. 事实缺口显式登记，禁止 composer 猜；
+  6. 回归 handoff/单机/declared⊆implemented。

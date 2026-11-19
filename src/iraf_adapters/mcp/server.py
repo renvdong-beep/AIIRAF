@@ -1512,6 +1512,33 @@ def iraf_run_scenario(scenario: str = "nominal", display: str = "window",
                 pass
 
 @app.tool()
+@_audited("iraf_onboard_robot")
+def iraf_onboard_robot(robot_id: str, model_path: str, capabilities: str = "",
+                       dry_run: bool = True, allow_overwrite: bool = False) -> str:
+    """新机器人接入的标准入口：模型事实 → Profile → 校验报告 → Backend 骨架。
+
+    只生成声明/校验，不伪装“可用”：validation.runnable 恒为 false，
+    必须补齐 Backend 能力并跑单机验收（stand/locomote/move/pick）后，才允许进联合世界。
+    capabilities 用逗号分隔（如 "stand,stop,locomote"）。
+    """
+    import json as _json
+    import os as _os
+    from pathlib import Path as _Path
+
+    from iraf_adapters.mujoco import robot_onboard as _rb
+
+    try:
+        root = _Path(_os.environ.get("IRAF_REPO_ROOT") or _os.getcwd())
+        caps = [c.strip() for c in str(capabilities).split(",") if c.strip()]
+        result = _rb.onboard(root, str(robot_id), str(model_path), capabilities=caps,
+                             dry_run=bool(dry_run), allow_overwrite=bool(allow_overwrite))
+        return _json.dumps(result, ensure_ascii=False)
+    except Exception as exc:  # noqa: BLE001
+        return _json.dumps({"status": "FAILED", "error_code": "IRAF-ONBOARD-ERROR",
+                            "reason": "%s: %s" % (type(exc).__name__, exc)}, ensure_ascii=False)
+
+
+@app.tool()
 @_audited("iraf_compose_joint_scene")
 def iraf_compose_joint_scene(scene_id: str, robots: str, base: str = "",
                              dry_run: bool = True, register: bool = False) -> str:

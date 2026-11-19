@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["robot_id", "model_path"],
+  "additionalProperties": false,
+  "properties": {
+    "robot_id": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,40}$"},
+    "model_path": {"type": "string", "minLength": 1, "description": "MJCF 路径（相对仓库根或绝对）"},
+    "capabilities": {"type": "array", "items": {"type": "string"}, "default": []},
+    "dry_run": {"type": "boolean", "default": true},
+    "allow_overwrite": {"type": "boolean", "default": false},
+    "output_dir": {"type": "string", "default": ""}
+  }
+}
