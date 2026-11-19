@@ -1,0 +1,47 @@
+schema_version: iraf.humanoid-loopback/v1
+simulation: true
+
+robot:
+  id: unitree_g1
+  profile: profiles/unitree_g1_mujoco.yaml
+  backend: unitree_g1_mujoco
+  trunk_body: pelvis
+
+model:
+  file: vendor/unitree_g1/scene.xml
+
+initial:
+  keyframe: stand
+
+control:
+  frequency_hz: 100
+  # 继承四足契约的限位来源检查；G1 为位置执行器，限位即模型 actuator_ctrlrange（位置量）
+  torque_limit_source: model
+
+stand:
+  pose_source: profile_home
+  duration_s: 5.0
+  height_target_m: 0.79
+  height_tolerance_m: 0.03
+  attitude_tolerance_deg: 5.0
+
+stop:
+  mode: hold_position
+  duration_s: 1.0
+
+locomote:
+  policy_file: vendor/unitree_g1/unitree_policy/motion.pt
+  model_file: vendor/unitree_g1/unitree_policy/scene.xml
+  duration_s: 5.0
+  command_forward_mps: 0.5
+  height_tolerance_m: 0.4
+
+render:
+  camera:
+    lookat_m: [0.0, 0.0, 0.8]
+    distance_m: 2.5
+    azimuth_deg: 90
+    elevation_deg: -15
+  width_px: 640
+  height_px: 480
+  render_hz: 30

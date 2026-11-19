@@ -242,3 +242,30 @@ moved = True
 
 结论：2F-85 已正确装配到 Franka，机械臂可动、夹爪可开合；
 剩余的是“抓取事实”（gripper 几何、targets、参考解）与 pick 策略闭环。
+
+## G1 站立/行走恢复（2026-11-19，来自 main 上已验证的开源方案）
+
+- 来源：`origin/main` 提交 `c9b0ed5` / `1663e57`（G1/Franka 接入 + inspect-robot skill），
+  当前 release 分支缺失这些文件，已恢复：
+  - `config/unitree_g1_loopback.yaml`
+  - `config/unitree_g1_simulation_baseline.yaml`
+  - `profiles/unitree_g1_mujoco.yaml`
+  - `src/iraf_adapters/unitree_g1/backend.py`
+  - `scripts/verify_g1_{stand,balance,locomote,locomote_chain,stand_chain}.py`
+- 方案：G1 位置执行器 + `motion.pt`（Unitree 官方 RL 策略）+ 力矩 PD 行走；
+- 实测：
+
+```text
+verify_g1_stand.py:
+  passed=true
+  height_m=0.7916139 (target 0.79, error 0.0016)
+  max_tilt_deg=0.07488
+  max_tracking_error_rad=0.00277
+
+verify_g1_locomote.py:
+  passed=true（G1_LOCOMOTE_PASSED）
+  distance_m=2.2367243
+  command_forward_mps=0.5
+```
+
+G1 现在具备 `stand/stop/locomote`（simulation=true），可以进入单机/联合场景。
