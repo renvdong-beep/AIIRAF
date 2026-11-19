@@ -515,3 +515,12 @@ iraf_submit_task("franka夹爪打开", scene_id="franka-lab")
   `IRAF_AGENTOS_MODEL=deepseek-flash`
   `IRAF_AGENTOS_TOKEN_FILE=/etc/iraf/agentos.key`
   并删除 `IRAF_INTENT_KEYWORD=1`。
+
+### AgentOS/模型接入现状（2026-11-19 14:45）
+
+- S600 上 AgentOS 仅起了 `agentos-db`、`agentos-searxng*` 容器；
+  未发现 dashboard/worker 的 `config.yaml`，也没有 `/etc/iraf/agentos.key`；
+- `.145` 的 `model_proxy.py` 转发 `192.168.100.89:3000`，但请求返回
+  `Invalid token`；现有 `build/board-147-agentos.token` 不是模型网关 key；
+- 因此第 3 项的真实模型 endpoint/token 仍缺，代码已就绪（真实优先 +
+  `IRAF_AGENTOS_TOKEN_FILE`），不伪造、不把关键词回退冒充完成。
