@@ -212,3 +212,18 @@ iraf_compose_joint_scene {scene_id: local_demo, robots: piper,unitree_go2, dry_r
 ```
 
 - 工具内 Profile 相对路径改为按 `IRAF_REPO_ROOT` 解析（不依赖进程 cwd）。
+
+## 阶段 5 进展：桌面方位语义 + 运行（2026-11-19）
+
+- `joint_semantic.parse_text` 支持桌面方位：左/右/前/后/中间/旁边；
+- prop.kind 按 scene.schema 归一（真实几何由 `geometry.type` 决定：box/cylinder/sphere）；
+- 实测：
+
+```text
+--text "piper 和狗，桌上左边一个杯子，右边一个方块"
+--scene-id semantic_layout --build --run
+
+build rc=0；props=[cup_00, box_01]
+build/acceptance/semantic_layout/stand_stop/report.json
+  passed=true，ss01_stand/ss02_stop 均 SUCCEEDED
+```

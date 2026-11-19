@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -56,11 +57,15 @@ def make_prop(name: str, xyz, library: dict, index: int) -> dict:
     if name not in library:
         raise SemanticError("未知物品 %r（可用：%s）" % (name, sorted(library)))
     template = copy.deepcopy(library[name])
+    kind = template.get("kind") or template["geometry"]["type"]
+    # scene.schema 的 prop.kind 只接受 box/tray/stand；真实几何由 geometry.type 决定
+    if kind not in ("box", "tray", "stand"):
+        kind = "box"
     prop_id = "box_01" if name == "box" and index == 0 else "%s_%02d" % (name, index)
     prop = {
         "id": prop_id,
         "body": prop_id,
-        "kind": template.get("kind") or template["geometry"]["type"],
+        "kind": kind,
         "geometry": template["geometry"],
         "mass_kg": template.get("mass_kg", 0.05),
         "friction": template.get("friction", "1.0 0.02 0.001"),
@@ -89,17 +94,58 @@ def parse_props(specs, library: dict, default_xyz=(0.28, -0.28, 0.03)) -> list:
     return props
 
 
+def prop_default_z(template: dict) -> float:
+    geo = template.get("geometry") or {}
+    kind = geo.get("type")
+    size = geo.get("size_m") or [0.025]
+    if kind == "box":
+        return float(size[2] if len(size) > 2 else size[0])
+    if kind == "cylinder":
+        return float(size[1] if len(size) > 1 else size[0])
+    return float(size[0])
+
+
+#: 桌面方位（相对桌面中心；+x 右，+y 前）
+DIRECTIONS = {
+    "左边": (-0.20, 0.0), "左": (-0.20, 0.0),
+    "右边": (0.20, 0.0), "右": (0.20, 0.0),
+    "前面": (0.0, 0.20), "前": (0.0, 0.20),
+    "后面": (0.0, -0.20), "后": (0.0, -0.20),
+    "中间": (0.0, 0.0), "旁边": (0.15, 0.0),
+}
+
+
 def parse_text(text: str, library: dict):
-    """受控词表解析：机器人别名 + 物品别名；位置用默认（显式 --props 优先）。"""
+    """受控词表 + 桌面方位：机器人别名、物品别名、左/右/前/后/中间。"""
     robots, props = [], []
     for token, canonical in ROBOT_ALIASES.items():
         if token in text and canonical not in robots:
             robots.append(canonical)
-    for token, canonical in PROP_ALIASES.items():
-        if token in text:
-            props.append(make_prop(canonical, (0.28, -0.28, 0.03), library, len(props)))
     if not robots:
         raise SemanticError("没有识别到机器人（可用：piper/ur5/狗/franka）")
+
+    base = (0.28, -0.28)
+    clauses = [c.strip() for c in re.split(r"[，,；;。]", text) if c.strip()]
+    for clause in clauses:
+        matched = None
+        for token, canonical in PROP_ALIASES.items():
+            if token in clause:
+                matched = canonical
+                break
+        if not matched:
+            continue
+        dx = dy = 0.0
+        for token, (ox, oy) in DIRECTIONS.items():
+            if token in clause:
+                dx, dy = ox, oy
+                break
+        template = library[matched]
+        z = prop_default_z(template)
+        index = len(props)
+        # 同一方位放多个物品时沿 x 错开，避免初始重叠
+        x = base[0] + dx + (0.06 * index if index else 0.0)
+        y = base[1] + dy
+        props.append(make_prop(matched, (x, y, z), library, index))
     return robots, props
 
 

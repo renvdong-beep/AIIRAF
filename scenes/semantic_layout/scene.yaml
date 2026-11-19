@@ -1,0 +1,237 @@
+schema_version: iraf.scene/v1
+id: semantic_layout
+description: 联合场景 semantic_layout（composer 生成）：piper,unitree_go2
+simulation: true
+plant_demand_gate: true
+world_physics:
+  cone: elliptic
+  impratio: 100
+seed:
+  base: 20260920
+  randomization: false
+terrain:
+  kind: flat
+  friction: 1.0 0.02 0.001
+  workbench:
+    top_z_m: 0.0
+    half_size_m: 1.5
+    half_thickness_m: 0.025
+    friction: 1.0 0.02 0.001
+robots:
+- id: piper
+  kind: arm
+  role: manipulator
+  profile: profiles/piper_mujoco.yaml
+  profile_name: piper_mujoco
+  capabilities:
+  - move_joint
+  - pick_object
+  - visual_pick
+  - place_object
+  - stop
+  manipulation_report: build/models/piper-pick-scene.json
+  reference_solver:
+    module: scripts/build_piper_baseline.py
+    entry: build_reference_poses
+    feedforward_entry: build_reference_feedforward
+    baseline: config/piper_simulation_baseline.yaml
+  placement:
+    pos_m:
+    - 0.45
+    - -0.45
+    - 0.12
+    quat_wxyz:
+    - 0.38268343236509
+    - 0.0
+    - 0.0
+    - 0.923879532511287
+  note: 既有能力（MuJoCo 仿真已验收）；本场景复用配置 config/piper_simulation_baseline.yaml，不改其语义。
+- id: unitree_go2
+  kind: quadruped
+  role: carrier
+  profile: profiles/unitree_go2_mujoco.yaml
+  capabilities:
+  - stand
+  - stop
+  - locomote
+  - dock_for_handoff
+  - accept_payload
+  note: 厂家 MJCF 已探测（12 个力矩型 motor、imu site、无相机/无雷达），仅证明低层模型存在，不代表导航/停靠能力（AGENTS.md
+    6.8）；场景构建器按本场景声明注入相机/雷达/托盘/道具/光照，厂商文件只读。locomote 已在 MuJoCo 仿真里验收并声明（速度指令可走/转/退，受安全策略
+    max_speed_mps=0.5 约束；**上板部署证据另计**）；**停靠/放托盘/载荷确认仍未交付**，见 scenario.yaml 的 pending
+    登记（步骤 18）。
+props:
+- id: cup_00
+  body: cup_00
+  kind: box
+  geometry:
+    type: cylinder
+    size_m:
+    - 0.025
+    - 0.045
+  mass_kg: 0.05
+  friction: 1.5 0.05 0.001
+  rgba:
+  - 0.85
+  - 0.85
+  - 0.9
+  - 1.0
+  pose:
+    pos_m:
+    - 0.08000000000000002
+    - -0.28
+    - 0.045
+    quat_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  note: 杯子（简化为实心圆柱；真实杯壁/开口属后续 mesh 资产）
+- id: box_01
+  body: box_01
+  kind: box
+  geometry:
+    type: box
+    size_m:
+    - 0.025
+    - 0.025
+    - 0.025
+  mass_kg: 0.04
+  friction: 2.0 0.05 0.001
+  rgba:
+  - 0.82
+  - 0.22
+  - 0.12
+  - 1.0
+  pose:
+    pos_m:
+    - 0.54
+    - -0.28
+    - 0.025
+    quat_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  note: 标准抓取方块（与 handoff box_01 同尺寸）
+frames:
+- id: handoff_station_frame
+  kind: site
+  pose:
+    pos_m:
+    - 0.45
+    - 0.0
+    - 0.0
+    quat_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  note: 前提：臂基座在台面原点附近（臂尚未装进同一模型，见 .hermes/plans/2026-09-23-dock-for-handoff.md §11）；只按**位置**可达筛选，**未约束工具姿态**。待臂的摆放（A/B/C
+    方案）确定后复核此坐标。
+- id: handoff_station_frame_b
+  kind: site
+  pose:
+    pos_m:
+    - 0.15
+    - 0.45
+    - 0.0
+    quat_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  note: 站位名在机型声明里登记（config/go2_joint.yaml 的 dock_for_handoff.stations.handoff_b）；
+    步骤按**站名**选择，不写坐标。台面 half_size_m=1.5 ⇒ 在台面内。
+sensors:
+- id: overhead_camera
+  kind: camera
+  source: scene
+  anchor:
+    object_kind: camera
+    name: overhead_camera
+    entity: piper
+  pos_m:
+  - 0.28
+  - -0.72
+  - 0.72
+  look_at_m:
+  - 0.28
+  - -0.28
+  - 0.025
+  fovy_deg: 78
+  note: 相机位姿与外参按机型独立；本场景沿用 Piper 基线已标定的视角，标定文件仍走 config/piper_simulation_baseline.yaml
+    的 vision 段。
+- id: payload_lidar
+  kind: lidar
+  source: scene
+  anchor:
+    object_kind: site
+    name: payload_lidar_site
+    entity: unitree_go2
+  num_rays: 360
+  range_m: 8.0
+  mount_height_m: 0.12
+  note: 首期只用于场景观测；导航能力未验收前不得据此声明 navigate 可用。
+- id: base_imu
+  kind: imu
+  source: vendor
+  anchor:
+    object_kind: site
+    name: imu
+    entity: unitree_go2
+  rate_hz: 100
+  note: 厂商 go2.xml 自带 <site name="imu">；场景构建器只读该 site，不修改厂商文件。
+lights:
+- name: key
+  directional: true
+  dir:
+  - -0.16
+  - 0.16
+  - -1.0
+  diffuse:
+  - 0.85
+  - 0.84
+  - 0.82
+  specular:
+  - 0.25
+  - 0.25
+  - 0.25
+  castshadow: false
+- name: fill
+  directional: true
+  dir:
+  - 0.6
+  - -0.25
+  - -0.55
+  diffuse:
+  - 0.3
+  - 0.3
+  - 0.3
+  specular:
+  - 0.05
+  - 0.05
+  - 0.05
+  castshadow: false
+- name: rim
+  directional: true
+  dir:
+  - 0.25
+  - 0.7
+  - -0.4
+  diffuse:
+  - 0.22
+  - 0.22
+  - 0.24
+  specular:
+  - 0.0
+  - 0.0
+  - 0.0
+  castshadow: false
+model:
+  output: build/scenes/semantic_layout/semantic_layout.xml
+  joint_output: build/scenes/semantic_layout/semantic_layout_joint.xml
+  joint_manipulator: piper
+  attached_actuator:
+    armature_min_kg_m2: 0.5
+  builder: scripts/build_scene.py
