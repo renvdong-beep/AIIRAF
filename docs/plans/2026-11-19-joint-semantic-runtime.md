@@ -411,3 +411,13 @@ franka移动（MCP）  → SUCCEEDED (move_joint)
 
 - 结论：handoff 回归由 MuJoCo 3.17 环境漂移导致，**不是**新机器人接入代码；
   固定版本后恢复 9/9。
+
+## 单机 Provider 回归（2026-11-19）
+
+- `piper` @50052、`ur5` @50053 已 headless 启动，能力 6 项
+  （move_joint/pick_object/place_object/reset_scene/stop/visual_pick）；
+- piper `move_joint` 经 Provider 实测 **accepted=True**；
+- ur5 Provider 在线，直接用 gRPC 调 `pick_object` 时参数形状与 AgentOS 路径不同
+  （`frame_id`/list 形状报错），未作为有效回归；以之前板卡 A6（58.3 s）为准，后续用
+  `iraf_submit_task` 路径复测。
+- handoff 已用 MuJoCo 3.3.7 恢复 passed=true（9 步）。
