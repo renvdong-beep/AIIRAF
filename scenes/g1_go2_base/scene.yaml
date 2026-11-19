@@ -37,6 +37,11 @@ robots:
     - 0.0
     - 0.0
   evidence_level: 仅模型
+  manipulation_report: build/scenes/g1_lab/g1_lab.json
+  reference_solver:
+    module: scripts/build_franka_baseline.py
+    entry: build_reference_poses
+    baseline: config/ur5_simulation_baseline.yaml
 - id: unitree_go2
   kind: quadruped
   role: carrier

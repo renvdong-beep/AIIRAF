@@ -157,3 +157,12 @@ build_scene --scene scenes/g1_lab --robot g1
   `使用 --attach 时必须在本体声明 manipulation_report` 拦下（builder 对所有附加本体要求
   manipulation 事实，暂不支持 `model_only` 静态附加）⇒ 这是下一步要解开的构建器限制，
   不是 G1 模型/Profile 问题。
+
+### G1 联合附加的构建器限制（2026-11-19 复核）
+
+- 给 G1 加 `manipulation_report` + dummy `reference_solver` 后，schema 通过；
+- 构建仍要求报告里必须有 `gripper` 段（`_joint_manipulation`），而 G1 是 humanoid/静态实体，
+  没有夹爪事实 ⇒ fail-closed；
+- 正确修法：让 builder 对 `model_only: true` 的附加本体**跳过 manipulation 继承**
+  （只附加几何/关节/执行器），而不是给静态实体伪造 gripper；
+- 该项已登记为下一步，不在 G1 模型/Profile 侧硬凑。
