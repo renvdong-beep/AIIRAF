@@ -544,3 +544,29 @@ iraf_submit_task("g1站起来")  # 不传 scene_id
 ```
 
 - 关键词回退仍保留在代码里，但只在**无模型配置**时启用；本机已切到真实模型。
+
+## 1/2/3 最终收口（2026-11-19 14:50）
+
+```text
+1) UR5 单机 MCP pick（真实意图）:
+   iraf_submit_task("ur5抓取盒子", scene_id="ur5-pick-local")
+   → SUCCEEDED, intent_provider=openai-compatible-intent(model=deepseek-flash),
+     pick_object, lift_mm=76.38
+
+2) Franka 2F-85 gripper（真实意图）:
+   franka夹爪闭合/打开 → SUCCEEDED (close qpos=0.781538 / open qpos=0.002979)
+   Franka move（显式关节）:
+   "franka 移动关节：joint1=0.2 ... joint7=0" → SUCCEEDED (move_joint)
+   注：无目标/方向的 "franka移动" 被真实意图正确拒绝（IRAF-NOT-ROBOT-TASK），
+       不伪造默认位形；显式关节命令可用。
+
+3) 意图 Provider:
+   本地 MCP 已删除 IRAF_INTENT_KEYWORD，使用 deepseek-flash 网关；
+   g1站起来（不传 scene_id）→ SUCCEEDED, scene=g1-lab, stand
+
+回归:
+   handoff_lab nominal → passed=true（9 步，14:50）
+   契约/单测           → 30 passed
+```
+
+凭据：`/home/coretek/.config/iraf/agentos.key`（600），不入 git。
