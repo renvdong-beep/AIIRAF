@@ -268,6 +268,20 @@ def acceptance(robot_id: str, capability: str, *, profile: str, root=".", scene_
     backend = load_backend(entry, cfg, profile_obj, _Authority())
     lease = SimpleNamespace(fencing_token=1, resource=robot_id, lease_id="acceptance")
     p = dict(params or {})
+    if p.get("initial_qpos"):
+        import mujoco as _mj
+        for name, values in dict(p["initial_qpos"]).items():
+            jid = int(_mj.mj_name2id(backend.model, _mj.mjtObj.mjOBJ_JOINT, str(name)))
+            if jid < 0:
+                bid = int(_mj.mj_name2id(backend.model, _mj.mjtObj.mjOBJ_BODY, str(name)))
+                if bid >= 0:
+                    jid = int(backend.model.body_jntadr[bid])
+            if jid < 0:
+                raise LifecycleError("initial_qpos 关节不存在：%s" % name)
+            adr = int(backend.model.jnt_qposadr[jid])
+            vals = list(values)
+            backend.data.qpos[adr:adr + len(vals)] = vals
+        _mj.mj_forward(backend.model, backend.data)
     evidence = None
     if cap == "move_joint":
         positions = dict(p.get("positions") or {})

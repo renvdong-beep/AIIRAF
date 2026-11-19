@@ -737,3 +737,11 @@ iraf_robot_join_world(demo_joint_build, piper,unitree_go2,
 - UR5 同一判据仍通过：`lift_delta_m=0.076349`。
 - 结论：Franka pick 仍需**可动目标 + 抬升轨迹**（自由关节初始位姿/参考解），
   当前没有伪造通过。
+
+### Franka 可动目标尝试（2026-11-19 16:30）
+
+- 生成 `franka_pick.xml`（box_01 带 freejoint）+ `franka_pick.json`；
+- acceptance 新增 `params.initial_qpos`（支持自由关节初始位姿；按 joint/body 名解析）；
+- 目标初始位姿已设到指腹中点，`pick_object` 仍报告 `lift_delta_m=0.0`
+  ⇒ 当前夹持/抬升轨迹不足以把自由目标提起，严格判据继续拒绝；
+- 不伪造 Franka pick。下一步需要可复现的抬升轨迹/夹持约束（不能只改静态目标）。
