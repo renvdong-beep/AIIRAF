@@ -227,3 +227,18 @@ build rc=0；props=[cup_00, box_01]
 build/acceptance/semantic_layout/stand_stop/report.json
   passed=true，ss01_stand/ss02_stop 均 SUCCEEDED
 ```
+
+### Franka + 2F-85 功能自检（2026-11-19）
+
+`build/models/franka_2f85/franka_2f85.xml` 实测：
+
+```text
+arm_max_delta_rad = 0.20357   （7 个臂执行器目标 0.2 rad，实际到位）
+gripper_open      = [0.00293, 0.00293]
+gripper_closed    = [0.78153, 0.78153]
+gripper_travel    = [0.77860, 0.77860]  （driver 关节行程 0–0.8）
+moved = True
+```
+
+结论：2F-85 已正确装配到 Franka，机械臂可动、夹爪可开合；
+剩余的是“抓取事实”（gripper 几何、targets、参考解）与 pick 策略闭环。
