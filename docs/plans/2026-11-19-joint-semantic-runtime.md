@@ -686,3 +686,13 @@ Franka（无 report）→ ready=false, missing=[report_path]
 1) 构建 Franka 目标场景报告（target box + gripper 几何 + 参考解）；
 2) 通过后跑 `iraf_robot_acceptance` 的 `pick_object`；
 3) 才允许注册/进联合世界。
+
+### 产品化最终回归（2026-11-19 16:05）
+
+```text
+目标测试（backend/profile/joint/intent/lifecycle）→ 41 passed
+handoff_lab nominal → passed=true（9/9，15:57）
+```
+
+工具清单：onboard / build_scene / scaffold_capability / acceptance /
+acceptance_all / register / status / join_world / pick_readiness。
