@@ -1,0 +1,123 @@
+schema_version: iraf.scene/v1
+id: g1_go2_base
+description: G1 + Go2 组合基座（阶段 3）
+simulation: true
+plant_demand_gate: false
+world_physics:
+  cone: elliptic
+  impratio: 100
+seed:
+  base: 20260920
+  randomization: false
+terrain:
+  kind: flat
+  friction: 1.0 0.02 0.001
+  workbench:
+    top_z_m: 0.0
+    half_size_m: 1.5
+    half_thickness_m: 0.025
+    friction: 1.0 0.02 0.001
+robots:
+- id: g1
+  kind: humanoid
+  role: scene_entity
+  profile: profiles/g1_mujoco.yaml
+  profile_name: g1_mujoco
+  capabilities:
+  - static_model_only
+  model_only: true
+  placement:
+    pos_m:
+    - 0.45
+    - 0.9
+    - 0.0
+    quat_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  evidence_level: 仅模型
+- id: unitree_go2
+  kind: quadruped
+  role: carrier
+  profile: profiles/unitree_go2_mujoco.yaml
+  capabilities:
+  - stand
+  - stop
+  - locomote
+  - dock_for_handoff
+  - accept_payload
+  note: 厂家 MJCF 已探测（12 个力矩型 motor、imu site、无相机/无雷达），仅证明低层模型存在，不代表导航/停靠能力（AGENTS.md
+    6.8）；场景构建器按本场景声明注入相机/雷达/托盘/道具/光照，厂商文件只读。locomote 已在 MuJoCo 仿真里验收并声明（速度指令可走/转/退，受安全策略
+    max_speed_mps=0.5 约束；**上板部署证据另计**）；**停靠/放托盘/载荷确认仍未交付**，见 scenario.yaml 的 pending
+    登记（步骤 18）。
+props: []
+frames: []
+sensors:
+- id: overhead_camera
+  kind: camera
+  source: scene
+  anchor:
+    object_kind: camera
+    name: overhead_camera
+    entity: franka
+  pos_m:
+  - 0.28
+  - -0.72
+  - 0.72
+  look_at_m:
+  - 0.28
+  - -0.28
+  - 0.025
+  fovy_deg: 78
+  note: Franka 单机接入相机
+lights:
+- name: key
+  directional: true
+  dir:
+  - -0.16
+  - 0.16
+  - -1.0
+  diffuse:
+  - 0.85
+  - 0.84
+  - 0.82
+  specular:
+  - 0.25
+  - 0.25
+  - 0.25
+  castshadow: false
+- name: fill
+  directional: true
+  dir:
+  - 0.6
+  - -0.25
+  - -0.55
+  diffuse:
+  - 0.3
+  - 0.3
+  - 0.3
+  specular:
+  - 0.05
+  - 0.05
+  - 0.05
+  castshadow: false
+- name: rim
+  directional: true
+  dir:
+  - 0.25
+  - 0.7
+  - -0.4
+  diffuse:
+  - 0.22
+  - 0.22
+  - 0.24
+  specular:
+  - 0.0
+  - 0.0
+  - 0.0
+  castshadow: false
+model:
+  output: build/scenes/g1_go2_base/g1_go2_base.xml
+  joint_output: build/scenes/g1_go2_base/g1_go2_base_joint.xml
+  builder: scripts/build_scene.py

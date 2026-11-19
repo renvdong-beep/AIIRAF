@@ -1,0 +1,110 @@
+schema_version: iraf.scene/v1
+id: g1_lab
+description: G1 人形单机静态接入（阶段 3）
+simulation: true
+plant_demand_gate: false
+world_physics:
+  cone: elliptic
+  impratio: 100
+seed:
+  base: 20260920
+  randomization: false
+terrain:
+  kind: flat
+  friction: 1.0 0.02 0.001
+  workbench:
+    top_z_m: 0.0
+    half_size_m: 1.5
+    half_thickness_m: 0.025
+    friction: 1.0 0.02 0.001
+robots:
+- id: g1
+  kind: humanoid
+  role: scene_entity
+  profile: profiles/g1_mujoco.yaml
+  profile_name: g1_mujoco
+  capabilities:
+  - static_model_only
+  model_only: true
+  placement:
+    pos_m:
+    - 0.45
+    - 0.9
+    - 0.0
+    quat_wxyz:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+  evidence_level: 仅模型
+props: []
+frames: []
+sensors:
+- id: overhead_camera
+  kind: camera
+  source: scene
+  anchor:
+    object_kind: camera
+    name: overhead_camera
+    entity: franka
+  pos_m:
+  - 0.28
+  - -0.72
+  - 0.72
+  look_at_m:
+  - 0.28
+  - -0.28
+  - 0.025
+  fovy_deg: 78
+  note: Franka 单机接入相机
+lights:
+- name: key
+  directional: true
+  dir:
+  - -0.16
+  - 0.16
+  - -1.0
+  diffuse:
+  - 0.85
+  - 0.84
+  - 0.82
+  specular:
+  - 0.25
+  - 0.25
+  - 0.25
+  castshadow: false
+- name: fill
+  directional: true
+  dir:
+  - 0.6
+  - -0.25
+  - -0.55
+  diffuse:
+  - 0.3
+  - 0.3
+  - 0.3
+  specular:
+  - 0.05
+  - 0.05
+  - 0.05
+  castshadow: false
+- name: rim
+  directional: true
+  dir:
+  - 0.25
+  - 0.7
+  - -0.4
+  diffuse:
+  - 0.22
+  - 0.22
+  - 0.24
+  specular:
+  - 0.0
+  - 0.0
+  - 0.0
+  castshadow: false
+model:
+  output: build/scenes/g1_lab/g1_lab.xml
+  joint_output: build/scenes/g1_lab/g1_lab_joint.xml
+  joint_manipulator: franka
+  builder: scripts/build_scene.py

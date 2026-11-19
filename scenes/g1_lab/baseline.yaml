@@ -1,0 +1,4 @@
+schema_version: iraf.scene-baseline/v1
+scene: scene.yaml
+robots:
+  g1: config/machines/g1.yaml

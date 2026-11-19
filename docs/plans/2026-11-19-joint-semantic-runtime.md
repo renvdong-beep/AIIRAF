@@ -139,3 +139,21 @@ build/acceptance/demo_lab/stand_stop/report.json
 
 - 修复：baseline.initial_state 需按所选机器人过滤；scene 包需 README.md（scene_check 契约）；
 - 语义组合默认移除放置段（无接收体时），保留 pick/stand 冒烟。
+
+## 阶段 3 记录：G1 单机静态接入（2026-11-19）
+
+- `profiles/g1_mujoco.yaml`：29 个铰接关节/限位（`g1_widefoot.xml` 实测）+ `model.home`；
+- `vendor/unitree_g1/source-lock.json`：99 个资产（vendor-source-lock/v1）；
+- `scenes/g1_lab/`：humanoid + `static_model_only` + `evidence_level: 仅模型`；
+- 构建实测：
+
+```text
+build_scene --scene scenes/g1_lab --robot g1
+→ build/scenes/g1_lab/g1_lab.xml
+   nq=36 / nv=35 / nu=29 / ncam=1 / nsite=4
+```
+
+- G1+go2 组合：`build_scene --attach g1` 被构建器的
+  `使用 --attach 时必须在本体声明 manipulation_report` 拦下（builder 对所有附加本体要求
+  manipulation 事实，暂不支持 `model_only` 静态附加）⇒ 这是下一步要解开的构建器限制，
+  不是 G1 模型/Profile 问题。
