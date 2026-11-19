@@ -197,3 +197,18 @@ G1 当前是**静态实体**（`static_model_only`，无运动能力）；站立
   pinch site 保留；
 - 新 Profile：`profiles/franka_2f85_mujoco.yaml`（15 关节，加载通过）；
 - 尚未完成：Franka+2F-85 的 manipulation 事实（gripper/targets/参考解）与单机 pick 场景。
+
+## 阶段 1 完成：本地 MCP（无板卡）
+
+- `scripts/run_local_mcp.sh`：127.0.0.1:8766，Bearer token（`~/.config/iraf/mcp-local-tokens.json`，600），
+  `IRAF_SCENE_REGISTRY_MODE=off`、`IRAF_REPO_ROOT=<repo>`；
+- 实测：
+
+```text
+initialize → serverInfo iraf-task 1.30.0
+tools/list → 12 个 iraf_* 工具
+iraf_compose_joint_scene {scene_id: local_demo, robots: piper,unitree_go2, dry_run: true}
+→ SUCCEEDED, joints=20, capabilities=10
+```
+
+- 工具内 Profile 相对路径改为按 `IRAF_REPO_ROOT` 解析（不依赖进程 cwd）。

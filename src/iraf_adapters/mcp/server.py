@@ -1200,14 +1200,20 @@ def _ensure_scene(scene: str, endpoint: str = "", host=None, provider=None) -> s
             hosted += [h for h in sorted(provider.hosts, key=lambda x: x.priority)
                        if host is None or h.id != host.id]
         last = ""
+        unknown_scene = True
         for h in hosted:
             if not _supervisor_url(h):
                 continue
             r = _supervisor_call("/ensure", {"scene": scene}, timeout=150, host=h)
             if r.get("status") == "OK":
                 return "switched(supervisor)" if h is host else "switched(supervisor:%s)" % h.id
-            last = "%s(%s)" % (r.get("reason") or "supervisor 拒绝", h.id)
-        return "switch-failed:%s" % (last or "no-supervisor")
+            reason = str(r.get("reason") or r.get("error") or "")
+            last = "%s(%s)" % (reason or "supervisor 拒绝", h.id)
+            if "无此场景" not in reason and "IRAF-SCENE-NOT-FOUND" not in reason:
+                unknown_scene = False
+        if not unknown_scene:
+            return "switch-failed:%s" % (last or "no-supervisor")
+        # 全部是“supervisor 不认识该场景” ⇒ 该 provider 不归 supervisor 管，走端点直连。
     if not endpoint:
         raw = _os.environ.get("IRAF_BACKEND_CONFIG", "")
         try:
@@ -1532,6 +1538,11 @@ def iraf_compose_joint_scene(scene_id: str, robots: str, base: str = "",
             return _json.dumps({"status": "FAILED", "error_code": "IRAF-COMPOSE-INPUT",
                                 "reason": "robots 不能为空"}, ensure_ascii=False)
         descriptors = [_jc.load_descriptor(_Path(base_dir) / "scene.yaml", rid) for rid in ids]
+        # 工具可能以任意 cwd 运行：Profile 的相对路径按仓库根解析（不依赖进程 cwd）。
+        for _desc in descriptors:
+            _profile = str(_desc.get("profile") or "")
+            if _profile and not _os.path.isabs(_profile):
+                _desc["profile"] = _os.path.join(root, _profile)
         profile = _jc.compose_profile(descriptors, scene_id=str(scene_id))
         composed = _jc.compose_scene(_Path(base_dir) / "scene.yaml", _Path(base_dir) / "baseline.yaml",
                                      scene_id=str(scene_id), robot_ids=ids)
