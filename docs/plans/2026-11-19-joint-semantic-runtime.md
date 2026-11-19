@@ -725,3 +725,15 @@ iraf_robot_join_world(demo_joint_build, piper,unitree_go2,
 仍未交付；`iraf_robot_pick_readiness` 明确返回：
 `ready=false, missing=[report_path]`。必须先构建 Franka 目标场景报告
 （box + gripper 几何 + 参考解），否则不伪造 pick。
+
+### Franka pick 尝试与严格判据（2026-11-19 16:20）
+
+- 构建了 `build/models/franka_2f85_pick/{franka_pick.xml,json}`：
+  目标 box 固定在 Franka home 姿态的指腹中点，`pick_readiness` ready=true；
+- 实际 `pick_object` 能形成双边接触（~73N），但目标为静态体 ⇒ `lift_delta_m=0.0`；
+- 因此给 `acceptance(pick_object)` 加严：必须 `bilateral_contact=true` 且
+  `lift_delta_m >= 0.02`，否则显式失败。Franka 该次验收被正确拒绝：
+  `pick 未提起载荷：lift_delta_m=0.0（静态目标不能冒充 pick）`；
+- UR5 同一判据仍通过：`lift_delta_m=0.076349`。
+- 结论：Franka pick 仍需**可动目标 + 抬升轨迹**（自由关节初始位姿/参考解），
+  当前没有伪造通过。

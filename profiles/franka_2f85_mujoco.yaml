@@ -74,3 +74,4 @@ spec:
   - stop
   - reset_scene
   - gripper
+  - pick_object

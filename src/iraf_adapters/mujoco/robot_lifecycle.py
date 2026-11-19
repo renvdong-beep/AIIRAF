@@ -281,6 +281,14 @@ def acceptance(robot_id: str, capability: str, *, profile: str, root=".", scene_
         evidence = backend.pick_object(str(p.get("target_id") or "box_01"),
                                        dict(p.get("grasp_pose") or {"frame_id": "world", "pose_source": "live_target_body"}),
                                        int(p.get("duration_ms", 30000)), lease)
+        _ev = evidence.get("evidence") if isinstance(evidence, dict) else {}
+        if not isinstance(_ev, dict):
+            _ev = {}
+        if not _ev.get("bilateral_contact"):
+            raise LifecycleError("pick 未形成双边接触（不把闭合当抓取成功）")
+        if float(_ev.get("lift_delta_m") or 0.0) < 0.02:
+            raise LifecycleError("pick 未提起载荷：lift_delta_m=%r（静态目标不能冒充 pick）"
+                                 % _ev.get("lift_delta_m"))
     elif cap == "place_object":
         evidence = backend.place_object(str(p.get("place_target_id") or "tray_01"),
                                         str(p.get("payload_id") or "box_01"),
