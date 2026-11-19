@@ -473,3 +473,12 @@ iraf_submit_task("franka夹爪打开", scene_id="franka-lab")
 ```
 
 - 说明：这是夹爪开合能力；Franka 的 `pick_object` 仍需目标体/参考解等 manipulation 事实。
+
+## 意图 Provider 优先级（2026-11-19）
+
+- `build_intent_provider` 改为：**真实模型配置优先**；只有
+  `IRAF_AGENTOS_MODEL_URL + IRAF_AGENTOS_MODEL` 都缺失时，才允许
+  `IRAF_INTENT_KEYWORD=1` 的受控关键词回退；两者都没有则显式返回 None（fail-closed）。
+- 新增单测 `tests/unit/test_intent_provider_precedence.py`（3 passed）：
+  真实模型 + 关键词 → 真实；只有关键词 → 关键词；都没有 → None。
+- 生产/板卡接入时设置真实模型两项，并**不要**再设 `IRAF_INTENT_KEYWORD=1`。

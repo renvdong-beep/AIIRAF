@@ -132,12 +132,14 @@ def build_intent_provider(environ=None):
     为什么不做"缺模型就直通"的降级：那会把自然语言入口变成**零校验后门**。
     """
     env = os.environ if environ is None else environ
-    if str(env.get("IRAF_INTENT_KEYWORD") or "").strip() in ("1", "true", "yes"):
-        from iraf_adapters.model.keyword_intent import KeywordIntentProvider
-        return KeywordIntentProvider()
     endpoint = str(env.get("IRAF_AGENTOS_MODEL_URL") or "").strip()
     model = str(env.get("IRAF_AGENTOS_MODEL") or "").strip()
     if not endpoint or not model:
+        # 没有真实意图模型时才允许受控关键词回退（本地/无板卡验收）；
+        # 一旦配置了模型，真实 Provider 优先，避免"配了模型却仍走关键词"。
+        if str(env.get("IRAF_INTENT_KEYWORD") or "").strip() in ("1", "true", "yes"):
+            from iraf_adapters.model.keyword_intent import KeywordIntentProvider
+            return KeywordIntentProvider()
         return None
     from iraf_adapters.model.openai_intent import (
         IntentProviderConfig,
