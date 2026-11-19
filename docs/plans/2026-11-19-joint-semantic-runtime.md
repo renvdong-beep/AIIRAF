@@ -696,3 +696,32 @@ handoff_lab nominal → passed=true（9/9，15:57）
 
 工具清单：onboard / build_scene / scaffold_capability / acceptance /
 acceptance_all / register / status / join_world / pick_readiness。
+
+## 剩余项处理（2026-11-19 16:10）
+
+### join_world 自动 build
+
+```text
+iraf_robot_join_world(demo_joint_build, piper,unitree_go2,
+  dry_run=false, build=true)
+→ SUCCEEDED
+  scenes/demo_joint_build/{scene,baseline}.yaml
+  profiles/demo_joint_build.yaml
+  build rc=0，产物 build/scenes/demo_joint_build/demo_joint_build_joint.xml
+  model_facts: nq=34, nv=32, nu=20
+```
+
+`build=true` 会调用 `scripts/build_scene.py`，主本体优先 unitree_go2，其余自动 `--attach`。
+
+### model_proxy systemd 化 + 板上 key
+
+- `.145` 新增 `deploy/systemd/iraf-model-proxy.service`；
+  已 enable/start，`127.0.0.1:3000` 监听，`/v1/models` = 200。
+- 模型 key 复制到 S600 `/etc/iraf/agentos.key`（600，root），供 AgentOS 安装方使用。
+- `.145` 的 `.bash_history` 中 `sk-...` 已脱敏（0 处剩余），历史备份含 key 已删除。
+
+### Franka pick
+
+仍未交付；`iraf_robot_pick_readiness` 明确返回：
+`ready=false, missing=[report_path]`。必须先构建 Franka 目标场景报告
+（box + gripper 几何 + 参考解），否则不伪造 pick。

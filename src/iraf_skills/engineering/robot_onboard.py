@@ -69,7 +69,9 @@ class RobotOnboardProvider:
                 require_runnable=bool(inputs.get("require_runnable", True)),
                 register=bool(inputs.get("register", False)),
                 registry_root=str(inputs.get("registry_root") or "/etc/iraf"),
-                profiles_root=str(inputs.get("profiles_root") or "profiles"))
+                profiles_root=str(inputs.get("profiles_root") or "profiles"),
+                build=bool(inputs.get("build", False)),
+                build_primary=str(inputs.get("build_primary") or ""))
         if stage == "register":
             return lifecycle.register(
                 str(inputs["scene_file"]), str(inputs["provider_file"]),

@@ -1,0 +1,14 @@
+[Unit]
+Description=IRAF model gateway TCP proxy (127.0.0.1:3000 -> upstream model gateway)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/coretek/iraf-instance/scripts/model_proxy.py
+Restart=always
+RestartSec=2
+User=root
+
+[Install]
+WantedBy=multi-user.target

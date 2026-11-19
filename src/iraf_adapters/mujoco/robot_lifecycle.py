@@ -394,7 +394,8 @@ def acceptance_all(robot_id: str, *, profile: str, root=".", params=None,
 
 def join_world(scene_id: str, robots, *, base="scenes/handoff_lab", root=".",
                dry_run=True, require_runnable=True, register=False,
-               registry_root="/etc/iraf", profiles_root="profiles") -> Dict[str, Any]:
+               registry_root="/etc/iraf", profiles_root="profiles",
+               build: bool = False, build_primary: str = "") -> Dict[str, Any]:
     """把已验收的机器人加入联合世界（复用 joint_compose）；未 runnable 拒绝。"""
     root = _root(root)
     ids = [x.strip() for x in (robots if isinstance(robots, (list, tuple)) else str(robots).split(",")) if x.strip()]
@@ -430,10 +431,36 @@ def join_world(scene_id: str, robots, *, base="scenes/handoff_lab", root=".",
             p = root / "config/scenes" / ("%s.yaml" % scene_id)
             p.write_text(yaml.safe_dump(reg, allow_unicode=True, sort_keys=False), encoding="utf-8")
             files.append(str(p))
+    build_result = None
+    if build:
+        if dry_run:
+            raise LifecycleError("build=true 需要 dry_run=false（先落声明再构建）")
+        import os
+        import subprocess
+        import sys
+        primary = build_primary or ("unitree_go2" if "unitree_go2" in ids else ids[0])
+        if primary not in ids:
+            raise LifecycleError("build_primary 必须是 robots 之一：%s" % primary)
+        cmd = [sys.executable, str(root / "scripts/build_scene.py"),
+               "--scene", str(root / "scenes" / scene_id), "--robot", primary,
+               "--root", str(root), "--quiet"]
+        for rid in ids:
+            if rid != primary:
+                cmd += ["--attach", rid]
+        env = dict(os.environ)
+        lib = str(Path("/home/coretek/.local/opt/iraf-sdk/0.4.4/lib"))
+        env["PYTHONPATH"] = str(root / "src") + ":" + lib
+        proc = subprocess.run(cmd, cwd=str(root), env=env, capture_output=True,
+                              text=True, timeout=900)
+        build_result = {"rc": proc.returncode, "primary": primary,
+                        "stdout": (proc.stdout or "")[-2000:],
+                        "stderr": (proc.stderr or "")[-2000:]}
+        if proc.returncode != 0:
+            raise LifecycleError("MJCF 构建失败（rc=%s）：%s" % (proc.returncode, build_result["stderr"]))
     return {"status": "SUCCEEDED", "scene_id": scene_id, "robots": ids,
             "joints": len(profile["spec"]["joints"]), "dry_run": bool(dry_run),
-            "artifacts": [str(x) for x in files],
-            "note": "只生成联合声明；MJCF 合成仍由 scripts/build_scene.py"}
+            "artifacts": [str(x) for x in files], "build": build_result,
+            "note": "只生成联合声明；build=true 时已调用 build_scene.py"}
 
 
 def pick_readiness(report_path: str = "", *, root=".") -> Dict[str, Any]:

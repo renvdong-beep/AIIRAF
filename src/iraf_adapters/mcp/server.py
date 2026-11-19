@@ -1657,7 +1657,8 @@ def iraf_robot_status(robot_id: str) -> str:
         result = _robot_lifecycle().status(
             robot_id, root=_robot_root(),
             registry_root=_os.environ.get("IRAF_SCENE_ROOT") or "/etc/iraf",
-            profiles_root=_os.environ.get("IRAF_PROFILES_ROOT") or "profiles")
+            profiles_root=_os.environ.get("IRAF_PROFILES_ROOT") or "profiles",
+            build=bool(build), build_primary=str(build_primary or ""))
         return _json.dumps(result, ensure_ascii=False)
     except Exception as exc:  # noqa: BLE001
         return _json.dumps({"status": "FAILED", "error_code": "IRAF-ROBOT-STATUS-FAILED",
@@ -1686,7 +1687,8 @@ def iraf_robot_acceptance_all(robot_id: str, profile: str, params: str = "{}",
 @_audited("iraf_robot_join_world")
 def iraf_robot_join_world(scene_id: str, robots: str, base: str = "",
                           dry_run: bool = True, require_runnable: bool = True,
-                          register: bool = False) -> str:
+                          register: bool = False, build: bool = False,
+                          build_primary: str = "") -> str:
     """联合世界编排：默认要求每个机器人 runnable；复用 joint_compose，不伪造合成。"""
     import json as _json
     import os as _os
@@ -1695,7 +1697,8 @@ def iraf_robot_join_world(scene_id: str, robots: str, base: str = "",
             scene_id, robots, base=base or "scenes/handoff_lab", root=_robot_root(),
             dry_run=bool(dry_run), require_runnable=bool(require_runnable), register=bool(register),
             registry_root=_os.environ.get("IRAF_SCENE_ROOT") or "/etc/iraf",
-            profiles_root=_os.environ.get("IRAF_PROFILES_ROOT") or "profiles")
+            profiles_root=_os.environ.get("IRAF_PROFILES_ROOT") or "profiles",
+            build=bool(build), build_primary=str(build_primary or ""))
         return _json.dumps(result, ensure_ascii=False)
     except Exception as exc:  # noqa: BLE001
         return _json.dumps({"status": "FAILED", "error_code": "IRAF-ROBOT-JOIN-WORLD-FAILED",

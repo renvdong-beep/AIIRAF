@@ -15,6 +15,8 @@
     "base": {"type": "string", "description": "join_world：基础联合场景目录"},
     "require_runnable": {"type": "boolean", "default": true},
     "register": {"type": "boolean", "default": false},
+    "build": {"type": "boolean", "default": false},
+    "build_primary": {"type": "string"},
     "provider_endpoint": {"type": "string"},
     "report_path": {"type": "string"},
     "backend_entrypoint": {"type": "string"},
