@@ -1,0 +1,16 @@
+apiVersion: iraf.intewell.io/v1
+kind: Skill
+metadata: {name: gripper, version: 1.0.0}
+spec:
+  verification: development
+  inputSchema: gripper.input.json
+  outputSchema: gripper.output.json
+  requires: [gripper]
+  preconditions: []
+  intentExamples: ["夹爪打开", "夹爪闭合", "合上夹爪", "open gripper", "close gripper"]
+  timeoutSeconds: 10
+  cancellation: not_applicable
+  recovery: [request_handover]
+  safetyClass: motion
+  providers:
+    - {name: common_gripper_sim, type: python_adapter, entrypoint: "iraf_skills.common.motion:GripperProvider", selector: {mode: simulation}, priority: 0}

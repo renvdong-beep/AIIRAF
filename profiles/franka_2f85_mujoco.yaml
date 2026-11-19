@@ -73,3 +73,4 @@ spec:
   - move_joint
   - stop
   - reset_scene
+  - gripper

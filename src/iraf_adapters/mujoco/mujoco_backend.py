@@ -3683,6 +3683,35 @@ class MujocoBackend:
         self._cancel_event.set()
         self._safe_stop_controls()
 
+    def gripper(self, action, lease, duration_ms=1000):
+        """开/合夹爪（声明式：只驱动已存在的夹爪 actuator，不碰臂关节）。"""
+        self.authority.validate(lease)
+        action = str(action or '').strip().lower()
+        if action not in ('open', 'close'):
+            raise ValueError("gripper action 必须是 open/close")
+        actuator = None
+        for name, idx in (getattr(self, "_actuators", {}) or {}).items():
+            if 'fingers_actuator' in str(name).lower() or str(name) == 'rq2f85_fingers_actuator':
+                actuator = int(idx)
+                break
+        if actuator is None:
+            raise RuntimeError("模型没有夹爪 actuator（未声明 rq2f85_fingers_actuator）")
+        lo = float(self.model.actuator_ctrlrange[actuator][0])
+        hi = float(self.model.actuator_ctrlrange[actuator][1])
+        value = lo if action == 'open' else hi
+        self.data.ctrl[actuator] = value
+        self._advance_for(int(duration_ms))
+        self._forward_readonly()
+        joint = 'rq2f85_right_driver_joint'
+        qpos = None
+        try:
+            qpos = float(self._joint_qpos(joint))
+        except Exception:
+            qpos = None
+        return {"action": action, "actuator": actuator, "ctrl": value,
+                "ctrlrange": [lo, hi], "driver_qpos": qpos,
+                "simulation": True}
+
     def step(self, count=1):
         """推进仿真 count 步。
 

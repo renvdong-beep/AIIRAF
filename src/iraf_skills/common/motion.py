@@ -18,3 +18,16 @@ class StopProvider:
     def execute(self,inputs,lease):
         self.backend.stop(lease)
         return {"skill":"stop","accepted":True}
+
+class GripperProvider:
+    def __init__(self, profile, backend):
+        self.profile = profile
+        self.backend = backend
+
+    def execute(self, inputs, lease):
+        action = str(inputs.get("action") or "").strip().lower()
+        if action not in ("open", "close"):
+            raise SkillRejected("gripper.action 必须是 open/close")
+        duration_ms = int(inputs.get("duration_ms") or 1000)
+        evidence = self.backend.gripper(action, lease, duration_ms)
+        return {"skill": "gripper", "accepted": True, "evidence": evidence}

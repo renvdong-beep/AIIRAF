@@ -1,0 +1,18 @@
+{
+  "type": "object",
+  "required": [
+    "skill",
+    "accepted"
+  ],
+  "properties": {
+    "skill": {
+      "const": "gripper"
+    },
+    "accepted": {
+      "type": "boolean"
+    },
+    "evidence": {
+      "type": "object"
+    }
+  }
+}

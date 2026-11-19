@@ -44,6 +44,7 @@ CAPABILITY_METHODS = {
     "calibrate_grasp": "calibrate_grasp",
     "calibrate_camera_to_base": "calibrate_camera_to_base",
     "stop": "stop",
+    "gripper": "gripper",
     "step": "step",
     # 四足能力（步骤 16）：与四足通用契约的规范词表一致；
     # 未登记的能力仍会被显式拦下（避免"策略通过但无人实现"的悬空能力）。

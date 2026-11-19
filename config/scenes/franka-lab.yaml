@@ -19,6 +19,7 @@ resources:
   - move_joint
   - stop
   - reset_scene
+  - gripper
 backend_entrypoint: iraf_adapters.mujoco.mujoco_backend:MujocoBackend
 backend_config:
   model_path: /home/coretek/AIIRAF/build/models/franka_2f85/franka_2f85.xml

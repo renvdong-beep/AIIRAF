@@ -457,3 +457,19 @@ iraf_submit_task("ur5抓取盒子", scene_id="ur5-pick-local")
 
 - 注意：`pick_object.grasp_pose` 的 `position/orientation` 是 **{x,y,z}/{x,y,z,w} 对象**，
   `live_target_body` 时不得携带；`duration_ms` 最大 30000。
+
+## Franka 2F-85 gripper（MCP 一级能力，2026-11-19）
+
+- 新增一等能力 `gripper`：Backend 方法 + `GripperProvider` + `skills/gripper` 契约；
+- Profile `franka_2f85_mujoco` 与 `franka-lab` scene 增加 `gripper`；
+- 安全策略 `simulation_lab.allowed_skills` 放行 `gripper`；
+- 实测：
+
+```text
+iraf_submit_task("franka夹爪闭合", scene_id="franka-lab")
+→ SUCCEEDED (gripper, ctrl=255, driver_qpos=0.781538)
+iraf_submit_task("franka夹爪打开", scene_id="franka-lab")
+→ SUCCEEDED (gripper, ctrl=0, driver_qpos=0.002979)
+```
+
+- 说明：这是夹爪开合能力；Franka 的 `pick_object` 仍需目标体/参考解等 manipulation 事实。

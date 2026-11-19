@@ -28,6 +28,10 @@ class KeywordIntentProvider:
                 return self._intent("stop", {}, allowed)
 
         if any(token in raw for token in ("franka", "Franka", "panda", "Panda")):
+            # GRIPPER_BRANCH
+            if any(token in raw for token in ("夹爪", "gripper", "开", "合")):
+                action = "open" if any(token in raw for token in ("打开", "张开", "open")) else "close"
+                return self._intent("gripper", {"action": action, "duration_ms": 1000}, allowed)
             if any(token in raw for token in ("移动", "动", "伸", "move")):
                 positions = {
                     "joint1": 0.2, "joint2": 0.1, "joint3": 0.0, "joint4": -0.6,
