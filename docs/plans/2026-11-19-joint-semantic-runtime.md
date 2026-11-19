@@ -370,3 +370,12 @@ iraf_submit_task("franka移动", scene_id="franka-lab")
 ```
 
 G1 与 Franka 现在都能通过本地 MCP 单机控制。
+
+## 回归发现（2026-11-19）
+
+- G1 `iraf_onboard_robot(unitree_g1_probe)`：SUCCEEDED（validation.json，runnable=false）；
+- `handoff_lab` nominal 现为 **FAILED**：
+  `s04_place_in_tray` 横向纠偏 0.07296 m > 0.070 上限，后续 s05/s06/s07 级联失败；
+- 已排除：`factory.py` 被 main 整文件覆盖（已恢复 release 版，仅保留 G1 映射）；
+  但重跑仍失败 ⇒ 需继续定位（build 模型/场景状态/依赖版本）。
+- 在修复前不宣称 handoff 不退化；Goal 保持 active。
