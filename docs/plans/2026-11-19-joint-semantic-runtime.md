@@ -755,3 +755,26 @@ iraf_robot_join_world(demo_joint_build, piper,unitree_go2,
 - 结论：不是目标位置问题，是 2F-85 夹爪在该模型/配置下没有真正闭合（tendon 执行器语义），
   需要单独的 2F-85 驱动映射/标定，之后才能谈 lift。
 - 严格 pick 判据继续拒绝；不伪造。
+
+### Franka pick 最终诊断（2026-11-19 16:55）
+
+手动序列（同一模型/配置）：
+
+```text
+close → driver_qpos=0.796219
+move joint2 -0.15 → target_z 0.490032 → 0.588439（+9.84cm）
+```
+
+说明“闭合 + 抬升”机制本身可用。
+
+但 `pick_object` 两条组合都不满足严格判据：
+
+```text
+静态目标: bilateral_contact=true, lift=0
+自由目标 + 正常 open:  target 被开爪推开
+自由目标 + open=closed: 未形成双边接触
+```
+
+根因是 Franka 目标/指腹的**初始接触几何**：目标必须由参考解放到“张爪可进入、合爪有正压力”的位置，
+当前手放的指腹中点只满足重叠/单侧接触，不能满足双边正压力 + 可抬升。
+下一步需要构建期 grasp 参考解（approach/grasp/lift 位形 + pad offset），不是改判据。
