@@ -65,7 +65,7 @@ sensors:
   anchor:
     object_kind: camera
     name: overhead_camera
-    entity: franka
+    entity: g1
   pos_m:
   - 0.28
   - -0.72

@@ -166,3 +166,22 @@ build_scene --scene scenes/g1_lab --robot g1
 - 正确修法：让 builder 对 `model_only: true` 的附加本体**跳过 manipulation 继承**
   （只附加几何/关节/执行器），而不是给静态实体伪造 gripper；
 - 该项已登记为下一步，不在 G1 模型/Profile 侧硬凑。
+
+### G1 进入联合世界（静态实体）已通过
+
+- builder：当报告声明 `manipulation_absent_reason` 且无 gripper 时，`_joint_manipulation`
+  **返回 absent**（静态实体只附加几何/关节/执行器，不伪造抓取事实）；
+- 新增 `config/machines/g1.yaml`（guest，owner=unitree_go2）；
+- `scenes/g1_go2_lab`：G1 + Go2 联合场景；
+- 实测：
+
+```text
+build rc=0（g1_go2_lab_joint.xml）
+scenario run stand_stop：
+  build/acceptance/g1_go2_lab/stand_stop/report.json
+  passed=true
+  ss01_stand SUCCEEDED
+  ss02_stop  SUCCEEDED
+```
+
+G1 当前是**静态实体**（`static_model_only`，无运动能力）；站立/行走仍需 G1 适配器与运动事实。

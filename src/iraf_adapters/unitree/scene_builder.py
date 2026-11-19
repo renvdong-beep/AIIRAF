@@ -2560,6 +2560,17 @@ def _joint_manipulation(root, arm_report_path, prefix, joint_facts, model, decla
         _fail(EXIT_REFERENCE,
               "联合构建需要臂侧场景报告以继承 manipulation 事实（不存在: %s）" % arm_report_path)
     report = json.loads(Path(arm_report_path).read_text(encoding="utf-8"))
+    # 静态实体（humanoid/model_only）：报告明确声明“没有 manipulation”，不应要求 gripper；
+    # 只附加几何/关节/执行器，抓取事实保持 absent（不伪造）。
+    if report.get("gripper") is None and report.get("manipulation_absent_reason"):
+        return {
+            "gripper": None, "targets": [], "target_id": report.get("target_id"),
+            "vision": None, "name_map": {}, "name_map_facts": {},
+            "rename_rule": None, "inherited_from": str(arm_report_path),
+            "reference_pose_check": None, "reference_pose_clearance_check": None,
+            "reference_pose_resolution": None,
+            "manipulation_absent_reason": report.get("manipulation_absent_reason"),
+        }
     mj = mujoco
     name_map = {}
 

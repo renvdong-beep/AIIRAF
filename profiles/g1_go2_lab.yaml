@@ -1,0 +1,186 @@
+apiVersion: iraf.intewell.io/v1
+kind: RobotProfile
+metadata:
+  name: g1_go2_lab
+  version: 0.1.0
+spec:
+  simulation: true
+  verification: development
+  control_frequency_hz: 100
+  joints:
+  - left_hip_pitch_joint
+  - left_hip_roll_joint
+  - left_hip_yaw_joint
+  - left_knee_joint
+  - left_ankle_pitch_joint
+  - left_ankle_roll_joint
+  - right_hip_pitch_joint
+  - right_hip_roll_joint
+  - right_hip_yaw_joint
+  - right_knee_joint
+  - right_ankle_pitch_joint
+  - right_ankle_roll_joint
+  - waist_yaw_joint
+  - waist_roll_joint
+  - waist_pitch_joint
+  - left_shoulder_pitch_joint
+  - left_shoulder_roll_joint
+  - left_shoulder_yaw_joint
+  - left_elbow_joint
+  - left_wrist_roll_joint
+  - left_wrist_pitch_joint
+  - left_wrist_yaw_joint
+  - right_shoulder_pitch_joint
+  - right_shoulder_roll_joint
+  - right_shoulder_yaw_joint
+  - right_elbow_joint
+  - right_wrist_roll_joint
+  - right_wrist_pitch_joint
+  - right_wrist_yaw_joint
+  - FL_hip_joint
+  - FL_thigh_joint
+  - FL_calf_joint
+  - FR_hip_joint
+  - FR_thigh_joint
+  - FR_calf_joint
+  - RL_hip_joint
+  - RL_thigh_joint
+  - RL_calf_joint
+  - RR_hip_joint
+  - RR_thigh_joint
+  - RR_calf_joint
+  joint_limits:
+    left_hip_pitch_joint:
+    - -2.5307
+    - 2.8798
+    left_hip_roll_joint:
+    - -0.5236
+    - 2.9671
+    left_hip_yaw_joint:
+    - -2.7576
+    - 2.7576
+    left_knee_joint:
+    - -0.087267
+    - 2.8798
+    left_ankle_pitch_joint:
+    - -0.87267
+    - 0.5236
+    left_ankle_roll_joint:
+    - -0.2618
+    - 0.2618
+    right_hip_pitch_joint:
+    - -2.5307
+    - 2.8798
+    right_hip_roll_joint:
+    - -2.9671
+    - 0.5236
+    right_hip_yaw_joint:
+    - -2.7576
+    - 2.7576
+    right_knee_joint:
+    - -0.087267
+    - 2.8798
+    right_ankle_pitch_joint:
+    - -0.87267
+    - 0.5236
+    right_ankle_roll_joint:
+    - -0.2618
+    - 0.2618
+    waist_yaw_joint:
+    - -2.618
+    - 2.618
+    waist_roll_joint:
+    - -0.52
+    - 0.52
+    waist_pitch_joint:
+    - -0.52
+    - 0.52
+    left_shoulder_pitch_joint:
+    - -3.0892
+    - 2.6704
+    left_shoulder_roll_joint:
+    - -1.5882
+    - 2.2515
+    left_shoulder_yaw_joint:
+    - -2.618
+    - 2.618
+    left_elbow_joint:
+    - -1.0472
+    - 2.0944
+    left_wrist_roll_joint:
+    - -1.97222
+    - 1.97222
+    left_wrist_pitch_joint:
+    - -1.61443
+    - 1.61443
+    left_wrist_yaw_joint:
+    - -1.61443
+    - 1.61443
+    right_shoulder_pitch_joint:
+    - -3.0892
+    - 2.6704
+    right_shoulder_roll_joint:
+    - -2.2515
+    - 1.5882
+    right_shoulder_yaw_joint:
+    - -2.618
+    - 2.618
+    right_elbow_joint:
+    - -1.0472
+    - 2.0944
+    right_wrist_roll_joint:
+    - -1.97222
+    - 1.97222
+    right_wrist_pitch_joint:
+    - -1.61443
+    - 1.61443
+    right_wrist_yaw_joint:
+    - -1.61443
+    - 1.61443
+    FL_hip_joint:
+    - -1.0472
+    - 1.0472
+    FL_thigh_joint:
+    - -1.5708
+    - 3.4907
+    FL_calf_joint:
+    - -2.7227
+    - -0.83776
+    FR_hip_joint:
+    - -1.0472
+    - 1.0472
+    FR_thigh_joint:
+    - -1.5708
+    - 3.4907
+    FR_calf_joint:
+    - -2.7227
+    - -0.83776
+    RL_hip_joint:
+    - -1.0472
+    - 1.0472
+    RL_thigh_joint:
+    - -0.5236
+    - 4.5379
+    RL_calf_joint:
+    - -2.7227
+    - -0.83776
+    RR_hip_joint:
+    - -1.0472
+    - 1.0472
+    RR_thigh_joint:
+    - -0.5236
+    - 4.5379
+    RR_calf_joint:
+    - -2.7227
+    - -0.83776
+  capabilities:
+  - accept_payload
+  - dock_for_handoff
+  - locomote
+  - stand
+  - static_model_only
+  - stop
+  joint:
+    resources:
+      g1: arm
+      unitree_go2: quadruped

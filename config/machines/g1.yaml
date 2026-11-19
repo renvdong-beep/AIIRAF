@@ -1,0 +1,16 @@
+schema_version: iraf.machine-declaration/v1
+robot:
+  id: g1
+  profile: profiles/g1_mujoco.yaml
+  backend: mujoco_arm
+  backend_config:
+    mode: scene_report
+    report: build/scenes/g1_lab/g1_lab.json
+    target_tolerance_m: 0.005
+    realtime: false
+  plant:
+    role: guest
+    owner: unitree_go2
+    guest_timeout_factor: 30.0
+skills:
+  safety_policy: profiles/safety/simulation_lab.yaml
