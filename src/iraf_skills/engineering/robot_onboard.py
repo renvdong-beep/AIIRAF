@@ -54,6 +54,22 @@ class RobotOnboardProvider:
                 backend_config=dict(inputs.get("backend_config") or {}),
                 params=dict(inputs.get("params") or {}), dry_run=dry,
                 output_dir=str(inputs.get("output_dir") or ""))
+        if stage == "acceptance_all":
+            return lifecycle.acceptance_all(
+                robot_id, profile=str(inputs["profile"]), root=root,
+                params=dict(inputs.get("params") or {}),
+                backend_entrypoint=str(inputs.get("backend_entrypoint") or ""),
+                backend_config=dict(inputs.get("backend_config") or {}),
+                dry_run=dry, output_dir=str(inputs.get("output_dir") or ""))
+        if stage == "join_world":
+            return lifecycle.join_world(
+                str(inputs["scene_id"]), str(inputs["robots"]),
+                base=str(inputs.get("base") or "scenes/handoff_lab"),
+                root=root, dry_run=dry,
+                require_runnable=bool(inputs.get("require_runnable", True)),
+                register=bool(inputs.get("register", False)),
+                registry_root=str(inputs.get("registry_root") or "/etc/iraf"),
+                profiles_root=str(inputs.get("profiles_root") or "profiles"))
         if stage == "register":
             return lifecycle.register(
                 str(inputs["scene_file"]), str(inputs["provider_file"]),

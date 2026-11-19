@@ -348,6 +348,94 @@ def register(scene_file: str, provider_file: str, *, root=".", registry_root="/e
             "scenes": sorted(r.scenes), "errors": r.errors}
 
 
+def acceptance_all(robot_id: str, *, profile: str, root=".", params=None,
+                   backend_entrypoint: str = "", backend_config=None,
+                   dry_run=True, output_dir: str = "") -> Dict[str, Any]:
+    """按 Profile 声明的全部能力批量验收；任一能力失败则整体不通过。"""
+    root = _root(root)
+    profile_doc = _load_yaml(root / profile) if not Path(profile).is_absolute() else _load_yaml(Path(profile))
+    caps = [str(c) for c in ((profile_doc.get("spec") or {}).get("capabilities") or [])]
+    if not caps:
+        raise LifecycleError("Profile 没有声明任何能力")
+    supported = {"move_joint", "gripper", "pick_object", "place_object",
+                 "stand", "locomote", "stop", "reset_scene"}
+    unsupported = [c for c in caps if c not in supported]
+    if unsupported:
+        raise LifecycleError("批量验收不支持能力：%s（显式失败，不跳过）" % unsupported)
+    plan = {"status": "SUCCEEDED", "robot_id": robot_id, "capabilities": caps,
+            "dry_run": bool(dry_run), "results": []}
+    if dry_run:
+        return plan
+    p = dict(params or {})
+    results = []
+    for cap in caps:
+        try:
+            r = acceptance(robot_id, cap, profile=profile, root=root,
+                           backend_entrypoint=backend_entrypoint,
+                           backend_config=backend_config,
+                           params=dict(p.get(cap) or {}), dry_run=False,
+                           output_dir=output_dir)
+            results.append({"capability": cap, "passed": True,
+                            "report_path": r.get("report_path")})
+        except Exception as exc:  # noqa: BLE001
+            results.append({"capability": cap, "passed": False,
+                            "error": "%s: %s" % (type(exc).__name__, exc)})
+    passed = all(x["passed"] for x in results)
+    report = {"schema": "iraf.robot-acceptance-all/v1", "robot_id": robot_id,
+              "profile": profile, "passed": passed, "results": results,
+              "missing": [x["capability"] for x in results if not x["passed"]]}
+    out = root / (output_dir or ("build/acceptance/%s" % robot_id))
+    out.mkdir(parents=True, exist_ok=True)
+    rp = out / "all.json"
+    rp.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    report["report_path"] = str(rp)
+    return report
+
+
+def join_world(scene_id: str, robots, *, base="scenes/handoff_lab", root=".",
+               dry_run=True, require_runnable=True, register=False,
+               registry_root="/etc/iraf", profiles_root="profiles") -> Dict[str, Any]:
+    """把已验收的机器人加入联合世界（复用 joint_compose）；未 runnable 拒绝。"""
+    root = _root(root)
+    ids = [x.strip() for x in (robots if isinstance(robots, (list, tuple)) else str(robots).split(",")) if x.strip()]
+    if not ids:
+        raise LifecycleError("robots 不能为空")
+    if require_runnable:
+        bad = []
+        for rid in ids:
+            st = status(rid, root=str(root), registry_root=registry_root, profiles_root=profiles_root)
+            if not st.get("runnable"):
+                bad.append({"robot_id": rid, "missing": st.get("missing_acceptance"),
+                            "scenes": st.get("scenes")})
+        if bad:
+            raise LifecycleError("存在未验收/不可用机器人：%s" % bad)
+    base_dir = root / (base or "scenes/handoff_lab")
+    if not (base_dir / "scene.yaml").is_file() or not (base_dir / "baseline.yaml").is_file():
+        raise LifecycleError("联合世界基础场景不存在：%s" % base_dir)
+    from iraf_adapters.mujoco import joint_compose as jc
+    descriptors = [jc.load_descriptor(base_dir / "scene.yaml", rid) for rid in ids]
+    for d in descriptors:
+        prof = str(d.get("profile") or "")
+        if prof and not Path(prof).is_absolute():
+            d["profile"] = str(root / prof)
+    profile = jc.compose_profile(descriptors, scene_id=scene_id)
+    composed = jc.compose_scene(base_dir / "scene.yaml", base_dir / "baseline.yaml",
+                                scene_id=scene_id, robot_ids=ids)
+    files = []
+    if not dry_run:
+        files = jc.write_outputs(root, scene_id=scene_id, composed=composed,
+                                 profile=profile, out_dir=root / "scenes" / scene_id)
+        if register:
+            reg = jc.build_registry_scene(scene_id, descriptors)
+            p = root / "config/scenes" / ("%s.yaml" % scene_id)
+            p.write_text(yaml.safe_dump(reg, allow_unicode=True, sort_keys=False), encoding="utf-8")
+            files.append(str(p))
+    return {"status": "SUCCEEDED", "scene_id": scene_id, "robots": ids,
+            "joints": len(profile["spec"]["joints"]), "dry_run": bool(dry_run),
+            "artifacts": [str(x) for x in files],
+            "note": "只生成联合声明；MJCF 合成仍由 scripts/build_scene.py"}
+
+
 def status(robot_id: str, *, root=".", registry_root="/etc/iraf", profiles_root="") -> Dict[str, Any]:
     root = _root(root)
     from iraf_core.scene_registry import SceneRegistry

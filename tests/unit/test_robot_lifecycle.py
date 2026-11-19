@@ -60,3 +60,24 @@ def test_skill_status_stage_smoke():
         {"robot_id": "franka_2f85", "stage": "status", "root": "."})
     assert out["status"] == "SUCCEEDED"
     assert isinstance(out["acceptance"], list)
+
+
+def test_acceptance_all_dry_plan():
+    out = rl.acceptance_all("franka_2f85", profile="profiles/franka_2f85_mujoco.yaml",
+                            root=".", dry_run=True)
+    assert out["status"] == "SUCCEEDED"
+    assert "gripper" in out["capabilities"]
+
+
+def test_join_world_dry_without_gate():
+    out = rl.join_world("demo-joint", "piper,unitree_go2", base="scenes/handoff_lab",
+                        root=".", dry_run=True, require_runnable=False)
+    assert out["status"] == "SUCCEEDED"
+    assert out["joints"] > 0
+
+
+def test_join_world_blocks_unaccepted_robot():
+    with pytest.raises(rl.LifecycleError):
+        rl.join_world("demo-joint", "piper", base="scenes/handoff_lab",
+                      root=".", dry_run=True, require_runnable=True)
+

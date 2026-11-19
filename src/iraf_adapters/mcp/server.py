@@ -1665,6 +1665,44 @@ def iraf_robot_status(robot_id: str) -> str:
 
 
 @app.tool()
+@_audited("iraf_robot_acceptance_all")
+def iraf_robot_acceptance_all(robot_id: str, profile: str, params: str = "{}",
+                              backend_entrypoint: str = "", backend_config: str = "",
+                              dry_run: bool = True) -> str:
+    """按 Profile 声明的全部能力批量验收；任一失败则整体不通过。"""
+    import json as _json
+    try:
+        result = _robot_lifecycle().acceptance_all(
+            robot_id, profile=profile, root=_robot_root(),
+            params=_json_arg(params), backend_entrypoint=backend_entrypoint,
+            backend_config=_json_arg(backend_config), dry_run=bool(dry_run))
+        return _json.dumps(result, ensure_ascii=False)
+    except Exception as exc:  # noqa: BLE001
+        return _json.dumps({"status": "FAILED", "error_code": "IRAF-ROBOT-ACCEPT-ALL-FAILED",
+                            "reason": "%s: %s" % (type(exc).__name__, exc)}, ensure_ascii=False)
+
+
+@app.tool()
+@_audited("iraf_robot_join_world")
+def iraf_robot_join_world(scene_id: str, robots: str, base: str = "",
+                          dry_run: bool = True, require_runnable: bool = True,
+                          register: bool = False) -> str:
+    """联合世界编排：默认要求每个机器人 runnable；复用 joint_compose，不伪造合成。"""
+    import json as _json
+    import os as _os
+    try:
+        result = _robot_lifecycle().join_world(
+            scene_id, robots, base=base or "scenes/handoff_lab", root=_robot_root(),
+            dry_run=bool(dry_run), require_runnable=bool(require_runnable), register=bool(register),
+            registry_root=_os.environ.get("IRAF_SCENE_ROOT") or "/etc/iraf",
+            profiles_root=_os.environ.get("IRAF_PROFILES_ROOT") or "profiles")
+        return _json.dumps(result, ensure_ascii=False)
+    except Exception as exc:  # noqa: BLE001
+        return _json.dumps({"status": "FAILED", "error_code": "IRAF-ROBOT-JOIN-WORLD-FAILED",
+                            "reason": "%s: %s" % (type(exc).__name__, exc)}, ensure_ascii=False)
+
+
+@app.tool()
 @_audited("iraf_compose_joint_scene")
 def iraf_compose_joint_scene(scene_id: str, robots: str, base: str = "",
                              dry_run: bool = True, register: bool = False) -> str:

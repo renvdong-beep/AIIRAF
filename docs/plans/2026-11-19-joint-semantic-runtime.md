@@ -653,3 +653,21 @@ ur5抓取盒子（真实意图）→ SUCCEEDED, lift_mm=76.38
 
 这证明“能力验收 → gap 报告 → runnable”闭环已可用；未验收项会明确留在
 `missing_acceptance`，不会冒充可用。
+
+
+### 批量验收 + 联合世界编排（2026-11-19 16:00）
+
+```text
+iraf_robot_acceptance_all(franka_2f85)
+→ passed=true，move/stop/reset/gripper 全部有 report
+
+iraf_robot_join_world(demo-joint, piper,unitree_go2, require_runnable=false)
+→ SUCCEEDED, joints=20（dry-run）
+
+iraf_robot_join_world(piper, require_runnable=true)
+→ FAILED：piper 没有验收/场景（不静默放行）
+```
+
+- `join_world` 复用 joint_compose，只生成联合声明；MJCF 合成仍由 build_scene.py。
+- 9 个 lifecycle 单测通过。
+- Franka pick 仍需 manipulation 报告/目标/参考解；当前没有该报告，未伪造。
