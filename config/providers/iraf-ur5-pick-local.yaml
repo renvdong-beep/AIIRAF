@@ -1,0 +1,19 @@
+schema: iraf.provider/v1
+provider_id: iraf/ur5-pick-local
+scene_id: ur5-pick-local
+token_env: IRAF_PROVIDER_TOKEN
+hosts:
+- id: x86-1
+  endpoint: 10.203.247.145:50053
+  capacity:
+    cores: 4
+    gpu: none
+  priority: 10
+schedule: static
+health:
+  interval_s: 5
+  timeout_s: 2
+  failover: none
+allowed_hosts:
+- 10.203.247.145
+digest: sha256:007e62a326b93184aa98921d9adeb65cdf502bd4a2f9ac1066b1cbe921fe9815

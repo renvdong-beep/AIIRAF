@@ -37,6 +37,15 @@ class KeywordIntentProvider:
             if any(token in raw for token in ("停", "停止", "stop")):
                 return self._intent("stop", {}, allowed)
 
+        # UR5_PICK_BRANCH: 单机 UR5e 抓取（本地 MujocoBackend / scene_report）
+        low = raw.lower()
+        if 'ur5' in low or low.startswith('ur ') or low.startswith('ur('):
+            if any(token in raw for token in ("抓", "抓取", "拿", "pick")):
+                return self._intent("pick_object", {
+                    "target_id": "box_01",
+                    "grasp_pose": {"frame_id": "world", "pose_source": "live_target_body"},
+                    "duration_ms": 30000,
+                }, allowed)
         if any(token in raw for token in ("停", "停止", "stop")):
             return self._intent("stop", {}, allowed)
         raise IntentNoMatch("关键词模式无法匹配：%r" % raw, matches=sorted(allowed))

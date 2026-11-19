@@ -442,3 +442,18 @@ ur5 Provider       → 50053，6 能力（pick 以 A6 58.3s 记录为准）
 - Franka：装配 + 2F-85 开合自检 + move_joint 单机可控；**pick 仍需 manipulation 事实**。
 - 新机器人接入：`iraf_onboard_robot` + `engineering.robot_onboard` + AGENTS §12 已强制；
   G1/Franka 均产出 validation.json（runnable=false 直到能力+验收齐全）。
+
+## UR5 单机 MCP pick（2026-11-19）
+
+- 本地场景 `ur5-pick-local`：本地 `MujocoBackend` + `scene_report`
+  （`build/models/ur5-pick-scene.json`，非远端 provider）；
+- `KeywordIntentProvider` 增加 UR5 抓取分支（`live_target_body`，30s 上限）；
+- 实测：
+
+```text
+iraf_submit_task("ur5抓取盒子", scene_id="ur5-pick-local")
+→ SUCCEEDED, resolved_skill=pick_object, lift_mm=76.35
+```
+
+- 注意：`pick_object.grasp_pose` 的 `position/orientation` 是 **{x,y,z}/{x,y,z,w} 对象**，
+  `live_target_body` 时不得携带；`duration_ms` 最大 30000。
