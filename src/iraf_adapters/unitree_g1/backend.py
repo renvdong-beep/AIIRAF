@@ -79,6 +79,8 @@ def load_declaration(config):
             raise DeclarationError("声明文件不存在: %s" % path)
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
     elif isinstance(config, dict):
+        if "declaration" in config:
+            return load_declaration(config["declaration"])
         document = dict(config)
         if document.get("root"):
             root = Path(str(document["root"]))

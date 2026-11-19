@@ -1,0 +1,10 @@
+schema_version: iraf.machine-declaration/v1
+robot:
+  id: unitree_g1
+  profile: profiles/unitree_g1_mujoco.yaml
+  backend: unitree_g1_mujoco
+  backend_config:
+    declaration: config/unitree_g1_loopback.yaml
+  trunk_body: pelvis
+skills:
+  safety_policy: profiles/safety/simulation_lab.yaml

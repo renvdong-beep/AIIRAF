@@ -29,6 +29,7 @@ import importlib
 KNOWN_BACKENDS = {
     "mujoco_arm": "iraf_adapters.mujoco.mujoco_backend:MujocoBackend",
     "unitree_go2_mujoco": "iraf_adapters.unitree.unitree_go2:UnitreeGo2Adapter",
+    "unitree_g1_mujoco": "iraf_adapters.unitree_g1.backend:UnitreeG1Backend",
 }
 
 #: capability 名 -> Backend 上必须存在的方法名。

@@ -284,3 +284,18 @@ G1 现在具备 `stand/stop/locomote`（simulation=true），可以进入单机/
   4. 单机通过才允许 `iraf_compose_joint_scene`；
   5. 事实缺口显式登记，禁止 composer 猜；
   6. 回归 handoff/单机/declared⊆implemented。
+
+## G1 单机 Provider 验收（2026-11-19，无板卡）
+
+- `factory` 登记 `unitree_g1_mujoco`；G1 `load_declaration` 支持 `{"declaration": path}`；
+- 新增 `config/machines/unitree_g1.yaml`；
+- `.145` 上 `iraf-provider@unitree_g1` @ **50058**（headless）：
+  `PROVIDER_CAPABILITIES 3 locomote,stand,stop`；
+- gRPC 直接验收（`scripts/verify_g1_provider.py`）：
+
+```text
+stand: passed=True, height=0.79161m, tilt=0.0749°, tracking=0.00277rad
+walk : distance_m=0.81635（指令 0.5 m/s，2000ms）
+```
+
+G1 现在具备**单机 Provider 级别的 stand/locomote**；还剩“场景注册 + MCP/chat 语义入口”。
