@@ -638,3 +638,18 @@ handoff_lab nominal → passed=true（9/9）
 - `franka pick` 本身仍未实现；
 - 联合世界仍用既有 `iraf_compose_joint_scene`，新机器人纳入联合世界的自动编排
   还未与 lifecycle 打通。
+
+### 产品化实测（2026-11-19 15:40）
+
+```text
+iraf_robot_status(franka_2f85)
+→ declared=[gripper,move_joint,reset_scene,stop]
+  accepted=全部四项
+  missing=[]
+  runnable=true
+
+ur5抓取盒子（真实意图）→ SUCCEEDED, lift_mm=76.38
+```
+
+这证明“能力验收 → gap 报告 → runnable”闭环已可用；未验收项会明确留在
+`missing_acceptance`，不会冒充可用。

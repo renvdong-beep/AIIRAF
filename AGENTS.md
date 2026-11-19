@@ -95,3 +95,25 @@ v1 交付**只做仿真**：仿真在 x86 主机（MuJoCo），板卡不装仿�
    必须在报告与 Profile 中显式标注，禁止 composer 猜测或静默降级。
 6. **回归不可退化**：每次接入后必须回归 handoff 9 步、单机 piper/ur5、
    `declared ⊆ implemented` 装配期校验。
+
+## 13. 新机器人接入工具链（2026-11-19）
+
+接入新机器人必须走生命周期工具，禁止手工作坊：
+
+```text
+iraf_onboard_robot             facts → Profile → validation(runnable=false) → backend skeleton
+iraf_robot_scaffold_capability  能力实现/skill/Profile/Scene/Policy 草案
+iraf_robot_build_scene          Profile/报告 → scene/provider（report 自动生成 backend_config）
+iraf_robot_acceptance           本地 Backend 单机验收 → report.json（passed）
+iraf_robot_register             仅接受 passed=true 的 acceptance → /etc/iraf 注册表 + seal
+iraf_robot_status               declared/accepted/missing/runnable gap 报告
+```
+
+`engineering.robot_onboard` skill 支持 stage：
+`onboard | scaffold | scene | acceptance | register | status`。
+
+铁律：
+- `runnable=false` 的能力不得进入联合世界；
+- 未验收（无 passed=true 报告）的 scene/provider 不得 register；
+- scaffold 只产草案，Backend 实现必须人审/实现后重新验收；
+- `acceptance` 只做仿真，`simulation=true`；不伪造证据、不自动改源码。
