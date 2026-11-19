@@ -482,3 +482,25 @@ iraf_submit_task("franka夹爪打开", scene_id="franka-lab")
 - 新增单测 `tests/unit/test_intent_provider_precedence.py`（3 passed）：
   真实模型 + 关键词 → 真实；只有关键词 → 关键词；都没有 → None。
 - 生产/板卡接入时设置真实模型两项，并**不要**再设 `IRAF_INTENT_KEYWORD=1`。
+
+## 1/2/3 收口回归（2026-11-19）
+
+```text
+1) UR5 单机 MCP pick:
+   iraf_submit_task("ur5抓取盒子", scene_id="ur5-pick-local")
+   → SUCCEEDED, pick_object, lift_mm=76.35
+2) Franka 2F-85 gripper:
+   franka夹爪闭合 → SUCCEEDED (ctrl=255, driver_qpos=0.781538)
+   franka夹爪打开 → SUCCEEDED (ctrl=0,   driver_qpos=0.002979)
+   说明：这是 gripper 能力；Franka pick 仍需目标体/参考解 manipulation 事实。
+3) 意图 Provider:
+   真实模型配置优先；关键词仅在无模型时回退；新增 3 个单测；
+   真实 AgentOS/模型 endpoint 未在 .145 提供，未伪造模型。
+
+回归：
+   g1站起来/ franka移动 → SUCCEEDED
+   handoff_lab nominal   → passed=true（9 步）
+   契约/单测             → 29 passed
+```
+
+边界：Franka `pick_object` 仍未交付；AgentOS 实际模型端由安装方配置。
