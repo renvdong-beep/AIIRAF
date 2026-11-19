@@ -421,3 +421,24 @@ franka移动（MCP）  → SUCCEEDED (move_joint)
   （`frame_id`/list 形状报错），未作为有效回归；以之前板卡 A6（58.3 s）为准，后续用
   `iraf_submit_task` 路径复测。
 - handoff 已用 MuJoCo 3.3.7 恢复 passed=true（9 步）。
+
+## 收口回归（2026-11-19）
+
+```text
+MuJoCo 3.3.7（固定 <3.16）
+handoff_lab nominal → passed=true（9 步）
+g1站起来（MCP）    → SUCCEEDED (stand)
+g1走两步（MCP）    → SUCCEEDED (locomote)
+franka移动（MCP）  → SUCCEEDED (move_joint)
+piper Provider     → 50052，6 能力，move_joint accepted=True
+ur5 Provider       → 50053，6 能力（pick 以 A6 58.3s 记录为准）
+契约单测           → 26 passed
+  backend_contract / profile_validation / joint_backend_contract /
+  joint_compose / joint_semantic / provider_cli_contract
+```
+
+边界（诚实）：
+- G1：stand/locomote 已单机可控；G1 仍是位置执行器 + 官方 RL，仿真。
+- Franka：装配 + 2F-85 开合自检 + move_joint 单机可控；**pick 仍需 manipulation 事实**。
+- 新机器人接入：`iraf_onboard_robot` + `engineering.robot_onboard` + AGENTS §12 已强制；
+  G1/Franka 均产出 validation.json（runnable=false 直到能力+验收齐全）。
