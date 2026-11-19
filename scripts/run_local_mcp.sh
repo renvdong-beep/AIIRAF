@@ -21,6 +21,7 @@ os.chmod(path, 0o600)
 PY
 printf '%s\n' "$TOKEN" > "$STATE/mcp-local.token"
 chmod 600 "$STATE/mcp-local.token"
+cd "$REPO"
 echo "token file: $TOKEN_FILE"
 echo "token: $TOKEN"
 exec env \
@@ -29,6 +30,12 @@ exec env \
   IRAF_MCP_TOKEN_FILE="$TOKEN_FILE" \
   IRAF_MCP_AUDIT_LOG=/home/coretek/.local/state/iraf/mcp-local-audit.jsonl \
   IRAF_EVENT_STORE=/home/coretek/.local/state/iraf/local-mcp.db \
+  IRAF_INTENT_KEYWORD=1 \
+  IRAF_PROFILE=profiles/unitree_g1_mujoco.yaml \
+  IRAF_SAFETY_POLICY=profiles/safety/simulation_lab.yaml \
+  IRAF_SKILL_ROOT=/home/coretek/AIIRAF/skills \
+  IRAF_BACKEND_ENTRYPOINT=iraf_adapters.unitree_g1.backend:UnitreeG1Backend \
+  'IRAF_BACKEND_CONFIG={"declaration":"config/unitree_g1_loopback.yaml"}' \
   IRAF_SCENE_REGISTRY_MODE=off \
   IRAF_REPO_ROOT="$REPO" \
   python3 -m iraf_adapters.mcp.server

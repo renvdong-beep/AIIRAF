@@ -308,3 +308,19 @@ G1 现在具备**单机 Provider 级别的 stand/locomote**；还剩“场景注
 - **阻塞**：本地 MCP 的 `iraf_submit_task` 需要意图 Provider
   （`IRAF_AGENTOS_MODEL_URL + IRAF_AGENTOS_MODEL`），`.145` 未配置 LLM ⇒ 文本任务入口不可用；
   Provider 级 stand/locomote 已通过（见 c3679af）。
+
+## G1 单机 MCP 语义入口打通（2026-11-19，无板卡/无 LLM）
+
+- 新增 `KeywordIntentProvider`（受控词表：g1 站起来/走两步/停），
+  仅在 `IRAF_INTENT_KEYWORD=1` 时启用；未知语句仍显式 `IRAF-NOT-ROBOT-TASK`；
+- 本地 MCP 配置 G1 runtime 默认（profile/safety/skill_root/entrypoint/declaration）+ `cd repo`；
+- 实测：
+
+```text
+iraf_submit_task("g1站起来") → SUCCEEDED, resolved_skill=stand
+iraf_submit_task("g1走两步") → SUCCEEDED, resolved_skill=locomote
+  profile=unitree_g1, provider=quadruped_locomote_sim,
+  evidence.velocity={vx_mps:0.5,...}, duration_ms=2000, simulation=true
+```
+
+G1 现在达到与 UR5/Piper 同级的**单机 MCP 控制闭环**（仿真证据）。
