@@ -19,3 +19,14 @@ def test_keyword_only_without_model():
 
 def test_no_provider_without_model_or_keyword():
     assert build_intent_provider({}) is None
+
+
+def test_token_file_supported(tmp_path):
+    key = tmp_path / "agentos.key"
+    key.write_text("secret-token\n", encoding="utf-8")
+    p = build_intent_provider({
+        "IRAF_AGENTOS_MODEL_URL": "http://127.0.0.1:9",
+        "IRAF_AGENTOS_MODEL": "dummy",
+        "IRAF_AGENTOS_TOKEN_FILE": str(key),
+    })
+    assert p.config.token == "secret-token"

@@ -43,6 +43,7 @@ import argparse
 import datetime as dt
 import json
 import os
+from pathlib import Path
 import sys
 import uuid
 
@@ -146,6 +147,13 @@ def build_intent_provider(environ=None):
         OpenAICompatibleIntentProvider,
     )
 
+    token = str(env.get("IRAF_AGENTOS_TOKEN") or "")
+    token_file = str(env.get("IRAF_AGENTOS_TOKEN_FILE") or "")
+    if not token and token_file:
+        try:
+            token = Path(token_file).read_text(encoding="utf-8").strip().splitlines()[0]
+        except (OSError, IndexError):
+            token = ""
     verify = str(env.get("IRAF_AGENTOS_VERIFY_TLS", "true")).lower() not in {"0", "false", "no"}
     try:
         timeout = float(env.get("IRAF_AGENTOS_TIMEOUT_SECONDS", "10"))
@@ -157,7 +165,7 @@ def build_intent_provider(environ=None):
     except ValueError:
         max_tokens = 1024
     return OpenAICompatibleIntentProvider(
-        IntentProviderConfig(endpoint, model, str(env.get("IRAF_AGENTOS_TOKEN") or ""),
+        IntentProviderConfig(endpoint, model, token,
                              timeout, verify,
                              # 网关不支持 json_schema 时按 auto 降级（2026-10-19 E300 实测）
                              str(env.get("IRAF_AGENTOS_RESPONSE_FORMAT") or "auto"),

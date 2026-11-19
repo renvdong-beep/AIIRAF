@@ -504,3 +504,14 @@ iraf_submit_task("franka夹爪打开", scene_id="franka-lab")
 ```
 
 边界：Franka `pick_object` 仍未交付；AgentOS 实际模型端由安装方配置。
+
+### AgentOS 意图凭据文件（2026-11-19）
+
+- `build_intent_provider` 支持 `IRAF_AGENTOS_TOKEN_FILE`（600，首行 token），
+  未设置 `IRAF_AGENTOS_TOKEN` 时读取；便于板上/模型网关统一放 /etc/iraf/agentos.key。
+- 测试新增 token_file 用例，4 passed。
+- 仍未提供真实模型 key；不伪造。拿到 key 后：
+  `IRAF_AGENTOS_MODEL_URL=http://192.168.100.89:3000/v1`
+  `IRAF_AGENTOS_MODEL=deepseek-flash`
+  `IRAF_AGENTOS_TOKEN_FILE=/etc/iraf/agentos.key`
+  并删除 `IRAF_INTENT_KEYWORD=1`。
