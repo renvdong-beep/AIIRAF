@@ -1,0 +1,45 @@
+apiVersion: iraf.intewell.io/v1
+kind: RobotProfile
+metadata:
+  name: franka_panda_mujoco
+  version: 0.1.0
+spec:
+  simulation: true
+  verification: development
+  control_frequency_hz: 100
+  joints:
+  - joint1
+  - joint2
+  - joint3
+  - joint4
+  - joint5
+  - joint6
+  - joint7
+  joint_limits:
+    joint1:
+    - -2.8973
+    - 2.8973
+    joint2:
+    - -1.7628
+    - 1.7628
+    joint3:
+    - -2.8973
+    - 2.8973
+    joint4:
+    - -3.0718
+    - -0.0698
+    joint5:
+    - -2.8973
+    - 2.8973
+    joint6:
+    - -0.0175
+    - 3.7525
+    joint7:
+    - -2.8973
+    - 2.8973
+  capabilities:
+  - move_joint
+  - pick_object
+  - gripper
+  - stop
+  - reset_scene

@@ -778,3 +778,33 @@ move joint2 -0.15 → target_z 0.490032 → 0.588439（+9.84cm）
 根因是 Franka 目标/指腹的**初始接触几何**：目标必须由参考解放到“张爪可进入、合爪有正压力”的位置，
 当前手放的指腹中点只满足重叠/单侧接触，不能满足双边正压力 + 可抬升。
 下一步需要构建期 grasp 参考解（approach/grasp/lift 位形 + pad offset），不是改判据。
+
+## Franka Panda 原配夹爪 pick 通过（2026-11-19 17:10）
+
+用仓库自带 Menagerie 参考：
+
+```text
+vendor/franka_emika_panda/mjx_single_cube.xml
+keyframes: home / pickup / pickup1
+```
+
+生成的正式 report：`build/models/franka_panda_pick/panda_mjx_pick.json`
+（脚本 `scripts/build_franka_panda_pick.py` 可复现）。
+
+实测 `iraf_robot_acceptance`：
+
+```text
+capability=pick_object
+passed=true
+bilateral_contact=true
+left/right force ≈ 2.751 / 2.761 N
+lift_delta_m=0.080495
+```
+
+关键：
+- `grasp_positions` 取 keyframe `pickup` 的 7 臂关节；
+- `lift_positions` 取 `pickup1` 并把 joint2 再降 0.15；
+- 目标 box 初始位姿取 keyframe `pickup` 的 free-joint qpos；
+- 这就是“开源参考解 → IRAF report”的落法，不再手放目标。
+
+说明：这是 Franka **原配夹爪**；2F-85 的 tendon 闭合路径仍单独待修。
