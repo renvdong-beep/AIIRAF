@@ -1,0 +1,33 @@
+# VLA Provider 配置（示例：Piper + SmolVLA）
+schema: iraf.vla/v1
+robot: piper
+scene: piper-pick-scene
+
+model_id: piper_smolvla_v4
+mode: shadow                 # analytic | vla | hybrid | shadow
+fallback: analytic           # VLA 失败/越界时回退
+
+provider:
+  base_url: http://127.0.0.1:8091
+  timeout_s: 30
+  token_env: IRAF_VLA_TOKEN
+
+observation:
+  cameras:
+    - observation.images.overhead
+    - observation.images.wrist
+  state_dim: 7
+
+action:
+  dim: 7
+  joint_names: [joint1, joint2, joint3, joint4, joint5, joint6, gripper]
+  joint_min: [-2.618, 0.0, -2.967, -1.745, -1.22, -2.094]
+  joint_max: [2.168, 3.14, 0.0, 1.745, 1.22, 2.094]
+  max_step_rad: 0.20
+  gripper_min: 0.005
+  gripper_max: 0.045
+
+safety:
+  require_policy_gate: true
+  max_chunk_age_ms: 300
+  shadow_only_until: "2026-12-31"
