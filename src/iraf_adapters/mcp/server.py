@@ -272,6 +272,30 @@ def iraf_plan_task(scene_id: str = "ur5-pick-planned", target_id: str = "box_01"
 
 
 @app.tool()
+def iraf_vla_status(base_url: str = "") -> str:
+    """VLA 推理服务健康检查（端侧 S600 / x86 GPU），只读、不触发动作。
+
+    base_url 为空时读环境变量 IRAF_VLA_URL（如 http://10.203.247.147:8095）。
+    """
+    import urllib.request
+
+    url = (base_url or os.environ.get("IRAF_VLA_URL", "")).strip().rstrip("/")
+    if not url:
+        return json.dumps({"status": "NOT-CONFIGURED", "kind": "diagnostic",
+                           "hint": "设置 IRAF_VLA_URL=http://<host>:8095 后重试"},
+                          ensure_ascii=False)
+    try:
+        with urllib.request.urlopen(url + "/health", timeout=3) as resp:
+            data = json.loads(resp.read().decode())
+        return json.dumps({"status": "OK", "base_url": url, "vla": data,
+                           "kind": "diagnostic"}, ensure_ascii=False)
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"status": "FAILED", "error_code": "VLA-UNREACHABLE",
+                           "base_url": url, "reason": str(exc)[:200], "kind": "diagnostic"},
+                          ensure_ascii=False)
+
+
+@app.tool()
 def iraf_rt_latency(duration_s: int = 10, interval_us: int = 200,
                     priority: int = 240, histogram_us: int = 100,
                     target_host: str = "") -> str:
