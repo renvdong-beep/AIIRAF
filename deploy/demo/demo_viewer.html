@@ -1,8 +1,8 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>IRAF · 机器人抓取演示（Piper / UR5）</title>
+<title>IRAF 路 鏈哄櫒浜烘姄鍙栨紨绀猴紙Piper / UR5锛?/title>
 <style>
   html,body{margin:0;height:100%;background:#0b1020;color:#e6edf7;font-family:ui-sans-serif,system-ui,"Segoe UI",sans-serif;overflow:hidden}
   #wrap{display:flex;height:100%}
@@ -69,50 +69,50 @@
   <div id="stage">
     <canvas id="cv"></canvas>
     <div id="hud">
-      <h1 id="title">机器人抓取演示 <span class="tag">PLAN</span></h1>
-      <div class="sub">端侧运动学计算 · FK/IK + 关节插值 · 无物理引擎</div>
-      <div class="phase" id="phase">加载中…</div>
+      <h1 id="title">鏈哄櫒浜烘姄鍙栨紨绀?<span class="tag">PLAN</span></h1>
+      <div class="sub">绔晶杩愬姩瀛﹁绠?路 FK/IK + 鍏宠妭鎻掑€?路 鏃犵墿鐞嗗紩鎿?/div>
+      <div class="phase" id="phase">鍔犺浇涓€?/div>
     </div>
     <div id="tabs"></div>
-    <div id="auto">AUTO · 等待 AgentOS 指令…</div>
+    <div id="auto">AUTO 路 绛夊緟 AgentOS 鎸囦护鈥?/div>
     <div id="ctl">
       <div class="grp"><label>box x</label><input id="inx"><span class="rng" id="rx"></span></div>
       <div class="grp"><label>y</label><input id="iny"><span class="rng" id="ry"></span></div>
       <div class="grp"><label>z</label><input id="inz"><span class="rng" id="rz"></span></div>
-      <button id="replan">计算并播放</button>
-      <span id="msg">选择机器人后可改坐标</span>
+      <button id="replan">璁＄畻骞舵挱鏀?/button>
+      <span id="msg">閫夋嫨鏈哄櫒浜哄悗鍙敼鍧愭爣</span>
     </div>
     <div id="go2ctl">
-      <button class="dir on" data-dir="forward">前</button>
-      <button class="dir" data-dir="back">后</button>
-      <button class="dir" data-dir="left">左</button>
-      <button class="dir" data-dir="right">右</button>
-      <label style="color:#8aa0c0">距离(m)</label>
+      <button class="dir on" data-dir="forward">鍓?/button>
+      <button class="dir" data-dir="back">鍚?/button>
+      <button class="dir" data-dir="left">宸?/button>
+      <button class="dir" data-dir="right">鍙?/button>
+      <label style="color:#8aa0c0">璺濈(m)</label>
       <input id="gdist" value="0.50">
-      <button class="go" id="gmove">移动</button>
+      <button class="go" id="gmove">绉诲姩</button>
     </div>
     <div id="panel">
-      <div><span class="k">机器人</span><span class="v" id="p-robot">-</span></div>
-      <div><span class="k">目标</span><span class="v" id="p-target">-</span></div>
-      <div><span class="k">箱子位置</span><span class="v" id="p-box">-</span></div>
-      <div><span class="k" id="k-err">IK 误差</span><span class="v" id="p-err">-</span></div>
-      <div><span class="k">轨迹时长</span><span class="v" id="p-dur">-</span></div>
-      <div><span class="k" id="k-fing">夹爪开口</span><span class="v" id="p-fing">-</span></div>
-      <div><span class="k" id="k-ee">末端</span><span class="v" id="p-ee">-</span></div>
+      <div><span class="k">鏈哄櫒浜?/span><span class="v" id="p-robot">-</span></div>
+      <div><span class="k">鐩爣</span><span class="v" id="p-target">-</span></div>
+      <div><span class="k">绠卞瓙浣嶇疆</span><span class="v" id="p-box">-</span></div>
+      <div><span class="k" id="k-err">IK 璇樊</span><span class="v" id="p-err">-</span></div>
+      <div><span class="k">杞ㄨ抗鏃堕暱</span><span class="v" id="p-dur">-</span></div>
+      <div><span class="k" id="k-fing">澶圭埅寮€鍙?/span><span class="v" id="p-fing">-</span></div>
+      <div><span class="k" id="k-ee">鏈</span><span class="v" id="p-ee">-</span></div>
       <div style="height:4px"></div>
-      <div class="k">关节角（deg）</div>
+      <div class="k">鍏宠妭瑙掞紙deg锛?/div>
       <div id="p-q" style="font-family:ui-monospace,Consolas,monospace;font-size:11px;color:#c7d6ee"></div>
     </div>
     <div id="scene">
       <img id="sceneimg" alt="scene">
-      <div class="cap" id="scenecap">场景实例</div>
+      <div class="cap" id="scenecap">鍦烘櫙瀹炰緥</div>
     </div>
     <div id="phases"></div>
     <div id="bar">
-      <button id="play">暂停</button>
+      <button id="play">鏆傚仠</button>
       <input id="scrub" type="range" min="0" max="1000" value="0">
       <span id="prog">0%</span>
-      <button id="spin" title="自动环绕">环绕</button>
+      <button id="spin" title="鑷姩鐜粫">鐜粫</button>
     </div>
   </div>
 </div>
@@ -214,7 +214,7 @@ function drawRobot(B,w,h,f){
   line(f.pos[G.wrist], f.pos[G.left], B,w,h, closing?'rgba(251,191,36,.95)':'rgba(148,163,184,.9)', 4);
   line(f.pos[G.wrist], f.pos[G.right], B,w,h, closing?'rgba(251,191,36,.95)':'rgba(148,163,184,.9)', 4);
   dot(f.pos[G.left],B,w,h,3.5,'#fca5a5'); dot(f.pos[G.right],B,w,h,3.5,'#fca5a5');
-  // 关节标签（跟随关节移动，简单避让：重叠时错开）
+  // 鍏宠妭鏍囩锛堣窡闅忓叧鑺傜Щ鍔紝绠€鍗曢伩璁╋細閲嶅彔鏃堕敊寮€锛?
   if(D.joint_labels){
     ctx.font='11px ui-monospace,Consolas,monospace';
     const placed=[];
@@ -231,25 +231,25 @@ function drawRobot(B,w,h,f){
       ctx.fillText(j.label, x, y);
     }
   }
-  // 夹爪状态标签（挂在腕部）
+  // 澶圭埅鐘舵€佹爣绛撅紙鎸傚湪鑵曢儴锛?
   const g = (f.gap_m!=null ? f.gap_m*1000 : (f.fingers!=null? f.fingers*1000 : null));
   if(g!=null){
     const P=project(f.pos[G.wrist],B,w,h);
     ctx.fillStyle='rgba(251,191,36,.95)';
-    ctx.fillText('夹爪 ' + g.toFixed(1) + ' mm', P[0]+9, P[1]+14);
+    ctx.fillText('澶圭埅 ' + g.toFixed(1) + ' mm', P[0]+9, P[1]+14);
   }
 }
 function phaseHTML(){
   document.getElementById('phases').innerHTML =
-    D.phases.map(p=>`<div data-n="${p.name}">${p.label} · ${(p.t1-p.t0).toFixed(1)}s</div>`).join('');
+    D.phases.map(p=>`<div data-n="${p.name}">${p.label} 路 ${(p.t1-p.t0).toFixed(1)}s</div>`).join('');
 }
 function updatePanel(){
   const info = (ROBOTS && ROBOTS.robots[ROBOT]) || {};
   if(D.kind === 'quadruped' || D.kind === 'humanoid'){ updateQuadPanel(info); return; }
-  document.getElementById('title').innerHTML = info.label + ' 抓取 · 可改 box 位置 <span class="tag">PLAN</span>';
-  document.getElementById('k-err').textContent = 'IK 误差';
-  document.getElementById('k-fing').textContent = '夹爪开口';
-  document.getElementById('k-ee').textContent = '末端';
+  document.getElementById('title').innerHTML = info.label + ' 鎶撳彇 路 鍙敼 box 浣嶇疆 <span class="tag">PLAN</span>';
+  document.getElementById('k-err').textContent = 'IK 璇樊';
+  document.getElementById('k-fing').textContent = '澶圭埅寮€鍙?;
+  document.getElementById('k-ee').textContent = '鏈';
   document.getElementById('p-robot').textContent = ROBOT;
   document.getElementById('p-target').textContent = D.target.id;
   document.getElementById('p-box').textContent = D.target.pos.map(v=>v.toFixed(3)).join(', ');
@@ -260,13 +260,13 @@ function updatePanel(){
   document.getElementById('iny').value = D.target.pos[1].toFixed(3);
   document.getElementById('inz').value = D.target.pos[2].toFixed(3);
   const r=(info.ranges)||{};
-  const fmt=(v)=> v? '['+v[0].toFixed(2)+', '+v[1].toFixed(2)+']' : '[—]';
+  const fmt=(v)=> v? '['+v[0].toFixed(2)+', '+v[1].toFixed(2)+']' : '[鈥擼';
   document.getElementById('rx').textContent = fmt(r.x);
   document.getElementById('ry').textContent = fmt(r.y);
   document.getElementById('rz').textContent = fmt(r.z);
   if(info.image){
     document.getElementById('sceneimg').src = info.image + '?v=1';
-    document.getElementById('scenecap').textContent = info.label + ' · 场景实例';
+    document.getElementById('scenecap').textContent = info.label + ' 路 鍦烘櫙瀹炰緥';
   }
 }
 function render(){
@@ -274,7 +274,7 @@ function render(){
   if(!D){
     ctx.clearRect(0,0,w0,h0);
     ctx.fillStyle='rgba(148,163,184,.55)'; ctx.font='16px ui-sans-serif';
-    ctx.textAlign='center'; ctx.fillText('等待 AgentOS 指令…', w0/2, h0/2); ctx.textAlign='left';
+    ctx.textAlign='center'; ctx.fillText('绛夊緟 AgentOS 鎸囦护鈥?, w0/2, h0/2); ctx.textAlign='left';
     return;
   }
   const r=cv.parentElement.getBoundingClientRect(), w=r.width, h=r.height;
@@ -291,12 +291,12 @@ function render(){
     drawTrail(B,w,h,frame);
     drawRobot(B,w,h,f);
   }
-  document.getElementById('phase').textContent = f.phase_label + ' · ' + f.t.toFixed(2) + ' s';
+  document.getElementById('phase').textContent = f.phase_label + ' 路 ' + f.t.toFixed(2) + ' s';
   if(D.kind === 'quadruped' || D.kind === 'humanoid'){
     const b=f.pos[D.base_body||'base_link'];
     document.getElementById('p-ee').textContent = b.map(v=>v.toFixed(3)).join(', ');
     document.getElementById('p-fing').textContent = (D.meta.distance_m).toFixed(2)+' m';
-    document.getElementById('p-q').textContent = 'GO2 12 关节（四足步态）';
+    document.getElementById('p-q').textContent = 'GO2 12 鍏宠妭锛堝洓瓒虫鎬侊級';
   }else{
   const G=D.gripper||{left:'link7',right:'link8'};
   const L=f.pos[G.left], Rr=f.pos[G.right];
@@ -318,18 +318,19 @@ function render(){
 async function loadRobot(name){
   const resp = await fetch(`/api/plan?robot=${encodeURIComponent(name)}`);
   const data = await resp.json();
-  if(data.status !== 'OK'){ throw new Error(data.error || '加载失败'); }
+  if(data.status !== 'OK'){ throw new Error(data.error || '鍔犺浇澶辫触'); }
   ROBOT = name;
   D = data.result;
   frame = 0; last = 0; playing = true;
-  document.getElementById('play').textContent = '暂停';
+  document.getElementById('play').textContent = '鏆傚仠';
   const kind = (ROBOTS.robots[name] || {}).kind || 'arm';
+  if(name === 'go2'){ yaw = Math.PI / 2; }
   document.getElementById('ctl').style.display = kind === 'quadruped' || kind === 'humanoid' ? 'none' : 'flex';
   document.getElementById('go2ctl').style.display = kind === 'quadruped' || kind === 'humanoid' ? 'flex' : 'none';
   if(kind === 'quadruped' || kind === 'humanoid'){
-    // Go2 面向 +x；相机从 -y 侧看时 +y（机器人左侧）会投到屏幕右边。
-    // 把四足视角放到 +y 侧，确保“左移”在屏幕上也向左。
-    yaw = 1.05;
+    // Go2 闈㈠悜 +x锛涚浉鏈轰粠 -y 渚х湅鏃?+y锛堟満鍣ㄤ汉宸︿晶锛変細鎶曞埌灞忓箷鍙宠竟銆?
+    // 鎶婂洓瓒宠瑙掓斁鍒?+y 渚э紝纭繚鈥滃乏绉烩€濆湪灞忓箷涓婁篃鍚戝乏銆?
+    yaw = Math.PI / 2;
     GO2_DIR = (D.meta && D.meta.command) || 'forward';
     document.querySelectorAll('#go2ctl [data-dir]').forEach(b =>
       b.classList.toggle('on', b.dataset.dir === GO2_DIR));
@@ -339,27 +340,27 @@ async function loadRobot(name){
 }
 async function replan(x,y,z){
   const msg=document.getElementById('msg');
-  msg.classList.remove('err'); msg.textContent='计算中…';
+  msg.classList.remove('err'); msg.textContent='璁＄畻涓€?;
   try{
     const resp=await fetch(`/api/plan?robot=${ROBOT}&x=${x}&y=${y}&z=${z}`);
     const data=await resp.json();
     if(data.status==='OK'){
       D=data.result; frame=0; last=0; playing=true;
-      document.getElementById('play').textContent='暂停';
+      document.getElementById('play').textContent='鏆傚仠';
       phaseHTML(); updatePanel(); render();
-      msg.textContent = `已计算：${ROBOT} box(${D.target.pos.map(v=>v.toFixed(3)).join(', ')}) ` +
-        `${D.meta.frames} 帧 / ${D.meta.duration_s.toFixed(1)}s  IK ${D.meta.ik_error_m.toExponential(1)} m`;
+      msg.textContent = `宸茶绠楋細${ROBOT} box(${D.target.pos.map(v=>v.toFixed(3)).join(', ')}) ` +
+        `${D.meta.frames} 甯?/ ${D.meta.duration_s.toFixed(1)}s  IK ${D.meta.ik_error_m.toExponential(1)} m`;
     }else{
       msg.classList.add('err');
-      msg.textContent = (data.error || '计算失败') + (data.status==='UNREACHABLE'?'（目标不可达，画面未改）':'');
+      msg.textContent = (data.error || '璁＄畻澶辫触') + (data.status==='UNREACHABLE'?'锛堢洰鏍囦笉鍙揪锛岀敾闈㈡湭鏀癸級':'');
     }
-  }catch(e){ msg.classList.add('err'); msg.textContent='请求失败：'+e.message; }
+  }catch(e){ msg.classList.add('err'); msg.textContent='璇锋眰澶辫触锛?+e.message; }
 }
 function updateQuadPanel(info){
-  document.getElementById('title').innerHTML = info.label + ' · 前后左右移动 <span class="tag">PLAN</span>';
-  document.getElementById('k-err').textContent = '步态';
-  document.getElementById('k-fing').textContent = '移动距离';
-  document.getElementById('k-ee').textContent = '机身位置';
+  document.getElementById('title').innerHTML = info.label + ' 路 鍓嶅悗宸﹀彸绉诲姩 <span class="tag">PLAN</span>';
+  document.getElementById('k-err').textContent = '姝ユ€?;
+  document.getElementById('k-fing').textContent = '绉诲姩璺濈';
+  document.getElementById('k-ee').textContent = '鏈鸿韩浣嶇疆';
   document.getElementById('p-robot').textContent = ROBOT;
   document.getElementById('p-target').textContent = D.target.id;
   document.getElementById('p-box').textContent = D.target.pos.map(v=>v.toFixed(2)).join(', ');
@@ -369,7 +370,7 @@ function updateQuadPanel(info){
   document.getElementById('gdist').value = D.meta.distance_m.toFixed(2);
   if(info.image){
     document.getElementById('sceneimg').src = info.image + '?v=1';
-    document.getElementById('scenecap').textContent = info.label + ' · 场景实例';
+    document.getElementById('scenecap').textContent = info.label + ' 路 鍦烘櫙瀹炰緥';
   }
 }
 function boxLines(pos, half){
@@ -388,8 +389,8 @@ function drawReferenceBox(B,w,h){
   }
   const top=project([ref.pos[0], ref.pos[1], ref.pos[2]+ (ref.half||ref.half_size)[2] + 0.03],B,w,h);
   ctx.fillStyle='rgba(248,113,113,.95)'; ctx.font='12px ui-sans-serif';
-  ctx.fillText(ref.label || '参考 box', top[0]+4, top[1]-4);
-  // 起点标记
+  ctx.fillText(ref.label || '鍙傝€?box', top[0]+4, top[1]-4);
+  // 璧风偣鏍囪
   const O=project([0,0,0.01],B,w,h);
   ctx.strokeStyle='rgba(34,197,94,.9)'; ctx.lineWidth=1.5;
   ctx.beginPath(); ctx.arc(O[0],O[1],6,0,Math.PI*2); ctx.stroke();
@@ -420,14 +421,14 @@ function drawOrientedBox(B,w,h,center,half,yaw,color){
 }
 function drawQuadruped(B,w,h,f){
   const colors={'FL':'#f97316','FR':'#22c55e','RL':'#60a5fa','RR':'#a78bfa'};
-  // 轨迹（机身）
+  // 杞ㄨ抗锛堟満韬級
   for(let i=1;i<=frame;i++){
     const BB=D.base_body||'base_link'; const a=project(D.frames[i-1].pos[BB],B,w,h);
     const b=project(D.frames[i].pos[BB],B,w,h);
     ctx.strokeStyle='rgba(148,163,184,.5)'; ctx.lineWidth=2;
     ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke();
   }
-  // 狗头 + 朝向箭头（方向 = 运动方向）
+  // 鐙楀ご + 鏈濆悜绠ご锛堟柟鍚?= 杩愬姩鏂瑰悜锛?
   const BB=D.base_body||'base_link'; const base=f.pos[BB], yaw=f.yaw||0;
   const H=D.head || {local_offset:[0.24,0,0.04], half:[0.075,0.06,0.05]};
   const c=Math.cos(yaw), s=Math.sin(yaw);
@@ -437,8 +438,8 @@ function drawQuadruped(B,w,h,f){
   drawOrientedBox(B,w,h,hc,H.half,yaw,'rgba(250,204,21,.95)');
   const hp=project(hc,B,w,h);
   ctx.fillStyle='rgba(250,204,21,.95)'; ctx.font='11px ui-sans-serif';
-  ctx.fillText('头', hp[0]+8, hp[1]-8);
-  // 地面方向箭头
+  ctx.fillText('澶?, hp[0]+8, hp[1]-8);
+  // 鍦伴潰鏂瑰悜绠ご
   const tip=[base[0]+c*0.45, base[1]+s*0.45, 0.02];
   const A=project([base[0],base[1],0.02],B,w,h), P=project(tip,B,w,h);
   ctx.strokeStyle='rgba(34,211,238,.9)'; ctx.lineWidth=2.5;
@@ -450,7 +451,7 @@ function drawQuadruped(B,w,h,f){
   ctx.lineTo(P[0]-10*Math.cos(ang+0.4), P[1]-10*Math.sin(ang+0.4));
   ctx.stroke();
   ctx.fillStyle='rgba(34,211,238,.9)'; ctx.font='10px ui-sans-serif';
-  ctx.fillText('运动方向', P[0]+6, P[1]+12);
+  ctx.fillText('杩愬姩鏂瑰悜', P[0]+6, P[1]+12);
   for(let li=0; li<D.chains.length; li++){
     const chain=D.chains[li], color=colors[D.feet[li].slice(0,2)] || ['#f97316','#22c55e','#60a5fa','#a78bfa'][li % 4];
     for(const [a,b] of chain.slice(0,-1).map((x,i)=>[x,chain[i+1]])){
@@ -469,21 +470,22 @@ function drawQuadruped(B,w,h,f){
 async function replanMove(){
   const msg=document.getElementById('msg');
   const distance=parseFloat(document.getElementById('gdist').value);
-  if(Number.isNaN(distance)){ msg.textContent='距离格式不对'; return; }
-  msg.classList.remove('err'); msg.textContent='计算中…';
+  if(Number.isNaN(distance)){ msg.textContent='璺濈鏍煎紡涓嶅'; return; }
+  msg.classList.remove('err'); msg.textContent='璁＄畻涓€?;
   try{
     const resp=await fetch(`/api/plan?robot=${ROBOT}&dir=${GO2_DIR}&distance=${distance}`);
     const data=await resp.json();
     if(data.status==='OK'){
       D=data.result; frame=0; last=0; playing=true;
-      document.getElementById('play').textContent='暂停';
+      if(ROBOT === 'go2'){ yaw = Math.PI / 2; }
+      document.getElementById('play').textContent='鏆傚仠';
       phaseHTML(); updatePanel(); render();
       const cmd=(D.meta.command_label||D.meta.command);
-      msg.textContent=`已计算：${ROBOT.toUpperCase()} ${cmd} ${D.meta.distance_m.toFixed(2)} m（${D.meta.frames} 帧 / ${D.meta.duration_s.toFixed(1)}s）`;
+      msg.textContent=`宸茶绠楋細${ROBOT.toUpperCase()} ${cmd} ${D.meta.distance_m.toFixed(2)} m锛?{D.meta.frames} 甯?/ ${D.meta.duration_s.toFixed(1)}s锛塦;
     }else{
-      msg.classList.add('err'); msg.textContent=data.error||'计算失败';
+      msg.classList.add('err'); msg.textContent=data.error||'璁＄畻澶辫触';
     }
-  }catch(e){ msg.classList.add('err'); msg.textContent='请求失败：'+e.message; }
+  }catch(e){ msg.classList.add('err'); msg.textContent='璇锋眰澶辫触锛?+e.message; }
 }
 function setAuto(text, show){
   const el = document.getElementById('auto');
@@ -493,7 +495,7 @@ function setAuto(text, show){
 async function handleJob(job){
   const robot = job.robot || 'piper';
   const label = ((ROBOTS.robots || {})[robot] || {}).label || robot;
-  let msg = `AgentOS → ${label} · ${job.action || ''}`;
+  let msg = `AgentOS 鈫?${label} 路 ${job.action || ''}`;
   if(job.target) msg += ` @ (${job.target.x}, ${job.target.y}, ${job.target.z})`;
   if(job.direction) msg += ` ${job.direction} ${job.distance || ''}m`;
   setAuto(msg, true);
@@ -512,7 +514,7 @@ async function handleJob(job){
     await replanMove();
   }
   frame = 0; last = 0; playing = true;
-  document.getElementById('play').textContent = '暂停';
+  document.getElementById('play').textContent = '鏆傚仠';
 }
 async function pollJobs(){
   if(!AUTO_FOLLOW) return;
@@ -523,7 +525,7 @@ async function pollJobs(){
     for(const job of (d.jobs || [])){
       if(job.seq !== lastJob){ await handleJob(job); lastJob = job.seq; }
     }
-  }catch(e){ setAuto('AUTO · job 轮询失败：' + e.message, true); }
+  }catch(e){ setAuto('AUTO 路 job 杞澶辫触锛? + e.message, true); }
 }
 function loop(ts){
   if(!last) last=ts;
@@ -549,7 +551,7 @@ async function boot(){
     const x=parseFloat(document.getElementById('inx').value);
     const y=parseFloat(document.getElementById('iny').value);
     const z=parseFloat(document.getElementById('inz').value);
-    if([x,y,z].some(Number.isNaN)){ document.getElementById('msg').textContent='坐标格式不对'; return; }
+    if([x,y,z].some(Number.isNaN)){ document.getElementById('msg').textContent='鍧愭爣鏍煎紡涓嶅'; return; }
     replan(x,y,z);
   };
   document.querySelectorAll('#go2ctl [data-dir]').forEach(b=>{
@@ -560,10 +562,10 @@ async function boot(){
     };
   });
   document.getElementById('gmove').onclick=replanMove;
-  document.getElementById('play').onclick=e=>{ playing=!playing; e.target.textContent=playing?'暂停':'播放'; };
-  document.getElementById('spin').onclick=e=>{ spinning=!spinning; e.target.textContent=spinning?'停止环绕':'环绕'; };
+  document.getElementById('play').onclick=e=>{ playing=!playing; e.target.textContent=playing?'鏆傚仠':'鎾斁'; };
+  document.getElementById('spin').onclick=e=>{ spinning=!spinning; e.target.textContent=spinning?'鍋滄鐜粫':'鐜粫'; };
   document.getElementById('scrub').oninput=e=>{ frame=+e.target.value; playing=false;
-    document.getElementById('play').textContent='播放'; render(); };
+    document.getElementById('play').textContent='鎾斁'; render(); };
   cv.addEventListener('pointerdown',e=>{ dragging=true; lastX=e.clientX; lastY=e.clientY;
     try{cv.setPointerCapture(e.pointerId);}catch(_){}});
   cv.addEventListener('pointermove',e=>{
@@ -576,10 +578,10 @@ async function boot(){
   cv.addEventListener('pointerup',stop); cv.addEventListener('pointercancel',stop); cv.addEventListener('pointerleave',stop);
   cv.addEventListener('wheel',e=>{ e.preventDefault();
     zoom=Math.max(0.5,Math.min(2.5, zoom*(e.deltaY>0?0.92:1.08))); render(); }, {passive:false});
-  document.getElementById('msg').textContent='选择机器人或修改坐标后点"计算并播放"';
+  document.getElementById('msg').textContent='閫夋嫨鏈哄櫒浜烘垨淇敼鍧愭爣鍚庣偣"璁＄畻骞舵挱鏀?';
   const qp = new URLSearchParams(location.search);
   if(AUTO_FOLLOW){
-    setAuto('AUTO · 等待 AgentOS 指令…', true);
+    setAuto('AUTO 路 绛夊緟 AgentOS 鎸囦护鈥?, true);
     try{
       const r = await fetch('/api/jobs/latest');
       const d = await r.json();
