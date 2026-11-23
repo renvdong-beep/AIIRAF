@@ -327,6 +327,9 @@ async function loadRobot(name){
   document.getElementById('ctl').style.display = kind === 'quadruped' || kind === 'humanoid' ? 'none' : 'flex';
   document.getElementById('go2ctl').style.display = kind === 'quadruped' || kind === 'humanoid' ? 'flex' : 'none';
   if(kind === 'quadruped' || kind === 'humanoid'){
+    // Go2 面向 +x；相机从 -y 侧看时 +y（机器人左侧）会投到屏幕右边。
+    // 把四足视角放到 +y 侧，确保“左移”在屏幕上也向左。
+    yaw = 1.05;
     GO2_DIR = (D.meta && D.meta.command) || 'forward';
     document.querySelectorAll('#go2ctl [data-dir]').forEach(b =>
       b.classList.toggle('on', b.dataset.dir === GO2_DIR));
@@ -580,7 +583,7 @@ async function boot(){
     try{
       const r = await fetch('/api/jobs/latest');
       const d = await r.json();
-      if(d.job) lastJob = d.job.seq;
+      if(d.job){ lastJob = d.job.seq; await handleJob(d.job); }
       const id = qp.get('job');
       if(id){
         const all = await (await fetch('/api/jobs')).json();
