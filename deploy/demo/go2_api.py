@@ -44,7 +44,11 @@ class Go2Planner:
     def build(self, direction="forward", distance=0.5, fps=30):
         if direction not in DIRS:
             raise ValueError("方向只支持 forward/back/left/right")
-        distance = max(-2.0, min(2.0, float(distance)))
+        distance = float(distance)
+        # 与 profiles/safety/quadruped_lab.yaml 的工作空间一致：单次平移不得超过 0.5m。
+        # 不能静默 clamp，否则 Web 会把越界计划当成合法轨迹播放。
+        if abs(distance) > 0.5:
+            raise ValueError("Go2 单次移动距离 %.2fm 超过工作空间上限 0.5m（安全策略拒绝）" % distance)
         dx, dy = DIRS[direction]
         # 头/机身朝向固定（朝 +x），前后左右只平移；转的只有腿的步态
         yaw = 0.0
@@ -103,6 +107,7 @@ class Go2Planner:
             "kind": "quadruped", "robot": "go2", "bodies": ["base_link"] + [b for c in CHAINS for b in c],
             "chains": CHAINS, "feet": FEET, "reference": REFERENCE,
             "body_box": {"body": "base_link", "half": [0.20, 0.11, 0.09]},
+            "base_body": "base_link",
             "head": {"local_offset": [0.24, 0.0, 0.04], "half": [0.075, 0.06, 0.05],
                      "label": "狗头（固定朝前）"},
             "target": {"id": "参考 box", "pos": REFERENCE["pos"], "half_size": REFERENCE["half"]},
