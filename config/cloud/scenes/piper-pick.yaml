@@ -1,0 +1,15 @@
+schema: iraf.scene/v1
+scene_id: piper-pick
+provider_id: iraf/piper-pick-145
+profile: profiles/piper_mujoco.yaml
+safety_policy: profiles/safety/simulation_lab.yaml
+simulation: true
+switch_name: piper
+aliases: [piper, 派珀, 机械臂, 机械手臂]
+max_concurrency: 1
+lease_ttl_s: 120
+resources:
+  - id: piper
+    profile: profiles/piper_mujoco.yaml
+    capabilities: [move_joint, pick_object, pick_random, place_object, stop, reset_scene, visual_pick]
+digest: sha256:edcc484b46f5b3a2d9014b4bc8c6bd6baa0a284be569be21b71a951b0938a592

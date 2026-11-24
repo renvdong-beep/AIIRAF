@@ -29,7 +29,6 @@ import importlib
 KNOWN_BACKENDS = {
     "mujoco_arm": "iraf_adapters.mujoco.mujoco_backend:MujocoBackend",
     "unitree_go2_mujoco": "iraf_adapters.unitree.unitree_go2:UnitreeGo2Adapter",
-    "unitree_g1_mujoco": "iraf_adapters.unitree_g1.backend:UnitreeG1Backend",
 }
 
 #: capability 名 -> Backend 上必须存在的方法名。
@@ -44,7 +43,6 @@ CAPABILITY_METHODS = {
     "calibrate_grasp": "calibrate_grasp",
     "calibrate_camera_to_base": "calibrate_camera_to_base",
     "stop": "stop",
-    "gripper": "gripper",
     "step": "step",
     # 四足能力（步骤 16）：与四足通用契约的规范词表一致；
     # 未登记的能力仍会被显式拦下（避免"策略通过但无人实现"的悬空能力）。
@@ -59,6 +57,7 @@ CAPABILITY_METHODS = {
     # 漏登记会直接拦装配：BackendContractError: ... reset_scene(需 <未登记的 capability>)
     # —— 0.3.15 首次上板就是这么红的（profile 声明了但本表没登记）。
     "reset_scene": "reset_scene",
+    "pick_random": "pick_random",
     "read_state": "read_state",
     "emergency_stop": "emergency_stop",
 }

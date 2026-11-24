@@ -194,6 +194,9 @@ class RemoteProviderBackend:
         return self._invoke("pick_object", {"target_id": target_id, "grasp_pose": grasp_pose,
                                             "duration_ms": int(duration_ms)}, lease)
 
+    def pick_random(self, lease) -> Dict[str, Any]:
+        return self._invoke("pick_random", {}, lease)
+
     def place_object(self, place_target_id, payload_id, duration_ms, lease) -> Dict[str, Any]:
         return self._invoke("place_object", {"place_target_id": place_target_id,
                                              "payload_id": payload_id,
@@ -211,13 +214,19 @@ class RemoteProviderBackend:
         return self._invoke("reset_scene", {"scope": str(scope or "all"),
                                            "target_id": target_id}, lease)
 
-    def stand(self, lease, targets=None, duration_ms=None) -> Dict[str, Any]:
-        return self._invoke("stand", {"targets": targets or {},
-                                      "duration_ms": int(duration_ms) if duration_ms else None}, lease)
-
-    def locomote(self, velocity, duration_ms, lease) -> Dict[str, Any]:
-        return self._invoke("locomote", {"velocity": velocity,
-                                         "duration_ms": int(duration_ms)}, lease)
+    def resolve_velocity(self, velocity) -> Dict[str, float]:
+        """把技能层速度输入规范成 provider 契约字段（不做安全边界，边界由 Policy/Provider）。"""
+        if not isinstance(velocity, dict):
+            raise ValueError("velocity 必须是对象")
+        allowed = {"vx_mps", "vy_mps", "wz_rad_s"}
+        unknown = sorted(set(velocity) - allowed)
+        if unknown:
+            raise ValueError("速度指令含未知字段: %s（规范字段 %s）" % (unknown, sorted(allowed)))
+        out = {}
+        for key in ("vx_mps", "vy_mps", "wz_rad_s"):
+            value = velocity.get(key, 0.0)
+            out[key] = float(value)
+        return out
 
     def dock_for_handoff(self, *, lease, position_tolerance_m, yaw_tolerance_rad,
                          max_final_speed_mps) -> Dict[str, Any]:
@@ -226,6 +235,18 @@ class RemoteProviderBackend:
             "yaw_tolerance_rad": float(yaw_tolerance_rad),
             "max_final_speed_mps": float(max_final_speed_mps),
         }, lease)
+
+    def accept_payload(self, payload_id, place_target_id, lease) -> Dict[str, Any]:
+        return self._invoke("accept_payload", {
+            "payload_id": payload_id, "place_target_id": place_target_id}, lease)
+
+    def locomote(self, velocity, duration_ms, lease) -> Dict[str, Any]:
+        return self._invoke("locomote", {"velocity": velocity,
+                                         "duration_ms": int(duration_ms)}, lease)
+
+    def stand(self, lease, targets=None, duration_ms=None) -> Dict[str, Any]:
+        return self._invoke("stand", {"targets": targets or {},
+                                      "duration_ms": int(duration_ms) if duration_ms else None}, lease)
 
     def stop(self, lease) -> None:
         self._invoke("stop", {}, lease)

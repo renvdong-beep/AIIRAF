@@ -1,0 +1,20 @@
+apiVersion: iraf.intewell.io/v1
+kind: Skill
+metadata: {name: walk_distance, version: 1.0.0}
+spec:
+  verification: development
+  inputSchema: walk_distance.input.json
+  outputSchema: walk_distance.output.json
+  requires: [locomote]
+  preconditions: []
+  intentExamples: ["机器狗向前走1米", "机器狗向后走2米", "机器狗向左走1米",
+                  "机器狗向右走1米", "四足按距离行走"]
+  intentTrigger: {natural_language: true, role: "按距离行走"}
+  timeoutSeconds: 120
+  cancellation: cooperative_stop
+  recovery: [stop, request_handover]
+  safetyClass: controlled_motion
+  providers:
+    - {name: quadruped_walk_distance_sim, type: python_adapter,
+       entrypoint: "iraf_skills.common.walk_distance:WalkDistanceProvider",
+       selector: {mode: simulation}, priority: 100}

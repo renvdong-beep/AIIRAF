@@ -1,0 +1,15 @@
+schema: iraf.scene/v1
+scene_id: go2-walk
+provider_id: iraf/go2-walk-145
+profile: profiles/unitree_go2_mujoco.yaml
+safety_policy: profiles/safety/quadruped_lab.yaml
+simulation: true
+switch_name: go2
+aliases: [go2, 狗, 机器狗, 四足]
+max_concurrency: 1
+lease_ttl_s: 120
+resources:
+  - id: go2
+    profile: profiles/unitree_go2_mujoco.yaml
+    capabilities: [stand, locomote, stop]
+digest: sha256:f3e2040a9553e4dae9d6b5bef57cb8d6340ee527b2871b84b8329a179e474f68

@@ -1,0 +1,100 @@
+apiVersion: iraf.intewell.io/v1
+kind: RobotProfile
+metadata:
+  name: piper_mujoco
+  version: 0.2.0
+spec:
+  simulation: true
+  verification: development
+  control_frequency_hz: 100
+  joints: [joint1, joint2, joint3, joint4, joint5, joint6, joint7, joint8]
+  joint_limits:
+    joint1: [-3.14, 3.14]
+    joint2: [-3.14, 3.14]
+    joint3: [-3.14, 3.14]
+    joint4: [-3.14, 3.14]
+    joint5: [-3.14, 3.14]
+    joint6: [-3.14, 3.14]
+    joint7: [0.0, 0.035]
+    joint8: [-0.035, 0.0]
+  capabilities: [move_joint, pick_object, visual_pick, place_object, stop, reset_scene]
+  # 开发档（仅 verification: development 生效）：让"抓取 box_01"这类开发/调试语义默认看得见画面。
+  # 生产 profile **不要写这一段** —— 不写 = 与以前完全一致（不自动起、缺 provider 就显式失败）。
+  # 由 scripts/dev_provider_supervisor.py 读取并执行（它不是 Skill：进程生命周期属运维）。
+  dev:
+    provider_display: window      # window | headless
+    autostart_provider: true      # 仅开发档；supervisor 按此决定是否拉起
+  # 结构化差异声明：把关节语义、夹爪位形、Home 位姿与相机视角
+  # 从脚本魔数收敛为 profile 数据，换机械臂只需替换本文件。
+  joint_roles:
+    joint1: arm
+    joint2: arm
+    joint3: arm
+    joint4: arm
+    joint5: arm
+    joint6: arm
+    joint7: gripper_drive_left
+    joint8: gripper_drive_right
+  gripper:
+    drive_joints: [joint7, joint8]
+    left_index: 0
+    right_index: 1
+    open_positions: {joint7: 0.035, joint8: -0.035}
+    closed_positions: {joint7: 0.023, joint8: -0.023}
+    pad_offset_m: 0.0298
+    max_tilt_deg: 30.0
+  # 构建期声明（`spec.model.*`）：供**联合模型**构建器（`--attach piper`）读取。
+  # 机械臂自己的产物仍走 `config/piper_simulation_baseline.yaml` 的 model 段（本场景不改其语义）。
+  model:
+    vendor: agilex_piper
+    file: vendor/agilex_piper/piper_description/mujoco_model/piper_description.xml
+    # **自碰撞排除**（2026-09-28 §11.23(41)，实测）：厂商 MJCF 的**安装基座**是挂在 `world`
+    # 下的网格（合成时并入主世界），与首节连杆 `link1` 的网格**设计上必然重叠**（实测 6 mm）；
+    # `link1` 是铰链子体 ⇒ MuJoCo 不跳过这一对 ⇒ 在联合世界冻结的 `impratio=100 / cone=elliptic`
+    # 口径下放大成 **9.21×10⁸ N** 的接触力，把整条臂连同 joint1 的铅垂轴旋转钉死
+    # （joint1 指令 0.749801 rad 只走到 0.017582 = 2.3%，而同臂其余关节全部到位）。
+    # 只排除这一对后同一指令 Δq 0.000424 → 0.058217 rad（137 倍，与"接触全关"完全同值）。
+    # 名字用**声明名**，注入时按"前缀存在才加前缀"的同一规则解析成联合模型名。
+    self_collision_excludes:
+      - [world, link1]
+    # 本体的"根" body（挂载参考系的宿主）；机械臂无挂载系 ⇒ 只声明根
+    trunk_body: link1
+    # 联合模型里的臂**执行器刚度口径**：值与规则都不在这里复制，从臂侧基线配置读（单一事实来源）。
+    # 为什么必须（实测，docs/debug/2026-09-24-joint-model-dog-arm.md §11.6）：厂商 MJCF 的
+    # kp = 10000/2000/500/50/20/5，臂自己场景注入的是 max(arm_position_kp, 阻尼×1.5) = 450/200/200/200/200/200
+    # ⇒ 两个模型里的臂不是同一个动力学系统：厂商口径下 approach/grasp/lift 静态保持残余
+    # 0.029975223 / 0.036213257 / 0.206096435 rad（声明容差 0.001），臂场景四项 ≤3.8e-06 rad。
+    # 契约（scene_builder._apply_declared_position_gains）：
+    #   baseline[section].inject_arm_position_gains(bool) / arm_position_kp(float)
+    #                                              / arm_position_kp_damping_ratio(float)
+    #   baseline[joints_section].arm_joints([...])  ⇒ kp := max(arm_position_kp, 关节阻尼 × ratio)
+    position_gain:
+      baseline: config/piper_simulation_baseline.yaml
+      section: scene
+      joints_section: model
+    # 指腹**摩擦**也必须按声明注入（与 position_gain 同源同理由）：厂商 MJCF 的指腹摩擦是
+    # [1.0, 0.005, 0.0001]，而臂自己场景用的是基线 scene.finger_friction（[2.0, 0.05, 0.001]）
+    # ⇒ 联合世界里只有一半摩擦、十分之一滑动摩擦。实测后果（2026-09-28）：
+    # 抓取后的**搬运**（0.6 m 横移到托盘上方）会滑掉 —— 接近段结束时方块已落回台面
+    # （载荷最低点 −0.000216 m、双侧指腹接触 false），随后下行 IK 目标不可达（0.103609369 m 未收敛）。
+    finger_friction:
+      baseline: config/piper_simulation_baseline.yaml
+      section: scene
+      key: finger_friction
+  home:
+    joint1: 0.0
+    joint2: 0.65
+    joint3: -1.15
+    joint4: 0.0
+    joint5: 0.35
+    joint6: 0.0
+  camera:
+    lookat_m: [0.06, 0.0, 0.12]
+    distance_m: 1.05
+    azimuth_deg: 180.0
+    elevation_deg: -8.0
+  manipulation:
+    targets:
+      box_01:
+        body: box_01
+        pose_tolerance_m: 0.005

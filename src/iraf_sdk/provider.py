@@ -60,6 +60,7 @@ CAPABILITY_METHODS = {
     "accept_payload": "accept_payload",
     "place_object": "place_object",
     "reset_scene": "reset_scene",
+    "pick_random": "pick_random",
     "read_state": "read_state",
     "emergency_stop": "emergency_stop",
 }

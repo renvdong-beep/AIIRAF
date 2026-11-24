@@ -1020,6 +1020,12 @@ class MujocoBackend:
 
         raise ValueError("scope 只接受 all / target，实际：%s" % scope)
 
+    def pick_random(self, lease):
+        """联合场景/单机的 pick_random 能力入口；联合演示只用固定 box_01。"""
+        return self.pick_object("box_01", {"frame_id": "world",
+                                           "pose_source": "live_target_body"},
+                                30000, lease)
+
     def pick_object(self, target_id, grasp_pose, duration_ms, lease):
         """闭合双指并以目标和两侧手指的真实接触作为抓取确认。"""
         self.authority.validate(lease)

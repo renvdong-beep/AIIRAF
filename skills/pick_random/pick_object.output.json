@@ -1,0 +1,408 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "skill",
+    "accepted",
+    "target_id",
+    "confirmation"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "skill": {
+      "const": "pick_random"
+    },
+    "accepted": {
+      "const": true
+    },
+    "target_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "confirmation": {
+      "enum": [
+        "contact",
+        "constraint",
+        "gripper_state"
+      ]
+    },
+    "evidence": {
+      "type": "object",
+      "required": [
+        "target_body",
+        "left_finger_body",
+        "right_finger_body",
+        "bilateral_contact"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "target_body": {
+          "type": "string",
+          "minLength": 1
+        },
+        "left_finger_body": {
+          "type": "string",
+          "minLength": 1
+        },
+        "right_finger_body": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bilateral_contact": {
+          "const": true
+        },
+        "lifted": {
+          "const": true
+        },
+        "constraint_activated": {
+          "type": "boolean"
+        },
+        "lift_attitude_max_deg": {
+          "type": "number",
+          "minimum": 0,
+          "description": "抬升段**载荷姿态**相对抬升起始姿态的最大偏角（度）。抓取失败时姿态会从 0° 单调增大到 100°+（载荷在夹口里\"翻滚出去\"），而接触力可能始终正常（实测双侧 5.7 N）⇒ 判读顺序必须是**先看姿态再看力**。见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.23(27)。"
+        },
+        "regrasp": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "description": "\"先抬离台、再合爪到载荷腰部\"（regrasp）的执行留痕；未启用为 null。",
+          "properties": {
+            "applied": {
+              "type": "boolean"
+            },
+            "pre_lift_m": {
+              "type": "number"
+            },
+            "depth_m": {
+              "type": "number"
+            },
+            "open_m": {
+              "type": "number"
+            },
+            "hold_pre_lift": {
+              "type": "boolean",
+              "description": "预抬段是否按声明临时使用抬升约束（regrasp 让预抬成立的措施；REGRASP_CLOSE 后撤销）。"
+            },
+            "pre_lift_constraint": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "临时使用的约束名（未启用为 null）。"
+            },
+            "contact_forces": {
+              "type": "object",
+              "description": "regrasp 闭合时刻的双侧法向力与不平衡比（与抓取段同一函数）。"
+            },
+            "pad_mid_z_m": {
+              "type": "number",
+              "description": "指腹中点高度（世界 z）：判断是否夹在载荷腰部。"
+            },
+            "payload_center_z_m": {
+              "type": "number",
+              "description": "载荷中心高度（世界 z）。"
+            },
+            "pad_minus_payload_z_m": {
+              "type": "number",
+              "description": "指腹中点 − 载荷中心（高度差）：0 附近=夹腰部；偏大=仍夹上缘。"
+            },
+            "pad_span_m": {
+              "type": "number",
+              "description": "指腹间距。"
+            },
+            "payload_pad_lateral_m": {
+              "type": "number",
+              "description": "载荷中心相对夹口轴线的水平偏移（§11.23(48) 的关键量）。"
+            },
+            "pre_lift_z_m": {
+              "type": "number",
+              "description": "预抬前载荷中心高度（世界 z）。"
+            },
+            "after_regrasp_z_m": {
+              "type": "number",
+              "description": "regrasp 闭合后载荷中心高度（世界 z）。"
+            },
+            "bilateral_after_regrasp": {
+              "type": "boolean",
+              "description": "regrasp 闭合后是否双侧指腹同时接触载荷。"
+            },
+            "force_ok_after_regrasp": {
+              "type": "boolean",
+              "description": "regrasp 闭合后双侧法向力与不平衡比是否达标。"
+            },
+            "pre_lift_declared_m": {
+              "type": "number",
+              "description": "声明的预抬高度（grasp.regrasp.pre_lift_m）。"
+            },
+            "payload_z_after_pre_lift_m": {
+              "type": "number",
+              "description": "预抬结束时载荷中心高度（世界 z）。"
+            },
+            "pre_lift_delta_m": {
+              "type": "number",
+              "description": "预抬实际抬升量（预抬后 − 预抬前）：与 pre_lift_declared_m 的差即「预抬是否到位」。"
+            },
+            "pad_minus_payload_z_after_pre_lift_m": {
+              "type": "number",
+              "description": "预抬结束时指腹中点 − 载荷中心（竖向）：夹持几何的直接证据。"
+            },
+            "payload_pad_lateral_after_pre_lift_m": {
+              "type": "number",
+              "description": "预抬结束时载荷中心相对夹口轴线的水平偏移。"
+            }
+          }
+        },
+        "lift_peak_step": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "峰值抬升发生时的抬升段步序号（NULL = 未采到）。与 `lift_peak_delta_m` 配对，用于把'抬起后滑出'定位到具体时刻（§11.23(25)(26)）。"
+        },
+        "lift_peak_delta_m": {
+          "type": "number",
+          "minimum": 0,
+          "description": "抬升段**过程中**载荷相对抬升前高度的**峰值**增量（m）。判据仍用结束时刻的 `lift_delta_m`（'结束时载荷是否还在夹口里'）；本项是**诊断量**：只取结束值会把'夹住→抬起→中途滑出'与'从未夹住'在报告里表达成同一个数（实测两者都≈0）。见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.23(25)。"
+        },
+        "lift_delta_m": {
+          "type": "number",
+          "minimum": 0
+        },
+        "left_normal_force_n": {
+          "type": "number",
+          "minimum": 0
+        },
+        "right_normal_force_n": {
+          "type": "number",
+          "minimum": 0
+        },
+        "force_imbalance_ratio": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "force_ok": {
+          "const": true
+        },
+        "grasp_alignment": {
+          "type": "object",
+          "required": [
+            "center_distance_m"
+          ],
+          "properties": {
+            "center_distance_m": {
+              "type": "number",
+              "minimum": 0
+            },
+            "pad_offset_m": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        },
+        "grasp_mode": {
+          "enum": [
+            "pose_adaptive",
+            "fallback_vertical"
+          ],
+          "description": "未知姿态抓取模式：pose_adaptive 按目标顶面法向适应，fallback_vertical 回退竖直抓取"
+        },
+        "approach_axis": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "实际使用的接近轴（世界系单位向量）"
+        },
+        "pose_source": {
+          "enum": [
+            "world_absolute",
+            "live_target_body"
+          ],
+          "description": "本次抓取用的目标位姿来源（与输入 `grasp_pose.pose_source` 一致）：`world_absolute` = 调用方给出的世界系坐标；`live_target_body` = 后端在**执行时刻**按目标体当前位姿解析（仿真真值 FK；真机应由感知 Provider 提供）。载具上的活体载荷必须用后者，见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.27。"
+        },
+        "grasp_pose_correction": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "description": "抓取段**运行期闭环纠偏**的完整留证（§11.29）：构建期关节解按标称目标求，目标被搬动后夹口对不准 ⇒ 声明 `gripper.grasp_pose_correction` 时按**实测**目标重解下压/抬升两段。缺声明为 null（不纠偏）。",
+          "required": [
+            "applied",
+            "decision",
+            "live_target_m",
+            "nominal_grasp_point_m",
+            "phases"
+          ],
+          "properties": {
+            "pre_descend": {
+              "type": "object",
+              "description": "**下压前的二次纠偏**（§11.40）：实测「纠偏测量点太早」（接近+下压几秒内载荷随载体漂 5.2 mm，而手臂执行只差 0.35 mm）⇒ 在接近完成后、下压之前**再量再解一次**（此时指腹悬在载荷上方无接触）。结构与顶层相同（declaration/decision/live_target_m/nominal_grasp_point_m/phases）。"
+            },
+            "descend_splits": {
+              "type": "object",
+              "description": "下压段**分段纠偏**留证（§11.56）：联合世界里臂是 guest、节拍被 owner（驻留线程）拖长（实测下压相位推进 27.28 s 仿真时间 vs 标称 8 s），而载荷在托盘里以 ~0.085 mm/s 漂移 ⇒ 从「最后一次用实测目标重解」到门禁的曝光窗口就是到位残差（实测 2.94/3.33/3.34 mm = 0.085 mm/s × 33 s）。声明 `grasp_pose_correction.descend_splits: K` 时把下压拆成 K 个子段、**每个子段之前**用新鲜实测目标重解剩余下压（IK 不推进植物 ⇒ 几乎不占仿真时间），最后一次解算到门禁的窗口 ≈ 1/K。含 splits/chunk_ms/chunk_settle_ms 与逐子段的纠偏证据（结构与 pre_descend 相同，另带 split=[i,K]）。缺声明（K=1）时无此键。"
+            },
+            "settled_alignment": {
+              "type": "object",
+              "description": "下压后的**停稳复量**（§11.31）：连续采样 N 次（N = 声明 align_max_attempts），给 min/max/spread/within_tolerance 与逐样本的指腹中点/目标点；只测量不动臂（下压后再纠会推着载荷走）。"
+            },
+            "applied": {
+              "type": "boolean",
+              "description": "本次是否真的改了关节解（偏差在声明容差内 ⇒ false，仍留证）"
+            },
+            "pose_source": {
+              "type": "string",
+              "description": "本次抓取用的目标位姿来源（与 evidence.pose_source 同源）"
+            },
+            "declaration": {
+              "type": "object",
+              "description": "生效的声明（原样留证：模式、容差、上限、IK 参数）"
+            },
+            "decision": {
+              "type": "object",
+              "description": "纯函数决策结果：delta_world_m / norm_m / within_tolerance / within_limit / required / refused / reason"
+            },
+            "live_target_m": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "执行时刻实测的目标体位置（世界系，m）"
+            },
+            "nominal_grasp_point_m": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "构建期名义解下的抓取点（世界系，m；= 夹持区中点 − 轴·pad_offset_m）"
+            },
+            "phases": {
+              "type": "object",
+              "description": "逐相位纠偏留证（grasp / lift）：目标点、IK 残差、迭代数、腕→夹持区轴偏角（度）、侵入对、修正后的关节解"
+            }
+          }
+        },
+        "resolved_target_pose_m": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "后端**实际采用**的目标体位置（世界系，m）。`live_target_body` 时即执行时刻的实测值，供判读\"位姿是否过期\"。"
+        },
+        "resolved_target_quat_wxyz": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 4,
+          "maxItems": 4,
+          "description": "后端**实际采用**的目标体姿态（世界系，wxyz）。"
+        },
+        "lift_anchor": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "description": "抬升段**焊缝锚点的驱动口径**留痕（2026-09-30 §11.54）。为什么必须留：s06 卸载步曾\"达标\"（`lifted=true`）而实测**载荷被拖离夹口 10.1/14.0 cm、零接触**——锚点是共享 mocap 体，激活时停在**上一次写入者**的陈旧位姿、且抬升全段无人驱动 ⇒ 载荷挂在焊缝上而非握在夹爪里。`mode=rigid_follow` 表示锚点在激活瞬间摆到载荷实测位姿、并按声明的「指腹中点 + 激活偏移」跟随（与放置段 §11.23(41) 同一口径）；`finger_mid_identity` 是旧口径（指腹中点 + 单位姿态、无偏移）。",
+          "required": [
+            "mode",
+            "driven_through_lift",
+            "activation_offset_m",
+            "activation_rel_quat_wxyz",
+            "constraint_active_at_end",
+            "bilateral_contact_at_end",
+            "payload_minus_pad_mid_at_end_m",
+            "held_at_end"
+          ],
+          "properties": {
+            "mode": {
+              "enum": [
+                "finger_mid_identity",
+                "rigid_follow"
+              ],
+              "description": "声明的驱动口径（场景基线 `grasp.lift_anchor_mode`，缺省旧口径）。"
+            },
+            "driven_through_lift": {
+              "type": "boolean",
+              "description": "锚点在**抬升全段**是否被逐拍驱动（旧口径只在段末摆一次）。"
+            },
+            "activation_offset_m": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "激活瞬间的「载荷中心 − 指腹中点」（世界系，m）；旧口径为 null。"
+            },
+            "activation_rel_quat_wxyz": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "number"
+              },
+              "minItems": 4,
+              "maxItems": 4,
+              "description": "激活瞬间的「腕部⁻¹ ⊗ 载荷」姿态（wxyz）；非 weld 或旧口径为 null。"
+            },
+            "constraint_active_at_end": {
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "description": "抬升结束时焊缝是否仍激活（null = 本次未用焊缝）。"
+            },
+            "bilateral_contact_at_end": {
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "description": "抬升结束时双侧指腹是否同时接触载荷（实测）。"
+            },
+            "payload_minus_pad_mid_at_end_m": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "抬升结束时「载荷中心 − 指腹中点」（世界系，m）。"
+            },
+            "held_at_end": {
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "description": "结束时载荷是否仍在夹口内（= bilateral_contact_at_end；门禁用值）。"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -118,7 +118,7 @@ class JointMujocoBackend:
         return kind, rid
 
     def _arm_backend(self):
-        return self._arm
+        return next(iter(self._arms.values()))
 
     def _quad_backend(self):
         return self._quadruped
@@ -157,6 +157,10 @@ class JointMujocoBackend:
         with self._advance_plant():
             return self._arm_for(lease).pick_object(*args, **kwargs)
 
+    def pick_random(self, lease):
+        with self._advance_plant():
+            return self._arm_for(lease).pick_random(lease)
+
     def place_object(self, *args, **kwargs):
         lease = kwargs.get("lease") or (args[-1] if args else None)
         with self._advance_plant():
@@ -168,7 +172,24 @@ class JointMujocoBackend:
             return self._arm_for(lease).visual_pick(*args, **kwargs)
 
     def reset_scene(self, *args, **kwargs):
-        return self._arm.reset_scene(*args, **kwargs)
+        """联合世界复位：直接把共享 MjData 恢复到模型初始 qpos0。"""
+        import mujoco
+        lease = kwargs.get("lease") or (args[-1] if args else None)
+        self.authority.validate(lease)
+        lock = self.plant.lock() if callable(getattr(self.plant, "lock", None)) else None
+        if lock is None:
+            raise RuntimeError("联合世界复位需要 plant.lock")
+        with lock:
+            if int(getattr(self.model, "nkey", 0) or 0) > 0:
+                mujoco.mj_resetDataKeyframe(self.model, self.data, 0)
+            else:
+                self.data.qpos[:] = self.model.qpos0
+                self.data.qvel[:] = 0
+            self.data.eq_active[:] = 0
+            mujoco.mj_forward(self.model, self.data)
+        baseline = "keyframe:0" if int(getattr(self.model, "nkey", 0) or 0) > 0 else "initial-snapshot"
+        return {"status": "SUCCEEDED", "scope": "all", "baseline": baseline,
+                "detail": "联合世界已复位到模型初始状态"}
 
     # ---- 四足能力（go2） ----
     def stand(self, lease, targets=None, duration_ms=None, execution_id=None):

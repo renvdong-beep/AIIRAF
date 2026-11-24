@@ -1,0 +1,21 @@
+schema: iraf.scene/v1
+scene_id: joint-handoff
+provider_id: iraf/joint-handoff-145
+profile: profiles/handoff_lab_joint.yaml
+safety_policy: profiles/safety/simulation_lab.yaml
+simulation: true
+switch_name: handoff_lab_joint
+aliases: [joint, 联合, 交接, handoff, 联合世界]
+max_concurrency: 1
+lease_ttl_s: 120
+resources:
+  - id: joint-piper
+    profile: profiles/piper_mujoco.yaml
+    capabilities: [move_joint, pick_object, visual_pick, place_object, stop, reset_scene]
+  - id: joint-ur5
+    profile: profiles/ur5_mujoco.yaml
+    capabilities: [move_joint, pick_object, visual_pick, place_object, stop, reset_scene]
+  - id: joint-go2
+    profile: profiles/unitree_go2_mujoco.yaml
+    capabilities: [stand, locomote, stop]
+digest: sha256:eca1adc167c512ffde20fdb40aa41c10d95223a28a5d489830d08975ae4c1e84

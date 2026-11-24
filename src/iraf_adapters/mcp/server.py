@@ -133,29 +133,29 @@ def _bridge_for_resolved(resolved):
             "IRAF 侧意图 Provider 未配置（需要 IRAF_AGENTOS_MODEL_URL + IRAF_AGENTOS_MODEL）")
     lock = _STATE.setdefault("_env_lock", threading.Lock())
     with lock:
-        saved = {k: os.environ.get(k) for k in
-                 ("IRAF_PROFILE", "IRAF_BACKEND_CONFIG", "IRAF_BACKEND_ENTRYPOINT")}
+        saved = {k: os.environ.get(k) for k in ("IRAF_PROFILE", "IRAF_BACKEND_CONFIG")}
         try:
             os.environ["IRAF_PROFILE"] = resolved.scene.profile
-            scene_override = (resolved.scene.raw or {})
-            if scene_override.get("backend_entrypoint"):
-                os.environ["IRAF_BACKEND_ENTRYPOINT"] = str(scene_override["backend_entrypoint"])
-            scene_config = scene_override.get("backend_config")
-            if isinstance(scene_config, dict):
-                os.environ["IRAF_BACKEND_CONFIG"] = json.dumps(scene_config)
             # 装配单里保留的是"基线配置"（token_file/timeout/subject 等），这里只合并 endpoint，
             # 不整体覆盖 —— 否则凭据配置丢失，Provider 鉴权直接失败。
-            if isinstance(scene_config, dict):
-                base = dict(scene_config)
-            else:
-                try:
-                    base = json.loads(saved.get("IRAF_BACKEND_CONFIG") or "{}")
-                except Exception:
-                    base = {}
-                base = dict(base) if isinstance(base, dict) else {}
+            try:
+                base = json.loads(saved.get("IRAF_BACKEND_CONFIG") or "{}")
+            except Exception:
+                base = {}
+            base = dict(base) if isinstance(base, dict) else {}
             base["endpoint"] = resolved.host.endpoint
             os.environ["IRAF_BACKEND_CONFIG"] = json.dumps(base)
+            import sys as _sys
+            print("DEBUG_SCENE base_keys=%s token_env_len=%s token_file=%s" % (
+                sorted(base.keys()), len(os.environ.get("IRAF_PROVIDER_TOKEN") or ""),
+                base.get("token_file")), file=_sys.stderr, flush=True)
             dispatcher = TaskDispatcher(build_runtime_from_env())
+            try:
+                _b = dispatcher.runtime.backend
+                print("DEBUG_BACKEND token_len=%s token=%r" % (
+                    len(getattr(_b, "_token", "") or ""), getattr(_b, "_token", "")), file=_sys.stderr, flush=True)
+            except Exception as _exc:
+                print("DEBUG_BACKEND_ERR %s" % _exc, file=_sys.stderr, flush=True)
         finally:
             for k, v in saved.items():
                 if v is None:
@@ -269,30 +269,6 @@ def iraf_plan_task(scene_id: str = "ur5-pick-planned", target_id: str = "box_01"
                          "per_joint": result["limits"]["per_joint"]}
     compact["hint"] = "⚠️ 计划计算（无物理/接触）；真实抓取需 x86 MuJoCo 或真机执行"
     return json.dumps(compact, ensure_ascii=False)
-
-
-@app.tool()
-def iraf_vla_status(base_url: str = "") -> str:
-    """VLA 推理服务健康检查（端侧 S600 / x86 GPU），只读、不触发动作。
-
-    base_url 为空时读环境变量 IRAF_VLA_URL（如 http://10.203.247.147:8095）。
-    """
-    import urllib.request
-
-    url = (base_url or os.environ.get("IRAF_VLA_URL", "")).strip().rstrip("/")
-    if not url:
-        return json.dumps({"status": "NOT-CONFIGURED", "kind": "diagnostic",
-                           "hint": "设置 IRAF_VLA_URL=http://<host>:8095 后重试"},
-                          ensure_ascii=False)
-    try:
-        with urllib.request.urlopen(url + "/health", timeout=3) as resp:
-            data = json.loads(resp.read().decode())
-        return json.dumps({"status": "OK", "base_url": url, "vla": data,
-                           "kind": "diagnostic"}, ensure_ascii=False)
-    except Exception as exc:  # noqa: BLE001
-        return json.dumps({"status": "FAILED", "error_code": "VLA-UNREACHABLE",
-                           "base_url": url, "reason": str(exc)[:200], "kind": "diagnostic"},
-                          ensure_ascii=False)
 
 
 @app.tool()
@@ -657,6 +633,23 @@ def _robot_facts(resolved=None) -> dict:
             facts["allowed_skills"] = sorted(policy.allowed_skills)
         except Exception as exc:
             facts["simulation_error"] = str(exc)[:200]
+    facts["scene_modes"] = {
+        "piper": {"provider": "10.203.247.145:50052", "display": "机械臂抓盒"},
+        "go2": {"provider": "10.203.247.145:50055", "display": "机器狗单独行走"},
+        "joint": {"provider": "10.203.247.145:50054", "display": "联合世界"},
+    }
+    facts["provider_endpoints"] = {k: v["provider"] for k, v in facts["scene_modes"].items()}
+    facts["command_intents"] = {
+        "piper_pick": ["piper随机抓取盒子", "机械臂抓取盒子", "随机抓取盒子"],
+        "go2_walk": ["机器狗向前走1米", "机器狗向后走1米", "机器狗向左走1米", "机器狗向右走1米"],
+        "joint_scene": ["联合世界场景", "切到联合世界", "joint场景"],
+    }
+    facts["only_one_mujoco_window"] = True
+    allowed = set(facts.get("allowed_skills") or [])
+    if allowed:
+        facts["skills"] = [s for s in facts.get("skills", []) if s in allowed]
+        facts["intents"] = {k: v for k, v in (facts.get("intents") or {}).items() if k in allowed}
+        facts["skill_triggers"] = {k: v for k, v in (facts.get("skill_triggers") or {}).items() if k in allowed}
     return facts
 
 
@@ -666,7 +659,12 @@ def robot_routing_policy() -> str:
     from iraf_adapters.mcp.mode import ROUTING_POLICY
 
     return ("机器人开发模式的分派规则（robot-first，不是无脑转发）：\n" + ROUTING_POLICY +
-            "\n技能清单与意图示例见 iraf_enter_robot_mode() 的返回（skills / intents）。")
+            "\n当前三场景固定口令（同一显示器只开一个 MuJoCo 窗口）：\n"
+            "  机械臂/piper 抓盒 → iraf_pick_random_piper\n"
+            "  机器狗/Go2 前后左右 → iraf_go2_walk(direction, distance)\n"
+            "  联合世界 → iraf_switch_robot_scene('joint')\n"
+            "不要再使用 place_object/托盘；piper 单机场景没有 tray_01。\n"
+            "技能清单与意图示例见 iraf_enter_robot_mode() 的返回（skills / intents）。")
 
 
 @app.prompt()
@@ -1011,6 +1009,12 @@ def iraf_submit_task(text: str, deadline_seconds: int = 180,
     返回 `planned=true, physics=false, mode=planned` 并给出 IK/限位/报告。
     这只是"计划是否可行"，不冒充抓取成功；策略拒绝、参数错误等仍原样失败。
     """
+    _scene_only = (text or "").strip().lower()
+    if _scene_only in ("联合世界场景", "联合世界", "joint场景", "切到联合世界", "joint", "联合",
+                       "联合世界9步演示", "9步演示", "联合演示"):
+        return iraf_run_scenario(scenario="nominal", display="window", hold_s=0,
+                                 scene_id="joint-handoff", async_mode=True)
+
     if _plan_only():
         # 与主链路同一套推断（SceneRegistry.infer）：不再另写一份 piper/ur5 关键词表，
         # 否则“ur抓取盒子”会在这里判成未知场景（2026-11-12 实测）。
@@ -1166,6 +1170,10 @@ def _supervisor_url(host=None) -> str:
     报“链路失败”。这里从 endpoint 的 IP 推导控制面地址，保证“注册表即路由”。
     """
     host_control_url = getattr(host, "control_url", "") if host is not None else ""
+    if not host_control_url and host is not None:
+        endpoint = str(getattr(host, "endpoint", "") or "")
+        if ":" in endpoint:
+            host_control_url = "http://%s:8770" % endpoint.rsplit(":", 1)[0]
     return (host_control_url or os.environ.get("IRAF_SUPERVISOR_URL") or "").strip().rstrip("/")
 
 
@@ -1220,30 +1228,20 @@ def _ensure_scene(scene: str, endpoint: str = "", host=None, provider=None) -> s
             r = _supervisor_call("/ensure", {"scene": scene}, timeout=150)
             if r.get("status") == "OK":
                 return "switched(supervisor)"
-            reason = str(r.get("reason") or r.get("error") or "")
-            # 新组合场景不在 supervisor 的固定场景表里：继续用 provider 端点直连检查，
-            # 不把"supervisor 不认识"误判成"provider 不可用"。
-            if "无此场景" not in reason and "IRAF-SCENE-NOT-FOUND" not in reason:
-                return "switch-failed:%s" % (reason or "supervisor 拒绝")
+            return "switch-failed:%s" % (r.get("reason") or "supervisor 拒绝")
         failover = str((getattr(provider, "health", {}) or {}).get("failover") or "")
         if failover == "next" and provider is not None:
             hosted += [h for h in sorted(provider.hosts, key=lambda x: x.priority)
                        if host is None or h.id != host.id]
         last = ""
-        unknown_scene = True
         for h in hosted:
             if not _supervisor_url(h):
                 continue
             r = _supervisor_call("/ensure", {"scene": scene}, timeout=150, host=h)
             if r.get("status") == "OK":
                 return "switched(supervisor)" if h is host else "switched(supervisor:%s)" % h.id
-            reason = str(r.get("reason") or r.get("error") or "")
-            last = "%s(%s)" % (reason or "supervisor 拒绝", h.id)
-            if "无此场景" not in reason and "IRAF-SCENE-NOT-FOUND" not in reason:
-                unknown_scene = False
-        if not unknown_scene:
-            return "switch-failed:%s" % (last or "no-supervisor")
-        # 全部是“supervisor 不认识该场景” ⇒ 该 provider 不归 supervisor 管，走端点直连。
+            last = "%s(%s)" % (r.get("reason") or "supervisor 拒绝", h.id)
+        return "switch-failed:%s" % (last or "no-supervisor")
     if not endpoint:
         raw = _os.environ.get("IRAF_BACKEND_CONFIG", "")
         try:
@@ -1317,7 +1315,7 @@ def iraf_switch_scene(scene: str) -> str:
     import subprocess as _sp
     from iraf_adapters.mcp import auth as _auth
 
-    allowed = ("piper", "piper-y05", "ur5", "joint")
+    allowed = ("piper", "piper-y05", "ur5", "joint", "go2")
     try:
         principal = _principal()
         _auth.require_scope(principal, "task.submit")
@@ -1341,6 +1339,11 @@ def _execute_scenario(scenario, display, hold, host, control_url=""):
     """同步执行全量链路（阻塞）；返回与工具响应同构的 dict，供同步/异步两条路径复用。"""
     import json as _json
     import subprocess as _sp
+
+    # 联合 9 步演示强制同步：平台一旦拿到 run_id 就会用 Terminal sleep 轮询，
+    # 触发宿主命令审批并拖慢对话。演示本身只需数秒，直接返回 steps 更安全。
+    if scenario == "nominal":
+        async_mode = True
 
     mode = "window" if str(display).lower() in ("window", "interactive", "viewer") else "none"
     control_url = (control_url or _supervisor_url()).strip().rstrip("/")
@@ -1430,8 +1433,12 @@ def _run_scenario_bg(run_id, scenario, display, hold, subject, scene_id, control
 
 
 @app.tool()
-def iraf_get_run(run_id: str) -> str:
-    """查异步全量链路的进度/结果（E1）。`iraf_run_scenario(async_mode=True)` 返回的 run_id 用它查。"""
+def iraf_get_run(run_id: str, wait_s: int = 0) -> str:
+    """查异步全量链路的进度/结果；立即返回快照，不在服务端阻塞等待。
+
+    推荐：`iraf_run_scenario` 返回 QUEUED 后先回复用户；稍后用户问进度时再调用本工具。
+    wait_s 保留兼容但不再阻塞，避免聊天长时间挂起。
+    """
     from iraf_adapters.mcp import auth
 
     try:
@@ -1447,8 +1454,12 @@ def iraf_get_run(run_id: str) -> str:
     if run is None:
         return json.dumps({"status": "FAILED", "error_code": "IRAF-INPUT-INVALID",
                            "reason": "run 不存在：%s" % rid}, ensure_ascii=False)
-    auth.audit("tool_call", principal, tool="iraf_get_run", run_id=rid, state=run.get("status"))
-    return json.dumps({"status": "SUCCEEDED", "run": run}, ensure_ascii=False)
+    auth.audit("tool_call", principal, tool="iraf_get_run", run_id=rid,
+               state=(run or {}).get("status"), waited_s=int(wait_s or 0))
+    out = {"status": "SUCCEEDED", "run": run}
+    if str((run or {}).get("status") or "") in ("running", "queued"):
+        out["instruction"] = "RUNNING：把当前进度回复给用户并结束本轮，禁止 Terminal/sleep/再次轮询"
+    return json.dumps(out, ensure_ascii=False)
 
 
 @app.tool()
@@ -1501,6 +1512,8 @@ def iraf_run_scenario(scenario: str = "nominal", display: str = "window",
     except Exception:
         hold = 60
 
+    if scenario == "nominal":
+        async_mode = True
     if async_mode:
         run_id = _run_store().create(scenario, mode, hold)
         threading.Thread(target=_run_scenario_bg,
@@ -1510,11 +1523,10 @@ def iraf_run_scenario(scenario: str = "nominal", display: str = "window",
                          daemon=True, name="scenario-%s" % run_id[:8]).start()
         _auth.audit("tool_call", principal, tool="iraf_run_scenario", action="async",
                     run_id=run_id, scene=scenario)
-        return _json.dumps({"status": "QUEUED", "run_id": run_id, "poll": "iraf_get_run",
-                            "next_poll_after_s": 20,
+        return _json.dumps({"status": "QUEUED", "run_id": run_id,
+                            "instruction": "立即回复用户已启动，结束本轮；禁止 Terminal/sleep",
                             "scenario": scenario, "display": mode, "hold_s": hold,
-                            "note": "后台执行；用 iraf_get_run(run_id) 轮询（约每 20s 一次），"
-                                    "不要用 sleep/终端等待"},
+                            "note": "用户之后问进度时再调用 iraf_get_run(run_id)"},
                            ensure_ascii=False)
 
     _lease = None
@@ -1540,261 +1552,6 @@ def iraf_run_scenario(scenario: str = "nominal", display: str = "window",
                 _lease_store().release(_lease.lease_id, "scenario-done")
             except Exception:
                 pass
-
-@app.tool()
-@_audited("iraf_onboard_robot")
-def iraf_onboard_robot(robot_id: str, model_path: str, capabilities: str = "",
-                       dry_run: bool = True, allow_overwrite: bool = False) -> str:
-    """新机器人接入的标准入口：模型事实 → Profile → 校验报告 → Backend 骨架。
-
-    只生成声明/校验，不伪装“可用”：validation.runnable 恒为 false，
-    必须补齐 Backend 能力并跑单机验收（stand/locomote/move/pick）后，才允许进联合世界。
-    capabilities 用逗号分隔（如 "stand,stop,locomote"）。
-    """
-    import json as _json
-    import os as _os
-    from pathlib import Path as _Path
-
-    from iraf_adapters.mujoco import robot_onboard as _rb
-
-    try:
-        root = _Path(_os.environ.get("IRAF_REPO_ROOT") or _os.getcwd())
-        caps = [c.strip() for c in str(capabilities).split(",") if c.strip()]
-        result = _rb.onboard(root, str(robot_id), str(model_path), capabilities=caps,
-                             dry_run=bool(dry_run), allow_overwrite=bool(allow_overwrite))
-        return _json.dumps(result, ensure_ascii=False)
-    except Exception as exc:  # noqa: BLE001
-        return _json.dumps({"status": "FAILED", "error_code": "IRAF-ONBOARD-ERROR",
-                            "reason": "%s: %s" % (type(exc).__name__, exc)}, ensure_ascii=False)
-
-
-def _robot_lifecycle():
-    from iraf_adapters.mujoco import robot_lifecycle as _rl
-    return _rl
-
-
-def _robot_root() -> str:
-    import os as _os
-    return _os.path.abspath(_os.environ.get("IRAF_REPO_ROOT") or _os.getcwd())
-
-
-def _json_arg(value):
-    import json as _json
-    if value is None or value == "":
-        return {}
-    if isinstance(value, (dict, list)):
-        return value
-    return _json.loads(value)
-
-
-@app.tool()
-@_audited("iraf_robot_build_scene")
-def iraf_robot_build_scene(robot_id: str, scene_id: str, profile: str,
-                           provider_endpoint: str, capabilities: str = "",
-                           report_path: str = "", model_path: str = "",
-                           backend_entrypoint: str = "", backend_config: str = "",
-                           control_url: str = "", dry_run: bool = True) -> str:
-    """生成单机 scene/provider 声明（可选自动从报告生成 backend_config）。
-
-    这是"接入产品化"的声明阶段：不写 registry、不执行机器人；未验收前不得注册。
-    """
-    import json as _json
-    try:
-        caps = [x.strip() for x in str(capabilities or "").split(",") if x.strip()]
-        cfg = _json_arg(backend_config)
-        result = _robot_lifecycle().build_scene(
-            robot_id=robot_id, scene_id=scene_id, profile=profile,
-            provider_endpoint=provider_endpoint, capabilities=caps,
-            root=_robot_root(), report_path=report_path, model_path=model_path,
-            backend_entrypoint=backend_entrypoint, backend_config=cfg,
-            control_url=control_url, dry_run=bool(dry_run))
-        return _json.dumps(result, ensure_ascii=False)
-    except Exception as exc:  # noqa: BLE001
-        return _json.dumps({"status": "FAILED", "error_code": "IRAF-ROBOT-SCENE-FAILED",
-                            "reason": "%s: %s" % (type(exc).__name__, exc)}, ensure_ascii=False)
-
-
-@app.tool()
-@_audited("iraf_robot_scaffold_capability")
-def iraf_robot_scaffold_capability(robot_id: str, capability: str,
-                                   dry_run: bool = True) -> str:
-    """生成能力实现/skill/声明补丁草案；不自动改现有源码（fail-closed）。"""
-    import json as _json
-    try:
-        result = _robot_lifecycle().scaffold_capability(
-            robot_id, capability, root=_robot_root(), dry_run=bool(dry_run))
-        return _json.dumps(result, ensure_ascii=False)
-    except Exception as exc:  # noqa: BLE001
-        return _json.dumps({"status": "FAILED", "error_code": "IRAF-ROBOT-SCAFFOLD-FAILED",
-                            "reason": "%s: %s" % (type(exc).__name__, exc)}, ensure_ascii=False)
-
-
-@app.tool()
-@_audited("iraf_robot_acceptance")
-def iraf_robot_acceptance(robot_id: str, capability: str, profile: str,
-                          params: str = "{}", backend_entrypoint: str = "",
-                          backend_config: str = "", dry_run: bool = True) -> str:
-    """在本地 Backend 上做单机能力验收并写 report；dry_run 不执行、不产生证据。
-
-    支持：move_joint / gripper / pick_object（其余能力显式失败，不伪造）。
-    """
-    import json as _json
-    try:
-        result = _robot_lifecycle().acceptance(
-            robot_id, capability, profile=profile, root=_robot_root(),
-            backend_entrypoint=backend_entrypoint,
-            backend_config=_json_arg(backend_config),
-            params=_json_arg(params), dry_run=bool(dry_run))
-        return _json.dumps(result, ensure_ascii=False)
-    except Exception as exc:  # noqa: BLE001
-        return _json.dumps({"status": "FAILED", "error_code": "IRAF-ROBOT-ACCEPTANCE-FAILED",
-                            "reason": "%s: %s" % (type(exc).__name__, exc)}, ensure_ascii=False)
-
-
-@app.tool()
-@_audited("iraf_robot_register")
-def iraf_robot_register(scene_file: str, provider_file: str,
-                        acceptance_report: str, dry_run: bool = True,
-                        registry_root: str = "", allow_overwrite: bool = False) -> str:
-    """验收 passed=true 后把 scene/provider 装入 /etc/iraf 注册表并 seal。"""
-    import json as _json
-    import os as _os
-    try:
-        result = _robot_lifecycle().register(
-            scene_file, provider_file, root=_robot_root(),
-            registry_root=registry_root or _os.environ.get("IRAF_SCENE_ROOT") or "/etc/iraf",
-            profiles_root=_os.environ.get("IRAF_PROFILES_ROOT") or "profiles",
-            acceptance_report=acceptance_report, dry_run=bool(dry_run),
-            allow_overwrite=bool(allow_overwrite))
-        return _json.dumps(result, ensure_ascii=False)
-    except Exception as exc:  # noqa: BLE001
-        return _json.dumps({"status": "FAILED", "error_code": "IRAF-ROBOT-REGISTER-FAILED",
-                            "reason": "%s: %s" % (type(exc).__name__, exc)}, ensure_ascii=False)
-
-
-@app.tool()
-def iraf_robot_status(robot_id: str) -> str:
-    """只读：机器人场景/能力/验收状态（未验收项明确列出）。"""
-    import json as _json
-    import os as _os
-    try:
-        result = _robot_lifecycle().status(
-            robot_id, root=_robot_root(),
-            registry_root=_os.environ.get("IRAF_SCENE_ROOT") or "/etc/iraf",
-            profiles_root=_os.environ.get("IRAF_PROFILES_ROOT") or "profiles",
-            build=bool(build), build_primary=str(build_primary or ""))
-        return _json.dumps(result, ensure_ascii=False)
-    except Exception as exc:  # noqa: BLE001
-        return _json.dumps({"status": "FAILED", "error_code": "IRAF-ROBOT-STATUS-FAILED",
-                            "reason": "%s: %s" % (type(exc).__name__, exc)}, ensure_ascii=False)
-
-
-@app.tool()
-@_audited("iraf_robot_acceptance_all")
-def iraf_robot_acceptance_all(robot_id: str, profile: str, params: str = "{}",
-                              backend_entrypoint: str = "", backend_config: str = "",
-                              dry_run: bool = True) -> str:
-    """按 Profile 声明的全部能力批量验收；任一失败则整体不通过。"""
-    import json as _json
-    try:
-        result = _robot_lifecycle().acceptance_all(
-            robot_id, profile=profile, root=_robot_root(),
-            params=_json_arg(params), backend_entrypoint=backend_entrypoint,
-            backend_config=_json_arg(backend_config), dry_run=bool(dry_run))
-        return _json.dumps(result, ensure_ascii=False)
-    except Exception as exc:  # noqa: BLE001
-        return _json.dumps({"status": "FAILED", "error_code": "IRAF-ROBOT-ACCEPT-ALL-FAILED",
-                            "reason": "%s: %s" % (type(exc).__name__, exc)}, ensure_ascii=False)
-
-
-@app.tool()
-@_audited("iraf_robot_join_world")
-def iraf_robot_join_world(scene_id: str, robots: str, base: str = "",
-                          dry_run: bool = True, require_runnable: bool = True,
-                          register: bool = False, build: bool = False,
-                          build_primary: str = "") -> str:
-    """联合世界编排：默认要求每个机器人 runnable；复用 joint_compose，不伪造合成。"""
-    import json as _json
-    import os as _os
-    try:
-        result = _robot_lifecycle().join_world(
-            scene_id, robots, base=base or "scenes/handoff_lab", root=_robot_root(),
-            dry_run=bool(dry_run), require_runnable=bool(require_runnable), register=bool(register),
-            registry_root=_os.environ.get("IRAF_SCENE_ROOT") or "/etc/iraf",
-            profiles_root=_os.environ.get("IRAF_PROFILES_ROOT") or "profiles",
-            build=bool(build), build_primary=str(build_primary or ""))
-        return _json.dumps(result, ensure_ascii=False)
-    except Exception as exc:  # noqa: BLE001
-        return _json.dumps({"status": "FAILED", "error_code": "IRAF-ROBOT-JOIN-WORLD-FAILED",
-                            "reason": "%s: %s" % (type(exc).__name__, exc)}, ensure_ascii=False)
-
-
-@app.tool()
-def iraf_robot_pick_readiness(report_path: str = "") -> str:
-    """只读：检查 scene_report 是否具备 pick 事实（不执行、不猜默认值）。"""
-    import json as _json
-    try:
-        return _json.dumps(_robot_lifecycle().pick_readiness(
-            report_path, root=_robot_root()), ensure_ascii=False)
-    except Exception as exc:  # noqa: BLE001
-        return _json.dumps({"status": "FAILED", "error_code": "IRAF-ROBOT-PICK-READINESS-FAILED",
-                            "reason": "%s: %s" % (type(exc).__name__, exc)}, ensure_ascii=False)
-
-
-@app.tool()
-@_audited("iraf_compose_joint_scene")
-def iraf_compose_joint_scene(scene_id: str, robots: str, base: str = "",
-                             dry_run: bool = True, register: bool = False) -> str:
-    """把已有单机/联合场景里的若干部件编排成新的联合场景声明（不驱动机器人）。
-
-    robots 用逗号分隔（如 "piper,unitree_go2"）；只生成 scene/baseline/Profile（可选 registry），
-    MJCF 合成仍由 scripts/build_scene.py 完成（主本体选四足）。
-    """
-    import json as _json
-    import os as _os
-    from pathlib import Path as _Path
-
-    from iraf_adapters.mujoco import joint_compose as _jc
-
-    try:
-        root = _os.path.abspath(_os.environ.get("IRAF_REPO_ROOT") or _os.getcwd())
-        base_dir = _os.path.join(root, base or "scenes/handoff_lab")
-        if not _os.path.isfile(_os.path.join(base_dir, "scene.yaml")):
-            return _json.dumps({"status": "FAILED", "error_code": "IRAF-COMPOSE-BASE-MISSING",
-                                "reason": "基础场景不存在：%s（用 base 参数指定含 scene.yaml 的目录）" % base_dir},
-                               ensure_ascii=False)
-        ids = [x.strip() for x in str(robots).split(",") if x.strip()]
-        if not ids:
-            return _json.dumps({"status": "FAILED", "error_code": "IRAF-COMPOSE-INPUT",
-                                "reason": "robots 不能为空"}, ensure_ascii=False)
-        descriptors = [_jc.load_descriptor(_Path(base_dir) / "scene.yaml", rid) for rid in ids]
-        # 工具可能以任意 cwd 运行：Profile 的相对路径按仓库根解析（不依赖进程 cwd）。
-        for _desc in descriptors:
-            _profile = str(_desc.get("profile") or "")
-            if _profile and not _os.path.isabs(_profile):
-                _desc["profile"] = _os.path.join(root, _profile)
-        profile = _jc.compose_profile(descriptors, scene_id=str(scene_id))
-        composed = _jc.compose_scene(_Path(base_dir) / "scene.yaml", _Path(base_dir) / "baseline.yaml",
-                                     scene_id=str(scene_id), robot_ids=ids)
-        files = []
-        if not dry_run:
-            files = _jc.write_outputs(_Path(root), scene_id=str(scene_id), composed=composed,
-                                      profile=profile, out_dir=_Path(root) / "scenes" / str(scene_id))
-            if register:
-                import yaml as _yaml
-                registry = _jc.build_registry_scene(str(scene_id), descriptors)
-                reg_path = _Path(root) / "config" / "scenes" / ("%s.yaml" % scene_id)
-                reg_path.write_text(_yaml.safe_dump(registry, allow_unicode=True, sort_keys=False),
-                                    encoding="utf-8")
-                files.append(str(reg_path))
-        return _json.dumps({"status": "SUCCEEDED", "scene_id": str(scene_id), "robots": ids,
-                            "joints": len(profile["spec"]["joints"]),
-                            "capabilities": profile["spec"]["capabilities"],
-                            "files": files, "dry_run": bool(dry_run)}, ensure_ascii=False)
-    except Exception as exc:  # noqa: BLE001
-        return _json.dumps({"status": "FAILED", "error_code": "IRAF-COMPOSE-ERROR",
-                            "reason": "%s: %s" % (type(exc).__name__, exc)}, ensure_ascii=False)
-
 
 @app.tool()
 @_audited("iraf_scene_status")

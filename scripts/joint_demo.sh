@@ -44,6 +44,15 @@ export XAUTHORITY
 cd /home/coretek/AIIRAF || exit 2
 export PYTHONPATH=src:/home/coretek/.local/opt/iraf-sdk/0.4.4/lib
 echo "[joint_demo] DISPLAY=$DISPLAY XAUTHORITY=$XAUTHORITY hold=${HOLD}s render_hz=${HZ}"
+# scenario viewer 也全屏
+(
+  sleep 8
+  for _ in 1 2 3; do
+    id=$(wmctrl -l | grep -i 'MuJoCo' | awk '{print $1}' | tail -n1)
+    [ -n "$id" ] && wmctrl -i -r "$id" -b add,fullscreen && wmctrl -i -a "$id"
+    sleep 1
+  done
+) &
 exec python3 scripts/scenario.py run \
   --scene scenes/handoff_lab --scenario nominal \
   --world joint \

@@ -1,0 +1,32 @@
+apiVersion: iraf.intewell.io/v1
+kind: Skill
+metadata: {name: pick_random, version: 1.0.0}
+spec:
+  verification: development
+  inputSchema: pick_object.input.json
+  outputSchema: pick_object.output.json
+  requires: [pick_random]
+  preconditions:
+    - safety.estop == false
+    - manipulation.target_visible == true
+  # 中文口语优先（2026-11-12 使用者口径）："piper抓取盒子" / "ur抓取盒子" 是主要输入形态；
+  # "盒子/方块" 由 target_id 的 schema description 映射到场景声明的规范 id（如 box_01）。
+  intentExamples: ["piper随机抓取盒子", "机械臂随机抓取盒子", "随机抓取盒子", "随机抓取"]
+  # 技能选择收口（2026-10-23 实机）：抓取类自然语言默认且只落到本技能。
+  # 同族技能 visual_pick 需要显式 vision_file，不参与自然语言竞争。
+  intentTrigger: {natural_language: true, role: "随机抓取"}
+  # 租约 TTL 必须覆盖**墙钟**（不是仿真时长）：带重力前馈后抓取实测墙钟 53.71632638690062 s
+  # （五段各 1600 ms 仿真 + 稳定窗，4 核软件渲染），原 30 s 会在收尾前过期 ⇒ 收尾路径抛
+  # LeaseConflict、整步被记成崩溃（2026-09-24 实测）。120 s = 约 2.2 倍余量（与 locomote 60 s /
+  # dock_for_handoff 120 s 同口径）。注意：它同时是策略层的时长上限来源
+  # （min(timeoutSeconds*1000, safety.max_duration_ms=30000) 不受影响）。
+  timeoutSeconds: 120
+  cancellation: cooperative_stop
+  recovery: [stop, reacquire_target, request_handover]
+  safetyClass: controlled_motion
+  providers:
+    - name: common_pick_sim
+      type: python_adapter
+      entrypoint: "iraf_skills.common.random_pick:PickRandomProvider"
+      selector: {mode: simulation}
+      priority: 100

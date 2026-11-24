@@ -9,5 +9,5 @@ spec:
   default: deny
   # reset_scene（2026-10-23）：开发/调试用的场景复位。它在 default: deny 下必须显式放行，
   # 否则策略会拒（实测 AgentOS 会话曾用 /tmp 覆盖才通过 —— 不该靠临时文件）。
-  allowed_skills: [move_joint, pick_object, visual_pick, place_object, accept_payload, stop, reset_scene, stand, locomote, dock_for_handoff, gripper]
+  allowed_skills: [pick_object, walk_distance, pick_random, move_joint, reset_scene, stop, locomote, stand]
   max_duration_ms: 30000

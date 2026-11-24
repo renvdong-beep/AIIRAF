@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "target_id",
+    "grasp_pose"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "target_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "description": "要抓取的载荷 id（场景声明里的 target id，ASCII：如 box_01）。自然语言里的『盒子 / 方块 / box』都指默认载荷 box_01；不要把中文词直接填进来（pattern 会按非法 id 拒绝）。"
+    },
+    "grasp_pose": {
+      "type": "object",
+      "required": [
+        "frame_id"
+      ],
+      "additionalProperties": false,
+      "description": "目标抓取位姿。`pose_source` 声明**位姿从哪里来**：`world_absolute`（缺省）= 调用方给出世界系坐标（`position`/`orientation` 必填）；`live_target_body` = 位置/朝向由后端按**目标体当前位姿**解析（载具上的活体载荷必须如此：构建期标称值实测偏 9.506e-03 ~ 1.1073e-02 m，见 docs/debug/2026-09-24-joint-model-dog-arm.md §11.27），此时 `position`/`orientation` 不得给出（避免两份事实）。",
+      "properties": {
+        "frame_id": {
+          "const": "world",
+          "description": "本契约只接受世界系（world）：`pose_source=world_absolute` 的定义就是调用方给世界系坐标；`live_target_body` 由后端按目标体当前位姿解析，同样落在世界系。允许自由字符串时意图模型会偶发给出 base/camera 等系（2026-10-21 实测 4 次里 2 次），后端只能 fail-closed 拒绝。"
+        },
+        "pose_source": {
+          "enum": [
+            "world_absolute",
+            "live_target_body"
+          ]
+        },
+        "position": {
+          "type": "object",
+          "required": [
+            "x",
+            "y",
+            "z"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            },
+            "z": {
+              "type": "number"
+            }
+          }
+        },
+        "orientation": {
+          "type": "object",
+          "required": [
+            "x",
+            "y",
+            "z",
+            "w"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            },
+            "z": {
+              "type": "number"
+            },
+            "w": {
+              "type": "number"
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "pose_source"
+            ],
+            "properties": {
+              "pose_source": {
+                "const": "live_target_body"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "position"
+                  ]
+                },
+                {
+                  "required": [
+                    "orientation"
+                  ]
+                }
+              ]
+            }
+          },
+          "else": {
+            "required": [
+              "position",
+              "orientation"
+            ]
+          }
+        }
+      ]
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 30000
+    }
+  }
+}
